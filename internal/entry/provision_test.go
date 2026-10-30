@@ -149,7 +149,7 @@ func newProvHarness(t *testing.T) *provHarness {
 		t.Fatal(err)
 	}
 	b := &fakeBox{password: "provider-pw-123", hostKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeHostKey"}
-	p := NewProvisioner(h.svc, b.dial, dir, "api.example.org:443", nil)
+	p := NewProvisioner(h.svc, b.dial, dir)
 	p.SetProber("https://api.example.org")
 	p.probeTimeout, p.probePoll = 10*time.Second, 50*time.Millisecond
 	return &provHarness{harness: h, box: b, prov: p}
@@ -239,7 +239,6 @@ func (ph *provHarness) logText(id uuid.UUID) string {
 
 func TestANewBoxGoesFromPasswordToThePool(t *testing.T) {
 	ph := newProvHarness(t)
-	ph.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	ph.vantage("clean")
 	box, id := ph.newBox(ph.box.password)
 	j := ph.wait(id)
@@ -270,10 +269,9 @@ func TestANewBoxGoesFromPasswordToThePool(t *testing.T) {
 	id0, _ := ph.svc.RelayIdentity(context.Background(), box+"-1")
 	var envSent bool
 	for _, in := range ph.box.stdins {
-		// The TCP rung of a call (voice plan Ф5): the stream relay forwards
-		// datagrams to the shards' media and serves the probe's echo.
-		if strings.Contains(in, "EDGE_PRIVATE_KEY="+id0.PrivateKey) && strings.Contains(in, "EDGE_UPSTREAMS=api.example.org:443") &&
-			strings.Contains(in, "EDGE_MEDIA=203.0.113.9:40000-40099") &&
+		// A VPN exit names no destination; it serves the probe's echo.
+		if strings.Contains(in, "EDGE_PRIVATE_KEY="+id0.PrivateKey) && !strings.Contains(in, "EDGE_UPSTREAMS") &&
+			!strings.Contains(in, "EDGE_MEDIA") &&
 			strings.Contains(in, "EDGE_ECHO_PORT="+strconv.Itoa(id0.LocalPortBase+relayLoopbackBlock-1)) {
 			envSent = true
 		}
@@ -380,17 +378,12 @@ func TestOneJobPerBox(t *testing.T) {
 	ph.wait(id)
 }
 
-type fixedMedia []MediaTarget
-
-func (m fixedMedia) Media(context.Context, string) ([]MediaTarget, error) { return m, nil }
-
 // A voice box (voice plan Ф3) goes through the same job as a stream box, with
 // what differs taken from its protocol: UDP in the firewall and the listening
-// check, the region's SFU media rendered into the relay's env, Hysteria
+// check, Hysteria
 // credentials handed to the vantage, and a hysteria2 record for the region.
 func TestAVoiceBoxGoesToThePoolInFrontOfItsRegion(t *testing.T) {
 	ph := newProvHarness(t)
-	ph.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	ph.vantage("clean")
 	u := uuid.New()
 	box := boxName("v", u)
@@ -428,7 +421,7 @@ func TestAVoiceBoxGoesToThePoolInFrontOfItsRegion(t *testing.T) {
 	if !strings.HasSuffix(swap, " 443 udp") {
 		t.Fatalf("swap checks %q, want a udp listener", swap)
 	}
-	for _, want := range []string{"EDGE_PROTO=hysteria2", "EDGE_MEDIA=203.0.113.9:40000-40099", "EDGE_HY_FINALMASK="} {
+	for _, want := range []string{"EDGE_PROTO=hysteria2", "EDGE_HY_FINALMASK="} {
 		if !strings.Contains(env, want) {
 			t.Fatalf("env lacks %s:\n%s", want, env)
 		}
@@ -455,32 +448,5 @@ func TestAVoiceBoxGoesToThePoolInFrontOfItsRegion(t *testing.T) {
 	}
 	if !served {
 		t.Fatalf("the admitted voice relay is not in a fresh batch")
-	}
-}
-
-// A region with no SFU announcing a media address has nowhere to forward
-// to: the job stops before the relay is deployed, not after it is admitted.
-func TestAVoiceBoxWithNoMediaIsNotDeployed(t *testing.T) {
-	ph := newProvHarness(t)
-	ph.prov.media = fixedMedia{}
-	u := uuid.New()
-	box := boxName("w", u)
-	id, err := ph.prov.CreateAndProvision(context.Background(), NewBox{
-		BoxSpec: BoxSpec{Name: box, Address: "2001:db8::" + u.String()[:4], Provider: "vultr",
-			Location: "amsterdam", Proto: ProtoHysteria2, Region: "t-" + u.String()[:8]},
-		Password: ph.box.password,
-	}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ph.made = append(ph.made, box+"-1")
-	j := ph.wait(id)
-	if j.Status == "done" || !strings.Contains(ph.logText(id), "некуда пересылать") {
-		t.Fatalf("job %+v\n%s", j, ph.logText(id))
-	}
-	for _, in := range ph.box.stdins {
-		if strings.Contains(in, "EDGE_PROTO=") {
-			t.Fatal("a relay env reached the box")
-		}
 	}
 }

@@ -104,8 +104,8 @@ func newRolloutHarness(t *testing.T) *rolloutHarness {
 	b1, b2 := []byte("edge-v1-"+run), []byte("edge-v2-"+run)
 	rh := &rolloutHarness{
 		harness: h, fleet: fleet,
-		v1:   NewProvisioner(h.svc, fleet.dial, buildDir(t, b1), "api.example.org:443", nil),
-		v2:   NewProvisioner(h.svc, fleet.dial, buildDir(t, b2), "api.example.org:443", nil),
+		v1:   NewProvisioner(h.svc, fleet.dial, buildDir(t, b1)),
+		v2:   NewProvisioner(h.svc, fleet.dial, buildDir(t, b2)),
 		sha1: sha256Hex(b1), sha2: sha256Hex(b2),
 		bench: func(string, string) BenchResult { return goodRun },
 		probe: func(string) string { return "clean" },

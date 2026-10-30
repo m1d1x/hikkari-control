@@ -30,7 +30,7 @@ func TestTheAdminSurfaceListsKillsAndPublishes(t *testing.T) {
 	asOwner := true
 	// A box the hub cannot log into: the wipe after a retire fails in its job,
 	// and the retire still stands.
-	prov := NewProvisioner(h.svc, (&fakeBox{hostKey: "ssh-ed25519 AAAA"}).dial, t.TempDir(), "api.example.org:443", nil)
+	prov := NewProvisioner(h.svc, (&fakeBox{hostKey: "ssh-ed25519 AAAA"}).dial, t.TempDir())
 	gate := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if asOwner {

@@ -25,7 +25,6 @@ import (
 // machine's own is no evidence against it.
 func TestARepairDeadlineIsNoEvidenceAgainstAFreshMachine(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	h.prov.probeTimeout = 4 * time.Second
 	h.vantage(VerdictProbeFailed)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -77,7 +76,6 @@ func TestARepairDeadlineDuringTheBootWaitKeepsTheMachine(t *testing.T) {
 // not a strike, and its machine stays rented.
 func TestARepairCutByItsDeadlineIsHeld(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	h.prov.probeTimeout = 4 * time.Second
 	inc := h.shortOfFleet()
 	m := NewMechanic(h.svc, h.prov)
@@ -117,7 +115,6 @@ func (h *hostHarness) jobsOf(box, kind string) int {
 // was opened on a machine being reinstalled.
 func TestADeadSuspectInTheOperatorsHandsIsNotTaken(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	h.isolateWave()
 	ctx := context.Background()
 	box := h.deadSuspect()
@@ -192,7 +189,6 @@ func TestAFreshMachineInTheOperatorsHandsIsNotHandedBack(t *testing.T) {
 // verdict, and a new second chance starts only on a new eviction.
 func TestTheOperatorsReinstallWithdrawsAnOldSentence(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	h.isolateWave()
 	ctx := context.Background()
 	box := h.inService()

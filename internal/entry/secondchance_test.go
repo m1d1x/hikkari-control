@@ -19,7 +19,6 @@ import (
 func suspectBoxHarness(t *testing.T) (*hostHarness, string) {
 	t.Helper()
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	ctx := context.Background()
 	if _, err := h.pool.Exec(ctx, `DELETE FROM entry_probe_tasks WHERE kind = 'box'`); err != nil {
 		t.Fatal(err)
@@ -475,7 +474,6 @@ func TestTheSecondChanceKnobsKeepTheirRules(t *testing.T) {
 // sizes the pool by its load.
 func TestTheEvictionSaysWhoReplacesTheMachine(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	ctx := context.Background()
 	box := h.inService()
 	inc := h.openIncident(box, CauseIPBanned, map[string]string{box + "-1": "ip_banned"})
@@ -495,7 +493,6 @@ func TestTheEvictionSaysWhoReplacesTheMachine(t *testing.T) {
 // calling the box short of it.
 func TestTheCoverRepairsKeepTheLedger(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	ctx := context.Background()
 	box := h.inService()
 	nvidia, tesla := DefaultCovers[1], DefaultCovers[2]

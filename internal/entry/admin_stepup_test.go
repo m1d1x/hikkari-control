@@ -59,7 +59,6 @@ func (h *hostHarness) stepUpMux(touched *bool) func(method, path string, body an
 // forget a host key so that the next login trusts whoever answers.
 func TestDestructiveBoxActionsNeedAStepUp(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	box := h.inService()
 	touched := false
 	do := h.stepUpMux(&touched)

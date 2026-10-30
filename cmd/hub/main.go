@@ -23,6 +23,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/db"
 	"github.com/m1d1x/hikkari-control/internal/entry"
 	"github.com/m1d1x/hikkari-control/internal/probesink"
+	"github.com/m1d1x/hikkari-control/internal/subscription"
 )
 
 func main() {
@@ -54,6 +55,8 @@ func main() {
 			runEntryBench(os.Args[2:])
 		case "entry-vantage-token":
 			runEntryVantageToken(os.Args[2:])
+		case "subscriber-add", "subscriber-revoke":
+			runSubscriber(os.Args[1], os.Args[2:])
 		}
 	}
 	if err := run(); err != nil {
@@ -116,11 +119,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("entry pool: %w", err)
 	}
-	ups, err := relayUpstreams()
-	if err != nil {
-		return fmt.Errorf("entry pool: %w", err)
-	}
-	prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir, ups, nil)
+	prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
 	if token := os.Getenv("EDGE_PULSE_TOKEN"); token != "" {
 		prov.SetPulse(config.Default().APIURL()+"/api/v1/internal/entry-pulse", token)
 	}
@@ -146,6 +145,8 @@ func run() error {
 	// ── Public plane: what probers and relays talk to ─────
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	// Subscribers' links (internal/subscription): their batch of the pool.
+	mux.HandleFunc("GET /sub/{token}", subscription.New(pool, svc, entry.PinnedKeys()).Handler())
 	if store != nil {
 		mux.HandleFunc("POST /api/v1/internal/entry-probes", probesink.IngestEntry(store, svc))
 		entry.RegisterProberRoutes(mux, svc)

@@ -338,7 +338,6 @@ func TestSaveHosterChecksKeySealsItAndApplies(t *testing.T) {
 func TestOrderingAMachineRecordsItsRentalAndAdmitsIt(t *testing.T) {
 	h := newHostHarness(t)
 	h.host.pollsBeforeAddress = 2 // the first look has no address yet
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	h.vantage("clean")
 	ctx := context.Background()
 
@@ -584,7 +583,6 @@ func (h *hostHarness) retire(box string) {
 // rails and the bookkeeping apply to it like any other repair.
 func TestRebootBoxRestartsTheMachineAndReprobes(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	h.vantage("clean")
 	ctx := context.Background()
 
@@ -643,7 +641,6 @@ func TestRebootBoxRestartsTheMachineAndReprobes(t *testing.T) {
 // machine waits for its second chance; the fleet buys the replacement.
 func TestEvictBoxTakesTheMachineOutOfThePoolAndKeepsIt(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	h.vantage("clean")
 	ctx := context.Background()
 
@@ -737,7 +734,6 @@ func (h *hostHarness) scaleUpReality() (repairResult, error) {
 // after the hoster handed it over and failed on an ssh timeout.
 func TestAnOrderedMachineIsWaitedForBeforeItsFirstLogin(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	h.vantage("clean")
 	booting := 3
 	real := h.prov.dial
@@ -766,7 +762,6 @@ func TestAnOrderedMachineIsWaitedForBeforeItsFirstLogin(t *testing.T) {
 
 func TestAReplacementWaitsForTheFirstBoot(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	h.vantage("clean")
 	ctx := context.Background()
 	old, job, err := h.prov.OrderBox(ctx, OrderSpec{}, "")
@@ -812,7 +807,6 @@ func TestAReplacementWaitsForTheFirstBoot(t *testing.T) {
 // by the hub, and the machines already in the pool are not touched.
 func TestAReplacementThatNeverBootsIsHandedBack(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	h.vantage("clean")
 	ctx := context.Background()
 	old, job, err := h.prov.OrderBox(ctx, OrderSpec{}, "")
@@ -854,7 +848,6 @@ func TestAReplacementThatNeverBootsIsHandedBack(t *testing.T) {
 // purchase, which keeps its own `ask`.
 func TestEvictBoxRunsUnattendedAndBuysNothing(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	ctx := context.Background()
 	box := h.inService()
 	orders := h.host.orderCount()
@@ -956,7 +949,6 @@ func TestTheCatalogCarriesTheOfferAndTheBudget(t *testing.T) {
 // at the offer and rebooting a machine are not.
 func TestAdminHostingSurface(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	ctx := context.Background()
 	var adminID string
 	if err := h.pool.QueryRow(ctx, `
@@ -1175,7 +1167,6 @@ func contains(list []string, s string) bool {
 // replacement takes it instead of buying another.
 func TestAReplacementTakesTheIdleMachineInsteadOfBuying(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	idle, _ := h.idleMachine()
 	h.made = append(h.made, idle+"-1")
 	orders := h.host.orderCount()
@@ -1207,7 +1198,6 @@ func TestAReplacementTakesTheIdleMachineInsteadOfBuying(t *testing.T) {
 // on to buy a new one.
 func TestAnIdleMachineThatFailsIsHandedBackAndANewOneBought(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	idle, idleInstance := h.idleMachine()
 	idleAddr := h.host.instances[idleInstance].Address
 	orders := h.host.orderCount()
@@ -1247,7 +1237,6 @@ func TestAnIdleMachineThatFailsIsHandedBackAndANewOneBought(t *testing.T) {
 // An idle machine the hoster no longer has is struck off and skipped.
 func TestAnIdleMachineGoneAtTheHosterIsSkipped(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	idle, idleInstance := h.idleMachine()
 	// Deleted in the hoster's panel by hand: the hub was not told.
 	h.host.mu.Lock()
@@ -1280,7 +1269,6 @@ func TestAnIdleMachineGoneAtTheHosterIsSkipped(t *testing.T) {
 // whatever else it looks like.
 func TestBusyMachinesAreNotTakenForIdle(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	ctx := context.Background()
 	carrying := h.inService()
 	working, _ := h.idleMachine()

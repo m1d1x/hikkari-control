@@ -110,30 +110,11 @@ func (r sealedRemote) Run(ctx context.Context, cmd string, stdin io.Reader) (str
 	return out, sshexec.Redact(err, r.host, r.box)
 }
 
-// MediaSource says where a call's media arrives: the SFU media addresses a
-// relay may forward datagrams to (the shard registry, sfu_nodes.media_*). A
-// voice relay asks for its region's; a stream relay, which no region owns,
-// asks with region "" for every shard's (its TCP rung, voice plan Ф5). Read
-// at every deploy, so a re-run of the job is what moves a relay onto new
-// shards.
-type MediaSource interface {
-	Media(ctx context.Context, region string) ([]MediaTarget, error)
-}
-
-// StreamSource supplies the current named endpoints for reliable streams.
-// Read at deploy time so SFU registration changes reach new relay configs.
-type StreamSource interface {
-	Streams(ctx context.Context) ([]string, error)
-}
-
 // Provisioner runs provisioning jobs.
 type Provisioner struct {
 	svc          *Service
 	dial         Dialer
-	media        MediaSource          // nil: voice boxes cannot be deployed, stream boxes carry no calls
-	streams      StreamSource         // current SFU signaling destinations
 	builds       map[string]EdgeBuild // by arch, hashed once at start
-	upstream     string               // what relays forward to: EDGE_UPSTREAMS, see Upstreams
 	probeTimeout time.Duration
 	probePoll    time.Duration
 	drainPoll    time.Duration
@@ -175,28 +156,19 @@ func (p *Provisioner) SetProber(apiURL string) {
 	p.proberAPIURL = strings.TrimRight(apiURL, "/")
 }
 
-// SetStreamSource adds live signaling destinations to the static HTTP hosts.
-// Call before starting provisioning jobs.
-func (p *Provisioner) SetStreamSource(source StreamSource) {
-	p.streams = source
-}
-
 // CanDeployProber reports whether this hub knows its own address and has at
 // least one compiled nekko-entry-prober binary to ship over ssh.
 func (p *Provisioner) CanDeployProber() bool {
 	return p != nil && p.proberAPIURL != "" && len(p.proberBuilds) > 0
 }
 
-// NewProvisioner builds the runner. upstream is what a stream relay forwards
-// to, as Upstreams renders it (the gateway and the client's HTTP hosts);
-// artifacts the directory of relay binaries, hashed here once: they are the
-// version this hub deploys (П6.14).
-func NewProvisioner(svc *Service, dial Dialer, artifacts, upstream string, media MediaSource) *Provisioner {
+// NewProvisioner builds the runner. artifacts is the directory of relay
+// binaries, hashed here once: they are the version this hub deploys (П6.14).
+func NewProvisioner(svc *Service, dial Dialer, artifacts string) *Provisioner {
 	return &Provisioner{
-		svc: svc, dial: dial, media: media,
+		svc: svc, dial: dial,
 		builds:       loadEdgeBuilds(artifacts),
 		proberBuilds: loadProberBuilds(artifacts),
-		upstream:     upstream,
 		probeTimeout: 5 * time.Minute, probePoll: 2 * time.Second, drainPoll: drainPoll,
 		jobTimeout:   30 * time.Minute,
 		bootWait:     bootWait,
@@ -1045,33 +1017,6 @@ func (j *jobRun) transport() string {
 	return "tcp"
 }
 
-// media is where the box's relays forward a call's datagrams, as the
-// registry has them now: a voice box its region's SFU media addresses, a
-// stream box every shard's. A voice box with none cannot be deployed; a stream
-// box without them still carries messaging, only no call through its TCP rung.
-func (j *jobRun) media() ([]MediaTarget, error) {
-	if j.acc.proto == ProtoVlessXhttp {
-		return nil, nil // streams only (identity.go EdgeEnv)
-	}
-	if j.p.media == nil {
-		if j.acc.voice() {
-			return nil, errors.New("хаб запущен без реестра SFU, голосовой вход не развернуть")
-		}
-		return nil, nil
-	}
-	m, err := j.p.media.Media(j.ctx, j.acc.region)
-	if err != nil {
-		if !j.acc.voice() {
-			return nil, fmt.Errorf("медиа-адреса SFU: %w", err)
-		}
-		return nil, fmt.Errorf("медиа-адреса региона %s: %w", j.acc.region, err)
-	}
-	if len(m) == 0 && j.acc.voice() {
-		return nil, fmt.Errorf("регион %s: %w", j.acc.region, errNoMedia)
-	}
-	return m, nil
-}
-
 func (j *jobRun) arch(r Remote) (string, error) {
 	out, err := r.Run(j.ctx, "uname -m", nil)
 	if err != nil {
@@ -1139,18 +1084,6 @@ func (j *jobRun) edgeOnBox(r Remote, arch string) string {
 	return have
 }
 
-func (j *jobRun) streamUpstreams() (string, error) {
-	if j.acc.voice() || j.p.streams == nil {
-		return j.p.upstream, nil
-	}
-	endpoints, err := j.p.streams.Streams(j.ctx)
-	if err != nil {
-		return "", fmt.Errorf("stream destinations: %w", err)
-	}
-	base := strings.Split(j.p.upstream, ",")
-	return Upstreams(base[0], append(base[1:], endpoints...)...)
-}
-
 // install puts one relay on whatever binary is staged at nekko-edge.new (or
 // the current one): unit, env, check, swap, restart, listening.
 func (j *jobRun) install(r Remote, rel provRelay) error {
@@ -1160,15 +1093,7 @@ func (j *jobRun) install(r Remote, rel provRelay) error {
 	// The relay's identity, rendered as the env nekko-edge runs with. Goes on
 	// stdin, never into the job log.
 	var env strings.Builder
-	media, err := j.media()
-	if err != nil {
-		return err
-	}
-	upstreams, err := j.streamUpstreams()
-	if err != nil {
-		return err
-	}
-	envMap, err := rel.id.EdgeEnv(upstreams, media)
+	envMap, err := rel.id.EdgeEnv()
 	if err != nil {
 		return fmt.Errorf("env релея %s: %w", rel.name, err)
 	}
@@ -1182,15 +1107,8 @@ func (j *jobRun) install(r Remote, rel provRelay) error {
 		envMap["EDGE_PULSE_TOKEN"] = PulseToken(j.p.pulseToken, j.box)
 		envMap["EDGE_RELAY_NAME"] = rel.name
 	}
-	switch {
-	case j.acc.proto == ProtoVlessXhttp:
-		j.log("%s: сайт на домене релея, туннель только для потоков", rel.name)
-	case j.acc.voice():
-		j.log("%s пересылает только в SFU региона %s: %s", rel.name, j.acc.region, mediaList(media))
-	case len(media) > 0:
-		j.log("%s: датаграммы звонка только в SFU: %s", rel.name, mediaList(media))
-	default:
-		j.log("%s: ни один SFU не закрепил медиа-адрес, TCP-ступень голоса через релей не поедет", rel.name)
+	if j.acc.proto == ProtoVlessXhttp {
+		j.log("%s: сайт на домене релея, туннель под секретным путём", rel.name)
 	}
 	keys := make([]string, 0, len(envMap))
 	for k := range envMap {

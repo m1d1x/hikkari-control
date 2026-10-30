@@ -11,7 +11,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -378,20 +377,15 @@ func (id Identity) rotatedReality() (Identity, error) {
 }
 
 // EdgeEnv renders the identity as the env nekko-edge runs with (edge/config.go).
-// A voice relay forwards to media (its region's SFU media addresses) and
-// nowhere else; a stream relay forwards streams to upstreams (the gateway and
-// the client's HTTP hosts, see Upstreams) and a call's datagrams to media
-// (every shard's: the TCP rung of the voice ladder, voice plan Ф5). CONTAINS
-// SECRETS: goes to the box over ssh, 0600.
+// Every relay is a VPN exit: what its tunnel carries leaves through the
+// edge's own exit (edge/egress.go), so the env names no destination at all.
+// CONTAINS SECRETS: goes to the box over ssh, 0600.
 //
 // Multi-line and JSON values travel base64-encoded: the env file is read both
 // by systemd and by a shell (the swap script's check), and the two disagree
 // about quotes.
-func (id Identity) EdgeEnv(upstreams string, media []MediaTarget) (map[string]string, error) {
+func (id Identity) EdgeEnv() (map[string]string, error) {
 	if h := id.Hysteria; h != nil {
-		if len(media) == 0 {
-			return nil, errNoMedia
-		}
 		finalmask, err := json.Marshal(xrayFinalmask(h.Masks))
 		if err != nil {
 			return nil, err
@@ -404,13 +398,10 @@ func (id Identity) EdgeEnv(upstreams string, media []MediaTarget) (map[string]st
 			"EDGE_HY_CERT":      b64([]byte(h.CertPEM)),
 			"EDGE_HY_KEY":       b64([]byte(h.KeyPEM)),
 			"EDGE_HY_FINALMASK": b64(finalmask),
-			"EDGE_MEDIA":        mediaList(media),
 			"EDGE_ECHO_PORT":    strconv.Itoa(id.echoPort()),
 		}, nil
 	}
 	if x := id.Xhttp; x != nil {
-		// Streams only for now: XHTTP is the messaging path and the voice
-		// ladder's later rung (plan 42 П4в, поправка 3), so no media here.
 		return map[string]string{
 			"EDGE_PROTO":           ProtoVlessXhttp,
 			"EDGE_LISTEN":          "0.0.0.0:" + strconv.Itoa(id.Port),
@@ -418,7 +409,6 @@ func (id Identity) EdgeEnv(upstreams string, media []MediaTarget) (map[string]st
 			"EDGE_XH_PATH":         x.Path,
 			"EDGE_CLIENTS":         id.UUID,
 			"EDGE_LOCAL_PORT_BASE": strconv.Itoa(id.LocalPortBase),
-			"EDGE_UPSTREAMS":       upstreams,
 		}, nil
 	}
 	covers := ""
@@ -436,21 +426,9 @@ func (id Identity) EdgeEnv(upstreams string, media []MediaTarget) (map[string]st
 		"EDGE_COVERS":          covers,
 		"EDGE_LISTEN":          "0.0.0.0:" + strconv.Itoa(id.Port),
 		"EDGE_LOCAL_PORT_BASE": strconv.Itoa(id.LocalPortBase),
-		"EDGE_UPSTREAMS":       upstreams,
 		"EDGE_ECHO_PORT":       strconv.Itoa(id.echoPort()),
 	}
-	if len(media) > 0 {
-		env["EDGE_MEDIA"] = mediaList(media)
-	}
 	return env, nil
-}
-
-func mediaList(media []MediaTarget) string {
-	targets := make([]string, len(media))
-	for i, m := range media {
-		targets[i] = m.String()
-	}
-	return strings.Join(targets, ",")
 }
 
 // xrayFinalmask renders masks as Xray's finalmask.udp list. The one Go
@@ -480,21 +458,6 @@ func xrayFinalmask(masks []Mask) []map[string]any {
 		}
 	}
 	return out
-}
-
-// errNoMedia: a voice relay with nowhere to forward would deploy as a black
-// hole that passes its own health check.
-var errNoMedia = errors.New("в регионе нет ни одного SFU с медиа-адресом (SFU_PUBLIC_IP и SFU_UDP_MIN/MAX): голосовому входу некуда пересылать")
-
-// MediaTarget is one SFU media address a voice relay may forward to: an IP
-// and its UDP port range (sfu_nodes.media_*, migration 048).
-type MediaTarget struct {
-	IP       string
-	From, To int
-}
-
-func (m MediaTarget) String() string {
-	return m.IP + ":" + strconv.Itoa(m.From) + "-" + strconv.Itoa(m.To)
 }
 
 // record is the signed record of this identity on a box at address. region is

@@ -2,3 +2,6 @@
 secrets
 data
 *.db
+admin/node_modules
+admin/build
+admin/.svelte-kit

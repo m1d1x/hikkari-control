@@ -43,29 +43,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/m1d1x/hikkari-control/internal/config"
 	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 	"github.com/m1d1x/hikkari-control/internal/entry"
 )
-
-// relayUpstreams is everything a stream relay this hub deploys may forward to:
-// the gateway, and the hosts the client's HTTP reaches through the tunnel
-// (roadmap 42 П8) — the object store presigned URLs are signed for and the
-// update channel. Both the panel's jobs and this CLI deploy with it.
-func relayUpstreams() (string, error) {
-	d := config.Default()
-	return entry.Upstreams(d.APIHost+":443", objectStorePublicEndpoint(), d.UpdateURL())
-}
-
-// objectStorePublicEndpoint is the address presigned URLs are signed for —
-// what a client dials for object bytes. Defaults to the endpoint this process
-// uses, the same rule storage.NewS3 applies.
-func objectStorePublicEndpoint() string {
-	if v := os.Getenv("S3_PUBLIC_ENDPOINT"); v != "" {
-		return v
-	}
-	return os.Getenv("S3_ENDPOINT")
-}
 
 func runEntryBox(args []string) {
 	fail := func(err error) {
@@ -167,7 +147,7 @@ func runEntryBox(args []string) {
 		if err != nil {
 			fail(err)
 		}
-		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir, "", nil)
+		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
 		var stdin io.Reader
 		if st, _ := os.Stdin.Stat(); st.Mode()&os.ModeCharDevice == 0 {
 			stdin = os.Stdin
@@ -206,12 +186,7 @@ func runEntryBox(args []string) {
 	if err != nil {
 		fail(err)
 	}
-	upstreams, err := relayUpstreams()
-	if err != nil {
-		fail(err)
-	}
-	prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir, upstreams,
-		nil)
+	prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
 	ctx := context.Background()
 	// So `entry-box <box> <ip> <provider> <city> xhttp` (no domain) buys and
 	// points the domain itself, through the account saved in the console, and

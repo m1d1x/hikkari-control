@@ -65,7 +65,7 @@ func TestABoxRecordsTheBuildItRuns(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "linux-amd64", "nekko-edge"), newer, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	next := NewProvisioner(ph.svc, ph.box.dial, dir, "api.example.org:443", nil)
+	next := NewProvisioner(ph.svc, ph.box.dial, dir)
 	next.probeTimeout, next.probePoll = ph.prov.probeTimeout, ph.prov.probePoll
 	ph.vantage("clean")
 	id2, err := next.Provision(context.Background(), box, "", "")

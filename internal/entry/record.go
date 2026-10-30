@@ -22,12 +22,12 @@ import (
 	"time"
 )
 
-// EntryKey1 is the public half of entry-1 — the same constant nekko-core pins
-// (client-core/nekko-core/src/net/entry.rs). The private half is the hub's
-// ENTRY_SIGNING_KEY (sign.go), checked against this at start.
+// EntryKey1 is the public half of Hikkari's entry-1. The private half is the
+// hub's ENTRY_SIGNING_KEY (sign.go, SOPS: deploy/hub.env.enc), checked against
+// this at start. Not Nekko's key: the two fleets sign apart.
 //
 // A public key, not a secret — hence the allow marker for the leak scanner.
-const EntryKey1 = "24d2928b4b3be3346ae49e87dcf8b64173991df2fe77c72e7239f84bb9760188" // gitleaks:allow
+const EntryKey1 = "046a5fec5534aec604ddeef1a7e88644045060449449d3dbff129eb19ddd5561" // gitleaks:allow
 
 // relayContext and sourcesContext are prepended to the payload before signing
 // (nekko-entry, envelope.rs, Kind): a signature binds the record to its kind,
@@ -185,4 +185,41 @@ func VerifySources(env Envelope, keys []Key, now time.Time) (SourceListMeta, err
 		return SourceListMeta{}, fmt.Errorf("%w: source list at %s", ErrExpired, time.Unix(m.ExpiresAt, 0).UTC())
 	}
 	return m, nil
+}
+
+// OpenRecord verifies one stored envelope (envelope JSON, as a Bundle carries
+// it) and returns the whole record, the half its Proto names included — what a
+// subscription renders a client link from.
+func OpenRecord(raw []byte, keys []Key, now time.Time) (RelayRecord, error) {
+	var env Envelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return RelayRecord{}, fmt.Errorf("%w: envelope: %v", ErrMalformed, err)
+	}
+	r, err := Verify(env, keys, now)
+	if err != nil {
+		return RelayRecord{}, err
+	}
+	payload, err := openEnvelope(env, keys, relayContext)
+	if err != nil {
+		return RelayRecord{}, err
+	}
+	rec := RelayRecord{Name: r.Name, Address: r.Address, Port: r.Port, Proto: r.Proto,
+		IssuedAt: r.IssuedAt, ExpiresAt: r.ExpiresAt}
+	switch r.Proto {
+	case ProtoVlessRealityVision:
+		rec.RealityParams = &RealityParams{}
+		err = json.Unmarshal(payload, rec.RealityParams)
+	case ProtoHysteria2:
+		rec.HysteriaParams = &HysteriaParams{}
+		err = json.Unmarshal(payload, rec.HysteriaParams)
+	case ProtoVlessXhttp:
+		rec.XhttpParams = &XhttpParams{}
+		err = json.Unmarshal(payload, rec.XhttpParams)
+	default:
+		return RelayRecord{}, fmt.Errorf("%w: relay %s has unknown proto %q", ErrMalformed, r.Name, r.Proto)
+	}
+	if err != nil {
+		return RelayRecord{}, fmt.Errorf("%w: relay %s params: %v", ErrMalformed, r.Name, err)
+	}
+	return rec, nil
 }

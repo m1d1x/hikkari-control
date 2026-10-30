@@ -80,7 +80,6 @@ func (h *hostHarness) isolateWave() {
 // the step-up — it is a retire with a six-hour fuse.
 func TestMarkingARelayDeadNeedsAStepUp(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	box := h.inService()
 	touched := false
 	do := h.stepUpMux(&touched)
@@ -165,7 +164,6 @@ func (h *hostHarness) deadSuspect() string {
 // delete the machine at the hoster two days later.
 func TestADeadSuspectWaitsForAPausedWave(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	h.isolateWave()
 	ctx := context.Background()
 	box := h.deadSuspect()
@@ -199,7 +197,6 @@ func TestADeadSuspectWaitsForAPausedWave(t *testing.T) {
 // fuse stands for, and it blows the same fuse.
 func TestDeadSuspectHandbacksAreAWave(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	h.isolateWave()
 	ctx := context.Background()
 	before, err := h.svc.DetectionPolicy(ctx)
@@ -308,7 +305,6 @@ func (h *hostHarness) shortOfFleet() Incident {
 // `held`: not a strike.
 func TestADeafVantageHoldsTheFreshMachineAndStrikesNothing(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	h.prov.probeTimeout = 400 * time.Millisecond
 	h.svc.SetVantages(fakeVantages{regions: []string{testVantage}})
 	ctx := context.Background()
@@ -396,7 +392,6 @@ func TestScaleUpWaitsForALiveVantage(t *testing.T) {
 // A machine whose key was forgotten is in the operator's hands.
 func TestAMachineWithAForgottenKeyIsLeftToTheOperator(t *testing.T) {
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	ctx := context.Background()
 	idle, instance := h.idleMachine()
 	if err := h.svc.ForgetHostKey(ctx, idle); err != nil {

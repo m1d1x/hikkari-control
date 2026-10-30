@@ -36,7 +36,7 @@ func (h *hostHarness) secondHub() *Provisioner {
 		h.t.Fatal(err)
 	}
 	h.t.Cleanup(svc.stopBackground)
-	return NewProvisioner(svc, h.box.dial, h.t.TempDir(), "api.example.org:443", nil)
+	return NewProvisioner(svc, h.box.dial, h.t.TempDir())
 }
 
 // В3. Room in the budget for one and a half machines, and two orders racing

@@ -1,4 +1,4 @@
 creation_rules:
-  - path_regex: deploy/secrets\.enc\.yaml$
+  - path_regex: deploy/(secrets\.enc\.yaml|hub\.env\.enc)$
     age: >-
       age1vuap4gvs2ljm87un7mje4rqhw6sq9vl3vmxfxj43njjager9hu5sutqp6f

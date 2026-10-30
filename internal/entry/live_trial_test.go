@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/m1d1x/hikkari-control/internal/analytics"
-	"github.com/m1d1x/hikkari-control/internal/config"
 	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 	"github.com/m1d1x/hikkari-control/internal/db"
 	"github.com/m1d1x/hikkari-control/internal/entry"
@@ -82,12 +81,7 @@ func TestLiveFleetTrial(t *testing.T) {
 	}
 	defer store.Close()
 	svc.SetVantages(trialVantages{store})
-	domain := config.Default()
-	upstream, err := entry.Upstreams(domain.APIHost+":443", os.Getenv("S3_PUBLIC_ENDPOINT"), domain.UpdateURL())
-	if err != nil {
-		t.Fatal(err)
-	}
-	prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir, upstream, nil)
+	prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
 	mech := entry.NewMechanic(svc, prov)
 	var clockOffset atomic.Int64
 	entry.TrialClockForTest(svc, func() time.Time { return time.Now().Add(time.Duration(clockOffset.Load())) })

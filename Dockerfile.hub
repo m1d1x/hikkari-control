@@ -1,0 +1,45 @@
+# syntax=docker/dockerfile:1.7
+# The fleet hub (cmd/hub), carrying what it deploys to the boxes it runs:
+# linux-<arch>/{nekko-edge,nekko-entry-prober} under the artifact directory
+# (internal/entry DefaultArtifactDir). The image is the version: a box runs the
+# current build when its binary's digest equals the one in here.
+
+# ── Hub and prober ───────────────────────────────────────────────────────────
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+ARG TARGETARCH
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/hub ./cmd/hub
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    for arch in amd64 arm64; do \
+      CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags="-s -w" \
+        -o /out/relay/linux-$arch/nekko-entry-prober ./cmd/entry-prober || exit 1; \
+    done
+
+# ── The VPN exit (edge/, its own module on the Go its Xray needs) ───────────
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS edge-builder
+WORKDIR /src/edge
+COPY edge/go.mod edge/go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY edge/ ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    for arch in amd64 arm64; do \
+      CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags="-s -w" \
+        -o /out/relay/linux-$arch/nekko-edge . || exit 1; \
+    done
+
+# ── Runtime ──────────────────────────────────────────────────────────────────
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 1000 hub
+COPY --from=builder /out/hub /usr/local/bin/hub
+COPY --from=builder /out/relay/ /usr/local/share/nekko/relay/
+COPY --from=edge-builder /out/relay/ /usr/local/share/nekko/relay/
+USER hub
+EXPOSE 8090
+ENTRYPOINT ["/usr/local/bin/hub"]

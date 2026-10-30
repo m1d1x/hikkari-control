@@ -267,24 +267,18 @@ func TestNewIdentityIsDialable(t *testing.T) {
 	if _, err := Verify(env, keys, time.Unix(1, 0)); err != nil {
 		t.Fatal(err)
 	}
-	e, err := id.EdgeEnv("api.example.org:443", nil)
+	e, err := id.EdgeEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e["EDGE_LISTEN"] != "0.0.0.0:443" || e["EDGE_CLIENTS"] != id.UUID || e["EDGE_UPSTREAMS"] == "" ||
+	if e["EDGE_LISTEN"] != "0.0.0.0:443" || e["EDGE_CLIENTS"] != id.UUID || e["EDGE_UPSTREAMS"] != "" ||
 		e["EDGE_ECHO_PORT"] != "10100" || e["EDGE_MEDIA"] != "" {
 		t.Fatalf("edge env %v", e)
-	}
-	// With shards pinning media, a stream relay forwards a call's datagrams
-	// there (the TCP rung, voice plan Ф5).
-	e, err = id.EdgeEnv("api.example.org:443", []MediaTarget{{IP: "203.0.113.9", From: 40000, To: 40099}})
-	if err != nil || e["EDGE_MEDIA"] != "203.0.113.9:40000-40099" {
-		t.Fatalf("edge env with media %v %v", e, err)
 	}
 }
 
 // An XHTTP relay the hub mints signs into a record with the box's domain as
-// host and a fresh secret path, and renders an env with no media: streams only.
+// host and a fresh secret path, and renders an env that names no destination.
 func TestNewXhttpIdentityIsDialable(t *testing.T) {
 	id, err := newXhttpIdentity(443, 10001, "notes.example-relay.xyz")
 	if err != nil {
@@ -319,12 +313,12 @@ func TestNewXhttpIdentityIsDialable(t *testing.T) {
 		r.XhttpParams.UUID != id.UUID || r.XhttpParams.Path != x.Path {
 		t.Fatalf("record %+v %+v", r, r.XhttpParams)
 	}
-	e, err := id.EdgeEnv("api.example.org:443", []MediaTarget{{IP: "203.0.113.9", From: 40000, To: 40099}})
+	e, err := id.EdgeEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if e["EDGE_PROTO"] != ProtoVlessXhttp || e["EDGE_XH_DOMAIN"] != "notes.example-relay.xyz" ||
-		e["EDGE_XH_PATH"] != x.Path || e["EDGE_CLIENTS"] != id.UUID || e["EDGE_UPSTREAMS"] == "" ||
+		e["EDGE_XH_PATH"] != x.Path || e["EDGE_CLIENTS"] != id.UUID || e["EDGE_UPSTREAMS"] != "" ||
 		e["EDGE_MEDIA"] != "" || e["EDGE_ECHO_PORT"] != "" {
 		t.Fatalf("edge env %v", e)
 	}
@@ -391,14 +385,11 @@ func TestNewVoiceIdentityIsDialable(t *testing.T) {
 		t.Fatalf("verify: %+v %v", r, err)
 	}
 
-	if _, err := id.EdgeEnv("api.example.org:443", nil); !errors.Is(err, errNoMedia) {
-		t.Fatalf("a voice relay with nowhere to forward rendered: %v", err)
-	}
-	e, err := id.EdgeEnv("api.example.org:443", []MediaTarget{{IP: "203.0.113.9", From: 40000, To: 40099}})
+	e, err := id.EdgeEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e["EDGE_PROTO"] != ProtoHysteria2 || e["EDGE_MEDIA"] != "203.0.113.9:40000-40099" ||
+	if e["EDGE_PROTO"] != ProtoHysteria2 || e["EDGE_MEDIA"] != "" ||
 		e["EDGE_LISTEN"] != "0.0.0.0:443" || e["EDGE_ECHO_PORT"] != "10001" || e["EDGE_UPSTREAMS"] != "" {
 		t.Fatalf("voice env %v", e)
 	}

@@ -30,7 +30,6 @@ type fleetHarness struct {
 func newFleetHarness(t *testing.T) *fleetHarness {
 	t.Helper()
 	h := newHostHarness(t)
-	h.prov.media = fixedMedia{{IP: "203.0.113.9", From: 40000, To: 40099}}
 	region := "f-" + uuid.NewString()[:8]
 	fh := &fleetHarness{hostHarness: h, region: region, key: FleetPool(ProtoHysteria2, region)}
 	t.Cleanup(func() {
