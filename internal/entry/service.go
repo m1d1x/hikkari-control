@@ -137,7 +137,8 @@ type Service struct {
 	doors doorCache
 	// verdicts is where the detector reads what the vantage last saw (П9.5);
 	// nil switches incident detection off entirely.
-	verdicts VerdictSource
+	verdicts    VerdictSource
+	nodeSignals NodeSignalSource
 	// load is where the fleet reads what the relays carried (П9.14–П9.15,
 	// demand.go); nil leaves the fleet without demand or capacity figures.
 	load LoadSource
@@ -732,6 +733,11 @@ func (s *Service) sign(ctx context.Context, name string, admit bool) error {
 	}
 	if err := s.repo.setRecord(ctx, tx, st.id, admit, env.KeyID, ct, time.Unix(issued, 0), time.Unix(expires, 0)); err != nil {
 		return err
+	}
+	if admit {
+		if err := s.bindNode(ctx, tx, st.id, id.proto(), st.region); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }

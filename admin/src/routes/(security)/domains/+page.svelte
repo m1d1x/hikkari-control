@@ -223,7 +223,7 @@
 			exclusions = [];
 		}
 		try {
-			accountDomains = (await fetchAccountDomains()).domains;
+			accountDomains = spend?.registrar ? (await fetchAccountDomains()).domains : [];
 		} catch {
 			accountDomains = [];
 		}

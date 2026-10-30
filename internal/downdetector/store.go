@@ -108,6 +108,11 @@ type Group struct {
 // Groups splits the last StatusWindows buckets of server id, src=tunnel
 // only, into the user's own ASN, the rest of their country, and abroad.
 func (s *Store) Groups(id string, asn uint32, country string, now time.Time) (sameASN, sameCountry, abroad Group) {
+	return s.GroupsSince(id, asn, country, now, time.Time{})
+}
+
+// GroupsSince excludes report windows preceding a replacement's binding.
+func (s *Store) GroupsSince(id string, asn uint32, country string, now, since time.Time) (sameASN, sameCountry, abroad Group) {
 	type acc struct {
 		installs map[string]bool
 		ok, fail int
@@ -119,7 +124,7 @@ func (s *Store) Groups(id string, asn uint32, country string, now time.Time) (sa
 	cur := alignedStart(now)
 	s.mu.Lock()
 	for start, b := range s.buckets {
-		if start >= cur || start < cur-StatusWindows*WindowSec {
+		if start >= cur || start < cur-StatusWindows*WindowSec || (!since.IsZero() && start < since.Unix()) {
 			continue
 		}
 		for k, c := range b.cells {

@@ -1,0 +1,5 @@
+FROM postgres:16-alpine
+RUN apk add --no-cache openssl
+COPY deploy/postgres-tls.sh /usr/local/bin/hikkari-postgres
+ENTRYPOINT ["/bin/sh", "/usr/local/bin/hikkari-postgres"]
+CMD ["postgres", "-c", "ssl=on", "-c", "ssl_cert_file=/var/lib/postgresql/tls/server.crt", "-c", "ssl_key_file=/var/lib/postgresql/tls/server.key"]

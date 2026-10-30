@@ -1,3 +1,114 @@
+# Hikkari Control: флот и даундетектор
+
+## Локальный хаб
+
+Требуются Docker Compose v2 с `include`, OpenSSL, SOPS и age-ключ в
+`~/.config/sops/age/keys.txt`. Команда ниже читает зашифрованный `deploy/hub.env.enc`,
+создаёт локальные пароли БД, ключ JWT и токены даундетектора в закрытой `secrets/`.
+Существующие ключи не перезаписываются. Открытые секреты запрещено добавлять в Git.
+
+```sh
+./scripts/hub-local-init.sh
+docker compose up --build -d
+docker compose ps
+```
+
+Хаб, Postgres 16 с TLS, ClickHouse 24.8, Svelte-админка и Caddy поднимаются одним
+стеком. Данные — в именованных томах. БД и API администратора не публикуются отдельно.
+Админка: `https://localhost:9443`, публичный API: `https://localhost:9444`.
+Caddy выпускает локальный сертификат; для браузера импортируйте локальный CA:
+
+```sh
+docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt /tmp/hikkari-local-ca.crt
+open /tmp/hikkari-local-ca.crt
+```
+
+В Keychain Access явно доверьте **только** этому локальному корню. Автоматические
+браузерные тесты используют изолированный профиль с локальным сертификатом.
+
+Создание владельца (пароль читается со stdin, код первого passkey показывается один раз):
+
+```sh
+docker compose exec hub hub admin-create --role=owner owner
+```
+
+Откройте `/login`, введите пароль и код консоли, зарегистрируйте passkey и сохраните
+10 кодов восстановления. Раздел «Антиблок» содержит обзор, автопилот, машины,
+инциденты, пробник, домены и провайдеров. Опасные действия требуют свежего passkey.
+
+Создание и отзыв подписки:
+
+```sh
+docker compose exec hub hub subscriber-add alice
+docker compose exec hub hub subscriber-revoke alice
+```
+
+Команда выдаёт токен один раз. Подписка: `https://<public-host>/sub/<token>`.
+В БД лежит только SHA-256 токена. По умолчанию выдаются Reality и XHTTP.
+Для Hikkari с выбранным движком **Xray** используйте `/sub/<token>?engine=xray`:
+добавляются Hysteria2 с `pinSHA256` сертификата и `finalmask` (весь набор Salamander + Noise).
+Sing-box должен явно отказаться от таких профилей, иначе pin или Noise будут потеряны.
+Эти ссылки требуют клиентского изменения из локального плана переноса, до его выпуска
+обычную подписку сохраняйте без `engine=xray`.
+
+### Первое подключение Vultr
+
+В «Антиблок → Провайдеры» выберите Vultr и введите API-ключ в форме подключения;
+сохранение требует passkey. Ключ хранится зашифрованным ключом хаба и не возвращается
+в API/аудите. Поля и доступность аккаунта проверяются перед включением.
+Начальные суточный и месячный лимиты обеих групп равны **0**, автопилот выключен
+в `compose.hub.yaml`. Сам запуск стека не заказывает машины. Установку ненулевого
+лимита, включение автопилота и живой заказ выполняйте только с явного разрешения владельца.
+Для этой задачи ключ для живого прогона передаётся через SOPS, не через чат.
+
+### Ноды и даундетектор
+
+Хаб обслуживает `/v1/reports`, `/v1/status`, `/v1/overview` из того же процесса;
+токены читаются из `secrets/hub-downdetector.yaml`. Raw-отчёты и install ID остаются
+в оперативной памяти; SQLite хранит только часовые агрегаты с k>=3.
+`entry_nodes` связывает устойчивый slug с текущим релеем. При замене недоступного
+релея слот переиспользуется в том же протоколе/регионе; IP остаётся в cryptobox.
+В ссылке сохраняется `hikkari-node=n:<slug>` и устойчивое имя.
+
+`server_down` дополняет диагноз недоступности; SSH/grid отделяет отказ провайдера
+от блока. `isp_block`/`country_block` выбирают ротацию Reality; для XHTTP — смену
+домена, для Hysteria2 — выселение с последующим пополнением флота. Сохраняются
+владельческие режимы, cooldown, wave pause и денежные лимиты. Одного TCP-успеха
+недостаточно для подтверждения здоровья туннеля; недостаточные/просроченные отчёты
+не закрывают инцидент. UDP Hysteria2 не проверяется TCP-пробой.
+
+При смене адреса исключаются старые окна отчётов и результаты незавершённых проб.
+Для первого допуска новой машины по-прежнему нужен доверенный admission-пробник:
+анонимная клиентская статистика не заменяет проверку допуска.
+
+### Хранилище, обновление, приватность
+
+Новый baseline Postgres содержит только control plane, без аккаунтов мессенджера,
+чатов, файлов и SFU. ClickHouse создаёт только 5 `entry_*` datasets. Старая
+экспериментальная история миграций НЕККО отвергается: выберите **новую БД**, не
+удаляйте существующую автоматически. Миграции сериализованы между хабом и CLI.
+
+Caddy и nginx не ведут access log, Caddy не пишет запросы в error log, HTTP-сервер
+хаба не пишет IP через стандартный error logger. Query/session logs ClickHouse
+отключены; адреса машин и провайдерские ключи в Postgres зашифрованы.
+Админский listener доступен с хоста через loopback-порт Caddy; публичный listener
+не содержит маршрутов администратора. Удалённый запуск здесь не выполняется.
+
+Проверки Go требуют отдельные БД, не рабочую базу флота:
+
+```sh
+GOFLAGS=-mod=mod TEST_DATABASE_URL='postgres://hc:hc@127.0.0.1:55442/hc_clean?sslmode=disable' \
+ CLICKHOUSE_TEST_DSN='clickhouse://hc:hc@127.0.0.1:59000/hc' \
+ NEKKO_TEST_CLICKHOUSE='clickhouse://hc:hc@127.0.0.1:59000/hc' go test -p 1 -count=1 ./...
+(cd edge && go test ./...)
+(cd admin && npm ci && npm run check && npm test && npm run build)
+```
+
+Локальная проверка браузера выполняется с виртуальным WebAuthn-аутентификатором,
+без обхода парольной проверки, CSRF, регистрации passkey или выдачи сессии.
+
+---
+
 # hikkari-control
 
 Серверная часть Hikkari. Сейчас здесь только **даундетектор**, этап 1 (MVP для друзей).
@@ -32,7 +143,7 @@
 ```
 
 ```bash
-HTTP_PORT=8088 HTTPS_PORT=8443 docker compose up -d --build
+HTTP_PORT=8088 HTTPS_PORT=8443 docker compose -f compose.downdetector.yaml up -d --build
 ```
 
 Caddy с `DOMAIN=localhost` выпускает сертификат своим внутренним CA, поэтому curl с `-k`:
@@ -59,7 +170,7 @@ go run ./cmd/downdetector -config deploy/config.yaml   # поправьте db_p
 2. Открыть зашифрованный файл в редакторе: `sops deploy/secrets.enc.yaml` (нужен age-ключ).
 3. Добавить токен в `invite_tokens` (админские — в `admin_tokens`), сохранить. SOPS зашифрует файл обратно.
 4. Закоммитить `deploy/secrets.enc.yaml`, на сервере выполнить `./scripts/decrypt-secrets.sh` и
-   `docker compose restart downdetector`.
+   `docker compose -f compose.downdetector.yaml restart downdetector`.
 
 Отозвать токен: удалить его из файла тем же путём. Добавить ещё одного владельца ключа: дописать его
 age-recipient в `.sops.yaml` и выполнить `sops updatekeys deploy/secrets.enc.yaml`.
@@ -82,7 +193,7 @@ nodes:
 ```
 
 id сервера считается так же, как у клиента: `s:` + первые 16 байт `sha256(lower(host) + ":" + port + ":" + proto)`
-в hex (тест `TestServerIDMatchesClient` закрепляет значение). После правки: `docker compose restart downdetector`.
+в hex (тест `TestServerIDMatchesClient` закрепляет значение). После правки: `docker compose -f compose.downdetector.yaml restart downdetector`.
 
 Проббер раз в 60 с делает TCP-connect с таймаутом 2 с. После 3 неудач подряд сервер `down`,
 после успеха `up`. Для серверов не из реестра и до первой пробы `external = unknown`.

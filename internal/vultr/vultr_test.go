@@ -293,26 +293,26 @@ func TestFailuresAreConcrete(t *testing.T) {
 		}
 	}
 
-	// A rejected key keeps Vultr's reason: a wrong token and an address outside
+	// A rejected key keeps the error category, without the egress address.
+	// A wrong token and an address outside
 	// the account's access control are both 401, and they are fixed in
 	// different places (found on the stand 25.10).
 	a, c := newAPI(t)
 	a.fail["/account"] = http.StatusUnauthorized
 	a.failMsg["/account"] = "Unauthorized IP address: 203.0.113.7"
 	if _, err := c.Account(context.Background()); !errors.Is(err, ErrBadCredentials) ||
-		!strings.Contains(err.Error(), "203.0.113.7") {
-		t.Errorf("401 with a reason: err = %v, want ErrBadCredentials carrying Vultr's words", err)
+		!strings.Contains(err.Error(), "IP allowlist") || strings.Contains(err.Error(), "203.0.113.7") {
+		t.Errorf("401 with a reason: err = %v, want ErrBadCredentials with safe IP allowlist advice", err)
 	}
 
-	// Anything the client has no sentinel for keeps the provider's own words,
-	// because those are what the owner has to act on.
+	// Unclassified failures retain status without an untrusted response body.
 	a, c = newAPI(t)
 	a.fail["/regions"] = http.StatusInternalServerError
 	a.failMsg["/regions"] = "the datacentre is on fire"
 	_, err := c.Regions(context.Background())
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.HTTPStatus != 500 || !strings.Contains(apiErr.Error(), "on fire") {
-		t.Errorf("err = %v, want the provider's own words", err)
+	if !errors.As(err, &apiErr) || apiErr.HTTPStatus != 500 || strings.Contains(apiErr.Error(), "on fire") {
+		t.Errorf("err = %v, want status without the provider response body", err)
 	}
 }
 
@@ -354,6 +354,15 @@ func TestAServerErrorIsNeverARefusal(t *testing.T) {
 		var apiErr *APIError
 		if !errors.As(err, &apiErr) || apiErr.HTTPStatus != http.StatusServiceUnavailable {
 			t.Errorf("503 %q: err = %v, want the status kept", msg, err)
+		}
+	}
+}
+
+func TestProviderErrorsNeverCarryAnEgressAddress(t *testing.T) {
+	for _, status := range []int{401, 403, 500, 502} {
+		err := classify(status, "Unauthorized IP address: 203.0.113.7 secret-response")
+		if strings.Contains(err.Error(), "203.0.113.7") || strings.Contains(err.Error(), "secret-response") {
+			t.Fatalf("response leaked: %v", err)
 		}
 	}
 }

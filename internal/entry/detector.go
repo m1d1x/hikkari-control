@@ -87,17 +87,64 @@ func (s *Service) readVerdictsSince(ctx context.Context, policy DetectionPolicy,
 // Safe to call as often as the probes refresh: opening is idempotent per
 // (box, cause), and closing only touches what no longer holds.
 func (s *Service) Detect(ctx context.Context) (opened, closed int, err error) {
-	if s.verdicts == nil {
+	if s.verdicts == nil && s.nodeSignals == nil {
 		return 0, 0, nil
 	}
 	policy, err := s.DetectionPolicy(ctx)
 	if err != nil {
 		return 0, 0, err
 	}
-	verdicts, err := s.readVerdicts(ctx, policy)
-	if err != nil {
-		return 0, 0, err
+	verdicts := RelayVerdicts{}
+	if s.verdicts != nil {
+		verdicts, err = s.readVerdicts(ctx, policy)
+		if err != nil {
+			return 0, 0, err
+		}
 	}
+	if verdicts == nil {
+		verdicts = RelayVerdicts{}
+	}
+	nodeEvidence := map[string]map[string]string{}
+	if s.nodeSignals != nil {
+		nodes, err := s.FleetNodes(ctx)
+		if err != nil {
+			return 0, 0, err
+		}
+		signals, err := s.nodeSignals.FleetSignals(ctx, nodes, s.now())
+		if err != nil {
+			return 0, 0, err
+		}
+		for _, n := range nodes {
+			sig, ok := signals[n.Relay]
+			if !ok || sig.ID != "n:"+n.Slug || sig.At.Before(n.BoundAt) || sig.At.Before(s.now().Add(-15*time.Minute)) || sig.At.After(s.now().Add(clockSkew)) {
+				continue
+			}
+			v := ""
+			switch sig.Verdict {
+			case "server_down":
+				v = "ip_banned"
+			case "isp_block", "country_block":
+				v = "fingerprint"
+				if n.Proto == ProtoVlessXhttp {
+					v = "domain_blocked"
+				}
+				if n.Proto == ProtoHysteria2 {
+					v = "ip_banned"
+				}
+			case "healthy":
+				v = "clean"
+			}
+			if v == "" {
+				continue
+			}
+			verdicts[n.Relay] = v
+			if nodeEvidence[n.Box] == nil {
+				nodeEvidence[n.Box] = map[string]string{"source": "downdetector"}
+			}
+			nodeEvidence[n.Box][sig.ID] = sig.Verdict
+		}
+	}
+
 	relays, err := s.List(ctx)
 	if err != nil {
 		return 0, 0, err
@@ -133,6 +180,9 @@ func (s *Service) Detect(ctx context.Context) (opened, closed int, err error) {
 	}
 	for box, rs := range byBox {
 		d := shortOfCovers(shortOfPorts(DiagnoseBoxWithPolicy(box, rs, verdicts, policy), rs), rs, covers)
+		for k, v := range nodeEvidence[box] {
+			d.Verdicts[k] = v
+		}
 		causes[box] = d.Cause
 		// A box reading healthy is the proof a recent repair landed: what
 		// replaced what broke has passed a probe and is in the pool. That
@@ -203,6 +253,10 @@ func (s *Service) Detect(ctx context.Context) (opened, closed int, err error) {
 		// for minutes, which reads here as "no evidence" and would close the
 		// incident in the middle of curing it.
 		if inc.Status == IncidentActing {
+			continue
+		}
+		if inc.Evidence["source"] == "downdetector" && nodeEvidence[inc.Box] == nil {
+			// No fresh aggregate means no evidence of recovery.
 			continue
 		}
 		now, judged := causes[inc.Box]

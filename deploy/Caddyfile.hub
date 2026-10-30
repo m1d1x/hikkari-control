@@ -1,0 +1,32 @@
+{
+    # Runtime reverse-proxy errors can include request addresses too.
+    log default {
+        output discard
+    }
+}
+
+{$DOMAIN:localhost} {
+    request_body {
+        max_size 1MB
+    }
+    reverse_proxy hub:8090 {
+        header_up -X-Forwarded-For
+        header_up -X-Real-IP
+    }
+}
+
+https://localhost:8444 {
+    tls internal
+    request_body {
+        max_size 1MB
+    }
+    handle /api/* {
+        reverse_proxy hub:3310 {
+            header_up -X-Forwarded-For
+            header_up -X-Real-IP
+        }
+    }
+    handle {
+        reverse_proxy admin:80
+    }
+}

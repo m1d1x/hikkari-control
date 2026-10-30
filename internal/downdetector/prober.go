@@ -26,6 +26,7 @@ type Target struct {
 type probeState struct {
 	fails  int
 	probed bool
+	at     time.Time
 }
 
 // Prober TCP-connects to every registry server from the outside.
@@ -60,7 +61,7 @@ func (p *Prober) External(id string) External {
 	defer p.mu.Unlock()
 	st := p.state[id]
 	switch {
-	case st == nil || !st.probed:
+	case st == nil || !st.probed || time.Since(st.at) > 2*ProbeInterval+ProbeTimeout:
 		return ExternalUnknown
 	case st.fails >= downAfter:
 		return ExternalDown
@@ -74,7 +75,10 @@ func (p *Prober) External(id string) External {
 // Round probes every target once, in parallel.
 func (p *Prober) Round(ctx context.Context) {
 	var wg sync.WaitGroup
-	for _, t := range p.targets {
+	p.mu.Lock()
+	targets := append([]Target(nil), p.targets...)
+	p.mu.Unlock()
+	for _, t := range targets {
 		wg.Add(1)
 		go func(t Target) {
 			defer wg.Done()
@@ -84,7 +88,7 @@ func (p *Prober) Round(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			p.record(t.ID, err == nil)
+			p.recordTarget(t, err == nil)
 		}(t)
 	}
 	wg.Wait()
@@ -94,7 +98,11 @@ func (p *Prober) record(id string, ok bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	st := p.state[id]
+	if st == nil {
+		return
+	}
 	st.probed = true
+	st.at = time.Now()
 	if ok {
 		st.fails = 0
 	} else {
@@ -113,5 +121,47 @@ func (p *Prober) Run(ctx context.Context) {
 			return
 		case <-t.C:
 		}
+	}
+}
+
+// ReplaceTargets resets external evidence when a logical node moves. A probe
+// still in flight for the old endpoint cannot update the new endpoint's state.
+func (p *Prober) ReplaceTargets(targets []Target) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	old := map[string]Target{}
+	for _, t := range p.targets {
+		old[t.ID] = t
+	}
+	next := map[string]*probeState{}
+	for _, t := range targets {
+		st := p.state[t.ID]
+		if prior, ok := old[t.ID]; !ok || prior.Host != t.Host || prior.Port != t.Port || st == nil {
+			st = &probeState{}
+		}
+		next[t.ID] = st
+	}
+	p.targets = append([]Target(nil), targets...)
+	p.state = next
+}
+func (p *Prober) recordTarget(t Target, ok bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, current := range p.targets {
+		if current.ID != t.ID || current.Host != t.Host || current.Port != t.Port {
+			continue
+		}
+		st := p.state[t.ID]
+		if st == nil {
+			return
+		}
+		st.probed = true
+		st.at = time.Now()
+		if ok {
+			st.fails = 0
+		} else {
+			st.fails++
+		}
+		return
 	}
 }

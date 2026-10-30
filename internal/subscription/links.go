@@ -5,6 +5,9 @@
 package subscription
 
 import (
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/url"
@@ -16,11 +19,9 @@ import (
 // errNoLink: a relay the client cannot dial from a plain link.
 var errNoLink = errors.New("relay has no client link")
 
-// Link renders one relay as the link a client imports. Hysteria2 relays have
-// none yet: they are reached by a self-signed certificate that must be pinned
-// and wear masks beyond salamander, and a plain hysteria2:// link can carry
-// neither — the client would dial without the pin (open to interception) or
-// not get through at all.
+// Link renders Hikkari links. Extended Hysteria2 links require the Xray
+// adapter: pinSHA256 is the leaf certificate digest, and finalmask is the
+// base64url JSON mask list from the signed record (including Noise).
 func Link(r entry.RelayRecord) (string, error) {
 	host := net.JoinHostPort(r.Address, strconv.Itoa(r.Port))
 	label := "Hikkari " + r.Name
@@ -40,6 +41,23 @@ func Link(r entry.RelayRecord) (string, error) {
 		q.Set("pbk", p.PublicKey)
 		q.Set("sid", p.ShortID)
 		return vless(p.UUID, host, q, label), nil
+	case r.Proto == entry.ProtoHysteria2 && r.HysteriaParams != nil:
+		p := r.HysteriaParams
+		pin, err := hex.DecodeString(p.CertSHA256)
+		if err != nil || len(pin) != 32 || p.Auth == "" || p.ServerName == "" || len(p.Masks) == 0 {
+			return "", errNoLink
+		}
+		masks, err := json.Marshal(p.Masks)
+		if err != nil {
+			return "", err
+		}
+		q := url.Values{}
+		q.Set("sni", p.ServerName)
+		q.Set("alpn", "h3")
+		q.Set("pinSHA256", p.CertSHA256)
+		q.Set("finalmask", base64.RawURLEncoding.EncodeToString(masks))
+		u := url.URL{Scheme: "hysteria2", User: url.User(p.Auth), Host: host, RawQuery: q.Encode(), Fragment: label}
+		return u.String(), nil
 	case r.Proto == entry.ProtoVlessXhttp && r.XhttpParams != nil:
 		p := r.XhttpParams
 		q := url.Values{}

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -68,6 +69,9 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if err := validateFleetSecrets(os.Getenv); err != nil {
+		return err
+	}
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		return errors.New("DATABASE_URL is not set")
@@ -145,6 +149,11 @@ func run() error {
 	// ── Public plane: what probers and relays talk to ─────
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	closeDD, err := wireDowndetector(ctx, svc, mux)
+	if err != nil {
+		return fmt.Errorf("downdetector: %w", err)
+	}
+	defer func() { stop(); closeDD() }()
 	// Subscribers' links (internal/subscription): their batch of the pool.
 	mux.HandleFunc("GET /sub/{token}", subscription.New(pool, svc, entry.PinnedKeys()).Handler())
 	if store != nil {
@@ -222,6 +231,7 @@ func run() error {
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    16 << 10,
+		ErrorLog:          log.New(io.Discard, "", 0),
 	}
 	adminSrv := newAdminServer(adminListenAddr(), adminMux)
 	errc := make(chan error, 2)
@@ -240,5 +250,14 @@ func run() error {
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
 	_ = adminSrv.Shutdown(shutdownCtx)
+	return nil
+}
+
+// The per-box pulse tokens are derived from this master; a short master can
+// be guessed offline even though the resulting tokens are full-length HMACs.
+func validateFleetSecrets(getenv func(string) string) error {
+	if v := getenv("EDGE_PULSE_TOKEN"); v != "" && len(v) < 32 {
+		return errors.New("EDGE_PULSE_TOKEN must contain at least 32 random characters")
+	}
 	return nil
 }

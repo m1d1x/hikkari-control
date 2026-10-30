@@ -1,0 +1,8 @@
+<clickhouse>
+  <logger><level>error</level><console>true</console></logger>
+  <query_log remove="1"/>
+  <query_thread_log remove="1"/>
+  <text_log remove="1"/>
+  <trace_log remove="1"/>
+  <session_log remove="1"/>
+</clickhouse>

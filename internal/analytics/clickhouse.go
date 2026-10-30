@@ -68,348 +68,9 @@ func (s *Store) Exec(ctx context.Context, query string, args ...any) error {
 	return s.conn.Exec(ctx, query, args...)
 }
 
-// RunMigrations creates the sessions table and applies fraud columns.
+// RunMigrations creates only the fleet datasets. Every DDL failure stops
+// startup; a partially initialized detector must never look operational.
 func (s *Store) RunMigrations(ctx context.Context) error {
-	// 001: base sessions table
-	if err := s.conn.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS sessions (
-			session_id      UUID,
-			user_id         UUID,
-			started_at      DateTime,
-			referrer        String DEFAULT '',
-			utm_source      String DEFAULT '',
-			utm_medium      String DEFAULT '',
-			utm_campaign    String DEFAULT '',
-			ip_address      String DEFAULT '',
-			country_code    String DEFAULT '',
-			country_name    String DEFAULT '',
-			region          String DEFAULT '',
-			city            String DEFAULT '',
-			browser         String DEFAULT '',
-			browser_version String DEFAULT '',
-			os              String DEFAULT '',
-			os_version      String DEFAULT '',
-			device_type     String DEFAULT ''
-		) ENGINE = MergeTree()
-		PARTITION BY toYYYYMM(started_at)
-		ORDER BY (started_at, user_id)
-	`); err != nil {
-		return fmt.Errorf("migration 001: %w", err)
-	}
-
-	// 002: fraud detection columns
-	fraudCols := []string{
-		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS asn_number    UInt32  DEFAULT 0",
-		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS asn_org       String  DEFAULT ''",
-		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS is_datacenter UInt8   DEFAULT 0",
-		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS is_vpn        UInt8   DEFAULT 0",
-		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS is_proxy      UInt8   DEFAULT 0",
-		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS is_tor        UInt8   DEFAULT 0",
-		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS is_hosting    UInt8   DEFAULT 0",
-		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS pow_solved    UInt8   DEFAULT 0",
-		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS pow_time_ms   UInt32  DEFAULT 0",
-		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS fp_hash       String  DEFAULT ''",
-		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS risk_score    UInt8   DEFAULT 0",
-		"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS behavior_signals String DEFAULT ''",
-	}
-	for _, q := range fraudCols {
-		if err := s.conn.Exec(ctx, q); err != nil {
-			return fmt.Errorf("migration 002 (%s): %w", q, err)
-		}
-	}
-
-	// 003: app_logs table for centralized logging (frontend + backend)
-	if err := s.conn.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS app_logs (
-			ts          DateTime64(3),
-			level       LowCardinality(String),
-			source      LowCardinality(String),
-			user_id     UUID,
-			session_id  String DEFAULT '',
-			cat         LowCardinality(String),
-			msg         String,
-			ctx         String DEFAULT '',
-			server_id   String DEFAULT ''
-		) ENGINE = MergeTree()
-		PARTITION BY toYYYYMMDD(ts)
-		ORDER BY (ts, level, user_id)
-		TTL toDateTime(ts) + INTERVAL 14 DAY
-	`); err != nil {
-		return fmt.Errorf("migration 003: %w", err)
-	}
-
-	// 004a: observability columns. These are required — every INSERT now
-	// targets all 16 columns, so a missing column would break ingest.
-	obsCols := []string{
-		"ALTER TABLE app_logs ADD COLUMN IF NOT EXISTS trace_id    String DEFAULT '' CODEC(ZSTD(1))",
-		"ALTER TABLE app_logs ADD COLUMN IF NOT EXISTS request_id  String DEFAULT '' CODEC(ZSTD(1))",
-		"ALTER TABLE app_logs ADD COLUMN IF NOT EXISTS duration_ms UInt32 DEFAULT 0",
-		"ALTER TABLE app_logs ADD COLUMN IF NOT EXISTS stacktrace  String DEFAULT '' CODEC(ZSTD(3))",
-		"ALTER TABLE app_logs ADD COLUMN IF NOT EXISTS fingerprint String DEFAULT '' CODEC(ZSTD(1))",
-		"ALTER TABLE app_logs ADD COLUMN IF NOT EXISTS file        String DEFAULT ''",
-		"ALTER TABLE app_logs ADD COLUMN IF NOT EXISTS line        UInt32 DEFAULT 0",
-	}
-	for _, q := range obsCols {
-		if err := s.conn.Exec(ctx, q); err != nil {
-			return fmt.Errorf("migration 004a (%s): %w", q, err)
-		}
-	}
-
-	// 004b: bloom_filter indexes for trace_id/fingerprint lookup. These are
-	// best-effort — `ADD INDEX IF NOT EXISTS` only landed in CH 23.3, so on
-	// older builds we log and move on. Queries still work without them, just
-	// scan more granules.
-	obsIdx := []string{
-		"ALTER TABLE app_logs ADD INDEX IF NOT EXISTS idx_trace_id   trace_id   TYPE bloom_filter GRANULARITY 4",
-		"ALTER TABLE app_logs ADD INDEX IF NOT EXISTS idx_fingerprint fingerprint TYPE bloom_filter GRANULARITY 4",
-	}
-	for _, q := range obsIdx {
-		if err := s.conn.Exec(ctx, q); err != nil {
-			log.Printf("clickhouse: migration 004b skipped (%s): %v", q, err)
-		}
-	}
-
-	// 005: error grouping. Hourly buckets per fingerprint via AggregatingMergeTree
-	// fed by a materialized view. Best-effort — if the engine doesn't accept the
-	// shape we log and move on; /admin/errors will degrade gracefully with the
-	// table missing (handler returns empty rows).
-	migration005 := []string{
-		`CREATE TABLE IF NOT EXISTS app_errors_hourly (
-			hour            DateTime,
-			fingerprint     String,
-			sample_msg      AggregateFunction(any, String),
-			sample_stack    AggregateFunction(any, String),
-			sample_file     AggregateFunction(any, String),
-			sample_line     AggregateFunction(any, UInt32),
-			sample_cat      AggregateFunction(any, String),
-			errors          AggregateFunction(countIf, UInt8),
-			warns           AggregateFunction(countIf, UInt8),
-			users_affected  AggregateFunction(uniqCombined, UUID),
-			last_seen       AggregateFunction(max, DateTime64(3))
-		) ENGINE = AggregatingMergeTree()
-		PARTITION BY toYYYYMM(hour)
-		ORDER BY (hour, fingerprint)
-		TTL toDateTime(hour) + INTERVAL 90 DAY`,
-
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS app_errors_hourly_mv TO app_errors_hourly AS
-		SELECT
-			toStartOfHour(ts) AS hour,
-			fingerprint,
-			anyState(msg)                 AS sample_msg,
-			anyState(stacktrace)          AS sample_stack,
-			anyState(file)                AS sample_file,
-			anyState(line)                AS sample_line,
-			anyState(cat)                 AS sample_cat,
-			countIfState(level = 'error') AS errors,
-			countIfState(level = 'warn')  AS warns,
-			uniqCombinedState(user_id)    AS users_affected,
-			maxState(ts)                  AS last_seen
-		FROM app_logs
-		WHERE level IN ('error', 'warn') AND fingerprint != ''
-		GROUP BY hour, fingerprint`,
-	}
-	for i, q := range migration005 {
-		if err := s.conn.Exec(ctx, q); err != nil {
-			log.Printf("clickhouse: migration 005[%d] skipped: %v", i, err)
-		}
-	}
-
-	// 006: distributed tracing spans. One row per span, parent_span_id links
-	// children to the root for waterfall reconstruction in admin. Best-effort —
-	// if the engine refuses, span ingest degrades to a no-op (sink logs the
-	// error) but the rest of the app keeps running.
-	// 007: release_sha column for correlating errors to a specific build.
-	// Tolerant — older CH builds may reject `IF NOT EXISTS` on ADD COLUMN; we
-	// log and continue. INSERT statements include the column anyway, so on
-	// failure we'd surface a clearer error there if the column is genuinely
-	// missing.
-	if err := s.conn.Exec(ctx, `ALTER TABLE app_logs ADD COLUMN IF NOT EXISTS release_sha String DEFAULT '' CODEC(ZSTD(1))`); err != nil {
-		log.Printf("clickhouse: migration 007 (release_sha) skipped: %v", err)
-	}
-
-	if err := s.conn.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS app_spans (
-			trace_id        String CODEC(ZSTD(1)),
-			span_id         String CODEC(ZSTD(1)),
-			parent_span_id  String DEFAULT '' CODEC(ZSTD(1)),
-			name            LowCardinality(String),
-			service         LowCardinality(String) DEFAULT 'backend',
-			started_at      DateTime64(3),
-			duration_ms     UInt32 DEFAULT 0,
-			status          Enum8('ok'=1, 'error'=2) DEFAULT 'ok',
-			user_id         UUID DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
-			attrs           String DEFAULT '' CODEC(ZSTD(3))
-		) ENGINE = MergeTree()
-		PARTITION BY toYYYYMMDD(started_at)
-		ORDER BY (trace_id, started_at)
-		TTL toDateTime(started_at) + INTERVAL 14 DAY
-	`); err != nil {
-		log.Printf("clickhouse: migration 006 skipped: %v", err)
-	}
-
-	// 008 (infra_logs, host_metrics) is gone: both tables were written by a
-	// vector sidecar on the prod hosts, and that contour went to ARCHIVE with
-	// task 55. Nothing wrote them and nothing read them; the numbers are not
-	// reused so a future migration cannot be mistaken for one of them.
-
-	// 009: synthetic_probes — uptime + packet-loss samples taken by
-	// cmd/sfu-prober every ~15s from each SFU host against every other.
-	// Best-effort: prober nodes write directly via the ingest endpoint, so
-	// even if the table is missing /api/v1/internal/probes returns 503 and
-	// no other subsystem breaks.
-	if err := s.conn.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS synthetic_probes (
-			ts              DateTime CODEC(ZSTD(1)),
-			source_region   LowCardinality(String),
-			target_region   LowCardinality(String),
-			probe_type      Enum8('udp'=1, 'tcp'=2, 'tls'=3),
-			rtt_ms          Float32 CODEC(ZSTD(1)),
-			jitter_ms       Float32 CODEC(ZSTD(1)),
-			packet_loss_pct Float32 CODEC(ZSTD(1)),
-			success         UInt8,
-			packets_sent    UInt16 DEFAULT 0,
-			packets_recv    UInt16 DEFAULT 0
-		) ENGINE = MergeTree()
-		PARTITION BY toYYYYMMDD(ts)
-		ORDER BY (target_region, source_region, ts)
-		TTL ts + INTERVAL 90 DAY
-	`); err != nil {
-		log.Printf("clickhouse: migration 009 (synthetic_probes) skipped: %v", err)
-	}
-
-	// 010: webrtc_stats — per-client RTC.getStats() snapshots pushed every
-	// ~10s by the frontend stats-monitor. Used by admin SFU dashboards to
-	// surface real-user-experienced jitter / packet loss alongside the
-	// synthetic probes (which only see the network path, not the codec or
-	// the audio element pipeline).
-	if err := s.conn.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS webrtc_stats (
-			ts                DateTime CODEC(ZSTD(1)),
-			session_id        String CODEC(ZSTD(1)),
-			user_id           UUID,
-			node_region       LowCardinality(String),
-			client_kind       LowCardinality(String),
-			rtt_ms            Float32 CODEC(ZSTD(1)),
-			jitter_ms         Float32 CODEC(ZSTD(1)),
-			packet_loss_pct   Float32 CODEC(ZSTD(1)),
-			packets_lost      UInt32 DEFAULT 0,
-			packets_received  UInt32 DEFAULT 0,
-			nack_count        UInt32 DEFAULT 0,
-			audio_level       Float32 DEFAULT 0,
-			bytes_per_sec     UInt32 DEFAULT 0
-		) ENGINE = MergeTree()
-		PARTITION BY toYYYYMMDD(ts)
-		ORDER BY (node_region, ts, user_id)
-		TTL ts + INTERVAL 30 DAY
-	`); err != nil {
-		log.Printf("clickhouse: migration 010 (webrtc_stats) skipped: %v", err)
-	}
-
-	// 011: csp_violations — Content-Security-Policy violation reports posted
-	// by browsers to /api/csp-report. While CSP runs in Report-Only mode this
-	// table is the audit signal for "what would I have blocked"; once enforce
-	// is on it stays useful for noticing when a new dependency tries to load
-	// from a host the policy doesn't list.
-	//
-	// `raw` keeps the full JSON in case a directive shows up that we haven't
-	// extracted into a column yet. ZSTD on raw is worth it — typical reports
-	// are 500-1500 bytes of mostly repeated text.
-	if err := s.conn.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS csp_violations (
-			ts                   DateTime64(3),
-			ip                   String CODEC(ZSTD(1)),
-			document_uri         String CODEC(ZSTD(1)),
-			referrer             String CODEC(ZSTD(1)),
-			violated_directive   LowCardinality(String),
-			effective_directive  LowCardinality(String),
-			blocked_uri          String CODEC(ZSTD(1)),
-			source_file          String CODEC(ZSTD(1)),
-			line_number          UInt32 DEFAULT 0,
-			column_number        UInt32 DEFAULT 0,
-			disposition          LowCardinality(String),
-			raw                  String CODEC(ZSTD(3))
-		) ENGINE = MergeTree()
-		PARTITION BY toYYYYMMDD(ts)
-		ORDER BY (ts, violated_directive)
-		TTL toDateTime(ts) + INTERVAL 30 DAY
-	`); err != nil {
-		log.Printf("clickhouse: migration 011 (csp_violations) skipped: %v", err)
-	}
-
-	// ⚠️ ORPHANED 2026-09-07. The route that filled this table was removed with
-	// the rest of the HTTP log ingest, and the Tauri launcher that produced the
-	// events lives in ARCHIVE/. Nothing writes here and nothing reads it. The
-	// table itself is left standing because dropping one is a data decision, not
-	// a code cleanup — task 38 builds a new launcher and gets to say whether it
-	// wants this shape back.
-	//
-	// 012 and 013 (launcher_crash_reports and its event_kind column) are gone
-	// with the Electron/Tauri launcher that produced the rows. The Flutter
-	// client has no watchdog, no rollback NSIS and no crash-report file, and
-	// the ingest route they fed was removed with the rest of that surface.
-
-	// 014: events — the product analytics table every admin Analytics view
-	// reads and InsertEvents writes.
-	//
-	// It was missing from this runner, and the miss was invisible for a
-	// reason worth recording: the schema used to be applied by hand, from
-	// deploy/clickhouse/init.sql on the prod box. That file went to ARCHIVE
-	// with the rest of the prod contour (task 55), and with it the only
-	// thing that had ever created the table — so every insert and every
-	// query started failing with «Unknown table expression identifier
-	// 'events'», in a log nobody was reading because the admin API had no
-	// process to run in.
-	//
-	// Schema is the prod one verbatim: it is the shape the rows in flight
-	// already have, and inventing a better one here would only mean the
-	// column list disagreeing with InsertEvents.
-	if err := s.conn.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS events (
-			user_id    UUID,
-			session_id UUID,
-			event_type LowCardinality(String),
-			properties String,
-			created_at DateTime64(3)
-		) ENGINE = MergeTree()
-		PARTITION BY toYYYYMM(created_at)
-		ORDER BY (event_type, user_id, created_at)
-		TTL toDateTime(created_at) + INTERVAL 12 MONTH
-	`); err != nil {
-		log.Printf("clickhouse: migration 014 (events) skipped: %v", err)
-	}
-
-	// 015: health_probes — the 10s samples the health tracker takes against
-	// Postgres/Redis/ClickHouse/S3/SFU, which the admin Health tab renders as
-	// 24h sparklines per (target, kind).
-	//
-	// Same story as 014: written by InsertHealthProbes, read by the Health
-	// tab, created by nothing. Ordered by (target, kind, ts) because every
-	// query is «this target's last 24 hours».
-	if err := s.conn.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS health_probes (
-			ts         DateTime CODEC(ZSTD(1)),
-			target     LowCardinality(String),
-			kind       LowCardinality(String),
-			status     LowCardinality(String),
-			latency_ms UInt32 DEFAULT 0,
-			http_code  UInt16 DEFAULT 0,
-			error      String DEFAULT ''
-		) ENGINE = MergeTree()
-		PARTITION BY toYYYYMMDD(ts)
-		ORDER BY (target, kind, ts)
-		TTL ts + INTERVAL 30 DAY
-	`); err != nil {
-		log.Printf("clickhouse: migration 015 (health_probes) skipped: %v", err)
-	}
-
-	// 016: entry_probes — Reality-relay liveness + cause-diagnosis samples
-	// taken by cmd/entry-prober from an RU vantage against each entry relay
-	// (plan 42 П6.6). Feeds the П6.7 censor-score dataset and the admin entry
-	// dashboard's latest-verdict-per-relay. Best-effort like synthetic_probes:
-	// if the table is missing the ingest endpoint returns 503 and nothing else
-	// breaks. Kept 180 days — longer than the 90-day synthetic series because
-	// this is the training set for the censor-score classifier, not an ops
-	// dashboard that only cares about the recent window.
 	if err := s.conn.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS entry_probes (
 			ts             DateTime CODEC(ZSTD(1)),
@@ -429,23 +90,11 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 		ORDER BY (relay_name, source_region, ts)
 		TTL ts + INTERVAL 180 DAY
 	`); err != nil {
-		log.Printf("clickhouse: migration 016 (entry_probes) skipped: %v", err)
+		return fmt.Errorf("fleet analytics schema 1: %w", err)
 	}
-
-	// 017: entry_probes loses relay_address. The relay address is the secret
-	// of plan 42 §9 — Postgres keeps it sealed under the server key — and a
-	// plain copy in an analytics table undid that. The relay name says which
-	// box (<box>-<n>), and the owner's console opens the address from the
-	// sealed record when it needs it.
 	if err := s.conn.Exec(ctx, `ALTER TABLE entry_probes DROP COLUMN IF EXISTS relay_address`); err != nil {
-		log.Printf("clickhouse: migration 017 (entry_probes drop relay_address) skipped: %v", err)
+		return fmt.Errorf("fleet analytics schema 2: %w", err)
 	}
-
-	// 018: entry_benches — one row per bench run of a relay build (plan 42
-	// П6.14 Ф3): chat RTT, media throughput, the voice-like stream, breaks,
-	// tagged with the build (edge_sha) and which side of the swap it measured.
-	// The rollout decides from Postgres; this is the dataset beside
-	// entry_probes, kept as long.
 	if err := s.conn.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS entry_benches (
 			ts               DateTime CODEC(ZSTD(1)),
@@ -480,30 +129,14 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 		ORDER BY (box, ts)
 		TTL ts + INTERVAL 180 DAY
 	`); err != nil {
-		log.Printf("clickhouse: migration 018 (entry_benches) skipped: %v", err)
+		return fmt.Errorf("fleet analytics schema 3: %w", err)
 	}
-
-	// 019: entry_probes learns domain_blocked — an XHTTP relay (plan 42 П4в)
-	// whose address answers while its domain is cut by SNI. Appending a value
-	// to an Enum8 is a metadata-only change in ClickHouse.
 	if err := s.conn.Exec(ctx, `
 		ALTER TABLE entry_probes MODIFY COLUMN verdict
 			Enum8('unknown'=0, 'clean'=1, 'ip_banned'=2, 'fingerprint'=3, 'reality_wins'=4, 'network_down'=5, 'domain_blocked'=6)
 	`); err != nil {
-		log.Printf("clickhouse: migration 019 (entry_probes domain_blocked) skipped: %v", err)
+		return fmt.Errorf("fleet analytics schema 4: %w", err)
 	}
-
-	// 020: entry_reach — how clients' attempts to reach the service ended
-	// (plan 42 П9.9). The doorway metric of the entry-points console: the
-	// share that got through at once, the share the carrier race had to work
-	// relays for, and the share that never got through at all.
-	//
-	// `account` is a keyed pseudonym, not an account id (internal/entry:
-	// reachPseudonym): the console counts distinct people without the dataset
-	// holding a list of them. Ordered by (ts, outcome) because every query
-	// here is a window over time sliced by outcome; the relay is a filter on
-	// top, not a leading key. Kept as long as the probes it is compared
-	// against — a ninety-day chart needs more than ninety days of history.
 	if err := s.conn.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS entry_reach (
 			ts           DateTime CODEC(ZSTD(1)),
@@ -518,23 +151,8 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 		ORDER BY (ts, outcome)
 		TTL ts + INTERVAL 180 DAY
 	`); err != nil {
-		log.Printf("clickhouse: migration 020 (entry_reach) skipped: %v", err)
+		return fmt.Errorf("fleet analytics schema 5: %w", err)
 	}
-
-	// 021: entry_relay_stats — what a relay says about itself every half
-	// minute (plan 42 П9.3). The third vantage of the console: the prober
-	// asks whether a relay can be reached from Russia, the client whether a
-	// person got through, and this one what the machine is actually doing.
-	//
-	// Counters are totals since the edge process started, never deltas: a
-	// lost pulse then costs nothing, because the next one still carries the
-	// whole, and a restart is visible as a counter going down rather than
-	// hidden as a quiet gap. A reader differences consecutive rows and skips
-	// the pair where uptime_s fell.
-	//
-	// Nothing here identifies anyone. Bytes and a connection count say how
-	// loaded a box is and nothing about who loaded it — the invariant of plan
-	// 42 §0.1, which is why an edge keeps no session list to report from.
 	if err := s.conn.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS entry_relay_stats (
 			ts         DateTime CODEC(ZSTD(1)),
@@ -552,41 +170,14 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 		ORDER BY (relay_name, ts)
 		TTL ts + INTERVAL 180 DAY
 	`); err != nil {
-		log.Printf("clickhouse: migration 021 (entry_relay_stats) skipped: %v", err)
+		return fmt.Errorf("fleet analytics schema 6: %w", err)
 	}
-
-	// 022: entry_probes keeps the voice door as its own pair of numbers (plan
-	// 42 П9.7). A stream relay that also carries calls is probed with a burst
-	// of datagrams through its Reality session, and the result used to be
-	// folded into the verdict — a `clean` row became `unknown` when the door
-	// was shut. One column then carried two independent claims, and the word
-	// it carried is the one everything downstream reads as "no evidence": the
-	// detector stopped seeing healthy boxes and every repair failed its own
-	// admission probe. The door is recorded here instead, where it can be
-	// asked about without asking about the stream.
-	// Written out twice rather than looped over a slice of names: the query
-	// text handed to Exec stays a compile-time constant, which is the
-	// project's rule for SQL and what tools/sqlguard enforces.
-	if err := s.conn.Exec(ctx,
-		`ALTER TABLE entry_probes ADD COLUMN IF NOT EXISTS xudp_got UInt16 DEFAULT 0`); err != nil {
-		log.Printf("clickhouse: migration 022 (entry_probes xudp_got) skipped: %v", err)
+	if err := s.conn.Exec(ctx, `ALTER TABLE entry_probes ADD COLUMN IF NOT EXISTS xudp_got UInt16 DEFAULT 0`); err != nil {
+		return fmt.Errorf("fleet analytics schema 7: %w", err)
 	}
-	if err := s.conn.Exec(ctx,
-		`ALTER TABLE entry_probes ADD COLUMN IF NOT EXISTS xudp_sent UInt16 DEFAULT 0`); err != nil {
-		log.Printf("clickhouse: migration 022 (entry_probes xudp_sent) skipped: %v", err)
+	if err := s.conn.Exec(ctx, `ALTER TABLE entry_probes ADD COLUMN IF NOT EXISTS xudp_sent UInt16 DEFAULT 0`); err != nil {
+		return fmt.Errorf("fleet analytics schema 8: %w", err)
 	}
-
-	// 023: entry_user_traffic — what each account's message socket carried
-	// and through which box it came (plan 42 П9.9). The per-person half of
-	// the console's traffic: the pulse (021) says how loaded a box is and
-	// nothing about who, this says how much one person moved and nothing
-	// about what.
-	//
-	// `account` is the same keyed pseudonym as entry_reach's, so the two
-	// count the same people; `box` is the hub's resolution of the socket's
-	// peer, empty for a direct socket, and the address itself is not kept.
-	// Rows are deltas the gateway flushes itself, so a sum over a window is
-	// the traffic of that window. Kept as long as entry_probes.
 	if err := s.conn.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS entry_user_traffic (
 			ts         DateTime CODEC(ZSTD(1)),
@@ -599,9 +190,8 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 		ORDER BY (ts, account)
 		TTL ts + INTERVAL 180 DAY
 	`); err != nil {
-		log.Printf("clickhouse: migration 023 (entry_user_traffic) skipped: %v", err)
+		return fmt.Errorf("fleet analytics schema 9: %w", err)
 	}
-
 	return nil
 }
 

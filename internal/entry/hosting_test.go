@@ -36,6 +36,7 @@ type fakeHoster struct {
 	// before one appears. Zero hands it out in the Create answer, which is
 	// what a hoster does when the machine was already built.
 	pollsBeforeAddress int
+	instanceErr        error
 
 	createErr          error
 	createErrForRegion map[string]error
@@ -162,6 +163,9 @@ func (f *fakeHoster) Create(_ context.Context, o BoxOrder) (BoxInstance, error) 
 func (f *fakeHoster) Instance(_ context.Context, id string) (BoxInstance, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.instanceErr != nil {
+		return BoxInstance{}, f.instanceErr
+	}
 	inst, ok := f.instances[id]
 	if !ok {
 		return BoxInstance{}, ErrNoSuchInstance
@@ -1329,5 +1333,24 @@ func TestTheMechanicHandsBackAMachineIdleTooLong(t *testing.T) {
 	}
 	if h.retired(fresh) || contains(h.host.deletedIDs(), freshInstance) {
 		t.Error("a machine idle for a moment was handed back")
+	}
+}
+
+// Audit 42 Н2: an unavailable provider API cannot justify a second rental.
+func TestAnUnreadableIdleMachineStopsNewOrders(t *testing.T) {
+	h := newHostHarness(t)
+	idle, _ := h.idleMachine()
+	before := h.host.orderCount()
+	h.host.instanceErr = errors.New("provider unavailable")
+	_, _, err := h.prov.adoptIdle(context.Background(), OrderSpec{})
+	if err == nil {
+		t.Fatal("unreadable idle machine accepted as an empty shelf")
+	}
+	got, _ := h.prov.obtainMachines(context.Background(), OrderSpec{}, 1)
+	if len(got) != 1 || got[0].err == nil {
+		t.Fatal("purchase continued after idle lookup failure")
+	}
+	if h.host.orderCount() != before || h.retired(idle) {
+		t.Fatal("provider outage bought a machine or retired the paid one")
 	}
 }

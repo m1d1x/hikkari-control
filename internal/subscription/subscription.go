@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -106,8 +107,15 @@ func (s *Service) account(ctx context.Context, token string) (uuid.UUID, error) 
 }
 
 // Links is the subscriber's batch as client links, in the batch's order.
-// Relays with no link (Hysteria2, see Link) are left out.
+// The default format stays compatible with ordinary VPN clients.
 func (s *Service) Links(ctx context.Context, token string) ([]string, error) {
+	return s.LinksFor(ctx, token, "")
+}
+
+// LinksFor opts into the full Hysteria2 contract only for an explicit Xray
+// subscription. A sing-box client must not import a link while dropping pins.
+func (s *Service) LinksFor(ctx context.Context, token, engine string) ([]string, error) {
+
 	account, err := s.account(ctx, token)
 	if err != nil {
 		return nil, err
@@ -115,6 +123,15 @@ func (s *Service) Links(ctx context.Context, token string) ([]string, error) {
 	b, err := s.batch.BundleFor(ctx, account, entry.GrantMeta{}, "")
 	if err != nil {
 		return nil, err
+	}
+	nodes := map[string]string{}
+	if registry, ok := s.batch.(interface {
+		NodeSlugs(context.Context) (map[string]string, error)
+	}); ok {
+		nodes, err = registry.NodeSlugs(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	now := s.now()
 	links := make([]string, 0, len(b.Relays))
@@ -126,7 +143,18 @@ func (s *Service) Links(ctx context.Context, token string) ([]string, error) {
 			applog.Error(ctx, "subscription", "relay record not opened", applog.F("err", err.Error()))
 			continue
 		}
+		if rec.Proto == entry.ProtoHysteria2 && engine != "xray" {
+			continue
+		}
 		link, err := Link(rec)
+		if err == nil && nodes[rec.Name] != "" {
+			u, _ := url.Parse(link)
+			q := u.Query()
+			q.Set("hikkari-node", "n:"+nodes[rec.Name])
+			u.RawQuery = q.Encode()
+			u.Fragment = "Hikkari " + nodes[rec.Name]
+			link = u.String()
+		}
 		if err != nil {
 			continue
 		}
@@ -145,7 +173,12 @@ func (s *Service) Handler() http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		links, err := s.Links(r.Context(), token)
+		engine := r.URL.Query().Get("engine")
+		if engine != "" && engine != "xray" {
+			http.Error(w, "unsupported subscription engine", http.StatusBadRequest)
+			return
+		}
+		links, err := s.LinksFor(r.Context(), token, engine)
 		if errors.Is(err, ErrUnknown) {
 			http.NotFound(w, r)
 			return

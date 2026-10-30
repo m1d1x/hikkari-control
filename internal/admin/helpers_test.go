@@ -2,6 +2,9 @@ package admin
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -17,16 +20,42 @@ import (
 // Needs CLICKHOUSE_TEST_DSN, e.g. the local compose stack:
 //
 //	CLICKHOUSE_TEST_DSN=clickhouse://nekko:nekko@127.0.0.1:9000/nekko_analytics
+//
+// Each test gets a database of its own, dropped when it ends: series and
+// medians are read across the whole table, so rows another test (or an
+// earlier run) left behind would land in the buckets this one asserts on.
 func liveClickHouse(t *testing.T) *analytics.Store {
 	t.Helper()
 	dsn := os.Getenv("CLICKHOUSE_TEST_DSN")
 	if dsn == "" {
 		t.Skip("CLICKHOUSE_TEST_DSN not set")
 	}
-	store, err := analytics.NewStore(dsn)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("CLICKHOUSE_TEST_DSN: %v", err)
+	}
+	admin, err := analytics.NewStore(dsn)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
+	var suffix [6]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		t.Fatalf("random: %v", err)
+	}
+	db := "t_" + hex.EncodeToString(suffix[:])
+	if err := admin.Exec(context.Background(), "CREATE DATABASE "+db); err != nil {
+		t.Fatalf("create test database: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = admin.Exec(context.Background(), "DROP DATABASE IF EXISTS "+db)
+		_ = admin.Close()
+	})
+	u.Path = "/" + db
+	store, err := analytics.NewStore(u.String())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
 	if err := store.RunMigrations(context.Background()); err != nil {
 		t.Fatalf("migrations: %v", err)
 	}

@@ -63,7 +63,7 @@ var (
 	ErrInsufficientFunds = errors.New("vultr: insufficient account credit")
 )
 
-// APIError is a failure the API described in its own words.
+// APIError preserves status without an untrusted provider response body.
 type APIError struct {
 	HTTPStatus int
 	Message    string
@@ -169,10 +169,10 @@ func classify(status int, msg string) error {
 	case status == http.StatusUnauthorized, status == http.StatusForbidden:
 		// Vultr answers 401 both to a wrong key and to a right key used from
 		// an address outside the account's API access control ("Unauthorized
-		// IP address: ..."). Only its own words tell the owner which of the
-		// two to fix, so they ride along with the sentinel.
-		if msg = strings.TrimSpace(msg); msg != "" {
-			return fmt.Errorf("%w: %s", ErrBadCredentials, msg)
+		// IP address: ..."). Keep that distinction without logging the address.
+
+		if strings.Contains(m, "unauthorized ip") {
+			return fmt.Errorf("%w: check the account IP allowlist", ErrBadCredentials)
 		}
 		return ErrBadCredentials
 	case status == http.StatusNotFound:
@@ -186,7 +186,7 @@ func classify(status int, msg string) error {
 		strings.Contains(m, "payment")):
 		return ErrInsufficientFunds
 	}
-	return &APIError{HTTPStatus: status, Message: msg}
+	return &APIError{HTTPStatus: status}
 }
 
 // listQuery is the per_page parameter every list call sends.

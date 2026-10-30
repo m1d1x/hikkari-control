@@ -1,0 +1,7 @@
+# The hub synchronizes its logical fleet nodes; do not copy IPs here.
+db_path: /data/downdetector.db
+secrets_path: /run/secrets/downdetector.yaml
+k: 3
+token_rate_per_min: 120
+overview_max_hours: 720
+nodes: []

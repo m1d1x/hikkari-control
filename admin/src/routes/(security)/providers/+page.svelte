@@ -61,7 +61,7 @@
 		}
 
 		try {
-			catalog = (await fetchHosting()).hosting;
+			catalog = providers?.some((p) => p.role === 'hosting' && p.configured && p.enabled) ? (await fetchHosting()).hosting : null;
 		} catch {
 			catalog = null;
 		}

@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -213,5 +214,31 @@ func TestEntryReachRTTAndBenchPeaks(t *testing.T) {
 	}
 	if len(peaks) != 1 || peaks["box-a"] != 120 {
 		t.Fatalf("bench peaks: %v", peaks)
+	}
+}
+
+func TestFreshAnalyticsContainsOnlyFleetTables(t *testing.T) {
+	s := liveStore(t)
+	rows, err := s.Query(context.Background(), `SELECT name FROM system.tables WHERE database=currentDatabase()`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		count++
+		if !strings.HasPrefix(name, "entry_") {
+			t.Errorf("non-fleet dataset: %s", name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if count != 5 {
+		t.Errorf("fleet datasets=%d, want 5", count)
 	}
 }

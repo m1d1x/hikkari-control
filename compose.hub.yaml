@@ -1,0 +1,82 @@
+# Isolated local control-plane stack. No cloud API is called on startup:
+# providers start disabled and both spend groups have zero caps.
+name: hikkari-fleet
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.postgres
+    env_file: ./secrets/hub-local.env
+    volumes:
+      - hub-pg:/var/lib/postgresql/data
+      - hub-pg-tls:/var/lib/postgresql/tls
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    env_file: ./secrets/hub-local.env
+    volumes:
+      - hub-ch:/var/lib/clickhouse
+      - ./deploy/clickhouse-privacy.xml:/etc/clickhouse-server/config.d/privacy.xml:ro
+    healthcheck:
+      test: [CMD-SHELL, 'clickhouse-client --user "$$CLICKHOUSE_USER" --password "$$CLICKHOUSE_PASSWORD" --query "SELECT 1"']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  hub:
+    build:
+      context: .
+      dockerfile: Dockerfile.hub
+    env_file:
+      - ./secrets/hub.env
+      - ./secrets/hub-local.env
+    environment:
+      ADMIN_LISTEN_ADDR: :3310
+      HUB_DOWNDETECTOR_CONFIG: /etc/hub/downdetector.yaml
+      ADMIN_WEBAUTHN_RP_ID: localhost
+      ADMIN_WEBAUTHN_ORIGINS: https://localhost:${ADMIN_HTTPS_PORT:-9443}
+      PUBLIC_ADMIN_EXTRA_ORIGINS: https://localhost:${ADMIN_HTTPS_PORT:-9443}
+      ENTRY_AUTOPILOT_ENABLED: '0'
+    volumes:
+      - hub-dd:/data
+      - ./deploy/hub-downdetector.yaml:/etc/hub/downdetector.yaml:ro
+      - ./secrets/hub-downdetector.yaml:/run/secrets/downdetector.yaml:ro
+      - ./secrets/admin-jwt.pem:/run/secrets/admin-jwt.pem:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1:8090/healthz]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  admin:
+    build: ./admin
+    environment:
+      NEKKO_API_URL: https://localhost:${ADMIN_HTTPS_PORT:-9443}
+  caddy:
+    image: caddy:2.10-alpine
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - '${PUBLISH_ADDR:-127.0.0.1}:${HTTP_PORT:-9080}:80'
+      - '${PUBLISH_ADDR:-127.0.0.1}:${HTTPS_PORT:-9444}:443'
+      # Operator plane is always loopback, even with a public hub domain.
+      - '127.0.0.1:${ADMIN_HTTPS_PORT:-9443}:8444'
+    volumes:
+      - ./deploy/Caddyfile.hub:/etc/caddy/Caddyfile:ro
+      - hub-caddy:/data
+      - hub-caddy-config:/config
+    depends_on:
+      hub: {condition: service_healthy}
+      admin: {condition: service_healthy}
+volumes:
+  hub-pg:
+  hub-pg-tls:
+  hub-ch:
+  hub-dd:
+  hub-caddy:
+  hub-caddy-config:

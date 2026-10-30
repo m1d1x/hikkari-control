@@ -1206,8 +1206,7 @@ func (p *Provisioner) adoptIdle(ctx context.Context, spec OrderSpec) (box, note 
 	}
 	idle, err := p.svc.idleBoxes(ctx, h.kind, &proto, voice)
 	if err != nil {
-		applog.Error(ctx, "entry", "idle machines unreadable", applog.F("err", err.Error()))
-		return "", "", nil
+		return "", "", fmt.Errorf("entry: cannot inspect idle fleet: %w", err)
 	}
 	var notes []string
 	for _, c := range idle {
@@ -1220,8 +1219,7 @@ func (p *Provisioner) adoptIdle(ctx context.Context, spec OrderSpec) (box, note 
 			notes = append(notes, fmt.Sprintf("простаивающей %s у хостера уже нет — снята с учёта", c.name))
 			continue
 		case err != nil:
-			applog.Warn(ctx, "entry", "idle machine unreadable at the hoster", applog.F("box", c.name), applog.F("err", err.Error()))
-			continue
+			return "", strings.Join(notes, "; "), fmt.Errorf("entry: idle machine %s cannot be verified: %w", c.name, err)
 		}
 		err = p.standUp(ctx, c.name, "беру простаивающую машину хаба, жду ssh")
 		if errors.Is(err, ErrBoxBusy) {

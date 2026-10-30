@@ -1,37 +1,4 @@
-# Downdetector + Caddy for TLS. Secrets are decrypted from SOPS into
-# secrets/secrets.yaml before `up` (see README); that file is gitignored.
-services:
-  downdetector:
-    build: .
-    restart: unless-stopped
-    volumes:
-      - ./deploy/config.yaml:/etc/downdetector/config.yaml:ro
-      - ./secrets/secrets.yaml:/run/secrets/downdetector.yaml:ro
-      - dd-data:/data
-    # No published port: only Caddy reaches it.
-    expose:
-      - "8080"
-    logging:
-      driver: local
-
-  caddy:
-    image: caddy:2.10-alpine
-    restart: unless-stopped
-    depends_on:
-      - downdetector
-    environment:
-      DOMAIN: ${DOMAIN:-localhost}
-    ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
-    volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    logging:
-      driver: local
-
-volumes:
-  dd-data:
-  caddy-data:
-  caddy-config:
+# Default local stack; legacy standalone downdetector is compose.downdetector.yaml.
+name: hikkari-fleet
+include:
+  - path: compose.hub.yaml

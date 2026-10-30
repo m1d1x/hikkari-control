@@ -25,6 +25,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -72,6 +73,7 @@ func newAdminServer(addr string, adminMux *http.ServeMux) *http.Server {
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    16 << 10,
+		ErrorLog:          log.New(io.Discard, "", 0),
 	}
 }
 
