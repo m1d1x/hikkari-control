@@ -40,6 +40,14 @@
 			<SidebarItem href="/providers" icon="system" label="Провайдеры" {collapsed} />
 		</SidebarSection>
 
+		<SidebarSection label="Продукт" {collapsed}>
+			<SidebarItem href="/metrics" icon="overview" label="Обзор" {collapsed} />
+			<SidebarItem href="/errors" icon="events" label="Ошибки" {collapsed} />
+			<SidebarItem href="/support" icon="search" label="Обращения" {collapsed} />
+			<SidebarItem href="/donations" icon="jobs" label="Донаты" {collapsed} />
+			<SidebarItem href="/presets" icon="system" label="Пресеты" {collapsed} />
+		</SidebarSection>
+
 		<SidebarSection label="Staff" {collapsed}>
 			<SidebarItem href="/security" icon="debug" label="Security" {collapsed} />
 		</SidebarSection>

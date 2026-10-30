@@ -1,0 +1,306 @@
+/* Product screens (metrics, errors, support, donations, presets) carried over
+   from the Hikkari admin mock. Scoped to .product so their tokens and
+   classes cannot touch the anti-blocking console. */
+
+.product {
+	--bg: oklch(0.14 0 0);
+	--side: oklch(0.17 0 0);
+	--card: oklch(0.2 0 0);
+	--inset: oklch(0.17 0 0);
+	--surface: oklch(0.23 0 0);
+
+	--primary: oklch(0.75 0.14 350);
+	--primary-subtle: oklch(0.75 0.14 350 / 0.1);
+	--primary-line: oklch(0.75 0.14 350 / 0.35);
+
+	--ok: oklch(0.72 0.15 155);
+	--warn: oklch(0.78 0.12 85);
+	--bad: oklch(0.65 0.2 25);
+	--blue: oklch(0.7 0.16 230);
+	--violet: oklch(0.72 0.18 310);
+
+	--border: oklch(0.24 0 0);
+	--border-subtle: oklch(0.19 0 0);
+
+	--text: oklch(0.93 0 0);
+	--text-2: oklch(0.62 0 0);
+	--text-3: oklch(0.42 0 0);
+
+	--sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+	--mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+.product a {
+	color: inherit;
+	text-decoration: none;
+}
+
+.product button,
+.product input,
+.product textarea {
+	font: inherit;
+	color: inherit;
+	background: none;
+	border: none;
+	outline: none;
+}
+
+.product button {
+	cursor: pointer;
+}
+
+.product .mono,
+.product b {
+	font-family: var(--mono);
+	font-variant-numeric: tabular-nums;
+	font-weight: 500;
+}
+
+.product /* ---------- head ---------- */
+
+.head {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	margin-bottom: 18px;
+}
+
+.product .head h1 {
+	font-size: 20px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	margin-right: auto;
+}
+
+.product .chips {
+	display: flex;
+	gap: 4px;
+}
+
+.product .chip {
+	padding: 4px 11px;
+	border-radius: 6px;
+	font-size: 11px;
+	color: var(--text-2);
+	border: 1px solid var(--border);
+	white-space: nowrap;
+	transition: background 120ms ease;
+}
+
+.product .chip:hover {
+	background: var(--surface);
+}
+
+.product .chip.on {
+	color: var(--text);
+	background: var(--primary-subtle);
+	border-color: var(--primary-line);
+}
+
+.product /* ---------- card ---------- */
+
+.card {
+	background: var(--card);
+	border: 1px solid var(--border-subtle);
+	border-radius: 8px;
+	padding: 18px 20px;
+	margin-bottom: 16px;
+}
+
+.product .card h2 {
+	font-size: 13px;
+	font-weight: 600;
+	margin-bottom: 12px;
+}
+
+.product /* figure on the left,
+.product chart on the right */
+.split {
+	display: grid;
+	grid-template-columns: 240px minmax(0, 1fr);
+	gap: 24px;
+	align-items: center;
+}
+
+.product .big {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	font-family: var(--mono);
+	font-variant-numeric: tabular-nums;
+	font-size: 42px;
+	font-weight: 600;
+	letter-spacing: -0.03em;
+	line-height: 1;
+}
+
+.product .big .unit {
+	font-size: 16px;
+	font-weight: 400;
+	color: var(--text-3);
+}
+
+.product .what {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	margin-top: 8px;
+	font-size: 12px;
+	color: var(--text-2);
+}
+
+.product .breakdown {
+	margin-top: 14px;
+	padding-top: 12px;
+	border-top: 1px solid var(--border-subtle);
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+}
+
+.product .breakdown div {
+	display: flex;
+	justify-content: space-between;
+	gap: 10px;
+	font-size: 11px;
+	color: var(--text-3);
+}
+
+.product .breakdown div span {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+}
+
+.product .breakdown b {
+	color: var(--text-2);
+}
+
+.product .breakdown .sep {
+	padding-top: 6px;
+	margin-top: 2px;
+	border-top: 1px dashed var(--border-subtle);
+}
+
+.product .sw {
+	width: 8px;
+	height: 8px;
+	border-radius: 2px;
+	flex-shrink: 0;
+	display: inline-block;
+}
+
+.product /* one-line strip of secondary figures under a card */
+.strip {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 22px;
+	margin: 16px -20px -18px;
+	padding: 10px 20px 12px;
+	border-top: 1px solid var(--border-subtle);
+	font-size: 12px;
+	color: var(--text-2);
+}
+
+.product .strip b {
+	margin-left: 4px;
+	color: var(--text);
+	font-weight: 600;
+}
+
+.product /* ---------- misc ---------- */
+
+.dim {
+	color: var(--text-3);
+}
+
+.product .ok {
+	color: var(--ok);
+}
+
+.product .bad {
+	color: var(--bad);
+}
+
+.product .warn {
+	color: var(--warn);
+}
+
+.product .empty {
+	padding: 16px 0;
+	color: var(--text-2);
+}
+
+.product .field {
+	width: 100%;
+	padding: 6px 10px;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--inset);
+	font-size: 12px;
+}
+
+.product .field:focus {
+	border-color: var(--primary-line);
+}
+
+.product .btn {
+	padding: 5px 12px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	font-size: 12px;
+	color: var(--text-2);
+	white-space: nowrap;
+}
+
+.product .btn:hover {
+	color: var(--text);
+	background: var(--surface);
+}
+
+.product .btn.primary {
+	color: var(--text);
+	background: var(--primary-subtle);
+	border-color: var(--primary-line);
+}
+
+.product /* plain list table */
+.rows {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.product .rows th {
+	text-align: left;
+	font-weight: 400;
+	font-size: 11px;
+	color: var(--text-3);
+	padding: 0 10px 8px 0;
+}
+
+.product .rows td {
+	padding: 9px 10px 9px 0;
+	border-top: 1px solid var(--border-subtle);
+	vertical-align: top;
+}
+
+.product .rows .r {
+	text-align: right;
+}
+
+.product .split {
+		grid-template-columns: 1fr;
+	}
+
+/* What the mock set on body and its main column. */
+.product {
+	flex: 1;
+	min-width: 0;
+	overflow-y: auto;
+	padding: 24px;
+	background: var(--bg);
+	color: var(--text);
+	font-family: var(--sans);
+	font-size: 13px;
+	line-height: 1.5;
+}
