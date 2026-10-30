@@ -67,7 +67,7 @@ type fakeHoster struct {
 	// addrNet makes this hoster's addresses unique to this test: the test
 	// database keeps every box ever recorded, and a box IS its address — a
 	// fixed range would have one run claim the address the next one is handed.
-	addrNet string
+	addrNet [6]byte
 }
 
 // newFakeHoster offers two sizes in two regions whose cities give distinct box
@@ -85,7 +85,7 @@ func newFakeHoster(t *testing.T) *fakeHoster {
 	}
 	return &fakeHoster{
 		balance: 12_345,
-		addrNet: fmt.Sprintf("2001:db8:%x%x:%x%x", u[6], u[7], u[8], u[9]),
+		addrNet: [6]byte{u[6], u[7], u[8], u[9]},
 		regions: []BoxRegion{
 			{ID: "r1", City: city(u[0:3]), Country: "NL"},
 			{ID: "r2", City: city(u[3:6]), Country: "DE"},
@@ -143,7 +143,7 @@ func (f *fakeHoster) Create(_ context.Context, o BoxOrder) (BoxInstance, error) 
 	inst := &BoxInstance{
 		ID: fmt.Sprintf("inst-%s-%d", o.Hostname, f.nextID), Label: o.Label,
 		Region: o.Region, Plan: o.Plan, Status: "pending", MonthlyCents: price,
-		Address: fmt.Sprintf("%s::%x", f.addrNet, f.nextAddr),
+		Address: testAddr(f.addrNet, uint16(f.nextAddr)),
 		Tags:    []string{o.Tag},
 	}
 	f.instances[inst.ID] = inst
@@ -560,7 +560,7 @@ func (h *hostHarness) takeNameMidOrder() {
 		h.host.onCreate = nil
 		u := uuid.New()
 		if err := h.svc.CreateBox(context.Background(), BoxSpec{
-			Name: o.Hostname, Address: fmt.Sprintf("2001:db8:ffff:%x%x::1", u[0], u[1]),
+			Name: o.Hostname, Address: testAddr([6]byte{0xff, 0xff, u[0], u[1]}, 1),
 			Provider: "vultr", Location: "amsterdam",
 		}); err != nil {
 			h.t.Errorf("take %s: %v", o.Hostname, err)

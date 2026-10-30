@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"slices"
@@ -250,13 +251,23 @@ func (h *harness) box() (name, addr string) {
 	u := uuid.New()
 	name = fmt.Sprintf("t%d", uint64(u[0])<<40|uint64(u[1])<<32|uint64(u[2])<<24|
 		uint64(u[3])<<16|uint64(u[4])<<8|uint64(u[5]))
-	addr = fmt.Sprintf("2001:db8:%x%x:%x%x:%x%x::1", u[6], u[7], u[8], u[9], u[10], u[11])
+	addr = testAddr([6]byte(u[6:12]), 1)
 	if err := h.svc.CreateBox(context.Background(), BoxSpec{
 		Name: name, Address: addr, Provider: "vultr", Location: "amsterdam",
 	}); err != nil {
 		h.t.Fatalf("create box: %v", err)
 	}
 	return name, addr
+}
+
+// testAddr is a documentation address (2001:db8::/32) with net as its next
+// 48 bits and host as its last 16, written canonically: the service stores
+// addresses canonically, and a hand-formatted "2001:db8:05:…" would come
+// back as "2001:db8:5:…".
+func testAddr(net [6]byte, host uint16) string {
+	ip := [16]byte{0x20, 0x01, 0x0d, 0xb8, net[0], net[1], net[2], net[3], net[4], net[5]}
+	ip[14], ip[15] = byte(host>>8), byte(host)
+	return netip.AddrFrom16(ip).String()
 }
 
 // relay mints a pending relay on box.
@@ -974,7 +985,7 @@ func (h *harness) voiceBox(region string) string {
 	u := uuid.New()
 	name := fmt.Sprintf("v%d", uint64(u[0])<<40|uint64(u[1])<<32|uint64(u[2])<<24|
 		uint64(u[3])<<16|uint64(u[4])<<8|uint64(u[5]))
-	addr := fmt.Sprintf("2001:db8:%x%x:%x%x:%x%x::2", u[6], u[7], u[8], u[9], u[10], u[11])
+	addr := testAddr([6]byte(u[6:12]), 2)
 	if err := h.svc.CreateBox(context.Background(), BoxSpec{
 		Name: name, Address: addr, Provider: "vultr", Location: "amsterdam",
 		Proto: ProtoHysteria2, Region: region,
@@ -1064,7 +1075,7 @@ func (h *harness) xhttpBox() (name, domain string) {
 	u := uuid.New()
 	name = fmt.Sprintf("x%d", uint64(u[0])<<40|uint64(u[1])<<32|uint64(u[2])<<24|
 		uint64(u[3])<<16|uint64(u[4])<<8|uint64(u[5]))
-	addr := fmt.Sprintf("2001:db8:%x%x:%x%x:%x%x::3", u[6], u[7], u[8], u[9], u[10], u[11])
+	addr := testAddr([6]byte(u[6:12]), 3)
 	domain = name + ".example-relay.xyz"
 	if err := h.svc.CreateBox(context.Background(), BoxSpec{
 		Name: name, Address: addr, Provider: "vultr", Location: "amsterdam",
@@ -1150,7 +1161,7 @@ func TestAnXhttpBoxServesItsDomainOneRelayAtATime(t *testing.T) {
 		// taken address.
 		u := uuid.New()
 		spec.Name, spec.Provider, spec.Location = "y1", "vultr", "amsterdam"
-		spec.Address = fmt.Sprintf("2001:db8:%x%x:%x%x:%x%x::4", u[6], u[7], u[8], u[9], u[10], u[11])
+		spec.Address = testAddr([6]byte(u[6:12]), 4)
 		if err := h.svc.CreateBox(ctx, spec); !errors.Is(err, ErrRejected) {
 			t.Fatalf("%s: %v", what, err)
 		}
