@@ -1,0 +1,243 @@
+// Command hub runs the fleet orchestrator carried over from Nekko
+// (internal/entry): provisioning over ssh, ordering machines and domains
+// under the spend caps, the incident detector and the autopilot's repairs,
+// the prober ingest, and the admin console API on its own listener.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/m1d1x/hikkari-control/internal/admin"
+	"github.com/m1d1x/hikkari-control/internal/analytics"
+	"github.com/m1d1x/hikkari-control/internal/auth"
+	"github.com/m1d1x/hikkari-control/internal/config"
+	"github.com/m1d1x/hikkari-control/internal/cryptobox"
+	"github.com/m1d1x/hikkari-control/internal/db"
+	"github.com/m1d1x/hikkari-control/internal/entry"
+	"github.com/m1d1x/hikkari-control/internal/probesink"
+)
+
+func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		// keygen: a fresh key for NEKKO_CONTENT_KEY, which seals machine
+		// addresses, ssh credentials and provider keys at rest.
+		case "keygen":
+			key, err := cryptobox.GenerateKey()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "keygen failed:", err)
+				os.Exit(1)
+			}
+			fmt.Println("NEKKO_CONTENT_KEY=" + key)
+			os.Exit(0)
+		case "admin-create":
+			runAdminCreate(os.Args[2:])
+		case "admin-passwd":
+			runAdminPasswd(os.Args[2:])
+		case "admin-disable":
+			runAdminDisable(os.Args[2:])
+		case "admin-2fa-reset":
+			runAdmin2FAReset(os.Args[2:])
+		case "admin-role":
+			runAdminRole(os.Args[2:])
+		case "entry-box":
+			runEntryBox(os.Args[2:])
+		case "entry-bench":
+			runEntryBench(os.Args[2:])
+		case "entry-vantage-token":
+			runEntryVantageToken(os.Args[2:])
+		}
+	}
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		return errors.New("DATABASE_URL is not set")
+	}
+	db.RequireSecureDSNOrFatal("cmd/hub", dbURL)
+	if err := cryptobox.Configure(os.Getenv); err != nil {
+		return fmt.Errorf("cryptobox: %w — run 'hub keygen' to generate a key", err)
+	}
+	pool, err := db.Connect(ctx, dbURL)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer pool.Close()
+	if err := db.RunMigrations(ctx, pool); err != nil {
+		return fmt.Errorf("migrations: %w", err)
+	}
+
+	adminKeys, err := auth.LoadAdminKeySet()
+	if err != nil {
+		return fmt.Errorf("admin keys: %w", err)
+	}
+	adminWA, err := auth.AdminWebAuthnFromEnv()
+	if err != nil {
+		return fmt.Errorf("admin webauthn: %w", err)
+	}
+
+	var store *analytics.Store
+	if dsn := os.Getenv("CLICKHOUSE_DSN"); dsn != "" {
+		store, err = analytics.NewStore(dsn)
+		if err != nil {
+			return fmt.Errorf("clickhouse: %w", err)
+		}
+		if err := store.RunMigrations(ctx); err != nil {
+			return fmt.Errorf("clickhouse migrations: %w", err)
+		}
+	} else {
+		log.Println("WARNING: CLICKHOUSE_DSN not set — probes, pulse and the autopilot are disabled")
+	}
+
+	// ── The fleet ─────────────────────────────────────────
+	signer, err := entry.LoadSigner(os.Getenv, entry.PinnedKeys())
+	if err != nil {
+		return fmt.Errorf("entry pool: %w", err)
+	}
+	if signer == nil {
+		log.Printf("entry pool: %s not set — relays cannot be admitted or re-signed", entry.SigningKeyEnv)
+	}
+	svc, err := entry.NewService(pool, signer, entry.DefaultBatchSize)
+	if err != nil {
+		return fmt.Errorf("entry pool: %w", err)
+	}
+	ups, err := relayUpstreams()
+	if err != nil {
+		return fmt.Errorf("entry pool: %w", err)
+	}
+	prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir, ups, nil)
+	if token := os.Getenv("EDGE_PULSE_TOKEN"); token != "" {
+		prov.SetPulse(config.Default().APIURL()+"/api/v1/internal/entry-pulse", token)
+	}
+	prov.SetProber(config.Default().APIURL())
+	mechanic := wireEntryDomains(ctx, svc, prov)
+	if n, err := svc.AbandonRunningJobs(ctx); err != nil {
+		log.Printf("entry pool: abandon running jobs: %v", err)
+	} else if n > 0 {
+		log.Printf("entry pool: %d provisioning job(s) were cut off by the restart", n)
+	}
+	if n, err := svc.AbandonRunningRepairs(ctx); err != nil {
+		log.Printf("entry pool: abandon running repairs: %v", err)
+	} else if n > 0 {
+		log.Printf("entry pool: %d repair(s) were cut off by the restart", n)
+	}
+	rollout := entry.NewOrchestrator(svc, prov)
+	if store != nil {
+		rollout.SetHealth(store)
+	}
+	go rollout.Run(ctx)
+	go svc.RunResigner(ctx)
+
+	// ── Public plane: what probers and relays talk to ─────
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	if store != nil {
+		mux.HandleFunc("POST /api/v1/internal/entry-probes", probesink.IngestEntry(store, svc))
+		entry.RegisterProberRoutes(mux, svc)
+		entry.RegisterPulseRoutes(mux, svc, os.Getenv("EDGE_PULSE_TOKEN"))
+		entry.RegisterBenchRoutes(mux, svc)
+		svc.SetBenchSink(benchSink{store})
+		svc.SetReachSink(reachSink{store})
+		svc.SetPulseSink(pulseSink{store})
+		svc.SetUserTrafficSink(userTrafficSink{store})
+		svc.SetLoadSource(loadSource{store})
+		svc.SetVerdicts(verdictSource{store})
+		svc.SetVantages(verdictSource{store})
+		svc.SetInspector(prov)
+		if os.Getenv("ENTRY_AUTOPILOT_ENABLED") == "1" {
+			go svc.DetectLoop(ctx, time.Minute)
+			go mechanic.Run(ctx, time.Minute)
+			go svc.SecondChanceLoop(ctx, time.Hour)
+		} else {
+			log.Printf("entry: automatic fleet management disabled on this process (ENTRY_AUTOPILOT_ENABLED != 1)")
+		}
+	}
+
+	// ── Admin plane: its own listener, never the public one ─
+	adminMux := http.NewServeMux()
+	authHandlers := auth.NewHandlers(pool)
+	authHandlers.SetAdminKeys(adminKeys)
+	authHandlers.SetAdminWebAuthn(adminWA)
+	adminMux.HandleFunc("GET /api/auth/admin/csrf", auth.AdminCSRFToken)
+	adminMux.HandleFunc("POST /api/auth/admin/login", authHandlers.AdminDirectLogin)
+	adminMux.HandleFunc("POST /api/auth/admin/logout",
+		admin.RequireAdmin(adminKeys.Public, pool, authHandlers.AdminDirectLogout))
+	adminMux.HandleFunc("POST /api/auth/admin/refresh", authHandlers.AdminRefresh)
+	adminMux.HandleFunc("POST /api/auth/admin/login/passkey", authHandlers.AdminLoginPasskey)
+	adminMux.HandleFunc("POST /api/auth/admin/login/recovery", authHandlers.AdminLoginRecovery)
+	adminMux.HandleFunc("POST /api/auth/admin/enroll/begin", authHandlers.AdminEnrollBegin)
+	adminMux.HandleFunc("POST /api/auth/admin/enroll/finish", authHandlers.AdminEnrollFinish)
+	adminSecurity := func(h http.HandlerFunc) http.HandlerFunc {
+		return admin.RequireAdmin(adminKeys.Public, pool, h)
+	}
+	adminSecurityStepUp := func(h http.HandlerFunc) http.HandlerFunc {
+		return admin.RequireAdmin(adminKeys.Public, pool, admin.RequireStepUp(h))
+	}
+	adminMux.HandleFunc("GET /api/v1/admin/security", adminSecurity(authHandlers.AdminSecurity))
+	adminMux.HandleFunc("POST /api/v1/admin/security/step-up/begin", adminSecurity(authHandlers.AdminStepUpBegin))
+	adminMux.HandleFunc("POST /api/v1/admin/security/step-up/finish", adminSecurity(authHandlers.AdminStepUpFinish))
+	adminMux.HandleFunc("POST /api/v1/admin/security/passkeys/begin", adminSecurityStepUp(authHandlers.AdminPasskeyAddBegin))
+	adminMux.HandleFunc("POST /api/v1/admin/security/passkeys/finish", adminSecurityStepUp(authHandlers.AdminPasskeyAddFinish))
+	adminMux.HandleFunc("DELETE /api/v1/admin/security/passkeys/{id}", adminSecurityStepUp(authHandlers.AdminPasskeyDelete))
+	adminMux.HandleFunc("POST /api/v1/admin/security/recovery-codes", adminSecurityStepUp(authHandlers.AdminRecoveryCodesRegenerate))
+	adminMux.HandleFunc("POST /api/v1/admin/security/password", adminSecurityStepUp(authHandlers.AdminPasswordChange))
+	go runAdminCeremonyPurger(ctx, pool)
+
+	if store != nil {
+		admin.RegisterRoutes(adminMux, admin.NewHandlers(pool, store), adminKeys, pool)
+	}
+	entry.RegisterAdminRoutes(adminMux, entry.NewAdminHandlers(svc, prov, pool),
+		func(next http.HandlerFunc) http.HandlerFunc {
+			return admin.RequireAdmin(adminKeys.Public, pool, admin.RequireOwner(next))
+		},
+		func(next http.HandlerFunc) http.HandlerFunc {
+			return admin.RequireAdmin(adminKeys.Public, pool, admin.RequireOwner(admin.RequireStepUp(next)))
+		})
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8090"
+	}
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
+	adminSrv := newAdminServer(adminListenAddr(), adminMux)
+	errc := make(chan error, 2)
+	go func() { errc <- srv.ListenAndServe() }()
+	go func() { errc <- adminSrv.ListenAndServe() }()
+	log.Printf("hub: public on :%s, admin on %s", port, adminSrv.Addr)
+
+	select {
+	case <-ctx.Done():
+	case err := <-errc:
+		if !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(shutdownCtx)
+	_ = adminSrv.Shutdown(shutdownCtx)
+	return nil
+}

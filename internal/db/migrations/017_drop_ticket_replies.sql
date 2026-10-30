@@ -1,0 +1,11 @@
+-- 017 — a ticket has no reply thread of its own.
+--
+-- Support is one channel: the user's chat with «Nekko». The per-ticket reply
+-- table was the shadow of the thread the client USED to read (the «ветка
+-- тикета» window, removed 01.10); after that it had writers and no reader.
+-- Worse, its author_id pointed at users while every admin lives in `admins`
+-- (its own plane, no users row), so every admin write to it failed: answering
+-- from a ticket page returned 500, and each status change logged a swallowed
+-- FK violation. Answers and status plates now go only to the chat
+-- (admin.answerSupport, emitStatusUpdate). Empty when dropped (02.10).
+DROP TABLE bug_ticket_replies;

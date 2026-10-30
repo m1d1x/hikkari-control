@@ -1,0 +1,948 @@
+<!doctype html>
+<html lang="ru">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>censor — детекция v1</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+			rel="stylesheet"
+		/>
+		<style>
+			:root {
+				--bg: oklch(0.14 0 0);
+				--bg-raised: oklch(0.17 0 0);
+				--surface: oklch(0.23 0 0);
+				--card-bg: oklch(0.2 0 0);
+				--inset: oklch(0.17 0 0);
+
+				--primary: oklch(0.75 0.14 350);
+				--primary-subtle: oklch(0.75 0.14 350 / 0.1);
+
+				--ok: oklch(0.72 0.15 155);
+				--warn: oklch(0.78 0.12 85);
+				--bad: oklch(0.65 0.2 25);
+				--unknown: oklch(0.52 0 0);
+
+				/* verdict / layer palette — three distinct bad hues so a stacked
+				   ban column reads what kind of ban is spiking */
+				--v-clean: oklch(0.72 0.15 155);
+				--v-reality: oklch(0.75 0.14 350);
+				--v-domain: oklch(0.78 0.12 85);
+				--v-ip: oklch(0.7 0.17 45);
+				--v-fp: oklch(0.65 0.2 25);
+				--v-mute: oklch(0.52 0 0);
+
+				--border: oklch(0.24 0 0);
+				--border-subtle: oklch(0.19 0 0);
+
+				--text: oklch(0.93 0 0);
+				--text-2: oklch(0.62 0 0);
+				--text-3: oklch(0.42 0 0);
+
+				--sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+				--mono: 'IBM Plex Mono', monospace;
+			}
+
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+			}
+
+			body {
+				background: var(--bg);
+				color: var(--text);
+				font-family: var(--sans);
+				font-size: 13px;
+				line-height: 1.5;
+				-webkit-font-smoothing: antialiased;
+			}
+
+			button {
+				font: inherit;
+				color: inherit;
+				background: none;
+				border: none;
+				cursor: pointer;
+			}
+
+			.page {
+				padding: 24px;
+				max-width: 1400px;
+			}
+
+			.m {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+			}
+
+			/* ---------- head ---------- */
+
+			.head {
+				display: flex;
+				align-items: flex-end;
+				gap: 16px;
+				margin-bottom: 18px;
+			}
+
+			.head h1 {
+				font-size: 20px;
+				font-weight: 600;
+				letter-spacing: -0.01em;
+			}
+
+			.head p {
+				margin-top: 4px;
+				font-size: 12px;
+				color: var(--text-2);
+				max-width: 680px;
+			}
+
+			.ranges {
+				margin-left: auto;
+				display: flex;
+				gap: 4px;
+			}
+
+			.chip {
+				padding: 4px 11px;
+				border-radius: 6px;
+				font-size: 11px;
+				color: var(--text-2);
+				border: 1px solid var(--border);
+				white-space: nowrap;
+			}
+
+			.chip:hover {
+				background: var(--surface);
+			}
+
+			.chip.on {
+				color: var(--text);
+				background: var(--primary-subtle);
+				border-color: oklch(0.75 0.14 350 / 0.35);
+			}
+
+			/* ---------- cards ---------- */
+
+			.card {
+				background: var(--card-bg);
+				border: 1px solid var(--border-subtle);
+				border-radius: 8px;
+				margin-bottom: 16px;
+			}
+
+			.card-head {
+				display: flex;
+				align-items: baseline;
+				gap: 10px;
+				padding: 13px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.card-head h2 {
+				font-size: 13px;
+				font-weight: 600;
+			}
+
+			.card-head .sub {
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.card-head .right {
+				margin-left: auto;
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+
+			.note {
+				padding: 11px 16px 14px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			/* ---------- hero: ban timeline ---------- */
+
+			.ban-hero {
+				display: grid;
+				grid-template-columns: 250px 1fr;
+				gap: 20px;
+				padding: 18px;
+			}
+
+			.ban-hero .figure .big {
+				display: flex;
+				align-items: baseline;
+				gap: 8px;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 44px;
+				font-weight: 600;
+				letter-spacing: -0.03em;
+				line-height: 1;
+			}
+
+			.ban-hero .figure .unit {
+				font-size: 18px;
+				font-weight: 400;
+				color: var(--text-3);
+			}
+
+			.ban-hero .figure .what {
+				margin-top: 10px;
+				font-size: 12px;
+				color: var(--text-2);
+			}
+
+			.trend {
+				font-family: var(--mono);
+				font-size: 13px;
+				font-weight: 500;
+			}
+
+			.trend.bad {
+				color: var(--bad);
+			}
+
+			.trend.good {
+				color: var(--ok);
+			}
+
+			.breakdown {
+				margin-top: 14px;
+				padding-top: 12px;
+				border-top: 1px solid var(--border-subtle);
+				display: flex;
+				flex-direction: column;
+				gap: 5px;
+			}
+
+			.breakdown div {
+				display: flex;
+				justify-content: space-between;
+				gap: 10px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.breakdown div span {
+				display: flex;
+				align-items: center;
+				gap: 7px;
+			}
+
+			.sw {
+				width: 8px;
+				height: 8px;
+				border-radius: 2px;
+				flex-shrink: 0;
+			}
+
+			.breakdown div b {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-weight: 500;
+				color: var(--text-2);
+			}
+
+			svg.ban-chart {
+				display: block;
+				width: 100%;
+				height: 160px;
+			}
+
+			.axis-x {
+				display: flex;
+				justify-content: space-between;
+				margin-top: 6px;
+				font-family: var(--mono);
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			/* ---------- thresholds ---------- */
+
+			.knobs {
+				padding: 6px 0;
+			}
+
+			.knob {
+				display: grid;
+				grid-template-columns: 1fr auto;
+				align-items: center;
+				gap: 14px;
+				padding: 13px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.knob:last-of-type {
+				border-bottom: none;
+			}
+
+			.knob .k-label {
+				font-size: 12px;
+				font-weight: 500;
+			}
+
+			.knob .k-hint {
+				margin-top: 2px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.stepper {
+				display: flex;
+				align-items: center;
+				gap: 2px;
+			}
+
+			.stepper button {
+				width: 24px;
+				height: 26px;
+				border: 1px solid var(--border);
+				background: var(--surface);
+				color: var(--text-2);
+				font-size: 14px;
+			}
+
+			.stepper button:first-child {
+				border-radius: 6px 0 0 6px;
+			}
+
+			.stepper button:last-child {
+				border-radius: 0 6px 6px 0;
+			}
+
+			.stepper button:hover {
+				color: var(--text);
+				background: var(--bg-raised);
+			}
+
+			.stepper .val {
+				min-width: 54px;
+				height: 26px;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				gap: 4px;
+				border-top: 1px solid var(--border);
+				border-bottom: 1px solid var(--border);
+				background: var(--inset);
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 13px;
+				font-weight: 600;
+			}
+
+			.stepper .val .u {
+				font-family: var(--sans);
+				font-size: 10px;
+				font-weight: 400;
+				color: var(--text-3);
+			}
+
+			.toggle {
+				width: 38px;
+				height: 22px;
+				border-radius: 11px;
+				background: var(--primary);
+				position: relative;
+			}
+
+			.toggle::after {
+				content: '';
+				position: absolute;
+				top: 2px;
+				right: 2px;
+				width: 18px;
+				height: 18px;
+				border-radius: 50%;
+				background: var(--bg);
+			}
+
+			.toggle.off {
+				background: var(--surface);
+			}
+
+			.toggle.off::after {
+				right: auto;
+				left: 2px;
+				background: var(--text-3);
+			}
+
+			.preview {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				padding: 12px 16px;
+				border-top: 1px solid var(--border-subtle);
+				background: var(--inset);
+				font-size: 12px;
+				color: var(--text-2);
+			}
+
+			.preview b {
+				font-family: var(--mono);
+				color: var(--text);
+				font-weight: 600;
+			}
+
+			.preview .apply {
+				margin-left: auto;
+				padding: 5px 13px;
+				border-radius: 6px;
+				font-size: 12px;
+				font-weight: 500;
+				color: var(--bg);
+				background: var(--primary);
+			}
+
+			/* ---------- glass box: per entry point ---------- */
+
+			.machine {
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.machine:last-child {
+				border-bottom: none;
+			}
+
+			.m-head {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				padding: 12px 16px 8px;
+			}
+
+			.m-head .mname {
+				font-family: var(--mono);
+				font-size: 13px;
+				font-weight: 600;
+			}
+
+			.badge {
+				padding: 2px 7px;
+				border-radius: 4px;
+				font-size: 10px;
+				white-space: nowrap;
+				background: var(--surface);
+				color: var(--text-2);
+			}
+
+			.badge.proto-reality {
+				color: var(--v-reality);
+				background: oklch(0.75 0.14 350 / 0.12);
+			}
+
+			.badge.proto-xhttp {
+				color: var(--v-domain);
+				background: oklch(0.78 0.12 85 / 0.12);
+			}
+
+			.badge.proto-hyst {
+				color: oklch(0.72 0.12 200);
+				background: oklch(0.72 0.12 200 / 0.12);
+			}
+
+			.m-diag {
+				margin-left: auto;
+				font-size: 11px;
+			}
+
+			.m-diag.bad {
+				color: var(--bad);
+			}
+			.m-diag.warn {
+				color: var(--warn);
+			}
+			.m-diag.ok {
+				color: var(--ok);
+			}
+			.m-diag.mute {
+				color: var(--text-3);
+			}
+
+			.r-grid {
+				padding: 0 16px 12px;
+			}
+
+			.r-head,
+			.r-row {
+				display: grid;
+				grid-template-columns: 96px 108px 128px 52px 150px minmax(140px, 1fr) 56px;
+				align-items: center;
+				gap: 12px;
+			}
+
+			.r-head {
+				padding-bottom: 6px;
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.r-head .num,
+			.r-row .rtt {
+				text-align: right;
+			}
+
+			.r-row {
+				padding: 5px 0;
+			}
+
+			.r-row .rname {
+				font-family: var(--mono);
+				font-size: 11px;
+				color: var(--text);
+			}
+
+			/* the three probe signals, the glass part: tunnel up, bare tls on the
+			   ip, control tls to an allowed site */
+			.sig {
+				display: flex;
+				gap: 9px;
+				font-family: var(--mono);
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.sig b {
+				font-weight: 400;
+			}
+
+			.sig .y {
+				color: var(--ok);
+			}
+			.sig .n {
+				color: var(--bad);
+			}
+
+			.r-row .rtt {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.verdict {
+				padding: 2px 8px;
+				border-radius: 4px;
+				font-size: 11px;
+				white-space: nowrap;
+				width: fit-content;
+			}
+
+			.vb-clean {
+				color: var(--v-clean);
+				background: oklch(0.72 0.15 155 / 0.12);
+			}
+			.vb-reality {
+				color: var(--v-reality);
+				background: oklch(0.75 0.14 350 / 0.12);
+			}
+			.vb-domain {
+				color: var(--v-domain);
+				background: oklch(0.78 0.12 85 / 0.12);
+			}
+			.vb-ip {
+				color: var(--v-ip);
+				background: oklch(0.7 0.17 45 / 0.12);
+			}
+			.vb-fp {
+				color: var(--v-fp);
+				background: oklch(0.65 0.2 25 / 0.12);
+			}
+			.vb-mute {
+				color: var(--text-3);
+				background: oklch(0.52 0 0 / 0.12);
+			}
+
+			/* inline verdict timeline: one cell per probe bucket over the window */
+			.vstrip {
+				display: flex;
+				gap: 1.5px;
+				height: 16px;
+			}
+
+			.vstrip i {
+				flex: 1;
+				border-radius: 1px;
+				background: var(--inset);
+			}
+
+			.vstrip i.c-clean {
+				background: var(--v-clean);
+			}
+			.vstrip i.c-reality {
+				background: var(--v-reality);
+			}
+			.vstrip i.c-domain {
+				background: var(--v-domain);
+			}
+			.vstrip i.c-ip {
+				background: var(--v-ip);
+			}
+			.vstrip i.c-fp {
+				background: var(--v-fp);
+			}
+			.vstrip i.c-mute {
+				background: oklch(0.3 0 0);
+			}
+
+			.r-row .kill {
+				font-size: 11px;
+				color: var(--text-3);
+				padding: 2px 7px;
+				border-radius: 5px;
+				justify-self: end;
+			}
+
+			.r-row .kill:hover {
+				color: var(--bad);
+				background: oklch(0.65 0.2 25 / 0.1);
+			}
+
+			.vantage {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				padding: 10px 16px;
+				font-size: 11px;
+				color: var(--text-3);
+				border-top: 1px solid var(--border-subtle);
+			}
+
+			.vantage .vtag {
+				font-family: var(--mono);
+				color: var(--text-2);
+			}
+
+			@media (max-width: 1100px) {
+				.ban-hero {
+					grid-template-columns: 1fr;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<main class="page">
+			<div class="head">
+				<div>
+					<h1>censor · детекция</h1>
+					<p>
+						что ру-пробник видит по каждой точке входа и когда провал становится баном. тут же крутятся пороги
+						выселения из пула. веерный бан — вертикальный столб на ленте: много точек слегло в один момент.
+					</p>
+				</div>
+				<div class="ranges">
+					<button class="chip">15 м</button>
+					<button class="chip">1 ч</button>
+					<button class="chip on">6 ч</button>
+					<button class="chip">24 ч</button>
+				</div>
+			</div>
+
+			<!-- ======== 1. ban timeline — fan-ban reads as a vertical column ======== -->
+			<section class="card">
+				<div class="card-head">
+					<h2>баны во времени</h2>
+					<span class="sub">как сильно давит ТСПУ и чем именно. забаненное автоматика уже заменила — смотрим темп и форму, не остаток</span>
+				</div>
+				<div class="ban-hero">
+					<div class="figure">
+						<div class="big">4.2<span class="unit">бана/ч</span> <span class="trend bad">+2.6</span></div>
+						<div class="what">за окно 25 банов · сутки назад шло 1.6 /ч</div>
+						<div class="breakdown">
+							<div>
+								<span><i class="sw" style="background: var(--v-domain)"></i>домен заблокирован</span>
+								<b>3.3 /ч</b>
+							</div>
+							<div>
+								<span><i class="sw" style="background: var(--v-ip)"></i>ip забанен</span>
+								<b>0.6 /ч</b>
+							</div>
+							<div>
+								<span><i class="sw" style="background: var(--v-fp)"></i>отпечаток спалили</span>
+								<b>0.3 /ч</b>
+							</div>
+							<div>
+								<span><i class="sw" style="background: var(--v-mute)"></i>волн за окно</span>
+								<b>1</b>
+							</div>
+						</div>
+					</div>
+					<div>
+						<svg class="ban-chart" id="bans" viewBox="0 0 900 160" preserveAspectRatio="none"></svg>
+						<div class="axis-x">
+							<span>08:30</span><span>09:30</span><span>10:30</span><span>11:30</span><span>14:30</span>
+						</div>
+					</div>
+				</div>
+				<div class="note">
+					площадь — темп банов по слоям, снизу вверх: домен, ip, отпечаток. всплеск в 14:20 — волна: домены
+					рванули вверх, один цвет = жгут имя, а не адрес. ровный хвост снизу = фоновое давление, автоматика его
+					переваривает не замечая. network_down в баны не считается.
+				</div>
+			</section>
+
+			<!-- ======== 2. eviction thresholds — tuned next to the bans they catch ======== -->
+			<section class="card">
+				<div class="card-head">
+					<h2>пороги выселения</h2>
+					<span class="sub">когда точка выпадает из пула раздачи. крутятся здесь, рядом с бэнами</span>
+				</div>
+				<div class="knobs">
+					<div class="knob">
+						<div>
+							<div class="k-label">выселить точку после подряд провалов</div>
+							<div class="k-hint">сколько проб подряд должны сказать «забанен», чтобы снять из раздачи</div>
+						</div>
+						<div class="stepper">
+							<button>−</button>
+							<span class="val">3 <span class="u">пробы</span></span>
+							<button>+</button>
+						</div>
+					</div>
+					<div class="knob">
+						<div>
+							<div class="k-label">волна: N банов за окно</div>
+							<div class="k-hint">столько новых банов в окне помечают веерный бан и выселяют разом</div>
+						</div>
+						<div class="stepper">
+							<button>−</button>
+							<span class="val">3 <span class="u">бана</span></span>
+							<button>+</button>
+						</div>
+					</div>
+					<div class="knob">
+						<div>
+							<div class="k-label">окно волны</div>
+							<div class="k-hint">за сколько минут считать баны для порога волны</div>
+						</div>
+						<div class="stepper">
+							<button>−</button>
+							<span class="val">10 <span class="u">мин</span></span>
+							<button>+</button>
+						</div>
+					</div>
+					<div class="knob">
+						<div>
+							<div class="k-label">нужно подтверждение из 2+ точек наблюдения</div>
+							<div class="k-hint">бан из одной точки = региональный блок, не выселять по нему весь пул</div>
+						</div>
+						<div class="toggle"></div>
+					</div>
+					<div class="knob">
+						<div>
+							<div class="k-label">network_down не считать баном</div>
+							<div class="k-hint">контроль k2 упал = сеть пробника, точка ни при чём</div>
+						</div>
+						<div class="toggle"></div>
+					</div>
+				</div>
+				<div class="preview">
+					за сутки эти пороги сработали <b>42 раза</b>: <b>40</b> поштучно (3 провала подряд) и <b>2 волны</b>
+					(выселение разом). на тех же пробах порог помягче дал бы <b>+6</b> ложных выселений
+					<button class="apply">применить</button>
+				</div>
+			</section>
+
+			<!-- ======== 3. glass box: what the prober sees per entry point ======== -->
+			<section class="card">
+				<div class="card-head">
+					<h2>стеклянный ящик</h2>
+					<span class="sub">по каждой точке: три пробы, вердикт и его лента за окно</span>
+					<div class="right"><button class="chip on">под подозрением · 3</button><button class="chip">все</button></div>
+				</div>
+
+				<!-- box: domain blocked — the wave hit here -->
+				<div class="machine">
+					<div class="m-head">
+						<span class="mname">fra2</span>
+						<span class="badge">hetzner · frankfurt</span>
+						<span class="badge proto-xhttp">xhttp</span>
+						<span class="m-diag warn">домен заблокирован, адрес жив: новый домен, машину не трогать</span>
+					</div>
+					<div class="r-grid">
+						<div class="r-head">
+							<span>релей</span><span>прикрытие</span><span>пробы</span><span class="num">rtt</span
+							><span>вердикт</span><span>лента вердикта · 6 ч</span><span></span>
+						</div>
+						<div class="r-row">
+							<span class="rname">fra2-2</span>
+							<span class="sig" style="color: var(--text-2)">adress-cdn-pool.net</span>
+							<span class="sig"><b>R<span class="n">✗</span></b><b>k1<span class="y">✓</span></b><b>k2<span class="y">✓</span></b></span>
+							<span class="rtt">—</span>
+							<span><span class="verdict vb-domain">домен заблокирован</span></span>
+							<span class="vstrip" data-strip="domain-late"></span>
+							<span class="kill">мёртв</span>
+						</div>
+						<div class="r-row">
+							<span class="rname">fra2-1</span>
+							<span class="sig" style="color: var(--text-2)">files-origin-cdn.org</span>
+							<span class="sig"><b>R<span class="y">✓</span></b><b>k1<span class="y">✓</span></b><b>k2<span class="y">✓</span></b></span>
+							<span class="rtt">51 мс</span>
+							<span><span class="verdict vb-clean">чисто</span></span>
+							<span class="vstrip" data-strip="clean"></span>
+							<span class="kill">мёртв</span>
+						</div>
+					</div>
+				</div>
+
+				<!-- box: ip banned — tunnel and bare tls both down, control up -->
+				<div class="machine">
+					<div class="m-head">
+						<span class="mname">ams1</span>
+						<span class="badge">vultr · amsterdam</span>
+						<span class="badge proto-reality">vless-reality</span>
+						<span class="m-diag bad">ip машины забанен целиком: сменить ip у провайдера или сдать машину</span>
+					</div>
+					<div class="r-grid">
+						<div class="r-head">
+							<span>релей</span><span>прикрытие</span><span>пробы</span><span class="num">rtt</span
+							><span>вердикт</span><span>лента вердикта · 6 ч</span><span></span>
+						</div>
+						<div class="r-row">
+							<span class="rname">ams1-1</span>
+							<span class="sig" style="color: var(--text-2)">www.cloudflare.com</span>
+							<span class="sig"><b>R<span class="n">✗</span></b><b>k1<span class="n">✗</span></b><b>k2<span class="y">✓</span></b></span>
+							<span class="rtt">—</span>
+							<span><span class="verdict vb-ip">ip забанен</span></span>
+							<span class="vstrip" data-strip="ip-tail"></span>
+							<span class="kill">мёртв</span>
+						</div>
+						<div class="r-row">
+							<span class="rname">ams1-2</span>
+							<span class="sig" style="color: var(--text-2)">cdn.jsdelivr.net</span>
+							<span class="sig"><b>R<span class="n">✗</span></b><b>k1<span class="n">✗</span></b><b>k2<span class="y">✓</span></b></span>
+							<span class="rtt">—</span>
+							<span><span class="verdict vb-ip">ip забанен</span></span>
+							<span class="vstrip" data-strip="ip-tail"></span>
+							<span class="kill">мёртв</span>
+						</div>
+					</div>
+				</div>
+
+				<!-- box: prober blind — control tls down too, nothing to say -->
+				<div class="machine">
+					<div class="m-head">
+						<span class="mname">sin1</span>
+						<span class="badge">vultr · singapore</span>
+						<span class="badge proto-hyst">hysteria2</span>
+						<span class="m-diag mute">пробник сам без сети, по машине ничего не сказать</span>
+					</div>
+					<div class="r-grid">
+						<div class="r-head">
+							<span>релей</span><span>прикрытие</span><span>пробы</span><span class="num">rtt</span
+							><span>вердикт</span><span>лента вердикта · 6 ч</span><span></span>
+						</div>
+						<div class="r-row">
+							<span class="rname">sin1-1</span>
+							<span class="sig" style="color: var(--text-2)">sfu-sg-1</span>
+							<span class="sig"><b>R<span class="n">✗</span></b><b>k1<span class="n">✗</span></b><b>k2<span class="n">✗</span></b></span>
+							<span class="rtt">—</span>
+							<span><span class="verdict vb-mute">точка offline</span></span>
+							<span class="vstrip" data-strip="mute-tail"></span>
+							<span class="kill">мёртв</span>
+						</div>
+					</div>
+				</div>
+
+				<div class="vantage">
+					<span>пробят из</span>
+					<span class="vtag">мск</span><span class="vtag">спб</span><span class="vtag">екб</span>
+					<span style="margin-left: auto">лента и вердикт — худшее из трёх точек; расхождение точек = региональный блок, не веерный</span>
+				</div>
+			</section>
+		</main>
+
+		<script>
+			function wobble(i, seed) {
+				return (Math.sin(i * 0.7 + seed) + Math.sin(i * 0.23 + seed * 3)) / 2;
+			}
+
+			function path(vals, w, h, pad, min, max) {
+				const n = vals.length;
+				const x = (i) => (i / (n - 1)) * w;
+				const y = (v) => h - pad - ((v - min) / (max - min)) * (h - pad * 2);
+				return vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+			}
+
+			// --- ban rate over the window, stacked area by layer; a wave is a spike ---
+			(function bans() {
+				const svg = document.getElementById('bans');
+				const W = 900,
+					H = 160,
+					PAD = 10;
+				const n = 48;
+
+				// gaussian bump for a short coordinated wave
+				const spike = (i, c, w) => Math.exp(-((i - c) ** 2) / (2 * w * w));
+
+				// bans/hour per layer: a steady background everywhere, a sharp domain
+				// wave near 14:20 (i≈30), minor ip/fp bumps elsewhere
+				const dom = Array.from({ length: n }, (_, i) => Math.max(0, 1.7 + wobble(i, 1) * 0.6 + spike(i, 30, 1.5) * 9));
+				const ip = Array.from({ length: n }, (_, i) => Math.max(0, 0.5 + wobble(i, 4) * 0.3 + spike(i, 40, 2.2) * 1.3));
+				const fp = Array.from({ length: n }, (_, i) => Math.max(0, 0.3 + wobble(i, 7) * 0.2 + spike(i, 22, 2.2) * 0.9));
+
+				const c0 = dom;
+				const c1 = dom.map((v, i) => v + ip[i]);
+				const c2 = c1.map((v, i) => v + fp[i]);
+				const max = Math.max(...c2) * 1.14;
+
+				let out = '';
+				for (let g = 0; g <= 2; g++) {
+					const gy = PAD + (g / 2) * (H - PAD * 2);
+					out += `<line x1="0" y1="${gy}" x2="${W}" y2="${gy}" stroke="oklch(0.22 0 0)" stroke-width="1" />`;
+				}
+
+				// cumulative tops drawn largest → smallest, so the bands stack:
+				// bottom = domain, middle = ip, top = fingerprint
+				for (const [vals, fill, stroke] of [
+					[c2, 'oklch(0.65 0.2 25 / 0.5)', 'var(--v-fp)'],
+					[c1, 'oklch(0.7 0.17 45 / 0.6)', 'var(--v-ip)'],
+					[c0, 'oklch(0.78 0.12 85 / 0.6)', 'var(--v-domain)'],
+				]) {
+					const d = path(vals, W, H, PAD, 0, max);
+					out += `<path d="${d} L${W},${H} L0,${H} Z" fill="${fill}" />`;
+					out += `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="1.3" stroke-linejoin="round" />`;
+				}
+
+				// mark the wave
+				const wx = (30 / (n - 1)) * W;
+				out += `<line x1="${wx.toFixed(1)}" y1="0" x2="${wx.toFixed(1)}" y2="${H}" stroke="oklch(0.65 0.2 25 / 0.45)" stroke-width="1" stroke-dasharray="2 3" />`;
+				out += `<text x="${(wx + 6).toFixed(1)}" y="15" fill="var(--v-fp)" font-size="10" font-family="monospace">волна 14:20</text>`;
+
+				svg.innerHTML = out;
+			})();
+
+			// --- inline verdict strips: 36 buckets over the window ---
+			const SEG = 36;
+			const STRIPS = {
+				clean: () => 'c-clean',
+				'domain-late': (i) => (i >= 28 ? 'c-domain' : 'c-clean'),
+				'ip-tail': (i) => (i >= 30 ? 'c-ip' : i >= 27 ? 'c-domain' : 'c-clean'),
+				'mute-tail': (i) => (i >= 24 ? 'c-mute' : 'c-clean'),
+			};
+			for (const strip of document.querySelectorAll('.vstrip')) {
+				const shape = STRIPS[strip.dataset.strip] ?? STRIPS.clean;
+				strip.innerHTML = Array.from({ length: SEG }, (_, i) => `<i class="${shape(i)}"></i>`).join('');
+			}
+
+			// --- mockup interactions ---
+			for (const group of document.querySelectorAll('.ranges, .right')) {
+				group.addEventListener('click', (e) => {
+					if (!e.target.classList.contains('chip')) return;
+					for (const c of group.querySelectorAll('.chip')) c.classList.toggle('on', c === e.target);
+				});
+			}
+			for (const t of document.querySelectorAll('.toggle')) {
+				t.addEventListener('click', () => t.classList.toggle('off'));
+			}
+		</script>
+	</body>
+</html>

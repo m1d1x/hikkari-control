@@ -1,0 +1,61 @@
+/*
+ * Column layout for the user list.
+ *
+ * Header and rows live in different components, so the template is one
+ * inherited custom property rather than two copies that drift. The rules are
+ * global on purpose: Svelte scopes styles per component, and this IS the
+ * contract between the page's header row and UserCard.
+ *
+ * What may shrink and what may not: the username is how a person is found and
+ * the action buttons are what the page is open for, so neither is ever cut.
+ * Everything else is secondary stat — as the container narrows, the least
+ * useful pair drops out, in order.
+ */
+.users-table {
+	container-type: inline-size;
+
+	--users-actions-w: 280px;
+	--users-grid:
+		minmax(130px, 1.6fr) /* username — never below 130 */
+		92px /* id */
+		84px /* last seen */
+		92px /* avg session */
+		92px /* max session */
+		62px /* stickiness */
+		76px /* s3 */
+		70px /* messages */
+		66px /* servers */
+		84px /* registered */
+		56px; /* fraud */
+}
+
+@container (max-width: 1260px) {
+	.users-table {
+		--users-grid:
+			minmax(130px, 1.6fr) 92px 84px 92px 62px 76px 70px 66px 56px;
+	}
+	.users-table .c-max,
+	.users-table .c-created {
+		display: none;
+	}
+}
+
+@container (max-width: 1090px) {
+	.users-table {
+		--users-grid: minmax(130px, 1.6fr) 92px 84px 92px 62px 70px 56px;
+	}
+	.users-table .c-s3,
+	.users-table .c-servers {
+		display: none;
+	}
+}
+
+@container (max-width: 950px) {
+	.users-table {
+		--users-grid: minmax(130px, 1.6fr) 92px 92px 70px 56px;
+	}
+	.users-table .c-lastseen,
+	.users-table .c-sticky {
+		display: none;
+	}
+}

@@ -1,0 +1,104 @@
+{
+  "public_key_hex": "2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12",
+  "key_id": "entry-1",
+  "now": 1760000000,
+  "relay": {
+    "address": "203.0.113.7",
+    "covers": [
+      "www.samsung.com",
+      "www.nvidia.com"
+    ],
+    "expires_at": 1762592000,
+    "issued_at": 1760000000,
+    "name": "ams1-1",
+    "port": 443,
+    "proto": "vless-reality-vision",
+    "public_key": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+    "short_id": "0123abcd",
+    "uuid": "00000000-1111-2222-3333-444444444444"
+  },
+  "voice_relay": {
+    "address": "203.0.113.8",
+    "auth": "aaaaaaaaaaaaaaaaaaaa",
+    "cert_sha256": "abababababababababababababababababababababababababababababababab",
+    "expires_at": 1762592000,
+    "issued_at": 1760000000,
+    "masks": [
+      {
+        "type": "noise",
+        "junk": [
+          {
+            "len": [
+              40,
+              90
+            ],
+            "delay_ms": [
+              1,
+              3
+            ]
+          }
+        ],
+        "reset_secs": [
+          0,
+          0
+        ]
+      },
+      {
+        "type": "salamander",
+        "password": "pwpwpwpwpwpwpwpwpwpw"
+      }
+    ],
+    "name": "ams1-2",
+    "port": 8443,
+    "proto": "hysteria2",
+    "region": "ru",
+    "server_name": "ams1-2.relay"
+  },
+  "xhttp_relay": {
+    "address": "203.0.113.9",
+    "expires_at": 1762592000,
+    "host": "cdn.example-relay.xyz",
+    "issued_at": 1760000000,
+    "mode": "stream-up",
+    "name": "ams1-3",
+    "path": "/s3cr3tPathAbCdEf",
+    "port": 443,
+    "proto": "vless-xhttp",
+    "uuid": "55555555-6666-7777-8888-999999999999"
+  },
+  "sources": {
+    "sources": [
+      {
+        "kind": "doh_txt",
+        "resolver": "https://dns.example.org/dns-query",
+        "name": "e.example.org"
+      },
+      {
+        "kind": "https",
+        "url": "https://cdn.example.org/e.json"
+      }
+    ],
+    "issued_at": 1760000000,
+    "expires_at": 1762592000
+  },
+  "envelope": {
+    "key_id": "entry-1",
+    "signature": "Xz7IzQ3GaTAPEhEwf+Gl3GNPRatlAMI4qGEuTOavQa/Pp+80mQN071QcmAwdEbOGfqCIdsSepccpzSqq2Ik+AA==",
+    "payload": "eyJhZGRyZXNzIjoiMjAzLjAuMTEzLjciLCJjb3ZlcnMiOlsid3d3LnNhbXN1bmcuY29tIiwid3d3Lm52aWRpYS5jb20iXSwiZXhwaXJlc19hdCI6MTc2MjU5MjAwMCwiaXNzdWVkX2F0IjoxNzYwMDAwMDAwLCJuYW1lIjoiYW1zMS0xIiwicG9ydCI6NDQzLCJwcm90byI6InZsZXNzLXJlYWxpdHktdmlzaW9uIiwicHVibGljX2tleSI6IkJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2MiLCJzaG9ydF9pZCI6IjAxMjNhYmNkIiwidXVpZCI6IjAwMDAwMDAwLTExMTEtMjIyMi0zMzMzLTQ0NDQ0NDQ0NDQ0NCJ9"
+  },
+  "voice_envelope": {
+    "key_id": "entry-1",
+    "signature": "KLHMIaqZc2817k5B+A1vBvLyMMG3kot0MyIf5+DMP8a9y0lZc8rIW4t9Iva+j+yhji8HncT3tkQUTiLDJEmnBQ==",
+    "payload": "eyJhZGRyZXNzIjoiMjAzLjAuMTEzLjgiLCJhdXRoIjoiYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJjZXJ0X3NoYTI1NiI6ImFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWIiLCJleHBpcmVzX2F0IjoxNzYyNTkyMDAwLCJpc3N1ZWRfYXQiOjE3NjAwMDAwMDAsIm1hc2tzIjpbeyJ0eXBlIjoibm9pc2UiLCJqdW5rIjpbeyJsZW4iOls0MCw5MF0sImRlbGF5X21zIjpbMSwzXX1dLCJyZXNldF9zZWNzIjpbMCwwXX0seyJ0eXBlIjoic2FsYW1hbmRlciIsInBhc3N3b3JkIjoicHdwd3B3cHdwd3B3cHdwd3B3cHcifV0sIm5hbWUiOiJhbXMxLTIiLCJwb3J0Ijo4NDQzLCJwcm90byI6Imh5c3RlcmlhMiIsInJlZ2lvbiI6InJ1Iiwic2VydmVyX25hbWUiOiJhbXMxLTIucmVsYXkifQ=="
+  },
+  "xhttp_envelope": {
+    "key_id": "entry-1",
+    "signature": "BKUzw4s6EcxgomMcugJ1IwcFew5wCfi+1aXrJoqlPjQxgDeu19OwN30xVFPcjyNY45ynQSMm05n5slijUhFjBQ==",
+    "payload": "eyJhZGRyZXNzIjoiMjAzLjAuMTEzLjkiLCJleHBpcmVzX2F0IjoxNzYyNTkyMDAwLCJob3N0IjoiY2RuLmV4YW1wbGUtcmVsYXkueHl6IiwiaXNzdWVkX2F0IjoxNzYwMDAwMDAwLCJtb2RlIjoic3RyZWFtLXVwIiwibmFtZSI6ImFtczEtMyIsInBhdGgiOiIvczNjcjN0UGF0aEFiQ2RFZiIsInBvcnQiOjQ0MywicHJvdG8iOiJ2bGVzcy14aHR0cCIsInV1aWQiOiI1NTU1NTU1NS02NjY2LTc3NzctODg4OC05OTk5OTk5OTk5OTkifQ=="
+  },
+  "sources_envelope": {
+    "key_id": "entry-1",
+    "signature": "nLqdjbTcRny6fi70iXwmVNHOUg1WCeP7nNe2A/zKWWZuLgv2JgOizA2sOxFVTwRUD/VNrNj78z8ZR2d0uxnzBw==",
+    "payload": "eyJzb3VyY2VzIjpbeyJraW5kIjoiZG9oX3R4dCIsInJlc29sdmVyIjoiaHR0cHM6Ly9kbnMuZXhhbXBsZS5vcmcvZG5zLXF1ZXJ5IiwibmFtZSI6ImUuZXhhbXBsZS5vcmcifSx7ImtpbmQiOiJodHRwcyIsInVybCI6Imh0dHBzOi8vY2RuLmV4YW1wbGUub3JnL2UuanNvbiJ9XSwiaXNzdWVkX2F0IjoxNzYwMDAwMDAwLCJleHBpcmVzX2F0IjoxNzYyNTkyMDAwfQ=="
+  }
+}

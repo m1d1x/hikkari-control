@@ -1,0 +1,95 @@
+/*
+ * Design tokens for the anti-blocking console (roadmap 42 П9.9 §6а).
+ *
+ * The overview and the fleet screens were hand-tuned first and are the
+ * reference: every other screen in the section inherits these values instead
+ * of re-declaring its own palette, so the six pages read as one console. The
+ * two reference pages still carry their own copy inline; this file is what the
+ * rest of the section uses, and what new screens pick up by putting
+ * `entry-scope` on their root element.
+ */
+
+.entry-scope {
+	--bg: oklch(0.14 0 0);
+	--bg-raised: oklch(0.17 0 0);
+	--surface: oklch(0.23 0 0);
+	--surface-hover: oklch(0.26 0 0);
+	--card-bg: oklch(0.2 0 0);
+	--inset: oklch(0.17 0 0);
+
+	--primary: oklch(0.75 0.14 350);
+	--primary-subtle: oklch(0.75 0.14 350 / 0.1);
+
+	--ok: oklch(0.72 0.15 155);
+	--warn: oklch(0.78 0.12 85);
+	--bad: oklch(0.65 0.2 25);
+	--unknown: oklch(0.52 0 0);
+
+	--c-reality: oklch(0.75 0.14 350);
+	--c-hyst: oklch(0.72 0.12 200);
+	--c-xhttp: oklch(0.78 0.12 85);
+	--c-direct: oklch(0.72 0.15 155);
+	--c-unknown: oklch(0.72 0.16 290);
+
+	--border: oklch(0.24 0 0);
+	--border-subtle: oklch(0.19 0 0);
+
+	--text: oklch(0.93 0 0);
+	--text-2: oklch(0.62 0 0);
+	--text-3: oklch(0.42 0 0);
+
+	--sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+	--mono: 'IBM Plex Mono', monospace;
+
+	color: var(--text);
+	font-family: var(--sans);
+	font-size: 13px;
+	line-height: 1.5;
+	max-width: 1400px;
+	-webkit-font-smoothing: antialiased;
+}
+
+/* The page head is identical on every screen: a lowercase name on the left,
+   the range picker pushed to the right. */
+.entry-scope .head {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	margin-bottom: 18px;
+}
+
+.entry-scope .head h1 {
+	margin: 0;
+	font-size: 20px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	color: var(--text);
+}
+
+.entry-scope .head .right {
+	margin-left: auto;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.entry-scope .hint,
+.entry-scope .empty {
+	margin: 0;
+	padding: 16px;
+	font-size: 13px;
+	color: var(--text-2);
+}
+
+.entry-scope .err-banner {
+	margin: 0 0 12px;
+	color: var(--bad);
+	font-size: 13px;
+}
+
+/* Tabular figures read as a column; names of machines, relays and domains are
+   identifiers and get the same treatment. */
+.entry-scope .m {
+	font-family: var(--mono);
+	font-variant-numeric: tabular-nums;
+}

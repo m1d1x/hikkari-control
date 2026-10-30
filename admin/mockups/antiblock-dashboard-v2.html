@@ -1,0 +1,1083 @@
+<!doctype html>
+<html lang="ru">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>антиблок — дашборд v2</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+			rel="stylesheet"
+		/>
+		<style>
+			:root {
+				--bg: oklch(0.14 0 0);
+				--bg-raised: oklch(0.17 0 0);
+				--surface: oklch(0.23 0 0);
+				--card-bg: oklch(0.2 0 0);
+
+				--primary: oklch(0.75 0.14 350);
+				--primary-subtle: oklch(0.75 0.14 350 / 0.1);
+
+				--ok: oklch(0.72 0.15 155);
+				--warn: oklch(0.78 0.12 85);
+				--bad: oklch(0.65 0.2 25);
+				--unknown: oklch(0.52 0 0);
+
+				--c-reality: oklch(0.75 0.14 350);
+				--c-hyst: oklch(0.72 0.12 200);
+				--c-xhttp: oklch(0.78 0.12 85);
+				--c-direct: oklch(0.72 0.15 155);
+
+				--border: oklch(0.24 0 0);
+				--border-subtle: oklch(0.19 0 0);
+
+				--text: oklch(0.93 0 0);
+				--text-2: oklch(0.62 0 0);
+				--text-3: oklch(0.42 0 0);
+
+				--sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+				--mono: 'IBM Plex Mono', monospace;
+			}
+
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+			}
+
+			body {
+				background: var(--bg);
+				color: var(--text);
+				font-family: var(--sans);
+				font-size: 13px;
+				line-height: 1.5;
+				-webkit-font-smoothing: antialiased;
+			}
+
+			button {
+				font: inherit;
+				color: inherit;
+				background: none;
+				border: none;
+				cursor: pointer;
+			}
+
+			.mono {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+			}
+
+			.page {
+				padding: 24px;
+				max-width: 1400px;
+			}
+
+			/* ---------- head ---------- */
+
+			.head {
+				display: flex;
+				align-items: flex-end;
+				gap: 16px;
+				margin-bottom: 20px;
+			}
+
+			.head h1 {
+				font-size: 20px;
+				font-weight: 600;
+				letter-spacing: -0.01em;
+			}
+
+			.head p {
+				margin-top: 4px;
+				font-size: 12px;
+				color: var(--text-2);
+			}
+
+			.ranges {
+				margin-left: auto;
+				display: flex;
+				gap: 4px;
+			}
+
+			.chip {
+				padding: 4px 11px;
+				border-radius: 6px;
+				font-size: 11px;
+				color: var(--text-2);
+				border: 1px solid var(--border);
+			}
+
+			.chip:hover {
+				background: var(--surface);
+			}
+
+			.chip.on {
+				color: var(--text);
+				background: var(--primary-subtle);
+				border-color: oklch(0.75 0.14 350 / 0.35);
+			}
+
+			/* ---------- hero numbers ---------- */
+
+			.hero {
+				display: grid;
+				grid-template-columns: 1.4fr 1fr 1fr 1fr;
+				gap: 1px;
+				background: var(--border-subtle);
+				border: 1px solid var(--border-subtle);
+				border-radius: 8px;
+				overflow: hidden;
+				margin-bottom: 16px;
+			}
+
+			.h-cell {
+				background: var(--card-bg);
+				padding: 16px 18px;
+			}
+
+			.h-cell .label {
+				display: block;
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.h-cell .value {
+				display: flex;
+				align-items: baseline;
+				gap: 7px;
+				margin-top: 5px;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 26px;
+				font-weight: 600;
+				letter-spacing: -0.02em;
+			}
+
+			.h-cell .unit {
+				font-size: 13px;
+				font-weight: 400;
+				color: var(--text-3);
+			}
+
+			.h-cell .meta {
+				display: block;
+				margin-top: 3px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.trend {
+				font-family: var(--mono);
+				font-size: 12px;
+				font-weight: 500;
+			}
+
+			.trend.up-good,
+			.trend.down-good {
+				color: var(--ok);
+			}
+
+			.trend.up-bad,
+			.trend.down-bad {
+				color: var(--bad);
+			}
+
+			/* cost cell: three numbers in a row */
+			.costs {
+				display: grid;
+				grid-template-columns: repeat(3, 1fr);
+				gap: 14px;
+				margin-top: 5px;
+			}
+
+			.costs > div .n {
+				display: block;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 20px;
+				font-weight: 600;
+				letter-spacing: -0.02em;
+			}
+
+			.costs > div .k {
+				display: block;
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.costs .proj .n {
+				color: var(--warn);
+			}
+
+			/* ---------- cards ---------- */
+
+			.card {
+				background: var(--card-bg);
+				border: 1px solid var(--border-subtle);
+				border-radius: 8px;
+				margin-bottom: 16px;
+			}
+
+			.card-head {
+				display: flex;
+				align-items: baseline;
+				gap: 10px;
+				padding: 13px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.card-head h2 {
+				font-size: 13px;
+				font-weight: 600;
+			}
+
+			.card-head .sub {
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.card-head .right {
+				margin-left: auto;
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+
+			.card-body {
+				padding: 16px;
+			}
+
+			.split {
+				display: grid;
+				grid-template-columns: 1fr 324px;
+				gap: 16px;
+				align-items: start;
+			}
+
+			.col-r > .card:last-child {
+				position: sticky;
+				top: 24px;
+			}
+
+			/* ---------- big chart ---------- */
+
+			.legend {
+				display: flex;
+				gap: 14px;
+			}
+
+			.legend span {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.legend i {
+				width: 9px;
+				height: 2px;
+				border-radius: 1px;
+			}
+
+			svg.big {
+				display: block;
+				width: 100%;
+				height: 190px;
+			}
+
+			.axis-x {
+				display: flex;
+				justify-content: space-between;
+				margin-top: 6px;
+				font-family: var(--mono);
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.verdictline {
+				margin-top: 12px;
+				padding-top: 12px;
+				border-top: 1px solid var(--border-subtle);
+				font-size: 12px;
+				color: var(--text-2);
+			}
+
+			.verdictline b {
+				color: var(--text);
+				font-weight: 500;
+			}
+
+			/* ---------- protocol cards ---------- */
+
+			.protos {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 12px;
+				padding: 16px;
+			}
+
+			.proto {
+				border: 1px solid var(--border-subtle);
+				border-radius: 7px;
+				padding: 13px 14px;
+				background: oklch(0.17 0 0);
+			}
+
+			.proto .top {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+
+			.proto .name {
+				font-family: var(--mono);
+				font-size: 12px;
+				font-weight: 500;
+			}
+
+			.proto .role {
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.proto .share {
+				margin-left: auto;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 17px;
+				font-weight: 600;
+			}
+
+			.sharebar {
+				height: 3px;
+				border-radius: 2px;
+				background: oklch(0.26 0 0);
+				margin: 9px 0 12px;
+				overflow: hidden;
+			}
+
+			.sharebar i {
+				display: block;
+				height: 100%;
+			}
+
+			.stats {
+				display: grid;
+				grid-template-columns: repeat(4, 1fr);
+				gap: 8px;
+			}
+
+			.stats div .n {
+				display: block;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 14px;
+				font-weight: 500;
+			}
+
+			.stats div .k {
+				display: block;
+				margin-top: 1px;
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.n.warn {
+				color: var(--warn);
+			}
+			.n.bad {
+				color: var(--bad);
+			}
+			.n.ok {
+				color: var(--ok);
+			}
+
+			svg.spark {
+				display: block;
+				width: 100%;
+				height: 34px;
+				margin-top: 11px;
+			}
+
+			.proto .foot {
+				display: flex;
+				justify-content: space-between;
+				margin-top: 5px;
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			/* ---------- machines ---------- */
+
+			.box-row {
+				display: grid;
+				grid-template-columns: 168px 1fr;
+				gap: 16px;
+				padding: 11px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.box-row:last-child {
+				border-bottom: none;
+			}
+
+			.box-id .name {
+				font-family: var(--mono);
+				font-size: 12px;
+				font-weight: 500;
+			}
+
+			.box-id .where {
+				margin-top: 2px;
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.tag {
+				display: inline-block;
+				margin-top: 5px;
+				padding: 2px 7px;
+				border-radius: 4px;
+				font-size: 10px;
+			}
+
+			.v-ok {
+				color: var(--ok);
+				background: oklch(0.72 0.15 155 / 0.12);
+			}
+			.v-warn {
+				color: var(--warn);
+				background: oklch(0.78 0.12 85 / 0.12);
+			}
+			.v-bad {
+				color: var(--bad);
+				background: oklch(0.65 0.2 25 / 0.12);
+			}
+			.v-mute {
+				color: var(--text-3);
+				background: oklch(0.52 0 0 / 0.12);
+			}
+
+			.relays {
+				display: flex;
+				flex-direction: column;
+				gap: 7px;
+			}
+
+			.relay {
+				display: grid;
+				grid-template-columns: 104px 1fr 92px;
+				align-items: center;
+				gap: 12px;
+			}
+
+			.relay .who {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				font-family: var(--mono);
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.dot {
+				width: 6px;
+				height: 6px;
+				border-radius: 50%;
+				flex-shrink: 0;
+			}
+
+			.dot.ok {
+				background: var(--ok);
+			}
+			.dot.warn {
+				background: var(--warn);
+			}
+			.dot.bad {
+				background: var(--bad);
+			}
+			.dot.mute {
+				background: var(--unknown);
+			}
+
+			.uptime {
+				display: flex;
+				gap: 1.5px;
+				height: 18px;
+			}
+
+			.uptime i {
+				flex: 1;
+				border-radius: 1px;
+				background: var(--ok);
+			}
+
+			.uptime i.w {
+				background: var(--warn);
+			}
+			.uptime i.b {
+				background: var(--bad);
+			}
+			.uptime i.m {
+				background: oklch(0.3 0 0);
+			}
+
+			.relay .num {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 11px;
+				color: var(--text-2);
+				text-align: right;
+			}
+
+			/* ---------- right column ---------- */
+
+			.auto-row {
+				display: flex;
+				align-items: baseline;
+				gap: 10px;
+				padding: 9px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+				font-size: 12px;
+			}
+
+			.auto-row:last-child {
+				border-bottom: none;
+			}
+
+			.auto-row .ic {
+				width: 5px;
+				height: 5px;
+				border-radius: 50%;
+				background: var(--ok);
+				flex-shrink: 0;
+				transform: translateY(-2px);
+			}
+
+			.auto-row .ic.w {
+				background: var(--warn);
+			}
+
+			.auto-row .t {
+				flex: 1;
+			}
+
+			.auto-row .t em {
+				font-style: normal;
+				font-family: var(--mono);
+				color: var(--text);
+			}
+
+			.auto-row .ago {
+				font-family: var(--mono);
+				font-size: 10px;
+				color: var(--text-3);
+				white-space: nowrap;
+			}
+
+			.inc {
+				display: flex;
+				gap: 11px;
+				padding: 12px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.inc:last-child {
+				border-bottom: none;
+			}
+
+			.inc .bar {
+				width: 2px;
+				border-radius: 1px;
+				flex-shrink: 0;
+				background: var(--bad);
+			}
+
+			.inc .bar.w {
+				background: var(--warn);
+			}
+
+			.inc .what {
+				font-size: 12px;
+				font-weight: 500;
+			}
+
+			.inc .why {
+				margin-top: 2px;
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.inc .when {
+				margin-top: 4px;
+				font-family: var(--mono);
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.act {
+				margin-top: 8px;
+				padding: 5px 11px;
+				border-radius: 6px;
+				font-size: 11px;
+				border: 1px solid var(--border);
+				color: var(--text-2);
+			}
+
+			.act:hover {
+				background: var(--surface);
+				color: var(--text);
+			}
+
+			.act.auto {
+				color: var(--ok);
+				border-color: oklch(0.72 0.15 155 / 0.3);
+				background: oklch(0.72 0.15 155 / 0.08);
+				cursor: default;
+			}
+
+			.quiet {
+				padding: 18px 16px;
+				font-size: 12px;
+				color: var(--text-3);
+				text-align: center;
+			}
+
+			.note {
+				padding: 10px 16px 14px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			@media (max-width: 1100px) {
+				.split,
+				.protos,
+				.hero {
+					grid-template-columns: 1fr;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<main class="page">
+			<div class="head">
+				<div>
+					<h1>антиблок</h1>
+					<p>
+						всё чинится само. эта страница отвечает на один вопрос: пробивается ли связь, и во сколько это обходится.
+					</p>
+				</div>
+				<div class="ranges">
+					<button class="chip">24 ч</button>
+					<button class="chip on">7 дн</button>
+					<button class="chip">30 дн</button>
+					<button class="chip">90 дн</button>
+				</div>
+			</div>
+
+			<div class="hero">
+				<div class="h-cell">
+					<span class="label">деньги</span>
+					<div class="costs">
+						<div>
+							<span class="n">$1.42</span>
+							<span class="k">в день</span>
+						</div>
+						<div>
+							<span class="n">$42.60</span>
+							<span class="k">за месяц</span>
+						</div>
+						<div class="proj">
+							<span class="n">$58.90</span>
+							<span class="k">прогноз месяца</span>
+						</div>
+					</div>
+					<span class="meta">при нынешнем темпе сгорания доменов. лимит $150</span>
+				</div>
+				<div class="h-cell">
+					<span class="label">связь пробивается</span>
+					<div class="value">
+						94.2<span class="unit">%</span>
+						<span class="trend down-bad">&minus;2.1</span>
+					</div>
+					<span class="meta">сессий, вставших с первой попытки</span>
+				</div>
+				<div class="h-cell">
+					<span class="label">жизнь домена, медиана</span>
+					<div class="value">
+						38<span class="unit">ч</span>
+						<span class="trend down-bad">&minus;23 ч</span>
+					</div>
+					<span class="meta">неделю назад 61 ч</span>
+				</div>
+				<div class="h-cell">
+					<span class="label">жизнь релея, медиана</span>
+					<div class="value">
+						9.2<span class="unit">дн</span>
+						<span class="trend up-good">+1.4</span>
+					</div>
+					<span class="meta">за всё время 1526 релеев</span>
+				</div>
+			</div>
+
+			<div class="split">
+				<div class="col-l">
+					<!-- ---------- the long history ---------- -->
+					<section class="card">
+						<div class="card-head">
+							<h2>выживаемость</h2>
+							<span class="sub">главный график: куда движется давление цензора</span>
+							<div class="right legend">
+								<span><i style="background: var(--c-reality)"></i>домен</span>
+								<span><i style="background: var(--c-hyst)"></i>релей</span>
+								<span><i style="background: var(--warn)"></i>пробивается</span>
+							</div>
+						</div>
+						<div class="card-body">
+							<svg class="big" id="survival" viewBox="0 0 900 190" preserveAspectRatio="none"></svg>
+							<div class="axis-x">
+								<span>22 сен</span><span>29 сен</span><span>6 окт</span><span>13 окт</span><span>22 окт</span>
+							</div>
+							<div class="verdictline">
+								<b>жизнь домена упала с 61 до 38 ч за неделю</b>, жизнь релея не изменилась. значит жгут имя, а не
+								адрес: давить надо на подбор доменов, машины ни при чём.
+							</div>
+						</div>
+					</section>
+
+					<!-- ---------- protocols ---------- -->
+					<section class="card">
+						<div class="card-head">
+							<h2>протоколы</h2>
+							<span class="sub">кто сколько тащит и какой ценой</span>
+							<div class="right"><span class="chip">сравнить за 30 дн</span></div>
+						</div>
+						<div class="protos">
+							<div class="proto">
+								<div class="top">
+									<span class="name">vless-reality</span>
+									<span class="role">основной</span>
+									<span class="share" style="color: var(--c-reality)">58%</span>
+								</div>
+								<div class="sharebar"><i style="width: 58%; background: var(--c-reality)"></i></div>
+								<div class="stats">
+									<div><span class="n">48</span><span class="k">пинг p50, мс</span></div>
+									<div><span class="n">121</span><span class="k">p95</span></div>
+									<div><span class="n ok">0.2%</span><span class="k">потери</span></div>
+									<div><span class="n">11 дн</span><span class="k">жизнь</span></div>
+								</div>
+								<svg class="spark" viewBox="0 0 300 34" preserveAspectRatio="none" data-spark="reality"></svg>
+								<div class="foot"><span>пинг за 7 дней</span><span>3.1 гб на юзера в сутки</span></div>
+							</div>
+
+							<div class="proto">
+								<div class="top">
+									<span class="name">hysteria2</span>
+									<span class="role">голос</span>
+									<span class="share" style="color: var(--c-hyst)">19%</span>
+								</div>
+								<div class="sharebar"><i style="width: 19%; background: var(--c-hyst)"></i></div>
+								<div class="stats">
+									<div><span class="n">31</span><span class="k">пинг p50, мс</span></div>
+									<div><span class="n">74</span><span class="k">p95</span></div>
+									<div><span class="n warn">1.8%</span><span class="k">потери</span></div>
+									<div><span class="n">14 дн</span><span class="k">жизнь</span></div>
+								</div>
+								<svg class="spark" viewBox="0 0 300 34" preserveAspectRatio="none" data-spark="hyst"></svg>
+								<div class="foot"><span>пинг за 7 дней</span><span>0.9 гб на юзера в сутки</span></div>
+							</div>
+
+							<div class="proto">
+								<div class="top">
+									<span class="name">xhttp</span>
+									<span class="role">запасной, на домене</span>
+									<span class="share" style="color: var(--c-xhttp)">17%</span>
+								</div>
+								<div class="sharebar"><i style="width: 17%; background: var(--c-xhttp)"></i></div>
+								<div class="stats">
+									<div><span class="n warn">196</span><span class="k">пинг p50, мс</span></div>
+									<div><span class="n bad">640</span><span class="k">p95</span></div>
+									<div><span class="n warn">2.4%</span><span class="k">потери</span></div>
+									<div><span class="n bad">38 ч</span><span class="k">жизнь</span></div>
+								</div>
+								<svg class="spark" viewBox="0 0 300 34" preserveAspectRatio="none" data-spark="xhttp"></svg>
+								<div class="foot"><span>пинг за 7 дней</span><span>1.4 гб на юзера в сутки</span></div>
+							</div>
+
+							<div class="proto">
+								<div class="top">
+									<span class="name">direct</span>
+									<span class="role">без релея</span>
+									<span class="share" style="color: var(--c-direct)">6%</span>
+								</div>
+								<div class="sharebar"><i style="width: 6%; background: var(--c-direct)"></i></div>
+								<div class="stats">
+									<div><span class="n ok">19</span><span class="k">пинг p50, мс</span></div>
+									<div><span class="n">42</span><span class="k">p95</span></div>
+									<div><span class="n ok">0.1%</span><span class="k">потери</span></div>
+									<div><span class="n">&mdash;</span><span class="k">жизнь</span></div>
+								</div>
+								<svg class="spark" viewBox="0 0 300 34" preserveAspectRatio="none" data-spark="direct"></svg>
+								<div class="foot"><span>пинг за 7 дней</span><span>доля падает: 11% → 6%</span></div>
+							</div>
+						</div>
+						<div class="note">
+							доля direct — показатель того, насколько плотно закрыт прямой путь. падает — значит ТСПУ ужесточает, и
+							нагрузка переезжает на релеи вместе с их стоимостью.
+						</div>
+					</section>
+
+					<!-- ---------- machines ---------- -->
+					<section class="card">
+						<div class="card-head">
+							<h2>машины</h2>
+							<span class="sub">сюда смотрят, когда график наверху пошёл вниз</span>
+							<div class="right"><span class="chip on">24 ч</span><span class="chip">6 ч</span></div>
+						</div>
+
+						<div class="box-row">
+							<div class="box-id">
+								<div class="name">ams1</div>
+								<div class="where">vultr · amsterdam · reality</div>
+								<span class="tag v-bad">ip забанен</span>
+							</div>
+							<div class="relays">
+								<div class="relay">
+									<span class="who"><i class="dot bad"></i>ams1-1</span>
+									<div class="uptime" data-fill="bad-tail"></div>
+									<span class="num">61% · нет</span>
+								</div>
+								<div class="relay">
+									<span class="who"><i class="dot bad"></i>ams1-2</span>
+									<div class="uptime" data-fill="bad-tail"></div>
+									<span class="num">60% · нет</span>
+								</div>
+							</div>
+						</div>
+
+						<div class="box-row">
+							<div class="box-id">
+								<div class="name">fra2</div>
+								<div class="where">hetzner · frankfurt · xhttp</div>
+								<span class="tag v-warn">домен заблокирован</span>
+							</div>
+							<div class="relays">
+								<div class="relay">
+									<span class="who"><i class="dot ok"></i>fra2-1</span>
+									<div class="uptime" data-fill="clean"></div>
+									<span class="num">99.8% · 51 мс</span>
+								</div>
+								<div class="relay">
+									<span class="who"><i class="dot warn"></i>fra2-2</span>
+									<div class="uptime" data-fill="dips"></div>
+									<span class="num">92.4% · 310 мс</span>
+								</div>
+							</div>
+						</div>
+
+						<div class="box-row">
+							<div class="box-id">
+								<div class="name">waw1</div>
+								<div class="where">ovh · warsaw · reality</div>
+								<span class="tag v-ok">чисто</span>
+							</div>
+							<div class="relays">
+								<div class="relay">
+									<span class="who"><i class="dot ok"></i>waw1-1</span>
+									<div class="uptime" data-fill="one-dip"></div>
+									<span class="num">98.1% · 44 мс</span>
+								</div>
+								<div class="relay">
+									<span class="who"><i class="dot ok"></i>waw1-2</span>
+									<div class="uptime" data-fill="clean"></div>
+									<span class="num">100% · 39 мс</span>
+								</div>
+							</div>
+						</div>
+
+						<div class="box-row">
+							<div class="box-id">
+								<div class="name">sin1</div>
+								<div class="where">vultr · singapore · hysteria2</div>
+								<span class="tag v-mute">пробник без сети</span>
+							</div>
+							<div class="relays">
+								<div class="relay">
+									<span class="who"><i class="dot mute"></i>sin1-1</span>
+									<div class="uptime" data-fill="gap"></div>
+									<span class="num">нет данных</span>
+								</div>
+							</div>
+						</div>
+					</section>
+				</div>
+
+				<!-- ---------- right column ---------- -->
+				<div class="col-r">
+					<section class="card">
+						<div class="card-head">
+							<h2>автоматика за сутки</h2>
+							<span class="sub">41 действие</span>
+						</div>
+						<div class="auto-row">
+							<i class="ic"></i>
+							<span class="t">сожжён домен <em>adress-cdn-pool.net</em>, выдан <em>files-origin-cdn.org</em></span>
+							<span class="ago">12 мин</span>
+						</div>
+						<div class="auto-row">
+							<i class="ic"></i>
+							<span class="t">релей <em>waw1-1</em> пересажен на новый reality-ключ</span>
+							<span class="ago">3 ч</span>
+						</div>
+						<div class="auto-row">
+							<i class="ic w"></i>
+							<span class="t">заказана машина у <em>vultr</em>, взамен <em>ams1</em></span>
+							<span class="ago">38 мин</span>
+						</div>
+						<div class="auto-row">
+							<i class="ic"></i>
+							<span class="t">куплено 3 домена на <em>$31.20</em></span>
+							<span class="ago">5 ч</span>
+						</div>
+						<div class="auto-row">
+							<i class="ic"></i>
+							<span class="t">раскатан билд <em>edge 4f21a9</em> на 6 машин</span>
+							<span class="ago">9 ч</span>
+						</div>
+						<div class="note">лента читается как «сколько автоматика отработала за тебя». растёт она — хорошо.</div>
+					</section>
+
+					<section class="card">
+						<div class="card-head">
+							<h2>требуют тебя</h2>
+							<span class="sub">1</span>
+						</div>
+						<div class="inc">
+							<div class="bar"></div>
+							<div>
+								<div class="what">кончились деньги у vultr</div>
+								<div class="why">машину взамен ams1 заказать нечем, баланс $4.10</div>
+								<div class="when">41 мин · автоматика встала</div>
+								<button class="act">пополнить</button>
+							</div>
+						</div>
+						<div class="quiet">остальное чинится само</div>
+					</section>
+				</div>
+			</div>
+		</main>
+
+		<script>
+			// --- uptime strips: 72 segments = 24 h at 20 min each ---
+			const SEGMENTS = 72;
+			const SHAPES = {
+				clean: () => '',
+				'one-dip': (i) => (i === 44 ? 'w' : ''),
+				dips: (i) => (i % 17 === 3 ? 'b' : i % 17 === 4 ? 'w' : ''),
+				'bad-tail': (i) => (i > 44 ? 'b' : i === 44 ? 'w' : ''),
+				gap: (i) => (i > 56 ? 'm' : ''),
+			};
+			for (const strip of document.querySelectorAll('.uptime')) {
+				const shape = SHAPES[strip.dataset.fill] ?? SHAPES.clean;
+				strip.innerHTML = Array.from({ length: SEGMENTS }, (_, i) => `<i class="${shape(i)}"></i>`).join('');
+			}
+
+			// --- shared helpers ---
+			function wobble(i, seed) {
+				return (Math.sin(i * 0.7 + seed) + Math.sin(i * 0.23 + seed * 3)) / 2;
+			}
+
+			function path(vals, w, h, pad, min, max) {
+				const n = vals.length;
+				const x = (i) => (i / (n - 1)) * w;
+				const y = (v) => h - pad - ((v - min) / (max - min)) * (h - pad * 2);
+				return vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+			}
+
+			// --- the big survival chart: 30 days, three series on one scale (percent of own start) ---
+			(function survival() {
+				const svg = document.getElementById('survival');
+				const W = 900,
+					H = 190,
+					PAD = 14;
+				const n = 30;
+
+				// Domain lifetime: flat, then the drop of the last week.
+				const domain = Array.from({ length: n }, (_, i) => {
+					const base = 62 + wobble(i, 1) * 5;
+					const fall = i > 21 ? (i - 21) * 3.4 : 0;
+					return base - fall;
+				});
+				// Relay lifetime: steady, slight climb.
+				const relay = Array.from({ length: n }, (_, i) => 7.4 + i * 0.06 + wobble(i, 5) * 0.5);
+				// Share of sessions that connect first try.
+				const ok = Array.from({ length: n }, (_, i) => 96.4 + wobble(i, 9) * 0.6 - (i > 22 ? (i - 22) * 0.32 : 0));
+
+				// Each series is drawn against its own min/max: the shape is the message,
+				// not the absolute value — the numbers live in the hero strip above.
+				const series = [
+					{ vals: domain, color: 'var(--c-reality)', fill: 'oklch(0.75 0.14 350 / 0.1)' },
+					{ vals: relay, color: 'var(--c-hyst)', fill: 'none' },
+					{ vals: ok, color: 'var(--warn)', fill: 'none' },
+				];
+
+				let out = '';
+				// horizontal grid
+				for (let g = 0; g <= 3; g++) {
+					const y = PAD + (g / 3) * (H - PAD * 2);
+					out += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="oklch(0.22 0 0)" stroke-width="1" />`;
+				}
+				// a marker where the owner changed something, so a bend has a cause
+				const markX = (23 / (n - 1)) * W;
+				out += `<line x1="${markX}" y1="0" x2="${markX}" y2="${H}" stroke="oklch(0.34 0 0)" stroke-width="1" stroke-dasharray="3 4" />`;
+
+				for (const s of series) {
+					const min = Math.min(...s.vals),
+						max = Math.max(...s.vals);
+					const span = max - min || 1;
+					const d = path(s.vals, W, H, PAD, min - span * 0.25, max + span * 0.25);
+					if (s.fill !== 'none') out += `<path d="${d} L${W},${H} L0,${H} Z" fill="${s.fill}" />`;
+					out += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" />`;
+				}
+				svg.innerHTML = out;
+			})();
+
+			// --- protocol sparklines: ping over 7 days ---
+			const SPARKS = {
+				reality: { base: 48, jitter: 5, drift: 0, color: 'var(--c-reality)', tint: 'oklch(0.75 0.14 350 / 0.13)' },
+				hyst: { base: 31, jitter: 4, drift: 0, color: 'var(--c-hyst)', tint: 'oklch(0.72 0.12 200 / 0.13)' },
+				xhttp: { base: 150, jitter: 26, drift: 70, color: 'var(--c-xhttp)', tint: 'oklch(0.78 0.12 85 / 0.13)' },
+				direct: { base: 19, jitter: 2.5, drift: 0, color: 'var(--c-direct)', tint: 'oklch(0.72 0.15 155 / 0.13)' },
+			};
+			for (const svg of document.querySelectorAll('svg.spark')) {
+				const cfg = SPARKS[svg.dataset.spark];
+				const n = 56,
+					W = 300,
+					H = 34;
+				const seed = svg.dataset.spark.length;
+				const vals = Array.from(
+					{ length: n },
+					(_, i) => cfg.base + wobble(i, seed) * cfg.jitter + (cfg.drift * i) / n,
+				);
+				const min = Math.min(...vals),
+					max = Math.max(...vals);
+				const span = max - min || 1;
+				const d = path(vals, W, H, 4, min - span * 0.3, max + span * 0.3);
+				svg.innerHTML =
+					`<path d="${d} L${W},${H} L0,${H} Z" fill="${cfg.tint}" />` +
+					`<path d="${d}" fill="none" stroke="${cfg.color}" stroke-width="1.4" stroke-linejoin="round" />`;
+			}
+
+			// --- range chips are inert in the mockup ---
+			for (const group of document.querySelectorAll('.ranges')) {
+				group.addEventListener('click', (e) => {
+					if (!e.target.classList.contains('chip')) return;
+					for (const c of group.children) c.classList.toggle('on', c === e.target);
+				});
+			}
+		</script>
+	</body>
+</html>

@@ -1,0 +1,1447 @@
+<!doctype html>
+<html lang="ru">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>антиблок — дашборд v3</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+			rel="stylesheet"
+		/>
+		<style>
+			:root {
+				--bg: oklch(0.14 0 0);
+				--bg-raised: oklch(0.17 0 0);
+				--surface: oklch(0.23 0 0);
+				--card-bg: oklch(0.2 0 0);
+				--inset: oklch(0.17 0 0);
+
+				--primary: oklch(0.75 0.14 350);
+				--primary-subtle: oklch(0.75 0.14 350 / 0.1);
+
+				--ok: oklch(0.72 0.15 155);
+				--warn: oklch(0.78 0.12 85);
+				--bad: oklch(0.65 0.2 25);
+				--unknown: oklch(0.52 0 0);
+
+				--c-reality: oklch(0.75 0.14 350);
+				--c-hyst: oklch(0.72 0.12 200);
+				--c-xhttp: oklch(0.78 0.12 85);
+				--c-direct: oklch(0.72 0.15 155);
+
+				--border: oklch(0.24 0 0);
+				--border-subtle: oklch(0.19 0 0);
+
+				--text: oklch(0.93 0 0);
+				--text-2: oklch(0.62 0 0);
+				--text-3: oklch(0.42 0 0);
+
+				--sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+				--mono: 'IBM Plex Mono', monospace;
+			}
+
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+			}
+
+			body {
+				background: var(--bg);
+				color: var(--text);
+				font-family: var(--sans);
+				font-size: 13px;
+				line-height: 1.5;
+				-webkit-font-smoothing: antialiased;
+			}
+
+			button {
+				font: inherit;
+				color: inherit;
+				background: none;
+				border: none;
+				cursor: pointer;
+			}
+
+			.page {
+				padding: 24px;
+				max-width: 1400px;
+			}
+
+			.m {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+			}
+
+			/* ---------- head ---------- */
+
+			.head {
+				display: flex;
+				align-items: flex-end;
+				gap: 16px;
+				margin-bottom: 18px;
+			}
+
+			.head h1 {
+				font-size: 20px;
+				font-weight: 600;
+				letter-spacing: -0.01em;
+			}
+
+			.head p {
+				margin-top: 4px;
+				font-size: 12px;
+				color: var(--text-2);
+			}
+
+			.ranges {
+				margin-left: auto;
+				display: flex;
+				gap: 4px;
+			}
+
+			.chip {
+				padding: 4px 11px;
+				border-radius: 6px;
+				font-size: 11px;
+				color: var(--text-2);
+				border: 1px solid var(--border);
+				white-space: nowrap;
+			}
+
+			.chip:hover {
+				background: var(--surface);
+			}
+
+			.chip.on {
+				color: var(--text);
+				background: var(--primary-subtle);
+				border-color: oklch(0.75 0.14 350 / 0.35);
+			}
+
+			/* ---------- cards ---------- */
+
+			.card {
+				background: var(--card-bg);
+				border: 1px solid var(--border-subtle);
+				border-radius: 8px;
+				margin-bottom: 16px;
+			}
+
+			.card-head {
+				display: flex;
+				align-items: baseline;
+				gap: 10px;
+				padding: 13px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.card-head h2 {
+				font-size: 13px;
+				font-weight: 600;
+			}
+
+			.card-head .sub {
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.card-head .right {
+				margin-left: auto;
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+
+			.card-body {
+				padding: 16px;
+			}
+
+			.note {
+				padding: 11px 16px 14px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			/* ---------- hero chart: reach ---------- */
+
+			.reach {
+				display: grid;
+				grid-template-columns: 220px 1fr;
+				gap: 20px;
+				padding: 18px;
+			}
+
+			.reach .figure .big {
+				display: flex;
+				align-items: baseline;
+				gap: 8px;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 44px;
+				font-weight: 600;
+				letter-spacing: -0.03em;
+				line-height: 1;
+			}
+
+			.reach .figure .unit {
+				font-size: 18px;
+				font-weight: 400;
+				color: var(--text-3);
+			}
+
+			.reach .figure .what {
+				margin-top: 10px;
+				font-size: 12px;
+				color: var(--text-2);
+			}
+
+			.reach .figure .who {
+				margin-top: 8px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.breakdown {
+				margin-top: 14px;
+				padding-top: 12px;
+				border-top: 1px solid var(--border-subtle);
+				display: flex;
+				flex-direction: column;
+				gap: 5px;
+			}
+
+			.breakdown div {
+				display: flex;
+				justify-content: space-between;
+				gap: 10px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.breakdown div span {
+				display: flex;
+				align-items: center;
+				gap: 7px;
+			}
+
+			/* Swatch tying a row to its band on the chart. */
+			.sw {
+				width: 8px;
+				height: 8px;
+				border-radius: 2px;
+				flex-shrink: 0;
+			}
+
+			.breakdown div b {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-weight: 500;
+				color: var(--text-2);
+			}
+
+			svg.reach-chart {
+				display: block;
+				width: 100%;
+				height: 150px;
+			}
+
+			.axis-x {
+				display: flex;
+				justify-content: space-between;
+				margin-top: 6px;
+				font-family: var(--mono);
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.trend {
+				font-family: var(--mono);
+				font-size: 13px;
+				font-weight: 500;
+			}
+
+			.trend.good {
+				color: var(--ok);
+			}
+			.trend.bad {
+				color: var(--bad);
+			}
+
+			/* ---------- numbers strip ---------- */
+
+			.strip {
+				display: grid;
+				grid-template-columns: 1.9fr repeat(4, 1fr);
+				gap: 1px;
+				background: var(--border-subtle);
+				border: 1px solid var(--border-subtle);
+				border-radius: 8px;
+				overflow: hidden;
+				margin-bottom: 16px;
+			}
+
+			.cell {
+				background: var(--card-bg);
+				padding: 15px 17px;
+			}
+
+			.cell .label {
+				display: block;
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.cell .value {
+				display: flex;
+				align-items: baseline;
+				gap: 7px;
+				margin-top: 5px;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 24px;
+				font-weight: 600;
+				letter-spacing: -0.02em;
+			}
+
+			.cell .unit {
+				font-size: 12px;
+				font-weight: 400;
+				color: var(--text-3);
+			}
+
+			.cell .meta {
+				display: block;
+				margin-top: 4px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			/* money cell */
+			.money {
+				margin-top: 7px;
+			}
+
+			.money table {
+				width: 100%;
+				border-collapse: collapse;
+			}
+
+			.money th {
+				padding: 0 0 5px;
+				text-align: right;
+				font-size: 10px;
+				font-weight: 400;
+				color: var(--text-3);
+			}
+
+			.money th:first-child {
+				text-align: left;
+			}
+
+			.money td {
+				padding: 3px 0;
+				font-size: 12px;
+				color: var(--text-2);
+				text-align: right;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+			}
+
+			.money td:first-child {
+				text-align: left;
+				font-family: var(--sans);
+				color: var(--text-2);
+			}
+
+			.money tr.total td {
+				padding-top: 7px;
+				border-top: 1px solid var(--border-subtle);
+				color: var(--text);
+				font-weight: 600;
+				font-size: 13px;
+			}
+
+			.money tr.total td:first-child {
+				font-weight: 500;
+			}
+
+			.money .proj {
+				color: var(--warn) !important;
+			}
+
+			/* ---------- survival ---------- */
+
+			.legend {
+				display: flex;
+				gap: 14px;
+			}
+
+			.legend span {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.legend i {
+				width: 9px;
+				height: 2px;
+				border-radius: 1px;
+			}
+
+			svg.big-chart {
+				display: block;
+				width: 100%;
+				height: 160px;
+			}
+
+			.verdictline {
+				margin-top: 12px;
+				padding-top: 12px;
+				border-top: 1px solid var(--border-subtle);
+				font-size: 12px;
+				color: var(--text-2);
+			}
+
+			.verdictline b {
+				color: var(--text);
+				font-weight: 500;
+			}
+
+			.split {
+				display: grid;
+				grid-template-columns: 1fr 330px;
+				gap: 16px;
+				align-items: start;
+			}
+
+			/* ---------- protocols ---------- */
+
+			.protos {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 12px;
+				padding: 16px;
+			}
+
+			.proto {
+				border: 1px solid var(--border-subtle);
+				border-radius: 7px;
+				padding: 13px 14px;
+				background: var(--inset);
+			}
+
+			.proto .top {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+
+			.proto .name {
+				font-family: var(--mono);
+				font-size: 12px;
+				font-weight: 500;
+			}
+
+			.proto .role {
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.proto .share {
+				margin-left: auto;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 17px;
+				font-weight: 600;
+			}
+
+			.sharebar {
+				height: 3px;
+				border-radius: 2px;
+				background: oklch(0.26 0 0);
+				margin: 9px 0 12px;
+				overflow: hidden;
+			}
+
+			.sharebar i {
+				display: block;
+				height: 100%;
+			}
+
+			.stats {
+				display: grid;
+				grid-template-columns: repeat(4, 1fr);
+				gap: 8px;
+			}
+
+			.stats div .n {
+				display: block;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 14px;
+				font-weight: 500;
+				white-space: nowrap;
+			}
+
+			.stats div .k {
+				display: block;
+				margin-top: 1px;
+				font-size: 10px;
+				line-height: 1.3;
+				color: var(--text-3);
+			}
+
+			.n.warn {
+				color: var(--warn);
+			}
+			.n.bad {
+				color: var(--bad);
+			}
+			.n.ok {
+				color: var(--ok);
+			}
+
+			svg.spark {
+				display: block;
+				width: 100%;
+				height: 34px;
+				margin-top: 11px;
+			}
+
+			.proto .foot {
+				display: flex;
+				justify-content: space-between;
+				gap: 8px;
+				margin-top: 5px;
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.proto.add {
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				color: var(--text-3);
+				font-size: 12px;
+				border-style: dashed;
+				min-height: 150px;
+			}
+
+			/* ---------- machines ---------- */
+
+			.machine {
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.machine:last-child {
+				border-bottom: none;
+			}
+
+			.m-head {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				padding: 12px 16px 10px;
+			}
+
+			.m-head .mname {
+				font-family: var(--mono);
+				font-size: 13px;
+				font-weight: 600;
+			}
+
+			.badge {
+				padding: 2px 7px;
+				border-radius: 4px;
+				font-size: 10px;
+				white-space: nowrap;
+				background: var(--surface);
+				color: var(--text-2);
+			}
+
+			.badge.proto-reality {
+				color: var(--c-reality);
+				background: oklch(0.75 0.14 350 / 0.12);
+			}
+
+			.badge.proto-hyst {
+				color: var(--c-hyst);
+				background: oklch(0.72 0.12 200 / 0.12);
+			}
+
+			.badge.proto-xhttp {
+				color: var(--c-xhttp);
+				background: oklch(0.78 0.12 85 / 0.12);
+			}
+
+			.m-head .verdict {
+				margin-left: auto;
+				padding: 2px 8px;
+				border-radius: 4px;
+				font-size: 11px;
+				white-space: nowrap;
+			}
+
+			.v-ok {
+				color: var(--ok);
+				background: oklch(0.72 0.15 155 / 0.12);
+			}
+			.v-warn {
+				color: var(--warn);
+				background: oklch(0.78 0.12 85 / 0.12);
+			}
+			.v-bad {
+				color: var(--bad);
+				background: oklch(0.65 0.2 25 / 0.12);
+			}
+			.v-mute {
+				color: var(--text-3);
+				background: oklch(0.52 0 0 / 0.12);
+			}
+
+			/* one fixed grid for every relay row, so nothing ever wraps */
+			.r-grid {
+				padding: 0 16px 12px;
+			}
+
+			/* The availability strip takes the slack, not the cover column:
+			   a fixed-width strip beside a 1fr text column left a gap in the
+			   middle and squeezed the bars against the numbers. */
+			.r-head,
+			.r-row {
+				display: grid;
+				grid-template-columns: 84px 210px minmax(120px, 1fr) 56px 68px;
+				align-items: center;
+				gap: 14px;
+			}
+
+			.r-head {
+				padding-bottom: 5px;
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.r-head span:nth-child(4),
+			.r-head span:nth-child(5),
+			.r-row .pct,
+			.r-row .ping {
+				text-align: right;
+			}
+
+			.r-row {
+				padding: 5px 0;
+			}
+
+			.r-row .rname {
+				display: flex;
+				align-items: center;
+				gap: 7px;
+				font-family: var(--mono);
+				font-size: 11px;
+				color: var(--text);
+			}
+
+			.r-row .dest {
+				font-family: var(--mono);
+				font-size: 11px;
+				color: var(--text-2);
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+
+			.r-row .pct,
+			.r-row .ping {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 11px;
+				color: var(--text-2);
+				white-space: nowrap;
+			}
+
+			.dot {
+				width: 6px;
+				height: 6px;
+				border-radius: 50%;
+				flex-shrink: 0;
+			}
+
+			.dot.ok {
+				background: var(--ok);
+			}
+			.dot.warn {
+				background: var(--warn);
+			}
+			.dot.bad {
+				background: var(--bad);
+			}
+			.dot.mute {
+				background: var(--unknown);
+			}
+
+			.uptime {
+				display: flex;
+				gap: 1.5px;
+				height: 16px;
+			}
+
+			.uptime i {
+				flex: 1;
+				border-radius: 1px;
+				background: var(--ok);
+			}
+
+			.uptime i.w {
+				background: var(--warn);
+			}
+			.uptime i.b {
+				background: var(--bad);
+			}
+			.uptime i.m {
+				background: oklch(0.3 0 0);
+			}
+
+			/* ---------- right column ---------- */
+
+			.feed {
+				max-height: 320px;
+				overflow-y: auto;
+				scrollbar-width: thin;
+				scrollbar-color: oklch(0.3 0 0) transparent;
+			}
+
+			.feed::-webkit-scrollbar {
+				width: 6px;
+			}
+
+			.feed::-webkit-scrollbar-thumb {
+				background: oklch(0.3 0 0);
+				border-radius: 3px;
+			}
+
+			.item {
+				position: relative;
+				display: flex;
+				gap: 11px;
+				width: 100%;
+				padding: 12px 34px 12px 16px;
+				text-align: left;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.item:last-child {
+				border-bottom: none;
+			}
+
+			.item.tappable:hover {
+				background: var(--inset);
+			}
+
+			.item .bar {
+				width: 2px;
+				border-radius: 1px;
+				flex-shrink: 0;
+				background: var(--bad);
+			}
+
+			.item .bar.w {
+				background: var(--warn);
+			}
+
+			.item .body {
+				min-width: 0;
+			}
+
+			.item .what {
+				font-size: 12px;
+				font-weight: 500;
+			}
+
+			/* two lines max, then ellipsis: a card never grows past this */
+			.item .why {
+				margin-top: 2px;
+				font-size: 11px;
+				color: var(--text-2);
+				display: -webkit-box;
+				-webkit-line-clamp: 2;
+				-webkit-box-orient: vertical;
+				overflow: hidden;
+			}
+
+			.item .when {
+				margin-top: 4px;
+				font-family: var(--mono);
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.x {
+				position: absolute;
+				top: 9px;
+				right: 8px;
+				width: 20px;
+				height: 20px;
+				border-radius: 4px;
+				line-height: 18px;
+				text-align: center;
+				font-size: 13px;
+				color: var(--text-3);
+				opacity: 0;
+				transition: opacity 120ms ease;
+			}
+
+			.item:hover .x {
+				opacity: 1;
+			}
+
+			.x:hover {
+				background: var(--surface);
+				color: var(--text);
+			}
+
+			.log .item {
+				padding: 9px 34px 9px 16px;
+				font-size: 12px;
+				align-items: baseline;
+			}
+
+			.log .ic {
+				width: 5px;
+				height: 5px;
+				border-radius: 50%;
+				background: var(--ok);
+				flex-shrink: 0;
+				transform: translateY(-2px);
+			}
+
+			.log .ic.w {
+				background: var(--warn);
+			}
+
+			.log .t {
+				flex: 1;
+				min-width: 0;
+			}
+
+			.log .t em {
+				font-style: normal;
+				font-family: var(--mono);
+				color: var(--text);
+			}
+
+			.log .ago {
+				font-family: var(--mono);
+				font-size: 10px;
+				color: var(--text-3);
+				white-space: nowrap;
+			}
+
+			.quiet {
+				padding: 16px;
+				font-size: 12px;
+				color: var(--text-3);
+				text-align: center;
+			}
+
+			.link {
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.link:hover {
+				color: var(--text-2);
+			}
+
+			@media (max-width: 1100px) {
+				.split,
+				.protos,
+				.strip,
+				.reach {
+					grid-template-columns: 1fr;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<main class="page">
+			<div class="head">
+				<div>
+					<h1>антиблок</h1>
+					<p>всё чинится само. страница отвечает на два вопроса: доходят ли люди и во сколько это обходится.</p>
+				</div>
+				<div class="ranges">
+					<button class="chip">24 ч</button>
+					<button class="chip on">7 дн</button>
+					<button class="chip">30 дн</button>
+					<button class="chip">90 дн</button>
+				</div>
+			</div>
+
+			<!-- ======== 1. the one number that matters ======== -->
+			<section class="card">
+				<div class="card-head">
+					<h2>доходимость</h2>
+					<span class="sub">доля людей, пробивших цензуру и дошедших до сервиса</span>
+					<div class="right link">по отчётам клиентов, 18 420 попыток за сутки</div>
+				</div>
+				<div class="reach">
+					<div class="figure">
+						<div class="big">
+							94.2<span class="unit">%</span>
+							<span class="trend bad">&minus;2.1</span>
+						</div>
+						<div class="what">дошли с первой попытки</div>
+						<div class="who">99.1% дошли хоть с какой-то — перебор релеев спасает, но стоит людям секунд</div>
+						<div class="breakdown">
+							<div>
+								<span><i class="sw" style="background: oklch(0.72 0.15 155 / 0.45)"></i>сразу, без перебора</span>
+								<b>94.2%</b>
+							</div>
+							<div>
+								<span><i class="sw" style="background: oklch(0.78 0.12 85 / 0.5)"></i>со второго релея и дальше</span>
+								<b>4.9%</b>
+							</div>
+							<div>
+								<span><i class="sw" style="background: oklch(0.65 0.2 25 / 0.75)"></i>не дошли вовсе</span>
+								<b style="color: var(--bad)">0.9%</b>
+							</div>
+						</div>
+					</div>
+					<div>
+						<svg class="reach-chart" id="reach" viewBox="0 0 900 150" preserveAspectRatio="none"></svg>
+						<div class="axis-x">
+							<span>24 июл</span><span>14 авг</span><span>4 сен</span><span>25 сен</span><span>22 окт</span>
+						</div>
+					</div>
+				</div>
+				<div class="note">
+					график занят целиком, сверху донизу — это все попытки. зелёное снизу — дошли сразу, жёлтое над ним — цена
+					перебора, красное у самого верха — не дошли совсем. красная полоса растёт трижды, и каждый раз это новый
+					фильтр у ТСПУ.
+				</div>
+			</section>
+
+			<!-- ======== 2. money and load ======== -->
+			<div class="strip">
+				<div class="cell">
+					<span class="label">деньги</span>
+					<div class="money">
+						<table>
+							<thead>
+								<tr>
+									<th>статья</th>
+									<th>в день</th>
+									<th>за месяц</th>
+									<th>прогноз</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td>домены</td>
+									<td>$0.94</td>
+									<td>$28.20</td>
+									<td class="proj">$41.70</td>
+								</tr>
+								<tr>
+									<td>машины</td>
+									<td>$0.48</td>
+									<td>$14.40</td>
+									<td class="proj">$17.20</td>
+								</tr>
+								<tr class="total">
+									<td>всего</td>
+									<td>$1.42</td>
+									<td>$42.60</td>
+									<td class="proj">$58.90</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+					<span class="meta">прогноз месяца при нынешнем темпе сгорания. лимит $150</span>
+				</div>
+				<div class="cell">
+					<span class="label">трафик на юзера</span>
+					<div class="value">2.6<span class="unit">гб / сут</span></div>
+					<span class="meta">через релеи 2.4, напрямую 0.2 · $0.0021 за гб</span>
+				</div>
+				<div class="cell">
+					<span class="label">обход на юзера</span>
+					<div class="value">$0.16<span class="unit">/ мес</span> <span class="trend bad">+38%</span></div>
+					<span class="meta">260 активных · $0.0055 в сутки · неделю назад $0.12</span>
+				</div>
+				<div class="cell">
+					<span class="label">жизнь домена, медиана</span>
+					<div class="value">38<span class="unit">ч</span> <span class="trend bad">&minus;23 ч</span></div>
+					<span class="meta">неделю назад 61 ч</span>
+				</div>
+				<div class="cell">
+					<span class="label">жизнь релея, медиана</span>
+					<div class="value">9.2<span class="unit">дн</span> <span class="trend good">+1.4</span></div>
+					<span class="meta">за всё время прожито 1526 релеев</span>
+				</div>
+			</div>
+
+			<div class="split">
+				<div class="col-l">
+					<!-- ======== 3. survival ======== -->
+					<section class="card">
+						<div class="card-head">
+							<h2>выживаемость</h2>
+							<span class="sub">что именно жгут: имя или адрес</span>
+							<div class="right legend">
+								<span><i style="background: var(--c-reality)"></i>домен</span>
+								<span><i style="background: var(--c-hyst)"></i>релей</span>
+							</div>
+						</div>
+						<div class="card-body">
+							<svg class="big-chart" id="survival" viewBox="0 0 900 160" preserveAspectRatio="none"></svg>
+							<div class="axis-x">
+								<span>22 сен</span><span>29 сен</span><span>6 окт</span><span>13 окт</span><span>22 окт</span>
+							</div>
+							<div class="verdictline">
+								<b>жизнь домена упала с 61 до 38 ч за неделю</b>, жизнь релея не изменилась. значит жгут имя, а не
+								адрес: давить надо на подбор доменов, машины ни при чём.
+							</div>
+						</div>
+					</section>
+
+					<!-- ======== 4. protocols ======== -->
+					<section class="card">
+						<div class="card-head">
+							<h2>протоколы</h2>
+							<span class="sub">кто сколько тащит и какой ценой</span>
+							<div class="right"><span class="chip">сравнить за 30 дн</span></div>
+						</div>
+						<div class="protos">
+							<div class="proto">
+								<div class="top">
+									<span class="name">vless-reality</span>
+									<span class="role">основной</span>
+									<span class="share" style="color: var(--c-reality)">58%</span>
+								</div>
+								<div class="sharebar"><i style="width: 58%; background: var(--c-reality)"></i></div>
+								<div class="stats">
+									<div><span class="n">48</span><span class="k">пинг p50, мс</span></div>
+									<div><span class="n">121</span><span class="k">p95, мс</span></div>
+									<div><span class="n ok">0.2%</span><span class="k">потери</span></div>
+									<div><span class="n">11 дн</span><span class="k">релей живёт</span></div>
+								</div>
+								<svg class="spark" viewBox="0 0 300 34" preserveAspectRatio="none" data-spark="reality"></svg>
+								<div class="foot"><span>пинг за 7 дней</span><span>1.5 гб на юзера в сутки</span></div>
+							</div>
+
+							<div class="proto">
+								<div class="top">
+									<span class="name">hysteria2</span>
+									<span class="role">голос</span>
+									<span class="share" style="color: var(--c-hyst)">19%</span>
+								</div>
+								<div class="sharebar"><i style="width: 19%; background: var(--c-hyst)"></i></div>
+								<div class="stats">
+									<div><span class="n">31</span><span class="k">пинг p50, мс</span></div>
+									<div><span class="n">74</span><span class="k">p95, мс</span></div>
+									<div><span class="n warn">1.8%</span><span class="k">потери</span></div>
+									<div><span class="n">14 дн</span><span class="k">релей живёт</span></div>
+								</div>
+								<svg class="spark" viewBox="0 0 300 34" preserveAspectRatio="none" data-spark="hyst"></svg>
+								<div class="foot"><span>пинг за 7 дней</span><span>0.5 гб на юзера в сутки</span></div>
+							</div>
+
+							<div class="proto">
+								<div class="top">
+									<span class="name">xhttp</span>
+									<span class="role">запасной, на домене</span>
+									<span class="share" style="color: var(--c-xhttp)">17%</span>
+								</div>
+								<div class="sharebar"><i style="width: 17%; background: var(--c-xhttp)"></i></div>
+								<div class="stats">
+									<div><span class="n warn">196</span><span class="k">пинг p50, мс</span></div>
+									<div><span class="n bad">640</span><span class="k">p95, мс</span></div>
+									<div><span class="n warn">2.4%</span><span class="k">потери</span></div>
+									<div><span class="n bad">38 ч</span><span class="k">домен живёт</span></div>
+								</div>
+								<svg class="spark" viewBox="0 0 300 34" preserveAspectRatio="none" data-spark="xhttp"></svg>
+								<div class="foot"><span>пинг за 7 дней</span><span>0.4 гб на юзера в сутки</span></div>
+							</div>
+
+							<div class="proto">
+								<div class="top">
+									<span class="name">direct</span>
+									<span class="role">без релея</span>
+									<span class="share" style="color: var(--c-direct)">6%</span>
+								</div>
+								<div class="sharebar"><i style="width: 6%; background: var(--c-direct)"></i></div>
+								<div class="stats">
+									<div><span class="n ok">19</span><span class="k">пинг p50, мс</span></div>
+									<div><span class="n">42</span><span class="k">p95, мс</span></div>
+									<div><span class="n ok">0.1%</span><span class="k">потери</span></div>
+									<div><span class="n">&mdash;</span><span class="k">не жгут</span></div>
+								</div>
+								<svg class="spark" viewBox="0 0 300 34" preserveAspectRatio="none" data-spark="direct"></svg>
+								<div class="foot"><span>пинг за 7 дней</span><span>доля падает: 11% → 6%</span></div>
+							</div>
+
+							<div class="proto add">+ протокол встанет сюда</div>
+						</div>
+						<div class="note">
+							доля direct — замер того, насколько плотно закрыт прямой путь. падает — ТСПУ ужесточает, и нагрузка
+							переезжает на релеи вместе с их стоимостью.
+						</div>
+					</section>
+
+					<!-- ======== 5. machines ======== -->
+					<section class="card">
+						<div class="card-head">
+							<h2>машины</h2>
+							<span class="sub">сюда смотрят, когда графики наверху пошли вниз</span>
+							<div class="right"><span class="chip on">24 ч</span><span class="chip">6 ч</span></div>
+						</div>
+
+						<div class="machine">
+							<div class="m-head">
+								<span class="mname">ams1</span>
+								<span class="badge">vultr</span>
+								<span class="badge">amsterdam</span>
+								<span class="badge proto-reality">vless-reality</span>
+								<span class="verdict v-bad">ip забанен целиком</span>
+							</div>
+							<div class="r-grid">
+								<div class="r-head">
+									<span>релей</span><span>прикрытие</span><span>доступность, 24 ч</span><span>%</span><span>пинг</span>
+								</div>
+								<div class="r-row">
+									<span class="rname"><i class="dot bad"></i>ams1-1</span>
+									<span class="dest">www.cloudflare.com</span>
+									<div class="uptime" data-fill="bad-tail"></div>
+									<span class="pct">61%</span>
+									<span class="ping">нет</span>
+								</div>
+								<div class="r-row">
+									<span class="rname"><i class="dot bad"></i>ams1-2</span>
+									<span class="dest">cdn.jsdelivr.net</span>
+									<div class="uptime" data-fill="bad-tail"></div>
+									<span class="pct">60%</span>
+									<span class="ping">нет</span>
+								</div>
+							</div>
+						</div>
+
+						<div class="machine">
+							<div class="m-head">
+								<span class="mname">fra2</span>
+								<span class="badge">hetzner</span>
+								<span class="badge">frankfurt</span>
+								<span class="badge proto-xhttp">xhttp</span>
+								<span class="verdict v-warn">домен заблокирован</span>
+							</div>
+							<div class="r-grid">
+								<div class="r-head">
+									<span>релей</span><span>домен</span><span>доступность, 24 ч</span><span>%</span><span>пинг</span>
+								</div>
+								<div class="r-row">
+									<span class="rname"><i class="dot ok"></i>fra2-1</span>
+									<span class="dest">files-origin-cdn.org</span>
+									<div class="uptime" data-fill="clean"></div>
+									<span class="pct">99.8%</span>
+									<span class="ping">51 мс</span>
+								</div>
+								<div class="r-row">
+									<span class="rname"><i class="dot warn"></i>fra2-2</span>
+									<span class="dest">adress-cdn-pool.net</span>
+									<div class="uptime" data-fill="dips"></div>
+									<span class="pct">92.4%</span>
+									<span class="ping">310 мс</span>
+								</div>
+							</div>
+						</div>
+
+						<div class="machine">
+							<div class="m-head">
+								<span class="mname">waw1</span>
+								<span class="badge">ovh</span>
+								<span class="badge">warsaw</span>
+								<span class="badge proto-reality">vless-reality</span>
+								<span class="verdict v-ok">чисто</span>
+							</div>
+							<div class="r-grid">
+								<div class="r-head">
+									<span>релей</span><span>прикрытие</span><span>доступность, 24 ч</span><span>%</span><span>пинг</span>
+								</div>
+								<div class="r-row">
+									<span class="rname"><i class="dot ok"></i>waw1-1</span>
+									<span class="dest">www.microsoft.com</span>
+									<div class="uptime" data-fill="one-dip"></div>
+									<span class="pct">98.1%</span>
+									<span class="ping">44 мс</span>
+								</div>
+								<div class="r-row">
+									<span class="rname"><i class="dot ok"></i>waw1-2</span>
+									<span class="dest">static.cloudflareinsights.com</span>
+									<div class="uptime" data-fill="clean"></div>
+									<span class="pct">100%</span>
+									<span class="ping">39 мс</span>
+								</div>
+							</div>
+						</div>
+
+						<div class="machine">
+							<div class="m-head">
+								<span class="mname">sin1</span>
+								<span class="badge">vultr</span>
+								<span class="badge">singapore</span>
+								<span class="badge proto-hyst">hysteria2</span>
+								<span class="badge">голос · sfu-sg</span>
+								<span class="verdict v-mute">пробник без сети</span>
+							</div>
+							<div class="r-grid">
+								<div class="r-head">
+									<span>релей</span><span>регион голоса</span><span>доступность, 24 ч</span><span>%</span
+									><span>пинг</span>
+								</div>
+								<div class="r-row">
+									<span class="rname"><i class="dot mute"></i>sin1-1</span>
+									<span class="dest">sfu-sg-1, sfu-sg-2</span>
+									<div class="uptime" data-fill="gap"></div>
+									<span class="pct">&mdash;</span>
+									<span class="ping">&mdash;</span>
+								</div>
+							</div>
+						</div>
+					</section>
+				</div>
+
+				<!-- ======== right column ======== -->
+				<div class="col-r">
+					<section class="card">
+						<div class="card-head">
+							<h2>требуют тебя</h2>
+							<span class="sub">1</span>
+						</div>
+						<div class="feed">
+							<button class="item tappable">
+								<span class="bar"></span>
+								<span class="body">
+									<span class="what">кончились деньги у vultr</span>
+									<span class="why">машину взамен ams1 заказать нечем, баланс $4.10</span>
+									<span class="when">41 мин · автоматика встала</span>
+								</span>
+								<span class="x" title="не актуально">&times;</span>
+							</button>
+						</div>
+						<div class="quiet">остальное чинится само</div>
+					</section>
+
+					<section class="card">
+						<div class="card-head">
+							<h2>автоматика за сутки</h2>
+							<span class="sub">41 действие</span>
+							<div class="right"><button class="link">журнал целиком</button></div>
+						</div>
+						<div class="feed log">
+							<div class="item">
+								<i class="ic"></i>
+								<span class="t">сожжён домен <em>adress-cdn-pool.net</em>, выдан <em>files-origin-cdn.org</em></span>
+								<span class="ago">12 мин</span>
+							</div>
+							<div class="item">
+								<i class="ic w"></i>
+								<span class="t">заказана машина у <em>vultr</em> взамен <em>ams1</em></span>
+								<span class="ago">38 мин</span>
+							</div>
+							<div class="item">
+								<i class="ic"></i>
+								<span class="t">релей <em>waw1-1</em> пересажен на новый reality-ключ</span>
+								<span class="ago">3 ч</span>
+							</div>
+							<div class="item">
+								<i class="ic"></i>
+								<span class="t">куплено 3 домена на <em>$31.20</em></span>
+								<span class="ago">5 ч</span>
+							</div>
+							<div class="item">
+								<i class="ic"></i>
+								<span class="t">раскатан билд <em>edge 4f21a9</em> на 6 машин</span>
+								<span class="ago">9 ч</span>
+							</div>
+							<div class="item">
+								<i class="ic"></i>
+								<span class="t">релей <em>fra2-3</em> выведен из пула, не прошёл пробу допуска</span>
+								<span class="ago">11 ч</span>
+							</div>
+							<div class="item">
+								<i class="ic"></i>
+								<span class="t">сожжён домен <em>img-assets-cache.net</em></span>
+								<span class="ago">14 ч</span>
+							</div>
+							<div class="item">
+								<i class="ic"></i>
+								<span class="t">машина <em>lis1</em> сдана провайдеру</span>
+								<span class="ago">19 ч</span>
+							</div>
+						</div>
+						<div class="note">журнал, ничего не требует. растёт — значит автоматика отрабатывает за тебя.</div>
+					</section>
+				</div>
+			</div>
+		</main>
+
+		<script>
+			// --- uptime strips: 72 segments = 24 h at 20 min each ---
+			const SEGMENTS = 72;
+			const SHAPES = {
+				clean: () => '',
+				'one-dip': (i) => (i === 44 ? 'w' : ''),
+				dips: (i) => (i % 17 === 3 ? 'b' : i % 17 === 4 ? 'w' : ''),
+				'bad-tail': (i) => (i > 44 ? 'b' : i === 44 ? 'w' : ''),
+				gap: (i) => (i > 56 ? 'm' : ''),
+			};
+			for (const strip of document.querySelectorAll('.uptime')) {
+				const shape = SHAPES[strip.dataset.fill] ?? SHAPES.clean;
+				strip.innerHTML = Array.from({ length: SEGMENTS }, (_, i) => `<i class="${shape(i)}"></i>`).join('');
+			}
+
+			function wobble(i, seed) {
+				return (Math.sin(i * 0.7 + seed) + Math.sin(i * 0.23 + seed * 3)) / 2;
+			}
+
+			function path(vals, w, h, pad, min, max) {
+				const n = vals.length;
+				const x = (i) => (i / (n - 1)) * w;
+				const y = (v) => h - pad - ((v - min) / (max - min)) * (h - pad * 2);
+				return vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+			}
+
+			// --- reach: 90 days, two lines — got through at all, and got through at once ---
+			(function reach() {
+				const svg = document.getElementById('reach');
+				const W = 900,
+					H = 150,
+					PAD = 10;
+				const n = 90;
+
+				// Three censorship tightenings: the gap between the lines widens at each.
+				const steps = [28, 54, 76];
+				const gapAt = (i) => 0.9 + steps.filter((s) => i >= s).length * 1.5 + wobble(i, 2) * 0.3;
+
+				// Each tightening costs a little of "got through at all" too, so the
+				// red band at the top grows in the same three steps.
+				const lostAt = (i) => steps.filter((s) => i >= s).length * 0.3;
+				const any = Array.from({ length: n }, (_, i) => 99.8 + wobble(i, 4) * 0.12 - lostAt(i));
+				const first = any.map((v, i) => v - gapAt(i));
+
+				const lo = Math.min(...first) - 1.2;
+				const hi = 100;
+
+				let out = '';
+				for (let g = 0; g <= 3; g++) {
+					const y = PAD + (g / 3) * (H - PAD * 2);
+					out += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="oklch(0.22 0 0)" stroke-width="1" />`;
+				}
+				for (const s of steps) {
+					const x = (s / (n - 1)) * W;
+					out += `<line x1="${x}" y1="0" x2="${x}" y2="${H}" stroke="oklch(0.32 0 0)" stroke-width="1" stroke-dasharray="3 4" />`;
+				}
+
+				const dAny = path(any, W, H, PAD, lo, hi);
+				const dFirst = path(first, W, H, PAD, lo, hi);
+
+				// The band between the two lines is the cost of retrying.
+				const anyRev = any
+					.map((v, i) => [i, v])
+					.reverse()
+					.map(([i, v]) => `L${((i / (n - 1)) * W).toFixed(1)},${(H - PAD - ((v - lo) / (hi - lo)) * (H - PAD * 2)).toFixed(1)}`)
+					.join(' ');
+				// Three stacked bands fill the whole plot, so the chart reads as
+				// 100% of attempts: everything above the dashed line never got
+				// through at all — the share that has no second chance.
+				out += `<path d="${dAny} L${W},${PAD} L0,${PAD} Z" fill="oklch(0.65 0.2 25 / 0.28)" />`;
+				out += `<path d="${dFirst} ${anyRev} Z" fill="oklch(0.78 0.12 85 / 0.16)" />`;
+				out += `<path d="${dFirst} L${W},${H} L0,${H} Z" fill="oklch(0.72 0.15 155 / 0.12)" />`;
+				out += `<path d="${dAny}" fill="none" stroke="oklch(0.62 0 0)" stroke-width="1.4" stroke-dasharray="4 3" />`;
+				out += `<path d="${dFirst}" fill="none" stroke="var(--ok)" stroke-width="1.8" stroke-linejoin="round" />`;
+				svg.innerHTML = out;
+			})();
+
+			// --- survival: 30 days, domain vs relay lifetime, each on its own scale ---
+			(function survival() {
+				const svg = document.getElementById('survival');
+				const W = 900,
+					H = 160,
+					PAD = 14;
+				const n = 30;
+
+				const domain = Array.from({ length: n }, (_, i) => {
+					const base = 62 + wobble(i, 1) * 5;
+					return base - (i > 21 ? (i - 21) * 3.4 : 0);
+				});
+				const relay = Array.from({ length: n }, (_, i) => 7.4 + i * 0.06 + wobble(i, 5) * 0.5);
+
+				let out = '';
+				for (let g = 0; g <= 3; g++) {
+					const y = PAD + (g / 3) * (H - PAD * 2);
+					out += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="oklch(0.22 0 0)" stroke-width="1" />`;
+				}
+				const markX = (23 / (n - 1)) * W;
+				out += `<line x1="${markX}" y1="0" x2="${markX}" y2="${H}" stroke="oklch(0.34 0 0)" stroke-width="1" stroke-dasharray="3 4" />`;
+
+				for (const s of [
+					{ vals: domain, color: 'var(--c-reality)', fill: 'oklch(0.75 0.14 350 / 0.1)' },
+					{ vals: relay, color: 'var(--c-hyst)', fill: 'none' },
+				]) {
+					const min = Math.min(...s.vals),
+						max = Math.max(...s.vals);
+					const span = max - min || 1;
+					const d = path(s.vals, W, H, PAD, min - span * 0.25, max + span * 0.25);
+					if (s.fill !== 'none') out += `<path d="${d} L${W},${H} L0,${H} Z" fill="${s.fill}" />`;
+					out += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="1.6" stroke-linejoin="round" />`;
+				}
+				svg.innerHTML = out;
+			})();
+
+			// --- protocol sparklines: ping over 7 days ---
+			const SPARKS = {
+				reality: { base: 48, jitter: 5, drift: 0, color: 'var(--c-reality)', tint: 'oklch(0.75 0.14 350 / 0.13)' },
+				hyst: { base: 31, jitter: 4, drift: 0, color: 'var(--c-hyst)', tint: 'oklch(0.72 0.12 200 / 0.13)' },
+				xhttp: { base: 150, jitter: 26, drift: 70, color: 'var(--c-xhttp)', tint: 'oklch(0.78 0.12 85 / 0.13)' },
+				direct: { base: 19, jitter: 2.5, drift: 0, color: 'var(--c-direct)', tint: 'oklch(0.72 0.15 155 / 0.13)' },
+			};
+			for (const svg of document.querySelectorAll('svg.spark')) {
+				const cfg = SPARKS[svg.dataset.spark];
+				const n = 56,
+					W = 300,
+					H = 34;
+				const seed = svg.dataset.spark.length;
+				const vals = Array.from(
+					{ length: n },
+					(_, i) => cfg.base + wobble(i, seed) * cfg.jitter + (cfg.drift * i) / n,
+				);
+				const min = Math.min(...vals),
+					max = Math.max(...vals);
+				const span = max - min || 1;
+				const d = path(vals, W, H, 4, min - span * 0.3, max + span * 0.3);
+				svg.innerHTML =
+					`<path d="${d} L${W},${H} L0,${H} Z" fill="${cfg.tint}" />` +
+					`<path d="${d}" fill="none" stroke="${cfg.color}" stroke-width="1.4" stroke-linejoin="round" />`;
+			}
+
+			// --- mockup interactions: dismiss a card, switch a range ---
+			for (const x of document.querySelectorAll('.x')) {
+				x.addEventListener('click', (e) => {
+					e.stopPropagation();
+					x.closest('.item').remove();
+				});
+			}
+			for (const group of document.querySelectorAll('.ranges')) {
+				group.addEventListener('click', (e) => {
+					if (!e.target.classList.contains('chip')) return;
+					for (const c of group.children) c.classList.toggle('on', c === e.target);
+				});
+			}
+		</script>
+	</body>
+</html>

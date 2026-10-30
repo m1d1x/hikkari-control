@@ -1,0 +1,31 @@
+{
+  "envelope": {
+    "key_id": "entry-1",
+    "payload": "ewogICJuYW1lIjogImFtcy0xIiwKICAiYWRkcmVzcyI6ICIyMDMuMC4xMTMuNyIsCiAgInBvcnQiOiA0NDMsCiAgInByb3RvIjogInZsZXNzLXJlYWxpdHktdmlzaW9uIiwKICAicHVibGljX2tleSI6ICJCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjIiwKICAidXVpZCI6ICIwMDAwMDAwMC0xMTExLTIyMjItMzMzMy00NDQ0NDQ0NDQ0NDQiLAogICJzaG9ydF9pZCI6ICIwMTIzYWJjZCIsCiAgImNvdmVycyI6IFsKICAgICJ3d3cuc2Ftc3VuZy5jb20iLAogICAgInd3dy5udmlkaWEuY29tIgogIF0sCiAgImlzc3VlZF9hdCI6IDE3NjAwMDAwMDAsCiAgImV4cGlyZXNfYXQiOiAxNzYyNTkyMDAwCn0=",
+    "signature": "ncCcZPh37rgdP2l01l7xYE2Qpsdujfc0zALxBsUdn0GyPuVBVa60AMOHPOqfasToy0Bc/h6z6skmmI/5yiTkBA=="
+  },
+  "key_id": "entry-1",
+  "now": 1760000000,
+  "public_key_hex": "2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12",
+  "relay": {
+    "address": "203.0.113.7",
+    "covers": [
+      "www.samsung.com",
+      "www.nvidia.com"
+    ],
+    "expires_at": 1762592000,
+    "issued_at": 1760000000,
+    "name": "ams-1",
+    "port": 443,
+    "proto": "vless-reality-vision",
+    "public_key": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+    "short_id": "0123abcd",
+    "uuid": "00000000-1111-2222-3333-444444444444"
+  },
+  "seed_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+  "sources_envelope": {
+    "key_id": "entry-1",
+    "payload": "ewogICJzb3VyY2VzIjogWwogICAgewogICAgICAia2luZCI6ICJkb2hfdHh0IiwKICAgICAgInJlc29sdmVyIjogImh0dHBzOi8vZG5zLmdvb2dsZS9kbnMtcXVlcnkiLAogICAgICAibmFtZSI6ICJfZS5leGFtcGxlLm9yZyIKICAgIH0sCiAgICB7CiAgICAgICJraW5kIjogImh0dHBzIiwKICAgICAgInVybCI6ICJodHRwczovL2Nkbi5leGFtcGxlLm9yZy9lLmpzb24iCiAgICB9CiAgXSwKICAiaXNzdWVkX2F0IjogMTc2MDAwMDAwMCwKICAiZXhwaXJlc19hdCI6IDE3NjI1OTIwMDAKfQ==",
+    "signature": "zSk28iqkm4ntNBSIB9XnkKyaShVKY249vr07Sk37WWmHsxYooNSVG96bfodX6cRSJp77Nkfdb820ms9WafW0Cg=="
+  }
+}

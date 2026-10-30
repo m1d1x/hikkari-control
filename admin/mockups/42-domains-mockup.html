@@ -1,0 +1,929 @@
+<!doctype html>
+<html lang="ru">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>домены — реестр v1</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+			rel="stylesheet"
+		/>
+		<style>
+			:root {
+				--bg: oklch(0.14 0 0);
+				--bg-raised: oklch(0.17 0 0);
+				--surface: oklch(0.23 0 0);
+				--card-bg: oklch(0.2 0 0);
+				--inset: oklch(0.17 0 0);
+
+				--primary: oklch(0.75 0.14 350);
+				--primary-subtle: oklch(0.75 0.14 350 / 0.1);
+
+				--ok: oklch(0.72 0.15 155);
+				--warn: oklch(0.78 0.12 85);
+				--bad: oklch(0.65 0.2 25);
+				--unknown: oklch(0.52 0 0);
+
+				--z-lol: oklch(0.65 0.2 25);
+				--z-top: oklch(0.78 0.12 85);
+				--z-mom: oklch(0.72 0.15 155);
+
+				--border: oklch(0.24 0 0);
+				--border-subtle: oklch(0.19 0 0);
+
+				--text: oklch(0.93 0 0);
+				--text-2: oklch(0.62 0 0);
+				--text-3: oklch(0.42 0 0);
+
+				--sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+				--mono: 'IBM Plex Mono', monospace;
+			}
+
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+			}
+
+			body {
+				background: var(--bg);
+				color: var(--text);
+				font-family: var(--sans);
+				font-size: 13px;
+				line-height: 1.5;
+				-webkit-font-smoothing: antialiased;
+			}
+
+			button {
+				font: inherit;
+				color: inherit;
+				background: none;
+				border: none;
+				cursor: pointer;
+			}
+
+			input {
+				font: inherit;
+			}
+
+			.page {
+				padding: 24px;
+				max-width: 1400px;
+			}
+
+			.m {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+			}
+
+			.head {
+				display: flex;
+				align-items: flex-end;
+				gap: 16px;
+				margin-bottom: 18px;
+			}
+
+			.head h1 {
+				font-size: 20px;
+				font-weight: 600;
+				letter-spacing: -0.01em;
+			}
+
+			.head p {
+				margin-top: 4px;
+				font-size: 12px;
+				color: var(--text-2);
+				max-width: 680px;
+			}
+
+			.ranges {
+				margin-left: auto;
+				display: flex;
+				gap: 4px;
+			}
+
+			.chip {
+				padding: 4px 11px;
+				border-radius: 6px;
+				font-size: 11px;
+				color: var(--text-2);
+				border: 1px solid var(--border);
+				white-space: nowrap;
+			}
+
+			.chip:hover {
+				background: var(--surface);
+			}
+
+			.chip.on {
+				color: var(--text);
+				background: var(--primary-subtle);
+				border-color: oklch(0.75 0.14 350 / 0.35);
+			}
+
+			.card {
+				background: var(--card-bg);
+				border: 1px solid var(--border-subtle);
+				border-radius: 8px;
+				margin-bottom: 16px;
+			}
+
+			.card-head {
+				display: flex;
+				align-items: baseline;
+				gap: 10px;
+				padding: 13px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.card-head h2 {
+				font-size: 13px;
+				font-weight: 600;
+			}
+
+			.card-head .sub {
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.card-head .right {
+				margin-left: auto;
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				flex-wrap: wrap;
+			}
+
+			.note {
+				padding: 11px 16px 14px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			/* ---------- hero: domain lifetime ---------- */
+
+			.life-hero {
+				display: grid;
+				grid-template-columns: 250px 1fr;
+				gap: 20px;
+				padding: 18px;
+			}
+
+			.life-hero .figure .big {
+				display: flex;
+				align-items: baseline;
+				gap: 8px;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 44px;
+				font-weight: 600;
+				letter-spacing: -0.03em;
+				line-height: 1;
+			}
+
+			.life-hero .figure .unit {
+				font-size: 18px;
+				font-weight: 400;
+				color: var(--text-3);
+			}
+
+			.trend {
+				font-family: var(--mono);
+				font-size: 13px;
+				font-weight: 500;
+			}
+
+			.trend.bad {
+				color: var(--bad);
+			}
+			.trend.good {
+				color: var(--ok);
+			}
+
+			.life-hero .figure .what {
+				margin-top: 10px;
+				font-size: 12px;
+				color: var(--text-2);
+			}
+
+			.breakdown {
+				margin-top: 14px;
+				padding-top: 12px;
+				border-top: 1px solid var(--border-subtle);
+				display: flex;
+				flex-direction: column;
+				gap: 5px;
+			}
+
+			.breakdown div {
+				display: flex;
+				justify-content: space-between;
+				gap: 10px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.breakdown div span {
+				display: flex;
+				align-items: center;
+				gap: 7px;
+			}
+
+			.sw {
+				width: 8px;
+				height: 8px;
+				border-radius: 2px;
+				flex-shrink: 0;
+			}
+
+			.breakdown div b {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-weight: 500;
+				color: var(--text-2);
+			}
+
+			svg.life-chart {
+				display: block;
+				width: 100%;
+				height: 150px;
+			}
+
+			.axis-x {
+				display: flex;
+				justify-content: space-between;
+				margin-top: 6px;
+				font-family: var(--mono);
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			/* ---------- strip ---------- */
+
+			.strip {
+				display: grid;
+				grid-template-columns: repeat(3, 1fr);
+				gap: 1px;
+				background: var(--border-subtle);
+				border: 1px solid var(--border-subtle);
+				border-radius: 8px;
+				overflow: hidden;
+				margin-bottom: 16px;
+			}
+
+			.cell {
+				background: var(--card-bg);
+				padding: 15px 17px;
+			}
+
+			.cell .label {
+				display: block;
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.cell .value {
+				display: flex;
+				align-items: baseline;
+				gap: 7px;
+				margin-top: 5px;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 24px;
+				font-weight: 600;
+				letter-spacing: -0.02em;
+			}
+
+			.cell .unit {
+				font-size: 12px;
+				font-weight: 400;
+				color: var(--text-3);
+			}
+
+			.cell .meta {
+				display: block;
+				margin-top: 4px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.v-warn {
+				color: var(--warn);
+			}
+			.v-ok {
+				color: var(--ok);
+			}
+			.v-bad {
+				color: var(--bad);
+			}
+
+			.capbar {
+				height: 3px;
+				border-radius: 2px;
+				background: oklch(0.26 0 0);
+				margin-top: 7px;
+				overflow: hidden;
+			}
+
+			.capbar i {
+				display: block;
+				height: 100%;
+				background: var(--ok);
+			}
+
+			/* ---------- buy card ---------- */
+
+			.buy {
+				display: flex;
+				flex-direction: column;
+				gap: 12px;
+				padding: 16px;
+			}
+
+			.row {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				flex-wrap: wrap;
+			}
+
+			.row input {
+				flex: 1 1 220px;
+				padding: 8px 11px;
+				font-family: var(--mono);
+				font-size: 13px;
+				color: var(--text);
+				background: var(--inset);
+				border: 1px solid var(--border);
+				border-radius: 8px;
+			}
+
+			.row input:focus {
+				outline: none;
+				border-color: var(--primary);
+			}
+
+			.btn {
+				padding: 7px 13px;
+				font-size: 12px;
+				color: var(--text-2);
+				background: var(--surface);
+				border: 1px solid var(--border);
+				border-radius: 7px;
+				white-space: nowrap;
+			}
+
+			.btn:hover {
+				color: var(--text);
+				background: var(--bg-raised);
+			}
+
+			.btn.prim {
+				color: var(--bg);
+				background: var(--primary);
+				border-color: transparent;
+			}
+
+			.btn.text {
+				background: none;
+				border-color: transparent;
+				color: var(--text-3);
+			}
+
+			.btn.text:hover {
+				color: var(--text);
+				background: var(--surface);
+			}
+
+			.offers {
+				display: flex;
+				gap: 8px;
+				flex-wrap: wrap;
+			}
+
+			.offer {
+				display: flex;
+				align-items: baseline;
+				gap: 9px;
+				padding: 6px 11px;
+				font-family: var(--mono);
+				font-size: 12px;
+				color: var(--text);
+				border: 1px solid var(--border);
+				border-radius: 7px;
+			}
+
+			.offer:hover,
+			.offer.on {
+				background: var(--surface);
+			}
+
+			.offer .price {
+				color: var(--text-3);
+			}
+
+			.checkout {
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+				padding: 13px;
+				border: 1px solid var(--border-subtle);
+				border-radius: 8px;
+				background: var(--inset);
+			}
+
+			.checkout .line {
+				display: flex;
+				justify-content: space-between;
+				gap: 12px;
+				font-family: var(--mono);
+				font-size: 14px;
+			}
+
+			.checkout .line .nm {
+				font-weight: 600;
+			}
+
+			.checkout .facts {
+				display: flex;
+				gap: 8px 24px;
+				flex-wrap: wrap;
+				font-size: 12px;
+				color: var(--text-3);
+			}
+
+			.checkout .facts b {
+				font-family: var(--mono);
+				color: var(--text-2);
+				font-weight: 500;
+			}
+
+			.checkout .ok-line {
+				display: flex;
+				align-items: center;
+				gap: 7px;
+				font-size: 12px;
+				color: var(--ok);
+			}
+
+			.checkout .actions {
+				display: flex;
+				justify-content: flex-end;
+			}
+
+			/* ---------- ledger table ---------- */
+
+			.ledger {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 12px;
+			}
+
+			.ledger th {
+				text-align: left;
+				font-weight: 400;
+				font-size: 10px;
+				color: var(--text-3);
+				padding: 10px 16px 8px;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.ledger th.num {
+				text-align: right;
+			}
+
+			.ledger td {
+				padding: 9px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+				white-space: nowrap;
+			}
+
+			.ledger tr:last-child td {
+				border-bottom: none;
+			}
+
+			.ledger .dm {
+				font-family: var(--mono);
+				color: var(--text);
+			}
+
+			.ledger .mono {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				color: var(--text-2);
+			}
+
+			.ledger td.num {
+				text-align: right;
+			}
+
+			.ledger .meta {
+				color: var(--text-3);
+			}
+
+			.ledger tr.burned .dm,
+			.ledger tr.failed .dm {
+				color: var(--text-2);
+			}
+
+			.st {
+				padding: 2px 7px;
+				border-radius: 4px;
+				font-size: 10px;
+				white-space: nowrap;
+			}
+
+			.st-owned {
+				color: var(--ok);
+				background: oklch(0.72 0.15 155 / 0.12);
+			}
+			.st-assigned {
+				color: var(--primary);
+				background: var(--primary-subtle);
+			}
+			.st-burned {
+				color: var(--bad);
+				background: oklch(0.65 0.2 25 / 0.12);
+			}
+			.st-buying {
+				color: var(--warn);
+				background: oklch(0.78 0.12 85 / 0.12);
+			}
+			.st-failed {
+				color: var(--text-3);
+				background: oklch(0.52 0 0 / 0.12);
+			}
+
+			.why {
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			/* ---------- secondary cards ---------- */
+
+			.mini {
+				display: flex;
+				align-items: center;
+				gap: 10px;
+				padding: 13px 16px;
+			}
+
+			.mini .m-title {
+				font-size: 12px;
+				font-weight: 600;
+			}
+
+			.mini .m-sub {
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.mini .right {
+				margin-left: auto;
+				display: flex;
+				gap: 6px;
+			}
+
+			.excl {
+				display: flex;
+				gap: 6px;
+				flex-wrap: wrap;
+				padding: 0 16px 14px;
+			}
+
+			.ex-tag {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				padding: 3px 8px;
+				border-radius: 5px;
+				background: var(--inset);
+				font-family: var(--mono);
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.ex-tag .x {
+				color: var(--text-3);
+			}
+
+			@media (max-width: 1100px) {
+				.strip,
+				.life-hero {
+					grid-template-columns: 1fr;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<main class="page">
+			<div class="head">
+				<div>
+					<h1>домены</h1>
+					<p>
+						расходники xhttp-машин: пул, каждая покупка с ценой и заказом, на какой машине живёт домен сейчас и
+						почему сгоревший умер. хаб берёт из пула раньше, чем покупает сам.
+					</p>
+				</div>
+				<div class="ranges">
+					<button class="chip">7 дн</button>
+					<button class="chip on">30 дн</button>
+					<button class="chip">90 дн</button>
+				</div>
+			</div>
+
+			<!-- ======== 1. domain lifetime — the economy signal ======== -->
+			<section class="card">
+				<div class="card-head">
+					<h2>жизнь домена</h2>
+					<span class="sub">сколько имя живёт на машине до блокировки. падает → жгут имена сильнее → покупаем чаще</span>
+				</div>
+				<div class="life-hero">
+					<div class="figure">
+						<div class="big">38<span class="unit">ч</span> <span class="trend bad">&minus;23 ч</span></div>
+						<div class="what">медиана за 30 дней · неделю назад 61 ч</div>
+						<div class="breakdown">
+							<div>
+								<span><i class="sw" style="background: var(--z-mom)"></i>.mom</span>
+								<b>52 ч</b>
+							</div>
+							<div>
+								<span><i class="sw" style="background: var(--z-top)"></i>.top</span>
+								<b>41 ч</b>
+							</div>
+							<div>
+								<span><i class="sw" style="background: var(--z-lol)"></i>.lol</span>
+								<b style="color: var(--bad)">28 ч</b>
+							</div>
+						</div>
+					</div>
+					<div>
+						<svg class="life-chart" id="life" viewBox="0 0 900 150" preserveAspectRatio="none"></svg>
+						<div class="axis-x">
+							<span>22 сен</span><span>29 сен</span><span>6 окт</span><span>13 окт</span><span>22 окт</span>
+						</div>
+					</div>
+				</div>
+				<div class="note">
+					линии — жизнь домена по зонам. .lol просел с 46 до 28 ч за неделю, .mom держится — зону .lol стоит
+					двигать вниз в порядке покупки (правится у регистратора). наведи на линию — точное значение и дата.
+				</div>
+			</section>
+
+			<!-- ======== 2. pool buffer + burn + spend ======== -->
+			<div class="strip">
+				<div class="cell">
+					<span class="label">в пуле</span>
+					<div class="value">9 <span class="unit">домена · хватит ~14 ч</span></div>
+					<span class="meta">хаб докупает при остатке &lt; 6 · сжигаем 7 /сут</span>
+				</div>
+				<div class="cell">
+					<span class="label">сгорает в день</span>
+					<div class="value v-warn">14 <span class="unit">/сут</span></div>
+					<span class="meta">неделю назад 9 /сут</span>
+				</div>
+				<div class="cell">
+					<span class="label">расход за месяц</span>
+					<div class="value">$28<span class="unit">.20</span></div>
+					<span class="meta">из $150 · одна покупка до $3</span>
+					<div class="capbar"><i style="width: 19%"></i></div>
+				</div>
+			</div>
+
+			<!-- ======== 3. buy into the pool ======== -->
+			<section class="card">
+				<div class="card-head">
+					<h2>купить домен в пул</h2>
+					<span class="sub">цена и бюджет-гейт те же, что у покупок самого хаба</span>
+				</div>
+				<div class="buy">
+					<div class="row">
+						<input class="mono" value="cedar4821.lol" spellcheck="false" />
+						<button class="btn">проверить</button>
+						<button class="btn text">подобрать</button>
+						<button class="btn text">добавить купленный</button>
+					</div>
+					<div class="offers">
+						<span class="offer on">cedar4821.lol <span class="price">$1.12</span></span>
+						<span class="offer">mapleproxy.top <span class="price">$2.40</span></span>
+						<span class="offer">rivercdn.mom <span class="price">$1.98</span></span>
+					</div>
+					<div class="checkout">
+						<div class="line">
+							<span class="nm">cedar4821.lol</span>
+							<span>$1.12</span>
+						</div>
+						<div class="facts">
+							<span>кредит <b>$28.20</b></span>
+							<span>за месяц <b>$28.20</b> из <b>$150.00</b></span>
+						</div>
+						<div class="ok-line">✓ в пределах потолков, регистратор продаст</div>
+						<div class="actions"><button class="btn prim">купить</button></div>
+					</div>
+				</div>
+			</section>
+
+			<!-- ======== 4. ledger ======== -->
+			<section class="card">
+				<div class="card-head">
+					<h2>журнал</h2>
+					<span class="sub">214 за всё время</span>
+					<div class="right">
+						<button class="chip">все 214</button>
+						<button class="chip on">сожжено 189</button>
+						<button class="chip">в пуле 9</button>
+						<button class="chip">на машинах 14</button>
+						<button class="chip">покупка 2</button>
+					</div>
+				</div>
+				<table class="ledger">
+					<thead>
+						<tr>
+							<th>домен</th>
+							<th>статус</th>
+							<th>машина</th>
+							<th>прожил</th>
+							<th class="num">цена</th>
+							<th>заказ</th>
+							<th>заведён</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td class="dm">files-origin-cdn.org</td>
+							<td><span class="st st-assigned">на машине</span></td>
+							<td class="mono">fra2</td>
+							<td class="mono">9 дн</td>
+							<td class="num mono">$2.40</td>
+							<td class="mono meta">pb-5521</td>
+							<td class="meta">13 окт</td>
+						</tr>
+						<tr class="burned">
+							<td class="dm">adress-cdn-pool.net</td>
+							<td><span class="st st-burned">сожжён</span></td>
+							<td class="mono">fra2</td>
+							<td class="mono">19 ч</td>
+							<td class="num mono">$1.98</td>
+							<td class="mono meta">pb-5602</td>
+							<td class="meta">21 окт</td>
+						</tr>
+						<tr>
+							<td class="dm">cedar4821.lol</td>
+							<td><span class="st st-owned">в пуле</span></td>
+							<td class="mono"></td>
+							<td class="mono"></td>
+							<td class="num mono">$1.12</td>
+							<td class="mono meta">pb-5610</td>
+							<td class="meta">22 окт</td>
+						</tr>
+						<tr class="buying">
+							<td class="dm">mapleproxy.top</td>
+							<td><span class="st st-buying">покупка</span></td>
+							<td class="mono"></td>
+							<td class="mono"></td>
+							<td class="num mono">$2.40</td>
+							<td class="mono meta">pb-5611</td>
+							<td class="meta">только что</td>
+						</tr>
+						<tr class="burned">
+							<td class="dm">img-assets-cache.net</td>
+							<td><span class="st st-burned">сожжён</span></td>
+							<td class="mono">waw1</td>
+							<td class="mono">2 дн</td>
+							<td class="num mono">$1.50</td>
+							<td class="mono meta">pb-5410 · руками</td>
+							<td class="meta">14 окт</td>
+						</tr>
+						<tr class="failed">
+							<td class="dm">fast-edge-33.lol</td>
+							<td><span class="st st-failed">не куплен</span></td>
+							<td class="mono"></td>
+							<td class="mono"></td>
+							<td class="num mono"></td>
+							<td class="mono meta">pb-5588</td>
+							<td class="meta">20 окт</td>
+						</tr>
+						<tr class="failed">
+							<td colspan="7" class="why">регистратор вернул 400: зона .lol временно не продаётся через api</td>
+						</tr>
+					</tbody>
+				</table>
+			</section>
+
+			<!-- ======== 5. secondary: exclusions + account ======== -->
+			<section class="card">
+				<div class="card-head">
+					<h2>не использовать</h2>
+					<span class="sub">имена, которые хаб никогда не возьмёт и не купит</span>
+					<div class="right"><button class="btn text">+ добавить</button></div>
+				</div>
+				<div class="excl">
+					<span class="ex-tag">spamhaus-known.net <span class="x">×</span></span>
+					<span class="ex-tag">*.ddns.net <span class="x">×</span></span>
+					<span class="ex-tag">old-burned-brand.top <span class="x">×</span></span>
+				</div>
+			</section>
+
+			<section class="card">
+				<div class="mini">
+					<div>
+						<div class="m-title">в аккаунте регистратора, но не в пуле</div>
+						<div class="m-sub">3 домена куплены на porkbun мимо хаба — забрать в пул, чтобы хаб ими распоряжался</div>
+					</div>
+					<div class="right"><button class="btn">забрать все в пул</button></div>
+				</div>
+			</section>
+		</main>
+
+		<script>
+			function wobble(i, seed) {
+				return (Math.sin(i * 0.7 + seed) + Math.sin(i * 0.23 + seed * 3)) / 2;
+			}
+
+			function path(vals, w, h, pad, min, max) {
+				const n = vals.length;
+				const x = (i) => (i / (n - 1)) * w;
+				const y = (v) => h - pad - ((v - min) / (max - min)) * (h - pad * 2);
+				return vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+			}
+
+			// --- domain lifetime by zone over 30 days; hover reads the value ---
+			const life = (() => {
+				const svg = document.getElementById('life');
+				const W = 900,
+					H = 150,
+					PAD = 12;
+				const n = 30;
+				// three zones, .lol falling off a cliff in the last week
+				const mom = Array.from({ length: n }, (_, i) => 54 + wobble(i, 1) * 4);
+				const top = Array.from({ length: n }, (_, i) => 44 + wobble(i, 3) * 4 - (i > 22 ? (i - 22) * 0.4 : 0));
+				const lol = Array.from({ length: n }, (_, i) => 46 + wobble(i, 5) * 3 - (i > 21 ? (i - 21) * 2.2 : 0));
+				const zones = [
+					{ name: '.mom', vals: mom, color: 'var(--z-mom)' },
+					{ name: '.top', vals: top, color: 'var(--z-top)' },
+					{ name: '.lol', vals: lol, color: 'var(--z-lol)' },
+				];
+				const all = zones.flatMap((z) => z.vals);
+				const lo = Math.min(...all) - 6,
+					hi = Math.max(...all) + 6;
+
+				function render(hoverI) {
+					let out = '';
+					for (let g = 0; g <= 3; g++) {
+						const gy = PAD + (g / 3) * (H - PAD * 2);
+						out += `<line x1="0" y1="${gy}" x2="${W}" y2="${gy}" stroke="oklch(0.22 0 0)" stroke-width="1" />`;
+					}
+					for (const z of zones) {
+						const d = path(z.vals, W, H, PAD, lo, hi);
+						out += `<path d="${d}" fill="none" stroke="${z.color}" stroke-width="1.7" stroke-linejoin="round" />`;
+					}
+					if (hoverI != null) {
+						const x = (hoverI / (n - 1)) * W;
+						out += `<line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${H}" stroke="oklch(0.5 0 0)" stroke-width="1" />`;
+						for (const z of zones) {
+							const y = H - PAD - ((z.vals[hoverI] - lo) / (hi - lo)) * (H - PAD * 2);
+							out += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.8" fill="${z.color}" />`;
+						}
+					}
+					svg.innerHTML = out;
+				}
+				render(null);
+				return { svg, zones, n, render };
+			})();
+
+			const tip = document.createElement('div');
+			tip.style.cssText =
+				'position:fixed;z-index:50;pointer-events:none;padding:5px 9px;border-radius:6px;background:var(--bg-raised);border:1px solid var(--border);font-family:var(--mono);font-size:11px;color:var(--text);white-space:nowrap;display:none;';
+			document.body.appendChild(tip);
+
+			life.svg.style.cursor = 'crosshair';
+			life.svg.addEventListener('mousemove', (e) => {
+				const rect = life.svg.getBoundingClientRect();
+				const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+				const i = Math.round(frac * (life.n - 1));
+				life.render(i);
+				const day = new Date(Date.now() - (life.n - 1 - i) * 86_400_000);
+				const date = day.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+				tip.innerHTML =
+					`${date}<br>` + life.zones.map((z) => `${z.name} ${Math.round(z.vals[i])} ч`).join(' · ');
+				tip.style.display = 'block';
+				tip.style.left = `${e.clientX + 12}px`;
+				tip.style.top = `${e.clientY - 40}px`;
+			});
+			life.svg.addEventListener('mouseleave', () => {
+				life.render(null);
+				tip.style.display = 'none';
+			});
+
+			// chip groups
+			for (const group of document.querySelectorAll('.ranges, .card-head .right')) {
+				group.addEventListener('click', (e) => {
+					if (!e.target.classList.contains('chip')) return;
+					for (const c of group.querySelectorAll('.chip')) c.classList.toggle('on', c === e.target);
+				});
+			}
+		</script>
+	</body>
+</html>

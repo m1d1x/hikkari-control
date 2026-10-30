@@ -1,0 +1,1241 @@
+<!doctype html>
+<html lang="ru">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>антиблок — макет дашборда</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+			rel="stylesheet"
+		/>
+		<style>
+			:root {
+				--bg: oklch(0.14 0 0);
+				--bg-raised: oklch(0.17 0 0);
+				--surface: oklch(0.23 0 0);
+				--surface-hover: oklch(0.26 0 0);
+				--card-bg: oklch(0.2 0 0);
+				--sidebar-bg: oklch(0.19 0 0);
+
+				--primary: oklch(0.75 0.14 350);
+				--primary-subtle: oklch(0.75 0.14 350 / 0.1);
+
+				--ok: oklch(0.72 0.15 155);
+				--warn: oklch(0.78 0.12 85);
+				--bad: oklch(0.65 0.2 25);
+				--unknown: oklch(0.52 0 0);
+
+				--border: oklch(0.24 0 0);
+				--border-subtle: oklch(0.19 0 0);
+
+				--text: oklch(0.93 0 0);
+				--text-2: oklch(0.62 0 0);
+				--text-3: oklch(0.42 0 0);
+
+				--sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+				--mono: 'IBM Plex Mono', monospace;
+			}
+
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+			}
+
+			body {
+				background: var(--bg);
+				color: var(--text);
+				font-family: var(--sans);
+				font-size: 13px;
+				line-height: 1.5;
+				-webkit-font-smoothing: antialiased;
+			}
+
+			button {
+				font: inherit;
+				color: inherit;
+				background: none;
+				border: none;
+				cursor: pointer;
+			}
+
+			.mono {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+			}
+
+			/* ---------- shell ---------- */
+
+			.switcher {
+				position: sticky;
+				top: 0;
+				z-index: 10;
+				display: flex;
+				align-items: center;
+				gap: 10px;
+				padding: 10px 24px;
+				background: var(--bg-raised);
+				border-bottom: 1px solid var(--border);
+			}
+
+			.switcher .note {
+				margin-left: auto;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.tab {
+				padding: 5px 12px;
+				border-radius: 6px;
+				font-size: 12px;
+				color: var(--text-2);
+				border: 1px solid transparent;
+			}
+
+			.tab:hover {
+				background: var(--surface);
+			}
+
+			.tab.on {
+				color: var(--text);
+				background: var(--primary-subtle);
+				border-color: oklch(0.75 0.14 350 / 0.35);
+			}
+
+			.page {
+				display: none;
+				padding: 24px;
+				max-width: 1320px;
+			}
+
+			.page.on {
+				display: block;
+			}
+
+			.head {
+				margin-bottom: 20px;
+			}
+
+			.head h1 {
+				font-size: 20px;
+				font-weight: 600;
+				letter-spacing: -0.01em;
+			}
+
+			.head p {
+				margin-top: 4px;
+				font-size: 12px;
+				color: var(--text-2);
+			}
+
+			/* ---------- numbers strip ---------- */
+
+			.numbers {
+				display: grid;
+				grid-template-columns: repeat(5, 1fr);
+				gap: 1px;
+				background: var(--border-subtle);
+				border: 1px solid var(--border-subtle);
+				border-radius: 8px;
+				overflow: hidden;
+				margin-bottom: 16px;
+			}
+
+			.num {
+				background: var(--card-bg);
+				padding: 14px 16px;
+			}
+
+			.num .label {
+				display: block;
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.num .value {
+				display: block;
+				margin-top: 4px;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 22px;
+				font-weight: 600;
+				letter-spacing: -0.02em;
+			}
+
+			.num .meta {
+				display: block;
+				margin-top: 2px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.value.ok {
+				color: var(--ok);
+			}
+			.value.warn {
+				color: var(--warn);
+			}
+			.value.bad {
+				color: var(--bad);
+			}
+
+			/* ---------- cards ---------- */
+
+			.card {
+				background: var(--card-bg);
+				border: 1px solid var(--border-subtle);
+				border-radius: 8px;
+				margin-bottom: 16px;
+			}
+
+			.card-head {
+				display: flex;
+				align-items: baseline;
+				gap: 10px;
+				padding: 14px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.card-head h2 {
+				font-size: 13px;
+				font-weight: 600;
+			}
+
+			.card-head .sub {
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.card-head .right {
+				margin-left: auto;
+				display: flex;
+				gap: 6px;
+			}
+
+			.chip {
+				padding: 3px 9px;
+				border-radius: 5px;
+				font-size: 11px;
+				color: var(--text-2);
+				border: 1px solid var(--border);
+			}
+
+			.chip.on {
+				color: var(--text);
+				background: var(--surface);
+			}
+
+			.card-body {
+				padding: 14px 16px;
+			}
+
+			/* ---------- box grid ---------- */
+
+			.box-row {
+				display: grid;
+				grid-template-columns: 180px 1fr;
+				gap: 16px;
+				padding: 12px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.box-row:last-child {
+				border-bottom: none;
+			}
+
+			.box-id .name {
+				font-family: var(--mono);
+				font-size: 13px;
+				font-weight: 500;
+			}
+
+			.box-id .where {
+				margin-top: 2px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.box-id .verdict {
+				display: inline-block;
+				margin-top: 6px;
+				padding: 2px 7px;
+				border-radius: 4px;
+				font-size: 10px;
+			}
+
+			.v-ok {
+				color: var(--ok);
+				background: oklch(0.72 0.15 155 / 0.12);
+			}
+			.v-warn {
+				color: var(--warn);
+				background: oklch(0.78 0.12 85 / 0.12);
+			}
+			.v-bad {
+				color: var(--bad);
+				background: oklch(0.65 0.2 25 / 0.12);
+			}
+			.v-mute {
+				color: var(--text-3);
+				background: oklch(0.52 0 0 / 0.12);
+			}
+
+			.relays {
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+			}
+
+			.relay {
+				display: grid;
+				grid-template-columns: 112px 1fr 56px;
+				align-items: center;
+				gap: 12px;
+			}
+
+			.relay .proto {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				font-family: var(--mono);
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.dot {
+				width: 6px;
+				height: 6px;
+				border-radius: 50%;
+				flex-shrink: 0;
+			}
+
+			.dot.ok {
+				background: var(--ok);
+			}
+			.dot.warn {
+				background: var(--warn);
+			}
+			.dot.bad {
+				background: var(--bad);
+			}
+			.dot.mute {
+				background: var(--unknown);
+			}
+
+			.uptime {
+				display: flex;
+				gap: 1.5px;
+				height: 20px;
+			}
+
+			.uptime i {
+				flex: 1;
+				border-radius: 1px;
+				background: var(--ok);
+			}
+
+			.uptime i.w {
+				background: var(--warn);
+			}
+			.uptime i.b {
+				background: var(--bad);
+			}
+			.uptime i.m {
+				background: oklch(0.3 0 0);
+			}
+
+			.relay .pct {
+				font-family: var(--mono);
+				font-size: 11px;
+				color: var(--text-2);
+				text-align: right;
+			}
+
+			/* ---------- table ---------- */
+
+			table {
+				width: 100%;
+				border-collapse: collapse;
+			}
+
+			th {
+				padding: 8px 16px;
+				text-align: left;
+				font-size: 11px;
+				font-weight: 500;
+				color: var(--text-3);
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			td {
+				padding: 9px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+				font-size: 12px;
+			}
+
+			tr:last-child td {
+				border-bottom: none;
+			}
+
+			td.m {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+			}
+
+			.age {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+
+			.age-bar {
+				width: 54px;
+				height: 3px;
+				border-radius: 2px;
+				background: oklch(0.3 0 0);
+				overflow: hidden;
+			}
+
+			.age-bar span {
+				display: block;
+				height: 100%;
+				background: var(--ok);
+			}
+
+			.age-bar span.w {
+				background: var(--warn);
+			}
+			.age-bar span.b {
+				background: var(--bad);
+			}
+
+			/* ---------- incidents ---------- */
+
+			.inc {
+				display: flex;
+				gap: 12px;
+				padding: 12px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.inc:last-child {
+				border-bottom: none;
+			}
+
+			.inc .bar {
+				width: 2px;
+				border-radius: 1px;
+				flex-shrink: 0;
+				background: var(--bad);
+			}
+
+			.inc .bar.w {
+				background: var(--warn);
+			}
+			.inc .bar.done {
+				background: oklch(0.3 0 0);
+			}
+
+			.inc .what {
+				font-size: 12px;
+				font-weight: 500;
+			}
+
+			.inc .why {
+				margin-top: 2px;
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.inc .when {
+				margin-top: 4px;
+				font-family: var(--mono);
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.inc .act {
+				margin-left: auto;
+				align-self: center;
+				padding: 5px 11px;
+				border-radius: 6px;
+				font-size: 11px;
+				white-space: nowrap;
+				border: 1px solid var(--border);
+				color: var(--text-2);
+			}
+
+			.inc .act:hover {
+				background: var(--surface);
+				color: var(--text);
+			}
+
+			.inc .act.auto {
+				color: var(--ok);
+				border-color: oklch(0.72 0.15 155 / 0.3);
+				background: oklch(0.72 0.15 155 / 0.08);
+				cursor: default;
+			}
+
+			.inc.closed .what,
+			.inc.closed .why {
+				color: var(--text-3);
+			}
+
+			/* ---------- latency ---------- */
+
+			.lat-row {
+				display: grid;
+				grid-template-columns: 170px 1fr 70px;
+				align-items: center;
+				gap: 12px;
+				padding: 9px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.lat-row:last-child {
+				border-bottom: none;
+			}
+
+			.lat-row .who {
+				font-family: var(--mono);
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.lat-row .ms {
+				font-family: var(--mono);
+				font-size: 11px;
+				text-align: right;
+				color: var(--text-2);
+			}
+
+			svg.spark {
+				display: block;
+				width: 100%;
+				height: 32px;
+			}
+
+			/* ---------- reports ---------- */
+
+			.rep {
+				display: flex;
+				align-items: baseline;
+				gap: 10px;
+				padding: 7px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+				font-size: 11px;
+			}
+
+			.rep:last-child {
+				border-bottom: none;
+			}
+
+			.rep .stage {
+				font-family: var(--mono);
+				padding: 1px 6px;
+				border-radius: 3px;
+				background: var(--surface);
+				color: var(--text-2);
+			}
+
+			.rep .rname {
+				font-family: var(--mono);
+				color: var(--text);
+			}
+
+			.rep .cnt {
+				margin-left: auto;
+				font-family: var(--mono);
+				color: var(--text-3);
+			}
+
+			/* ---------- layout B ---------- */
+
+			.split {
+				display: grid;
+				grid-template-columns: 1fr 320px;
+				gap: 16px;
+				align-items: start;
+			}
+
+			.split .col-r .card {
+				position: sticky;
+				top: 68px;
+			}
+
+			.two {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 16px;
+			}
+
+			.two .card {
+				margin-bottom: 0;
+			}
+		</style>
+	</head>
+	<body>
+		<nav class="switcher">
+			<button class="tab on" data-go="a">компоновка a — в одну колонку</button>
+			<button class="tab" data-go="b">компоновка b — лента инцидентов сбоку</button>
+			<span class="note">макет, данные выдуманные</span>
+		</nav>
+
+		<!-- ======================= A ======================= -->
+		<main class="page on" id="a">
+			<div class="head">
+				<h1>антиблок</h1>
+				<p>что сейчас происходит с машинами, релеями и доменами. кнопок действий тут нет, только инциденты.</p>
+			</div>
+
+			<div class="numbers">
+				<div class="num">
+					<span class="label">машины в строю</span>
+					<span class="value">6</span>
+					<span class="meta">одна сдаётся</span>
+				</div>
+				<div class="num">
+					<span class="label">релеи живые</span>
+					<span class="value ok">14<span style="color: var(--text-3); font-size: 15px"> / 17</span></span>
+					<span class="meta">2 пересадка, 1 проверка версии</span>
+				</div>
+				<div class="num">
+					<span class="label">домены в пуле</span>
+					<span class="value">9</span>
+					<span class="meta">11 на машинах</span>
+				</div>
+				<div class="num">
+					<span class="label">жизнь домена, медиана</span>
+					<span class="value warn">38 ч</span>
+					<span class="meta">неделю назад было 61 ч</span>
+				</div>
+				<div class="num">
+					<span class="label">потрачено за месяц</span>
+					<span class="value">$42.60</span>
+					<span class="meta">из $150</span>
+				</div>
+			</div>
+
+			<section class="card">
+				<div class="card-head">
+					<h2>инциденты</h2>
+					<span class="sub">открытые сверху</span>
+					<div class="right">
+						<span class="chip on">открытые 2</span>
+						<span class="chip">за сутки 7</span>
+					</div>
+				</div>
+				<div class="inc">
+					<div class="bar"></div>
+					<div>
+						<div class="what">ams1: ip забанен целиком</div>
+						<div class="why">все четыре релея машины не отвечают с 14:02, пробник из рф три цикла подряд</div>
+						<div class="when">открыт 41 мин назад · плейбук: сменить ip у провайдера</div>
+					</div>
+					<button class="act">открыть машину</button>
+				</div>
+				<div class="inc">
+					<div class="bar w"></div>
+					<div>
+						<div class="what">fra2-2: домен заблокирован</div>
+						<div class="why">adress-cdn-pool.net отдаёт сброс, адрес машины жив</div>
+						<div class="when">открыт 12 мин назад · ротация домена идёт</div>
+					</div>
+					<button class="act auto">чинится сам</button>
+				</div>
+				<div class="inc closed">
+					<div class="bar done"></div>
+					<div>
+						<div class="what">waw1-1: отпечаток спалили</div>
+						<div class="why">закрыт сменой reality-ключа, релей вернулся в пул</div>
+						<div class="when">закрыт 3 ч назад · жил 52 мин</div>
+					</div>
+				</div>
+			</section>
+
+			<section class="card">
+				<div class="card-head">
+					<h2>машины и релеи</h2>
+					<span class="sub">полоска — доступность за сутки, пробник из рф раз в 60 с</span>
+					<div class="right">
+						<span class="chip on">24 ч</span>
+						<span class="chip">6 ч</span>
+						<span class="chip">1 ч</span>
+					</div>
+				</div>
+
+				<div class="box-row">
+					<div class="box-id">
+						<div class="name">ams1</div>
+						<div class="where">vultr · amsterdam · 14 дн</div>
+						<div class="verdict v-bad">ip забанен</div>
+					</div>
+					<div class="relays">
+						<div class="relay">
+							<span class="proto"><i class="dot bad"></i>reality</span>
+							<div class="uptime" data-fill="bad-tail"></div>
+							<span class="pct">61%</span>
+						</div>
+						<div class="relay">
+							<span class="proto"><i class="dot bad"></i>hysteria2</span>
+							<div class="uptime" data-fill="bad-tail"></div>
+							<span class="pct">61%</span>
+						</div>
+						<div class="relay">
+							<span class="proto"><i class="dot bad"></i>xhttp</span>
+							<div class="uptime" data-fill="bad-tail"></div>
+							<span class="pct">60%</span>
+						</div>
+					</div>
+				</div>
+
+				<div class="box-row">
+					<div class="box-id">
+						<div class="name">fra2</div>
+						<div class="where">hetzner · frankfurt · 31 дн</div>
+						<div class="verdict v-warn">домен заблокирован</div>
+					</div>
+					<div class="relays">
+						<div class="relay">
+							<span class="proto"><i class="dot ok"></i>reality</span>
+							<div class="uptime" data-fill="clean"></div>
+							<span class="pct">99.8%</span>
+						</div>
+						<div class="relay">
+							<span class="proto"><i class="dot warn"></i>xhttp</span>
+							<div class="uptime" data-fill="dips"></div>
+							<span class="pct">92.4%</span>
+						</div>
+						<div class="relay">
+							<span class="proto"><i class="dot ok"></i>hysteria2</span>
+							<div class="uptime" data-fill="clean"></div>
+							<span class="pct">99.9%</span>
+						</div>
+					</div>
+				</div>
+
+				<div class="box-row">
+					<div class="box-id">
+						<div class="name">waw1</div>
+						<div class="where">ovh · warsaw · 6 дн</div>
+						<div class="verdict v-ok">все релеи живы</div>
+					</div>
+					<div class="relays">
+						<div class="relay">
+							<span class="proto"><i class="dot ok"></i>reality</span>
+							<div class="uptime" data-fill="one-dip"></div>
+							<span class="pct">98.1%</span>
+						</div>
+						<div class="relay">
+							<span class="proto"><i class="dot ok"></i>xhttp</span>
+							<div class="uptime" data-fill="clean"></div>
+							<span class="pct">100%</span>
+						</div>
+					</div>
+				</div>
+
+				<div class="box-row">
+					<div class="box-id">
+						<div class="name">sin1</div>
+						<div class="where">vultr · singapore · 2 дн</div>
+						<div class="verdict v-mute">пробник сам без сети</div>
+					</div>
+					<div class="relays">
+						<div class="relay">
+							<span class="proto"><i class="dot mute"></i>reality</span>
+							<div class="uptime" data-fill="gap"></div>
+							<span class="pct">—</span>
+						</div>
+						<div class="relay">
+							<span class="proto"><i class="dot mute"></i>hysteria2</span>
+							<div class="uptime" data-fill="gap"></div>
+							<span class="pct">—</span>
+						</div>
+					</div>
+				</div>
+			</section>
+
+			<section class="card">
+				<div class="card-head">
+					<h2>домены в работе</h2>
+					<span class="sub">сколько живёт — главный показатель: насколько быстро их жжёт</span>
+					<div class="right"><span class="chip">журнал целиком</span></div>
+				</div>
+				<table>
+					<thead>
+						<tr>
+							<th>домен</th>
+							<th>машина</th>
+							<th>живёт</th>
+							<th>вердикт</th>
+							<th>цена</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td class="m">adress-cdn-pool.net</td>
+							<td class="m">fra2-2</td>
+							<td>
+								<div class="age">
+									<span class="age-bar"><span class="b" style="width: 96%"></span></span>
+									<span class="m">71 ч</span>
+								</div>
+							</td>
+							<td><span class="verdict v-warn">заблокирован</span></td>
+							<td class="m">$9.13</td>
+						</tr>
+						<tr>
+							<td class="m">static-edge-delivery.com</td>
+							<td class="m">waw1-2</td>
+							<td>
+								<div class="age">
+									<span class="age-bar"><span class="w" style="width: 52%"></span></span>
+									<span class="m">39 ч</span>
+								</div>
+							</td>
+							<td><span class="verdict v-ok">чисто</span></td>
+							<td class="m">$11.20</td>
+						</tr>
+						<tr>
+							<td class="m">img-assets-cache.net</td>
+							<td class="m">sin1-1</td>
+							<td>
+								<div class="age">
+									<span class="age-bar"><span style="width: 14%"></span></span>
+									<span class="m">11 ч</span>
+								</div>
+							</td>
+							<td><span class="verdict v-mute">нет данных</span></td>
+							<td class="m">$9.13</td>
+						</tr>
+						<tr>
+							<td class="m">files-origin-cdn.org</td>
+							<td class="m">fra2-1</td>
+							<td>
+								<div class="age">
+									<span class="age-bar"><span style="width: 8%"></span></span>
+									<span class="m">6 ч</span>
+								</div>
+							</td>
+							<td><span class="verdict v-ok">чисто</span></td>
+							<td class="m">$12.40</td>
+						</tr>
+					</tbody>
+				</table>
+			</section>
+
+			<div class="two">
+				<section class="card">
+					<div class="card-head">
+						<h2>латентность и флопы</h2>
+						<span class="sub">подлетел пинг — был флоп</span>
+					</div>
+					<div class="lat-row">
+						<span class="who">fra2-1 · reality</span>
+						<svg class="spark" viewBox="0 0 220 32" preserveAspectRatio="none" data-spark="calm"></svg>
+						<span class="ms">48 мс</span>
+					</div>
+					<div class="lat-row">
+						<span class="who">fra2-2 · xhttp</span>
+						<svg class="spark" viewBox="0 0 220 32" preserveAspectRatio="none" data-spark="spike"></svg>
+						<span class="ms">310 мс</span>
+					</div>
+					<div class="lat-row">
+						<span class="who">waw1-1 · reality</span>
+						<svg class="spark" viewBox="0 0 220 32" preserveAspectRatio="none" data-spark="calm2"></svg>
+						<span class="ms">61 мс</span>
+					</div>
+					<div class="lat-row">
+						<span class="who">ams1-1 · reality</span>
+						<svg class="spark" viewBox="0 0 220 32" preserveAspectRatio="none" data-spark="dead"></svg>
+						<span class="ms">нет</span>
+					</div>
+				</section>
+
+				<section class="card">
+					<div class="card-head">
+						<h2>отчёты клиентов</h2>
+						<span class="sub">второй источник улик, за 6 ч</span>
+					</div>
+					<div class="rep">
+						<span class="stage">tls</span>
+						<span class="rname">ams1-1</span>
+						<span style="color: var(--text-2)">рукопожатие оборвано</span>
+						<span class="cnt">214</span>
+					</div>
+					<div class="rep">
+						<span class="stage">timeout</span>
+						<span class="rname">ams1-2</span>
+						<span style="color: var(--text-2)">ответа нет</span>
+						<span class="cnt">189</span>
+					</div>
+					<div class="rep">
+						<span class="stage">tcp</span>
+						<span class="rname">fra2-2</span>
+						<span style="color: var(--text-2)">соединение сброшено</span>
+						<span class="cnt">57</span>
+					</div>
+					<div class="rep">
+						<span class="stage">reality</span>
+						<span class="rname">waw1-1</span>
+						<span style="color: var(--text-2)">прикрытие не приняло</span>
+						<span class="cnt">4</span>
+					</div>
+				</section>
+			</div>
+		</main>
+
+		<!-- ======================= B ======================= -->
+		<main class="page" id="b">
+			<div class="head">
+				<h1>антиблок</h1>
+				<p>то же содержимое, но инциденты закреплены справа и видны, пока листаешь сетку машин.</p>
+			</div>
+
+			<div class="numbers">
+				<div class="num">
+					<span class="label">машины в строю</span>
+					<span class="value">6</span>
+					<span class="meta">одна сдаётся</span>
+				</div>
+				<div class="num">
+					<span class="label">релеи живые</span>
+					<span class="value ok">14<span style="color: var(--text-3); font-size: 15px"> / 17</span></span>
+					<span class="meta">2 пересадка, 1 проверка версии</span>
+				</div>
+				<div class="num">
+					<span class="label">домены в пуле</span>
+					<span class="value">9</span>
+					<span class="meta">11 на машинах</span>
+				</div>
+				<div class="num">
+					<span class="label">жизнь домена, медиана</span>
+					<span class="value warn">38 ч</span>
+					<span class="meta">неделю назад было 61 ч</span>
+				</div>
+				<div class="num">
+					<span class="label">потрачено за месяц</span>
+					<span class="value">$42.60</span>
+					<span class="meta">из $150</span>
+				</div>
+			</div>
+
+			<div class="split">
+				<div class="col-l">
+					<section class="card">
+						<div class="card-head">
+							<h2>машины и релеи</h2>
+							<div class="right">
+								<span class="chip on">24 ч</span>
+								<span class="chip">6 ч</span>
+								<span class="chip">1 ч</span>
+							</div>
+						</div>
+
+						<div class="box-row">
+							<div class="box-id">
+								<div class="name">ams1</div>
+								<div class="where">vultr · amsterdam · 14 дн</div>
+								<div class="verdict v-bad">ip забанен</div>
+							</div>
+							<div class="relays">
+								<div class="relay">
+									<span class="proto"><i class="dot bad"></i>reality</span>
+									<div class="uptime" data-fill="bad-tail"></div>
+									<span class="pct">61%</span>
+								</div>
+								<div class="relay">
+									<span class="proto"><i class="dot bad"></i>hysteria2</span>
+									<div class="uptime" data-fill="bad-tail"></div>
+									<span class="pct">61%</span>
+								</div>
+								<div class="relay">
+									<span class="proto"><i class="dot bad"></i>xhttp</span>
+									<div class="uptime" data-fill="bad-tail"></div>
+									<span class="pct">60%</span>
+								</div>
+							</div>
+						</div>
+
+						<div class="box-row">
+							<div class="box-id">
+								<div class="name">fra2</div>
+								<div class="where">hetzner · frankfurt · 31 дн</div>
+								<div class="verdict v-warn">домен заблокирован</div>
+							</div>
+							<div class="relays">
+								<div class="relay">
+									<span class="proto"><i class="dot ok"></i>reality</span>
+									<div class="uptime" data-fill="clean"></div>
+									<span class="pct">99.8%</span>
+								</div>
+								<div class="relay">
+									<span class="proto"><i class="dot warn"></i>xhttp</span>
+									<div class="uptime" data-fill="dips"></div>
+									<span class="pct">92.4%</span>
+								</div>
+								<div class="relay">
+									<span class="proto"><i class="dot ok"></i>hysteria2</span>
+									<div class="uptime" data-fill="clean"></div>
+									<span class="pct">99.9%</span>
+								</div>
+							</div>
+						</div>
+
+						<div class="box-row">
+							<div class="box-id">
+								<div class="name">waw1</div>
+								<div class="where">ovh · warsaw · 6 дн</div>
+								<div class="verdict v-ok">все релеи живы</div>
+							</div>
+							<div class="relays">
+								<div class="relay">
+									<span class="proto"><i class="dot ok"></i>reality</span>
+									<div class="uptime" data-fill="one-dip"></div>
+									<span class="pct">98.1%</span>
+								</div>
+								<div class="relay">
+									<span class="proto"><i class="dot ok"></i>xhttp</span>
+									<div class="uptime" data-fill="clean"></div>
+									<span class="pct">100%</span>
+								</div>
+							</div>
+						</div>
+
+						<div class="box-row">
+							<div class="box-id">
+								<div class="name">sin1</div>
+								<div class="where">vultr · singapore · 2 дн</div>
+								<div class="verdict v-mute">пробник сам без сети</div>
+							</div>
+							<div class="relays">
+								<div class="relay">
+									<span class="proto"><i class="dot mute"></i>reality</span>
+									<div class="uptime" data-fill="gap"></div>
+									<span class="pct">—</span>
+								</div>
+								<div class="relay">
+									<span class="proto"><i class="dot mute"></i>hysteria2</span>
+									<div class="uptime" data-fill="gap"></div>
+									<span class="pct">—</span>
+								</div>
+							</div>
+						</div>
+					</section>
+
+					<section class="card">
+						<div class="card-head">
+							<h2>домены в работе</h2>
+							<span class="sub">сколько живёт</span>
+						</div>
+						<table>
+							<thead>
+								<tr>
+									<th>домен</th>
+									<th>машина</th>
+									<th>живёт</th>
+									<th>вердикт</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td class="m">adress-cdn-pool.net</td>
+									<td class="m">fra2-2</td>
+									<td>
+										<div class="age">
+											<span class="age-bar"><span class="b" style="width: 96%"></span></span>
+											<span class="m">71 ч</span>
+										</div>
+									</td>
+									<td><span class="verdict v-warn">заблокирован</span></td>
+								</tr>
+								<tr>
+									<td class="m">static-edge-delivery.com</td>
+									<td class="m">waw1-2</td>
+									<td>
+										<div class="age">
+											<span class="age-bar"><span class="w" style="width: 52%"></span></span>
+											<span class="m">39 ч</span>
+										</div>
+									</td>
+									<td><span class="verdict v-ok">чисто</span></td>
+								</tr>
+								<tr>
+									<td class="m">img-assets-cache.net</td>
+									<td class="m">sin1-1</td>
+									<td>
+										<div class="age">
+											<span class="age-bar"><span style="width: 14%"></span></span>
+											<span class="m">11 ч</span>
+										</div>
+									</td>
+									<td><span class="verdict v-mute">нет данных</span></td>
+								</tr>
+								<tr>
+									<td class="m">files-origin-cdn.org</td>
+									<td class="m">fra2-1</td>
+									<td>
+										<div class="age">
+											<span class="age-bar"><span style="width: 8%"></span></span>
+											<span class="m">6 ч</span>
+										</div>
+									</td>
+									<td><span class="verdict v-ok">чисто</span></td>
+								</tr>
+							</tbody>
+						</table>
+					</section>
+
+					<section class="card">
+						<div class="card-head">
+							<h2>латентность и флопы</h2>
+							<span class="sub">подлетел пинг — был флоп</span>
+						</div>
+						<div class="lat-row">
+							<span class="who">fra2-1 · reality</span>
+							<svg class="spark" viewBox="0 0 220 32" preserveAspectRatio="none" data-spark="calm"></svg>
+							<span class="ms">48 мс</span>
+						</div>
+						<div class="lat-row">
+							<span class="who">fra2-2 · xhttp</span>
+							<svg class="spark" viewBox="0 0 220 32" preserveAspectRatio="none" data-spark="spike"></svg>
+							<span class="ms">310 мс</span>
+						</div>
+						<div class="lat-row">
+							<span class="who">waw1-1 · reality</span>
+							<svg class="spark" viewBox="0 0 220 32" preserveAspectRatio="none" data-spark="calm2"></svg>
+							<span class="ms">61 мс</span>
+						</div>
+					</section>
+				</div>
+
+				<div class="col-r">
+					<section class="card">
+						<div class="card-head">
+							<h2>инциденты</h2>
+							<span class="sub">2 открытых</span>
+						</div>
+						<div class="inc" style="flex-wrap: wrap">
+							<div class="bar"></div>
+							<div style="flex: 1">
+								<div class="what">ams1: ip забанен целиком</div>
+								<div class="why">четыре релея молчат с 14:02</div>
+								<div class="when">41 мин · сменить ip</div>
+								<button class="act" style="margin: 8px 0 0">открыть машину</button>
+							</div>
+						</div>
+						<div class="inc" style="flex-wrap: wrap">
+							<div class="bar w"></div>
+							<div style="flex: 1">
+								<div class="what">fra2-2: домен заблокирован</div>
+								<div class="why">adress-cdn-pool.net сбрасывает</div>
+								<div class="when">12 мин · ротация идёт</div>
+								<button class="act auto" style="margin: 8px 0 0">чинится сам</button>
+							</div>
+						</div>
+						<div class="inc closed" style="flex-wrap: wrap">
+							<div class="bar done"></div>
+							<div style="flex: 1">
+								<div class="what">waw1-1: отпечаток спалили</div>
+								<div class="why">закрыт сменой reality-ключа</div>
+								<div class="when">3 ч назад · жил 52 мин</div>
+							</div>
+						</div>
+					</section>
+
+					<section class="card">
+						<div class="card-head">
+							<h2>отчёты клиентов</h2>
+							<span class="sub">за 6 ч</span>
+						</div>
+						<div class="rep">
+							<span class="stage">tls</span>
+							<span class="rname">ams1-1</span>
+							<span class="cnt">214</span>
+						</div>
+						<div class="rep">
+							<span class="stage">timeout</span>
+							<span class="rname">ams1-2</span>
+							<span class="cnt">189</span>
+						</div>
+						<div class="rep">
+							<span class="stage">tcp</span>
+							<span class="rname">fra2-2</span>
+							<span class="cnt">57</span>
+						</div>
+						<div class="rep">
+							<span class="stage">reality</span>
+							<span class="rname">waw1-1</span>
+							<span class="cnt">4</span>
+						</div>
+					</section>
+				</div>
+			</div>
+		</main>
+
+		<script>
+			// Layout switcher.
+			for (const tab of document.querySelectorAll('.tab')) {
+				tab.addEventListener('click', () => {
+					for (const t of document.querySelectorAll('.tab')) t.classList.toggle('on', t === tab);
+					for (const p of document.querySelectorAll('.page')) p.classList.toggle('on', p.id === tab.dataset.go);
+				});
+			}
+
+			// Uptime strips: 72 segments = 24 h at 20 min each.
+			const SEGMENTS = 72;
+			const SHAPES = {
+				clean: () => '',
+				'one-dip': (i) => (i === 44 ? 'w' : ''),
+				dips: (i) => (i % 17 === 3 ? 'b' : i % 17 === 4 ? 'w' : ''),
+				'bad-tail': (i) => (i > 44 ? 'b' : i === 44 ? 'w' : ''),
+				gap: (i) => (i > 60 ? 'm' : ''),
+			};
+			for (const strip of document.querySelectorAll('.uptime')) {
+				const shape = SHAPES[strip.dataset.fill] ?? SHAPES.clean;
+				strip.innerHTML = Array.from({ length: SEGMENTS }, (_, i) => `<i class="${shape(i)}"></i>`).join('');
+			}
+
+			// Latency sparklines: area + a red mark where a flap was recorded.
+			const SERIES = {
+				calm: { base: 46, jitter: 6, spikes: [] },
+				calm2: { base: 60, jitter: 8, spikes: [] },
+				spike: { base: 70, jitter: 10, spikes: [38, 39, 52] },
+				dead: { base: 0, jitter: 0, spikes: [] },
+			};
+			function noise(i, seed) {
+				return (Math.sin(i * 1.7 + seed) + Math.sin(i * 0.43 + seed * 2)) / 2;
+			}
+			for (const svg of document.querySelectorAll('svg.spark')) {
+				const cfg = SERIES[svg.dataset.spark];
+				const n = 60;
+				const seed = svg.dataset.spark.length;
+				if (cfg.base === 0) {
+					svg.innerHTML =
+						'<line x1="0" y1="16" x2="220" y2="16" stroke="oklch(0.3 0 0)" stroke-width="1" stroke-dasharray="3 3" />';
+					continue;
+				}
+				const vals = Array.from({ length: n }, (_, i) => {
+					const spike = cfg.spikes.includes(i) ? 230 : 0;
+					return cfg.base + noise(i, seed) * cfg.jitter + spike;
+				});
+				const max = Math.max(...vals) * 1.15;
+				const x = (i) => (i / (n - 1)) * 220;
+				const y = (v) => 30 - (v / max) * 26;
+				const line = vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+				const stroke = cfg.spikes.length ? 'oklch(0.78 0.12 85)' : 'oklch(0.72 0.15 155)';
+				const fill = cfg.spikes.length ? 'oklch(0.78 0.12 85 / 0.14)' : 'oklch(0.72 0.15 155 / 0.14)';
+				const marks = cfg.spikes
+					.map((i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(vals[i]).toFixed(1)}" r="2.2" fill="oklch(0.65 0.2 25)" />`)
+					.join('');
+				svg.innerHTML =
+					`<path d="${line} L220,32 L0,32 Z" fill="${fill}" />` +
+					`<path d="${line}" fill="none" stroke="${stroke}" stroke-width="1.3" stroke-linejoin="round" />` +
+					marks;
+			}
+		</script>
+	</body>
+</html>

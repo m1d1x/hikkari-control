@@ -1,0 +1,966 @@
+<!doctype html>
+<html lang="ru">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>инциденты v1</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+			rel="stylesheet"
+		/>
+		<style>
+			:root {
+				--bg: oklch(0.14 0 0);
+				--bg-raised: oklch(0.17 0 0);
+				--surface: oklch(0.23 0 0);
+				--card-bg: oklch(0.2 0 0);
+				--inset: oklch(0.17 0 0);
+
+				--primary: oklch(0.75 0.14 350);
+				--primary-subtle: oklch(0.75 0.14 350 / 0.1);
+
+				--ok: oklch(0.72 0.15 155);
+				--warn: oklch(0.78 0.12 85);
+				--bad: oklch(0.65 0.2 25);
+				--unknown: oklch(0.52 0 0);
+
+				--border: oklch(0.24 0 0);
+				--border-subtle: oklch(0.19 0 0);
+
+				--text: oklch(0.93 0 0);
+				--text-2: oklch(0.62 0 0);
+				--text-3: oklch(0.42 0 0);
+
+				--sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+				--mono: 'IBM Plex Mono', monospace;
+			}
+
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+			}
+
+			body {
+				background: var(--bg);
+				color: var(--text);
+				font-family: var(--sans);
+				font-size: 13px;
+				line-height: 1.5;
+				-webkit-font-smoothing: antialiased;
+			}
+
+			button {
+				font: inherit;
+				color: inherit;
+				background: none;
+				border: none;
+				cursor: pointer;
+			}
+
+			.page {
+				padding: 24px;
+				max-width: 1400px;
+			}
+
+			.m {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+			}
+
+			.head {
+				display: flex;
+				align-items: flex-end;
+				gap: 16px;
+				margin-bottom: 18px;
+			}
+
+			.head h1 {
+				font-size: 20px;
+				font-weight: 600;
+				letter-spacing: -0.01em;
+			}
+
+			.head p {
+				margin-top: 4px;
+				font-size: 12px;
+				color: var(--text-2);
+				max-width: 680px;
+			}
+
+			.ranges {
+				margin-left: auto;
+				display: flex;
+				gap: 4px;
+			}
+
+			.chip {
+				padding: 4px 11px;
+				border-radius: 6px;
+				font-size: 11px;
+				color: var(--text-2);
+				border: 1px solid var(--border);
+				white-space: nowrap;
+			}
+
+			.chip:hover {
+				background: var(--surface);
+			}
+
+			.chip.on {
+				color: var(--text);
+				background: var(--primary-subtle);
+				border-color: oklch(0.75 0.14 350 / 0.35);
+			}
+
+			.card {
+				background: var(--card-bg);
+				border: 1px solid var(--border-subtle);
+				border-radius: 8px;
+				margin-bottom: 16px;
+			}
+
+			.card-head {
+				display: flex;
+				align-items: baseline;
+				gap: 10px;
+				padding: 13px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.card-head h2 {
+				font-size: 13px;
+				font-weight: 600;
+			}
+
+			.card-head .sub {
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.card-head .right {
+				margin-left: auto;
+				display: flex;
+				gap: 6px;
+			}
+
+			.note {
+				padding: 11px 16px 14px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			/* ---------- hero: autopilot performance ---------- */
+
+			.perf-hero {
+				display: grid;
+				grid-template-columns: 250px 1fr;
+				gap: 20px;
+				padding: 18px;
+			}
+
+			.perf-hero .figure .big {
+				display: flex;
+				align-items: baseline;
+				gap: 8px;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 44px;
+				font-weight: 600;
+				letter-spacing: -0.03em;
+				line-height: 1;
+			}
+
+			.perf-hero .figure .unit {
+				font-size: 18px;
+				font-weight: 400;
+				color: var(--text-3);
+			}
+
+			.trend {
+				font-family: var(--mono);
+				font-size: 13px;
+				font-weight: 500;
+			}
+			.trend.good {
+				color: var(--ok);
+			}
+			.trend.bad {
+				color: var(--bad);
+			}
+
+			.perf-hero .figure .what {
+				margin-top: 10px;
+				font-size: 12px;
+				color: var(--text-2);
+			}
+
+			.breakdown {
+				margin-top: 14px;
+				padding-top: 12px;
+				border-top: 1px solid var(--border-subtle);
+				display: flex;
+				flex-direction: column;
+				gap: 5px;
+			}
+
+			.breakdown div {
+				display: flex;
+				justify-content: space-between;
+				gap: 10px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.breakdown div span {
+				display: flex;
+				align-items: center;
+				gap: 7px;
+			}
+
+			.sw {
+				width: 8px;
+				height: 8px;
+				border-radius: 2px;
+				flex-shrink: 0;
+			}
+
+			.breakdown div b {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-weight: 500;
+				color: var(--text-2);
+			}
+
+			svg.perf-chart {
+				display: block;
+				width: 100%;
+				height: 150px;
+				cursor: crosshair;
+			}
+
+			.axis-x {
+				display: flex;
+				justify-content: space-between;
+				margin-top: 6px;
+				font-family: var(--mono);
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			/* ---------- strip: the three autopilot clocks ---------- */
+
+			.strip {
+				display: grid;
+				grid-template-columns: repeat(3, 1fr);
+				gap: 1px;
+				background: var(--border-subtle);
+				border: 1px solid var(--border-subtle);
+				border-radius: 8px;
+				overflow: hidden;
+				margin-bottom: 16px;
+			}
+
+			.cell {
+				background: var(--card-bg);
+				padding: 15px 17px;
+			}
+
+			.cell .label {
+				display: block;
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.cell .value {
+				display: flex;
+				align-items: baseline;
+				gap: 7px;
+				margin-top: 5px;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 24px;
+				font-weight: 600;
+				letter-spacing: -0.02em;
+			}
+
+			.cell .unit {
+				font-size: 12px;
+				font-weight: 400;
+				color: var(--text-3);
+			}
+
+			.cell .meta {
+				display: block;
+				margin-top: 4px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			/* ---------- queue (needs you) ---------- */
+
+			.item {
+				position: relative;
+				display: flex;
+				gap: 11px;
+				padding: 13px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.item:last-child {
+				border-bottom: none;
+			}
+
+			.item .bar {
+				width: 2px;
+				border-radius: 1px;
+				flex-shrink: 0;
+				background: var(--bad);
+			}
+
+			.item .bar.warn {
+				background: var(--warn);
+			}
+
+			.item .body {
+				min-width: 0;
+				flex: 1;
+			}
+
+			.item .what {
+				font-size: 12px;
+				font-weight: 600;
+			}
+
+			.item .why {
+				margin-top: 2px;
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.item .when {
+				margin-top: 5px;
+				font-family: var(--mono);
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.item .acts {
+				display: flex;
+				gap: 7px;
+				margin-top: 9px;
+			}
+
+			.act {
+				padding: 5px 11px;
+				border-radius: 6px;
+				font-size: 11px;
+				border: 1px solid var(--border);
+				color: var(--text-2);
+			}
+
+			.act:hover {
+				background: var(--surface);
+				color: var(--text);
+			}
+
+			.act.do {
+				color: var(--primary);
+				border-color: oklch(0.75 0.14 350 / 0.4);
+			}
+
+			.act.do:hover {
+				background: var(--primary-subtle);
+			}
+
+			.act.dismiss {
+				margin-left: auto;
+				color: var(--text-3);
+				border-color: transparent;
+			}
+
+			/* ---------- ledger: incident rows + expanded timeline ---------- */
+
+			.inc {
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.inc:last-child {
+				border-bottom: none;
+			}
+
+			.inc-row {
+				display: grid;
+				grid-template-columns: 18px 90px 1fr 150px 120px 70px;
+				align-items: center;
+				gap: 12px;
+				padding: 11px 16px;
+				cursor: pointer;
+			}
+
+			.inc-row:hover {
+				background: var(--inset);
+			}
+
+			.caret {
+				font-family: var(--mono);
+				color: var(--text-3);
+				font-size: 11px;
+			}
+
+			.inc-row .ibox {
+				font-family: var(--mono);
+				font-size: 12px;
+				font-weight: 600;
+			}
+
+			.inc-row .icause {
+				font-size: 12px;
+				color: var(--text);
+			}
+
+			.inc-row .ioutcome {
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.tag {
+				padding: 2px 8px;
+				border-radius: 4px;
+				font-size: 10px;
+				white-space: nowrap;
+				width: fit-content;
+			}
+
+			.tag-auto {
+				color: var(--ok);
+				background: oklch(0.72 0.15 155 / 0.12);
+			}
+			.tag-human {
+				color: var(--warn);
+				background: oklch(0.78 0.12 85 / 0.12);
+			}
+			.tag-dismiss {
+				color: var(--text-3);
+				background: oklch(0.52 0 0 / 0.12);
+			}
+			.tag-failed {
+				color: var(--bad);
+				background: oklch(0.65 0.2 25 / 0.12);
+			}
+
+			.inc-row .iwhen {
+				font-family: var(--mono);
+				font-size: 10px;
+				color: var(--text-3);
+				text-align: right;
+			}
+
+			/* expanded timeline */
+			.inc-body {
+				padding: 4px 16px 18px 46px;
+			}
+
+			.inc-body.hidden {
+				display: none;
+			}
+
+			.timeline {
+				display: grid;
+				grid-template-columns: repeat(4, 1fr);
+				gap: 0;
+				margin: 8px 0 16px;
+			}
+
+			.stage {
+				position: relative;
+				padding: 0 14px 0 0;
+			}
+
+			.stage .dot {
+				width: 11px;
+				height: 11px;
+				border-radius: 50%;
+				background: var(--ok);
+				border: 2px solid var(--card-bg);
+				position: relative;
+				z-index: 1;
+			}
+
+			.stage .dot.warn {
+				background: var(--warn);
+			}
+
+			/* the connecting line */
+			.stage::before {
+				content: '';
+				position: absolute;
+				top: 5px;
+				left: 11px;
+				right: 0;
+				height: 2px;
+				background: var(--border);
+			}
+
+			.stage:last-child::before {
+				display: none;
+			}
+
+			.stage .s-name {
+				margin-top: 8px;
+				font-size: 11px;
+				font-weight: 600;
+			}
+
+			.stage .s-time {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 10px;
+				color: var(--text-3);
+				margin-top: 1px;
+			}
+
+			.stage .s-detail {
+				margin-top: 4px;
+				font-size: 11px;
+				color: var(--text-2);
+				line-height: 1.4;
+				padding-right: 10px;
+			}
+
+			/* evidence grid: the probe snapshot at diagnosis */
+			.evidence {
+				border: 1px solid var(--border-subtle);
+				border-radius: 7px;
+				background: var(--inset);
+				overflow: hidden;
+			}
+
+			.ev-head {
+				padding: 8px 12px;
+				font-size: 11px;
+				color: var(--text-3);
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.ev-grid {
+				display: grid;
+				grid-template-columns: 110px repeat(3, 1fr);
+				font-size: 11px;
+			}
+
+			.ev-grid .gh {
+				padding: 6px 12px;
+				font-size: 10px;
+				color: var(--text-3);
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.ev-grid .gc {
+				padding: 7px 12px;
+				border-bottom: 1px solid var(--border-subtle);
+				font-family: var(--mono);
+			}
+
+			.ev-grid .gc.rname {
+				color: var(--text);
+			}
+
+			.ev-grid .gc.sig {
+				color: var(--text-2);
+			}
+
+			.ev-grid .y {
+				color: var(--ok);
+			}
+			.ev-grid .n {
+				color: var(--bad);
+			}
+
+			.ev-verdict {
+				padding: 8px 12px;
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.ev-verdict b {
+				color: var(--text);
+			}
+
+			.spark-tip {
+				position: fixed;
+				z-index: 50;
+				pointer-events: none;
+				padding: 5px 9px;
+				border-radius: 6px;
+				background: var(--bg-raised);
+				border: 1px solid var(--border);
+				font-family: var(--mono);
+				font-size: 11px;
+				color: var(--text);
+				white-space: nowrap;
+				display: none;
+			}
+
+			@media (max-width: 1100px) {
+				.perf-hero {
+					grid-template-columns: 1fr;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<main class="page">
+			<div class="head">
+				<div>
+					<h1>инциденты</h1>
+					<p>
+						каждый «у машины что-то не так» — одна запись от первого провала до закрытия. хаб диагностирует и чинит
+						сам; сюда — что он сделал, за сколько, и то немногое, что он отдал тебе.
+					</p>
+				</div>
+				<div class="ranges">
+					<button class="chip">24 ч</button>
+					<button class="chip on">7 дн</button>
+					<button class="chip">30 дн</button>
+				</div>
+			</div>
+
+			<!-- ======== 1. autopilot performance over time ======== -->
+			<section class="card">
+				<div class="card-head">
+					<h2>как отрабатывает автопилот</h2>
+					<span class="sub">инциденты по дням и чем закрылись. растущая зелёная зона = чинит за тебя</span>
+				</div>
+				<div class="perf-hero">
+					<div class="figure">
+						<div class="big">94<span class="unit">%</span> <span class="trend good">+3</span>
+						</div>
+						<div class="what">закрыл сам, без тебя · 148 инцидентов за 7 дн</div>
+						<div class="breakdown">
+							<div>
+								<span><i class="sw" style="background: var(--ok)"></i>закрыл автопилот</span>
+								<b>139</b>
+							</div>
+							<div>
+								<span><i class="sw" style="background: var(--warn)"></i>отдал тебе</span>
+								<b>6</b>
+							</div>
+							<div>
+								<span><i class="sw" style="background: var(--bad)"></i>ремонт не удался</span>
+								<b>2</b>
+							</div>
+							<div>
+								<span><i class="sw" style="background: var(--unknown)"></i>отклонено</span>
+								<b>1</b>
+							</div>
+						</div>
+					</div>
+					<div>
+						<svg class="perf-chart" id="perf" viewBox="0 0 900 150" preserveAspectRatio="none"></svg>
+						<div class="axis-x">
+							<span>16 окт</span><span>18 окт</span><span>20 окт</span><span>22 окт</span><span>сегодня</span>
+						</div>
+					</div>
+				</div>
+				<div class="note">
+					площадь снизу вверх: закрыл сам, отдал тебе, ремонт не удался. всплеск «отдал тебе» 21 окт — предохранитель
+					волны остановил авто-замену. наведи — числа за день.
+				</div>
+			</section>
+
+			<!-- ======== 2. the three autopilot clocks ======== -->
+			<div class="strip">
+				<div class="cell">
+					<span class="label">до обнаружения, медиана</span>
+					<div class="value">34 <span class="unit">с</span></div>
+					<span class="meta">первый провал пробы → инцидент заведён</span>
+				</div>
+				<div class="cell">
+					<span class="label">до диагноза, медиана</span>
+					<div class="value">6 <span class="unit">с</span></div>
+					<span class="meta">инцидент → причина с уликами</span>
+				</div>
+				<div class="cell">
+					<span class="label">до ремонта, медиана</span>
+					<div class="value">4<span class="unit">м 40с</span></div>
+					<span class="meta">диагноз → допуск замены в пул</span>
+				</div>
+			</div>
+
+			<!-- ======== 3. needs you (the queue) ======== -->
+			<section class="card">
+				<div class="card-head">
+					<h2>требуют тебя</h2>
+					<span class="sub">3 · только то, чего автопилот не может сам — предохранители, деньги, доступы</span>
+				</div>
+
+				<div class="item">
+					<span class="bar"></span>
+					<div class="body">
+						<div class="what">hetzner: кончились деньги</div>
+						<div class="why">замена ams1 не заказана: кредит $4.10 меньше цены машины $6. предохранитель бюджета остановил авто.</div>
+						<div class="when">41 мин · ждёт · предложено: заказать замену у vultr ($5, кредит есть)</div>
+						<div class="acts">
+							<button class="act do">заказать у vultr</button>
+							<button class="act">другое действие</button>
+							<button class="act dismiss">закрыть руками</button>
+						</div>
+					</div>
+				</div>
+
+				<div class="item">
+					<span class="bar"></span>
+					<div class="body">
+						<div class="what">предохранитель волны: domain_blocked на паузе</div>
+						<div class="why">4 домена сгорели за 18 мин — больше порога 3/час. авто-своп причины встал: так ведёт себя новое правило ТСПУ или баг пробы, пачкой покупать нельзя.</div>
+						<div class="when">12 мин · ждёт · предложено: разобрать 4 инцидента, потом снять паузу</div>
+						<div class="acts">
+							<button class="act do">открыть censor</button>
+							<button class="act">снять паузу</button>
+							<button class="act dismiss">закрыть руками</button>
+						</div>
+					</div>
+				</div>
+
+				<div class="item">
+					<span class="bar warn"></span>
+					<div class="body">
+						<div class="what">waw1: отпечаток reality спалили</div>
+						<div class="why">ремонт этой причины не авто — ротация протокола затрагивает все машины на нём. ждёт твоего решения.</div>
+						<div class="when">2 ч · ждёт · предложено: ротировать прикрытие на waw1</div>
+						<div class="acts">
+							<button class="act do">выполнить ротацию</button>
+							<button class="act">другое действие</button>
+							<button class="act dismiss">закрыть руками</button>
+						</div>
+					</div>
+				</div>
+			</section>
+
+			<!-- ======== 4. ledger with expandable timeline ======== -->
+			<section class="card">
+				<div class="card-head">
+					<h2>лента</h2>
+					<span class="sub">148 за 7 дней</span>
+					<div class="right">
+						<button class="chip on">все</button>
+						<button class="chip">отдал тебе</button>
+						<button class="chip">ремонт не удался</button>
+					</div>
+				</div>
+
+				<!-- expanded: a resolved auto incident, the full timeline -->
+				<div class="inc">
+					<div class="inc-row" data-exp>
+						<span class="caret">−</span>
+						<span class="ibox">ams1</span>
+						<span class="icause">ip забанен целиком</span>
+						<span class="ioutcome">заменена, 2 релея в пуле</span>
+						<span class="tag tag-auto">закрыл автопилот</span>
+						<span class="iwhen">38 мин</span>
+					</div>
+					<div class="inc-body">
+						<div class="timeline">
+							<div class="stage">
+								<div class="dot"></div>
+								<div class="s-name">провал</div>
+								<div class="s-time">0 с</div>
+								<div class="s-detail">пробы из 3 точек перестали пробивать туннель к ams1-1 и ams1-2</div>
+							</div>
+							<div class="stage">
+								<div class="dot"></div>
+								<div class="s-name">диагноз</div>
+								<div class="s-time">+11 с</div>
+								<div class="s-detail">причина: ip забанен целиком (reality и k1 легли, k2 жив) — сетка ниже</div>
+							</div>
+							<div class="stage">
+								<div class="dot"></div>
+								<div class="s-name">ремонт</div>
+								<div class="s-time">+4 с</div>
+								<div class="s-detail">плейбук replace_box · заказ у vultr, job pb-5611 · $5</div>
+							</div>
+							<div class="stage">
+								<div class="dot"></div>
+								<div class="s-name">допуск</div>
+								<div class="s-time">+4 м 32 с</div>
+								<div class="s-detail">замена прошла пробу, 2 релея в пуле, старая ams1 сдана</div>
+							</div>
+						</div>
+
+						<div class="evidence">
+							<div class="ev-head">улика — сетка на момент диагноза (что увидела каждая точка наблюдения)</div>
+							<div class="ev-grid">
+								<span class="gh">релей</span>
+								<span class="gh">мск</span>
+								<span class="gh">спб</span>
+								<span class="gh">екб</span>
+
+								<span class="gc rname">ams1-1</span>
+								<span class="gc sig">R<span class="n">✗</span> k1<span class="n">✗</span> k2<span class="y">✓</span></span>
+								<span class="gc sig">R<span class="n">✗</span> k1<span class="n">✗</span> k2<span class="y">✓</span></span>
+								<span class="gc sig">R<span class="n">✗</span> k1<span class="n">✗</span> k2<span class="y">✓</span></span>
+
+								<span class="gc rname">ams1-2</span>
+								<span class="gc sig">R<span class="n">✗</span> k1<span class="n">✗</span> k2<span class="y">✓</span></span>
+								<span class="gc sig">R<span class="n">✗</span> k1<span class="n">✗</span> k2<span class="y">✓</span></span>
+								<span class="gc sig">R<span class="n">✗</span> k1<span class="n">✗</span> k2<span class="y">✓</span></span>
+							</div>
+							<div class="ev-verdict">
+								туннель и голый tls на ip легли из всех трёх точек, контроль k2 жив → сеть в порядке, забанен сам
+								<b>ip машины</b>, а не домен или протокол. отсюда плейбук replace_box, а не свап домена.
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- collapsed rows -->
+				<div class="inc">
+					<div class="inc-row" data-exp>
+						<span class="caret">+</span>
+						<span class="ibox">fra2</span>
+						<span class="icause">домен заблокирован</span>
+						<span class="ioutcome">свопнут домен, машина цела</span>
+						<span class="tag tag-auto">закрыл автопилот</span>
+						<span class="iwhen">1 ч</span>
+					</div>
+					<div class="inc-body hidden"></div>
+				</div>
+
+				<div class="inc">
+					<div class="inc-row" data-exp>
+						<span class="caret">+</span>
+						<span class="ibox">waw1</span>
+						<span class="icause">отпечаток спалили</span>
+						<span class="ioutcome">ждёт твоего решения</span>
+						<span class="tag tag-human">отдал тебе</span>
+						<span class="iwhen">2 ч</span>
+					</div>
+					<div class="inc-body hidden"></div>
+				</div>
+
+				<div class="inc">
+					<div class="inc-row" data-exp>
+						<span class="caret">+</span>
+						<span class="ibox">hel3</span>
+						<span class="icause">не удалось заказать машину</span>
+						<span class="ioutcome">3 попытки, квота hetzner — отдал тебе</span>
+						<span class="tag tag-failed">ремонт не удался</span>
+						<span class="iwhen">3 ч</span>
+					</div>
+					<div class="inc-body hidden"></div>
+				</div>
+
+				<div class="inc">
+					<div class="inc-row" data-exp>
+						<span class="caret">+</span>
+						<span class="ibox">sin1</span>
+						<span class="icause">пробник без сети</span>
+						<span class="ioutcome">улик нет, по машине ничего не сказать</span>
+						<span class="tag tag-dismiss">отклонено</span>
+						<span class="iwhen">5 ч</span>
+					</div>
+					<div class="inc-body hidden"></div>
+				</div>
+			</section>
+		</main>
+
+		<script>
+			function wobble(i, seed) {
+				return (Math.sin(i * 0.7 + seed) + Math.sin(i * 0.23 + seed * 3)) / 2;
+			}
+
+			function path(vals, w, h, pad, min, max) {
+				const n = vals.length;
+				const x = (i) => (i / (n - 1)) * w;
+				const y = (v) => h - pad - ((v - min) / (max - min)) * (h - pad * 2);
+				return vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+			}
+
+			const tip = document.createElement('div');
+			tip.className = 'spark-tip';
+			document.body.appendChild(tip);
+
+			// --- incidents per day by resolution, stacked area, hover ---
+			const perf = (() => {
+				const svg = document.getElementById('perf');
+				const W = 900,
+					H = 150,
+					PAD = 10;
+				const n = 30;
+				const spike = (i, c, w) => Math.exp(-((i - c) ** 2) / (2 * w * w));
+				const auto = Array.from({ length: n }, (_, i) => 16 + wobble(i, 1) * 5);
+				const human = Array.from({ length: n }, (_, i) => 0.6 + Math.max(0, wobble(i, 4)) * 0.6 + spike(i, 21, 1.3) * 5);
+				const failed = Array.from({ length: n }, (_, i) => 0.2 + Math.max(0, wobble(i, 7)) * 0.4);
+				const zones = [
+					{ name: 'закрыл сам', vals: auto, color: 'var(--ok)', fill: 'oklch(0.72 0.15 155 / 0.16)' },
+					{ name: 'отдал тебе', vals: human, color: 'var(--warn)', fill: 'oklch(0.78 0.12 85 / 0.2)' },
+					{ name: 'не удался', vals: failed, color: 'var(--bad)', fill: 'oklch(0.65 0.2 25 / 0.26)' },
+				];
+				const cum = [];
+				let acc = Array.from({ length: n }, () => 0);
+				for (const z of zones) {
+					acc = acc.map((v, i) => v + z.vals[i]);
+					cum.push([...acc]);
+				}
+				const max = Math.max(...cum[cum.length - 1]) * 1.1;
+
+				function render(hoverI) {
+					let out = '';
+					for (let g = 0; g <= 2; g++) {
+						const gy = PAD + (g / 2) * (H - PAD * 2);
+						out += `<line x1="0" y1="${gy}" x2="${W}" y2="${gy}" stroke="oklch(0.22 0 0)" stroke-width="1" />`;
+					}
+					for (let z = zones.length - 1; z >= 0; z--) {
+						const d = path(cum[z], W, H, PAD, 0, max);
+						out += `<path d="${d} L${W},${H} L0,${H} Z" fill="${zones[z].fill}" />`;
+						out += `<path d="${d}" fill="none" stroke="${zones[z].color}" stroke-width="1.3" stroke-linejoin="round" />`;
+					}
+					if (hoverI != null) {
+						const x = (hoverI / (n - 1)) * W;
+						out += `<line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${H}" stroke="oklch(0.5 0 0)" stroke-width="1" />`;
+					}
+					svg.innerHTML = out;
+				}
+				render(null);
+				return { svg, zones, n, render };
+			})();
+
+			perf.svg.addEventListener('mousemove', (e) => {
+				const rect = perf.svg.getBoundingClientRect();
+				const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+				const i = Math.round(frac * (perf.n - 1));
+				perf.render(i);
+				const day = new Date(Date.now() - (perf.n - 1 - i) * 86_400_000);
+				const date = day.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+				tip.innerHTML = `${date}<br>` + perf.zones.map((z) => `${z.name} ${Math.round(z.vals[i])}`).join(' · ');
+				tip.style.display = 'block';
+				tip.style.left = `${e.clientX + 12}px`;
+				tip.style.top = `${e.clientY - 44}px`;
+			});
+			perf.svg.addEventListener('mouseleave', () => {
+				perf.render(null);
+				tip.style.display = 'none';
+			});
+
+			// chips + expand/collapse incident rows
+			for (const group of document.querySelectorAll('.ranges, .card-head .right')) {
+				group.addEventListener('click', (e) => {
+					if (!e.target.classList.contains('chip')) return;
+					for (const c of group.querySelectorAll('.chip')) c.classList.toggle('on', c === e.target);
+				});
+			}
+			for (const row of document.querySelectorAll('.inc-row[data-exp]')) {
+				row.addEventListener('click', () => {
+					const body = row.parentElement.querySelector('.inc-body');
+					const caret = row.querySelector('.caret');
+					if (!body) return;
+					body.classList.toggle('hidden');
+					caret.textContent = body.classList.contains('hidden') ? '+' : '−';
+				});
+			}
+		</script>
+	</body>
+</html>

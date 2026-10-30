@@ -1,0 +1,891 @@
+<!doctype html>
+<html lang="ru">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>провайдеры — сравнение v1</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+			rel="stylesheet"
+		/>
+		<style>
+			:root {
+				--bg: oklch(0.14 0 0);
+				--bg-raised: oklch(0.17 0 0);
+				--surface: oklch(0.23 0 0);
+				--card-bg: oklch(0.2 0 0);
+				--inset: oklch(0.17 0 0);
+
+				--primary: oklch(0.75 0.14 350);
+				--primary-subtle: oklch(0.75 0.14 350 / 0.1);
+
+				--ok: oklch(0.72 0.15 155);
+				--warn: oklch(0.78 0.12 85);
+				--bad: oklch(0.65 0.2 25);
+				--unknown: oklch(0.52 0 0);
+
+				--border: oklch(0.24 0 0);
+				--border-subtle: oklch(0.19 0 0);
+
+				--text: oklch(0.93 0 0);
+				--text-2: oklch(0.62 0 0);
+				--text-3: oklch(0.42 0 0);
+
+				--sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+				--mono: 'IBM Plex Mono', monospace;
+			}
+
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+			}
+
+			body {
+				background: var(--bg);
+				color: var(--text);
+				font-family: var(--sans);
+				font-size: 13px;
+				line-height: 1.5;
+				-webkit-font-smoothing: antialiased;
+			}
+
+			button {
+				font: inherit;
+				color: inherit;
+				background: none;
+				border: none;
+				cursor: pointer;
+			}
+
+			input {
+				font: inherit;
+			}
+
+			.page {
+				padding: 24px;
+				max-width: 1400px;
+			}
+
+			.m {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+			}
+
+			/* ---------- head ---------- */
+
+			.head {
+				display: flex;
+				align-items: flex-end;
+				gap: 16px;
+				margin-bottom: 18px;
+			}
+
+			.head h1 {
+				font-size: 20px;
+				font-weight: 600;
+				letter-spacing: -0.01em;
+			}
+
+			.head p {
+				margin-top: 4px;
+				font-size: 12px;
+				color: var(--text-2);
+				max-width: 680px;
+			}
+
+			/* ---------- section ---------- */
+
+			.sec-head {
+				display: flex;
+				align-items: baseline;
+				gap: 10px;
+				margin: 22px 2px 12px;
+			}
+
+			.sec-head h2 {
+				font-size: 14px;
+				font-weight: 600;
+			}
+
+			.sec-head .sub {
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.sec-head .right {
+				margin-left: auto;
+				display: flex;
+				gap: 4px;
+			}
+
+			.chip {
+				padding: 4px 11px;
+				border-radius: 6px;
+				font-size: 11px;
+				color: var(--text-2);
+				border: 1px solid var(--border);
+				white-space: nowrap;
+			}
+
+			.chip:hover {
+				background: var(--surface);
+			}
+
+			.chip.on {
+				color: var(--text);
+				background: var(--primary-subtle);
+				border-color: oklch(0.75 0.14 350 / 0.35);
+			}
+
+			/* ---------- provider card ---------- */
+
+			.prov {
+				background: var(--card-bg);
+				border: 1px solid var(--border-subtle);
+				border-radius: 8px;
+				margin-bottom: 12px;
+			}
+
+			.prov-head {
+				display: flex;
+				align-items: center;
+				gap: 9px;
+				padding: 13px 16px;
+			}
+
+			.prov-head .pname {
+				font-family: var(--mono);
+				font-size: 14px;
+				font-weight: 600;
+			}
+
+			.badge {
+				padding: 2px 7px;
+				border-radius: 4px;
+				font-size: 10px;
+				white-space: nowrap;
+				background: var(--surface);
+				color: var(--text-2);
+			}
+
+			.state {
+				padding: 2px 8px;
+				border-radius: 4px;
+				font-size: 11px;
+				white-space: nowrap;
+			}
+
+			.st-on {
+				color: var(--ok);
+				background: oklch(0.72 0.15 155 / 0.12);
+			}
+			.st-off {
+				color: var(--text-3);
+				background: oklch(0.52 0 0 / 0.12);
+			}
+			.st-bad {
+				color: var(--bad);
+				background: oklch(0.65 0.2 25 / 0.12);
+			}
+
+			.prov-head .right {
+				margin-left: auto;
+				display: flex;
+				align-items: center;
+				gap: 10px;
+			}
+
+			.toggle {
+				width: 38px;
+				height: 22px;
+				border-radius: 11px;
+				background: var(--primary);
+				position: relative;
+				flex-shrink: 0;
+			}
+
+			.toggle::after {
+				content: '';
+				position: absolute;
+				top: 2px;
+				right: 2px;
+				width: 18px;
+				height: 18px;
+				border-radius: 50%;
+				background: var(--bg);
+			}
+
+			.toggle.off {
+				background: var(--surface);
+			}
+
+			.toggle.off::after {
+				right: auto;
+				left: 2px;
+				background: var(--text-3);
+			}
+
+			/* the comparison headline: same cells across every card, so the eye
+			   scans a column down the page */
+			.pstats {
+				display: grid;
+				grid-template-columns: 1.3fr 1fr 1fr 1fr 1fr 1.4fr;
+				gap: 1px;
+				background: var(--border-subtle);
+				border-top: 1px solid var(--border-subtle);
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.pcell {
+				background: var(--card-bg);
+				padding: 12px 15px;
+			}
+
+			.pcell .label {
+				display: block;
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.pcell .value {
+				display: flex;
+				align-items: baseline;
+				gap: 5px;
+				margin-top: 4px;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 20px;
+				font-weight: 600;
+				letter-spacing: -0.01em;
+			}
+
+			.pcell .value.lead {
+				font-size: 24px;
+			}
+
+			.pcell .unit {
+				font-size: 11px;
+				font-weight: 400;
+				color: var(--text-3);
+			}
+
+			.pcell .sub {
+				display: block;
+				margin-top: 3px;
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.pcell.spark {
+				display: flex;
+				flex-direction: column;
+				justify-content: center;
+			}
+
+			.win-ok {
+				color: var(--ok);
+			}
+			.win-warn {
+				color: var(--warn);
+			}
+			.win-bad {
+				color: var(--bad);
+			}
+
+			svg.spark {
+				display: block;
+				width: 100%;
+				height: 30px;
+				margin-top: 2px;
+				cursor: crosshair;
+			}
+
+			.spark-tip {
+				position: fixed;
+				z-index: 50;
+				pointer-events: none;
+				padding: 4px 8px;
+				border-radius: 6px;
+				background: var(--bg-raised);
+				border: 1px solid var(--border);
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 11px;
+				color: var(--text);
+				white-space: nowrap;
+			}
+
+			.spark-tip[hidden] {
+				display: none;
+			}
+
+			/* supported but not yet connected: no data row, muted */
+			.prov.dim {
+				opacity: 0.82;
+			}
+
+			/* credit bar: how much of the monthly cap is spent */
+			.capbar {
+				height: 3px;
+				border-radius: 2px;
+				background: oklch(0.26 0 0);
+				margin-top: 6px;
+				overflow: hidden;
+			}
+
+			.capbar i {
+				display: block;
+				height: 100%;
+				background: var(--ok);
+			}
+
+			.capbar i.warn {
+				background: var(--warn);
+			}
+			.capbar i.bad {
+				background: var(--bad);
+			}
+
+			/* zones (registrar): which tld burns fastest */
+			.zones {
+				display: flex;
+				gap: 7px;
+				flex-wrap: wrap;
+			}
+
+			.zone {
+				display: flex;
+				align-items: baseline;
+				gap: 5px;
+				padding: 3px 8px;
+				border-radius: 5px;
+				background: var(--inset);
+				font-size: 11px;
+			}
+
+			.zone .z {
+				font-family: var(--mono);
+				color: var(--text-2);
+			}
+
+			.zone .life {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 11px;
+			}
+
+			/* ---------- config (collapsible) ---------- */
+
+			.cfg-toggle {
+				display: flex;
+				align-items: center;
+				gap: 7px;
+				width: 100%;
+				padding: 11px 16px;
+				text-align: left;
+				font-size: 12px;
+				color: var(--text-3);
+			}
+
+			.cfg-toggle:hover {
+				color: var(--text-2);
+			}
+
+			.cfg-toggle .caret {
+				font-family: var(--mono);
+			}
+
+			.config {
+				padding: 4px 16px 16px;
+				display: flex;
+				flex-direction: column;
+				gap: 14px;
+			}
+
+			.config.hidden {
+				display: none;
+			}
+
+			.facts {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 6px 22px;
+				font-size: 12px;
+			}
+
+			.facts > div {
+				display: flex;
+				align-items: baseline;
+				gap: 7px;
+			}
+
+			.facts .label {
+				color: var(--text-3);
+			}
+
+			.facts .ok {
+				color: var(--ok);
+			}
+			.facts .bad {
+				color: var(--bad);
+			}
+			.facts .mono {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				color: var(--text-2);
+			}
+
+			.fields {
+				display: grid;
+				grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+				gap: 10px 12px;
+			}
+
+			.field {
+				display: flex;
+				flex-direction: column;
+				gap: 4px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.field input {
+				padding: 7px 10px;
+				font-size: 13px;
+				font-family: var(--mono);
+				color: var(--text);
+				background: var(--inset);
+				border: 1px solid var(--border);
+				border-radius: 7px;
+			}
+
+			.field input:focus {
+				outline: none;
+				border-color: var(--primary);
+			}
+
+			.cfg-note {
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.cfg-acts {
+				display: flex;
+				justify-content: flex-end;
+				gap: 8px;
+			}
+
+			.btn {
+				padding: 6px 13px;
+				font-size: 12px;
+				color: var(--text-2);
+				background: var(--surface);
+				border: 1px solid var(--border);
+				border-radius: 7px;
+			}
+
+			.btn:hover {
+				color: var(--text);
+				background: var(--bg-raised);
+			}
+
+			.btn.prim {
+				color: var(--bg);
+				background: var(--primary);
+				border-color: transparent;
+			}
+
+			.note-sec {
+				font-size: 11px;
+				color: var(--text-3);
+				margin: 4px 2px 0;
+			}
+
+			@media (max-width: 1100px) {
+				.pstats {
+					grid-template-columns: 1fr 1fr 1fr;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<main class="page">
+			<div class="head">
+				<div>
+					<h1>провайдеры</h1>
+					<p>
+						аккаунты, через которые хаб покупает машины и домены. ключи запечатаны и назад не показываются. тут же
+						видно, у кого что дольше живёт и почём на самом деле — срез датасета банов по провайдеру.
+					</p>
+				</div>
+			</div>
+
+			<!-- ======== box providers ======== -->
+			<div class="sec-head">
+				<h2>машинные провайдеры</h2>
+				<span class="sub">винрейт = доля машин, переживших 30 дней без ip-бана. себес считается за живой день, не за машину</span>
+				<div class="right">
+					<button class="chip on">по винрейту</button>
+					<button class="chip">по себесу</button>
+				</div>
+			</div>
+
+			<!-- vultr: best -->
+			<div class="prov">
+				<div class="prov-head">
+					<span class="pname">vultr</span>
+					<span class="badge">машины</span>
+					<span class="badge">по умолч. amsterdam · 1 vCPU</span>
+					<span class="state st-on">работает</span>
+					<div class="right"><span class="sub" style="font-size: 11px; color: var(--text-3)">хаб покупает</span><span class="toggle"></span></div>
+				</div>
+				<div class="pstats">
+					<div class="pcell">
+						<span class="label">винрейт, 30 дн</span>
+						<div class="value lead win-ok">88<span class="unit">%</span></div>
+						<span class="sub">доживают до вывода</span>
+					</div>
+					<div class="pcell">
+						<span class="label">машин куплено</span>
+						<div class="value">19</div>
+						<span class="sub">живо сейчас 17</span>
+					</div>
+					<div class="pcell">
+						<span class="label">жизнь машины, медиана</span>
+						<div class="value">19<span class="unit">дн</span></div>
+						<span class="sub">до ip-бана или вывода</span>
+					</div>
+					<div class="pcell">
+						<span class="label">себес / живой день</span>
+						<div class="value win-ok">$0.38</div>
+						<span class="sub">$5/мес ÷ дожитие</span>
+					</div>
+					<div class="pcell">
+						<span class="label">кредит</span>
+						<div class="value">$42<span class="unit">.10</span></div>
+						<span class="sub">месячный потолок $90</span>
+						<div class="capbar"><i style="width: 36%"></i></div>
+					</div>
+					<div class="pcell spark">
+						<span class="label">баны его машин · 30 дн</span>
+						<svg class="spark" data-spark="low" viewBox="0 0 220 30" preserveAspectRatio="none"></svg>
+					</div>
+				</div>
+				<button class="cfg-toggle"><span class="caret">+</span> настройка: ключ, потолки, регион</button>
+			</div>
+
+			<!-- hetzner: worst, quota hit -->
+			<div class="prov">
+				<div class="prov-head">
+					<span class="pname">hetzner</span>
+					<span class="badge">машины</span>
+					<span class="badge">по умолч. falkenstein · cx22</span>
+					<span class="state st-bad">лимит исчерпан</span>
+					<div class="right"><span class="sub" style="font-size: 11px; color: var(--text-3)">хаб покупает</span><span class="toggle"></span></div>
+				</div>
+				<div class="pstats">
+					<div class="pcell">
+						<span class="label">винрейт, 30 дн</span>
+						<div class="value lead win-bad">61<span class="unit">%</span></div>
+						<span class="sub">дёшево, но часто банят ip</span>
+					</div>
+					<div class="pcell">
+						<span class="label">машин куплено</span>
+						<div class="value">14</div>
+						<span class="sub">живо сейчас 8</span>
+					</div>
+					<div class="pcell">
+						<span class="label">жизнь машины, медиана</span>
+						<div class="value win-warn">9<span class="unit">дн</span></div>
+						<span class="sub">до ip-бана или вывода</span>
+					</div>
+					<div class="pcell">
+						<span class="label">себес / живой день</span>
+						<div class="value win-bad">$0.57</div>
+						<span class="sub">€4.5/мес, но дожитие низкое</span>
+					</div>
+					<div class="pcell">
+						<span class="label">кредит</span>
+						<div class="value win-bad">$4<span class="unit">.10</span></div>
+						<span class="sub">месячный потолок $60</span>
+						<div class="capbar"><i class="bad" style="width: 94%"></i></div>
+					</div>
+					<div class="pcell spark">
+						<span class="label">баны его машин · 30 дн</span>
+						<svg class="spark" data-spark="high" viewBox="0 0 220 30" preserveAspectRatio="none"></svg>
+					</div>
+				</div>
+				<button class="cfg-toggle"><span class="caret">−</span> настройка: ключ, потолки, регион</button>
+				<div class="config">
+					<div class="facts">
+						<div><span class="label">проверка</span><span class="bad">не прошла</span><span class="label">8 мин назад</span></div>
+						<div><span class="label">лимит самого hetzner</span><span class="mono">10 из 10 серверов</span></div>
+					</div>
+					<div class="fields">
+						<label class="field"><span>api-токен</span><input type="password" value="сохранён" /></label>
+						<label class="field"><span>потолок на покупку, $</span><input value="6.00" /></label>
+						<label class="field"><span>потолок в месяц, $</span><input value="60.00" /></label>
+					</div>
+					<span class="cfg-note">пустые поля оставляют сохранённый ключ. новый ключ проверяется у провайдера до сохранения.</span>
+					<div class="cfg-acts">
+						<button class="btn">проверить</button>
+						<button class="btn prim">сохранить</button>
+					</div>
+				</div>
+			</div>
+
+			<!-- ovh: middle -->
+			<div class="prov">
+				<div class="prov-head">
+					<span class="pname">ovh</span>
+					<span class="badge">машины</span>
+					<span class="badge">по умолч. warsaw · vps-1</span>
+					<span class="state st-on">работает</span>
+					<div class="right"><span class="sub" style="font-size: 11px; color: var(--text-3)">хаб покупает</span><span class="toggle"></span></div>
+				</div>
+				<div class="pstats">
+					<div class="pcell">
+						<span class="label">винрейт, 30 дн</span>
+						<div class="value lead win-warn">79<span class="unit">%</span></div>
+						<span class="sub">доживают до вывода</span>
+					</div>
+					<div class="pcell">
+						<span class="label">машин куплено</span>
+						<div class="value">9</div>
+						<span class="sub">живо сейчас 9</span>
+					</div>
+					<div class="pcell">
+						<span class="label">жизнь машины, медиана</span>
+						<div class="value">14<span class="unit">дн</span></div>
+						<span class="sub">до ip-бана или вывода</span>
+					</div>
+					<div class="pcell">
+						<span class="label">себес / живой день</span>
+						<div class="value">$0.44</div>
+						<span class="sub">$6/мес ÷ дожитие</span>
+					</div>
+					<div class="pcell">
+						<span class="label">кредит</span>
+						<div class="value">$31<span class="unit">.00</span></div>
+						<span class="sub">месячный потолок $60</span>
+						<div class="capbar"><i style="width: 48%"></i></div>
+					</div>
+					<div class="pcell spark">
+						<span class="label">баны его машин · 30 дн</span>
+						<svg class="spark" data-spark="mid" viewBox="0 0 220 30" preserveAspectRatio="none"></svg>
+					</div>
+				</div>
+				<button class="cfg-toggle"><span class="caret">+</span> настройка: ключ, потолки, регион</button>
+			</div>
+
+			<p class="note-sec">
+				винрейт, дожитие и себес — одна производная из жизненного цикла машин и банов детекции, срез по провайдеру.
+				hetzner дешевле за машину, но его ip банят вдвое чаще → по живому дню он дороже всех. это и есть сигнал, у кого
+				заказывать следующую.
+			</p>
+
+			<!-- ======== registrars ======== -->
+			<div class="sec-head">
+				<h2>регистраторы доменов</h2>
+				<span class="sub">домены горят часами, не днями. винрейт и себес считаются по зонам: какая tld живёт дольше</span>
+			</div>
+
+			<div class="prov">
+				<div class="prov-head">
+					<span class="pname">porkbun</span>
+					<span class="badge">домены</span>
+					<span class="badge">зоны: lol · top · mom · autos</span>
+					<span class="state st-on">работает</span>
+					<div class="right"><span class="sub" style="font-size: 11px; color: var(--text-3)">хаб покупает</span><span class="toggle"></span></div>
+				</div>
+				<div class="pstats" style="grid-template-columns: 1.3fr 1fr 1fr 1fr 1.4fr">
+					<div class="pcell">
+						<span class="label">жизнь домена, медиана</span>
+						<div class="value lead win-warn">38<span class="unit">ч</span></div>
+						<span class="sub">неделю назад 61 ч</span>
+					</div>
+					<div class="pcell">
+						<span class="label">доменов куплено</span>
+						<div class="value">214</div>
+						<span class="sub">в пуле сейчас 9</span>
+					</div>
+					<div class="pcell">
+						<span class="label">себес / живой день</span>
+						<div class="value">$0.63</div>
+						<span class="sub">$1/домен ÷ 38 ч</span>
+					</div>
+					<div class="pcell">
+						<span class="label">кредит</span>
+						<div class="value">$28<span class="unit">.20</span></div>
+						<span class="sub">лимит porkbun $150/мес</span>
+						<div class="capbar"><i style="width: 19%"></i></div>
+					</div>
+					<div class="pcell">
+						<span class="label">зоны: жизнь домена</span>
+						<div class="zones" style="margin-top: 5px">
+							<span class="zone"><span class="z">.lol</span><span class="life win-bad">28 ч</span></span>
+							<span class="zone"><span class="z">.top</span><span class="life win-warn">41 ч</span></span>
+							<span class="zone"><span class="z">.mom</span><span class="life win-ok">52 ч</span></span>
+						</div>
+					</div>
+				</div>
+				<button class="cfg-toggle"><span class="caret">+</span> настройка: ключ, потолки, порядок зон</button>
+			</div>
+
+			<p class="note-sec">
+				.lol горит быстрее всех — хаб берёт зоны по порядку, .lol стоит двигать вниз списка. порядок зон правится в
+				настройке карточки.
+			</p>
+
+			<!-- ======== supported but not connected ======== -->
+			<div class="sec-head">
+				<h2>поддерживаются, не подключены</h2>
+				<span class="sub">провайдер — это код в хабе; «подключить» = дать ключ и включить, новый тип кнопкой не заводится</span>
+			</div>
+
+			<div class="prov dim">
+				<div class="prov-head">
+					<span class="pname">aeza</span>
+					<span class="badge">машины</span>
+					<span class="state st-off">не настроен</span>
+					<div class="right"><span class="toggle off"></span></div>
+				</div>
+				<button class="cfg-toggle"><span class="caret">+</span> подключить: ключ, потолки, регион</button>
+				<div class="config hidden">
+					<div class="fields">
+						<label class="field"><span>api-ключ</span><input type="password" placeholder="" /></label>
+						<label class="field"><span>потолок на покупку, $</span><input placeholder="6.00" /></label>
+						<label class="field"><span>потолок в месяц, $</span><input placeholder="60.00" /></label>
+					</div>
+					<span class="cfg-note">ключ проверяется у провайдера до сохранения. включить можно только после проверки.</span>
+					<div class="cfg-acts">
+						<button class="btn prim">подключить</button>
+					</div>
+				</div>
+			</div>
+
+			<div class="prov dim">
+				<div class="prov-head">
+					<span class="pname">namecheap</span>
+					<span class="badge">домены</span>
+					<span class="state st-off">не настроен</span>
+					<div class="right"><span class="toggle off"></span></div>
+				</div>
+				<button class="cfg-toggle"><span class="caret">+</span> подключить: ключ, потолки, порядок зон</button>
+				<div class="config hidden">
+					<div class="fields">
+						<label class="field"><span>api-ключ</span><input type="password" placeholder="" /></label>
+						<label class="field"><span>api-user</span><input placeholder="" /></label>
+						<label class="field"><span>потолок в месяц, $</span><input placeholder="150.00" /></label>
+						<label class="field"><span>зоны по порядку</span><input placeholder="lol, top, mom" /></label>
+					</div>
+					<span class="cfg-note">ключ проверяется у провайдера до сохранения. включить можно только после проверки.</span>
+					<div class="cfg-acts">
+						<button class="btn prim">подключить</button>
+					</div>
+				</div>
+			</div>
+
+			<p class="note-sec">
+				новый провайдер, которого ещё нет в этом списке, — это реализация в хабе (регистратор или машинный),
+				не строка в админке. появится в коде → встанет сюда «не настроен».
+			</p>
+		</main>
+
+		<script>
+			function wobble(i, seed) {
+				return (Math.sin(i * 0.7 + seed) + Math.sin(i * 0.23 + seed * 3)) / 2;
+			}
+
+			function path(vals, w, h, pad, min, max) {
+				const n = vals.length;
+				const x = (i) => (i / (n - 1)) * w;
+				const y = (v) => h - pad - ((v - min) / (max - min)) * (h - pad * 2);
+				return vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+			}
+
+			// per-provider ban rate over 30 days: the shape behind the winrate.
+			// hover reads out the day and its value — a bare sparkline says nothing.
+			const SPARKS = {
+				low: { base: 0.6, jitter: 0.3, spikes: [], color: 'var(--ok)', tint: 'oklch(0.72 0.15 155 / 0.13)' },
+				mid: { base: 1.2, jitter: 0.5, spikes: [[20, 2]], color: 'var(--warn)', tint: 'oklch(0.78 0.12 85 / 0.13)' },
+				high: { base: 2.4, jitter: 0.8, spikes: [[14, 3.5], [26, 2.5]], color: 'var(--bad)', tint: 'oklch(0.65 0.2 25 / 0.13)' },
+			};
+			const SN = 30,
+				SW = 220,
+				SH = 30;
+			const tip = document.createElement('div');
+			tip.className = 'spark-tip';
+			tip.hidden = true;
+			document.body.appendChild(tip);
+			const sparkData = new Map();
+
+			function onSparkMove(e) {
+				const svg = e.currentTarget;
+				const sd = sparkData.get(svg);
+				const rect = svg.getBoundingClientRect();
+				const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+				const i = Math.round(frac * (SN - 1));
+				const v = sd.vals[i];
+				const x = (i / (SN - 1)) * SW;
+				const y = SH - 3 - (v / sd.max) * (SH - 6);
+				svg.innerHTML =
+					sd.base +
+					`<line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${SH}" stroke="oklch(0.5 0 0)" stroke-width="1" />` +
+					`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.6" fill="${sd.color}" />`;
+				const day = new Date(Date.now() - (SN - 1 - i) * 86_400_000);
+				tip.textContent = `${v.toFixed(1)} бан/день · ${day.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}`;
+				tip.hidden = false;
+				tip.style.left = `${e.clientX + 12}px`;
+				tip.style.top = `${e.clientY - 30}px`;
+			}
+
+			for (const svg of document.querySelectorAll('svg.spark')) {
+				const cfg = SPARKS[svg.dataset.spark];
+				const spike = (i, c, w) => Math.exp(-((i - c) ** 2) / (2 * w * w));
+				const vals = Array.from({ length: SN }, (_, i) => {
+					let v = cfg.base + wobble(i, 2) * cfg.jitter;
+					for (const [c, amp] of cfg.spikes) v += spike(i, c, 1.6) * amp;
+					return Math.max(0, v);
+				});
+				const max = Math.max(...vals) * 1.15;
+				const d = path(vals, SW, SH, 3, 0, max);
+				const base =
+					`<path d="${d} L${SW},${SH} L0,${SH} Z" fill="${cfg.tint}" />` +
+					`<path d="${d}" fill="none" stroke="${cfg.color}" stroke-width="1.4" stroke-linejoin="round" />`;
+				svg.innerHTML = base;
+				sparkData.set(svg, { vals, max, base, color: cfg.color });
+				svg.addEventListener('mousemove', onSparkMove);
+				svg.addEventListener('mouseleave', () => {
+					tip.hidden = true;
+					svg.innerHTML = sparkData.get(svg).base;
+				});
+			}
+
+			// mockup interactions: sort chips, enable toggles, config fold
+			for (const group of document.querySelectorAll('.right')) {
+				group.addEventListener('click', (e) => {
+					if (!e.target.classList.contains('chip')) return;
+					for (const c of group.querySelectorAll('.chip')) c.classList.toggle('on', c === e.target);
+				});
+			}
+			for (const t of document.querySelectorAll('.toggle')) {
+				t.addEventListener('click', () => t.classList.toggle('off'));
+			}
+			for (const btn of document.querySelectorAll('.cfg-toggle')) {
+				btn.addEventListener('click', () => {
+					const card = btn.closest('.prov');
+					let cfg = card.querySelector('.config');
+					const caret = btn.querySelector('.caret');
+					if (cfg) {
+						cfg.classList.toggle('hidden');
+						caret.textContent = cfg.classList.contains('hidden') ? '+' : '−';
+					}
+				});
+			}
+		</script>
+	</body>
+</html>

@@ -1,0 +1,32 @@
+{
+	"name": "nekko-admin",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "vite dev",
+		"test": "node --conditions=browser --test tests/*.test.mjs",
+		"build": "vite build",
+		"preview": "vite preview",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"format": "prettier --write \"src/**/*.{ts,svelte,css,html}\"",
+		"format:check": "prettier --check \"src/**/*.{ts,svelte,css,html}\""
+	},
+	"devDependencies": {
+		"@sveltejs/adapter-static": "^3.0.8",
+		"@sveltejs/kit": "^2.16.0",
+		"@sveltejs/vite-plugin-svelte": "^5.1.1",
+		"happy-dom": "^21.0.4",
+		"prettier": "^3.5.3",
+		"prettier-plugin-svelte": "^3.5.1",
+		"svelte": "^5.54.0",
+		"svelte-check": "^4.2.1",
+		"typescript": "^5.9.3",
+		"vite": "^6.4.1"
+	},
+	"dependencies": {
+		"@fontsource/ibm-plex-mono": "^5.2.7",
+		"@fontsource/inter": "^5.2.8",
+		"echarts": "^5.6.0"
+	}
+}

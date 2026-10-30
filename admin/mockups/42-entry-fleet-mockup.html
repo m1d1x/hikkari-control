@@ -1,0 +1,1168 @@
+<!doctype html>
+<html lang="ru">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>точки входа — парк v2</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+			rel="stylesheet"
+		/>
+		<style>
+			:root {
+				--bg: oklch(0.14 0 0);
+				--bg-raised: oklch(0.17 0 0);
+				--surface: oklch(0.23 0 0);
+				--card-bg: oklch(0.2 0 0);
+				--inset: oklch(0.17 0 0);
+
+				--primary: oklch(0.75 0.14 350);
+				--primary-subtle: oklch(0.75 0.14 350 / 0.1);
+
+				--ok: oklch(0.72 0.15 155);
+				--warn: oklch(0.78 0.12 85);
+				--bad: oklch(0.65 0.2 25);
+				--unknown: oklch(0.52 0 0);
+
+				--c-reality: oklch(0.75 0.14 350);
+				--c-hyst: oklch(0.72 0.12 200);
+				--c-xhttp: oklch(0.78 0.12 85);
+				--c-direct: oklch(0.72 0.15 155);
+
+				--border: oklch(0.24 0 0);
+				--border-subtle: oklch(0.19 0 0);
+
+				--text: oklch(0.93 0 0);
+				--text-2: oklch(0.62 0 0);
+				--text-3: oklch(0.42 0 0);
+
+				--sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+				--mono: 'IBM Plex Mono', monospace;
+			}
+
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+			}
+
+			body {
+				background: var(--bg);
+				color: var(--text);
+				font-family: var(--sans);
+				font-size: 13px;
+				line-height: 1.5;
+				-webkit-font-smoothing: antialiased;
+			}
+
+			button {
+				font: inherit;
+				color: inherit;
+				background: none;
+				border: none;
+				cursor: pointer;
+			}
+
+			.page {
+				padding: 24px;
+				max-width: 1400px;
+			}
+
+			.m {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+			}
+
+			/* ---------- head ---------- */
+
+			.head {
+				display: flex;
+				align-items: flex-end;
+				gap: 16px;
+				margin-bottom: 18px;
+			}
+
+			.head h1 {
+				font-size: 20px;
+				font-weight: 600;
+				letter-spacing: -0.01em;
+			}
+
+			.head p {
+				margin-top: 4px;
+				font-size: 12px;
+				color: var(--text-2);
+				max-width: 660px;
+			}
+
+			.head .right {
+				margin-left: auto;
+				display: flex;
+				align-items: center;
+				gap: 10px;
+			}
+
+			.ranges {
+				display: flex;
+				gap: 4px;
+			}
+
+			.chip {
+				padding: 4px 11px;
+				border-radius: 6px;
+				font-size: 11px;
+				color: var(--text-2);
+				border: 1px solid var(--border);
+				white-space: nowrap;
+			}
+
+			.chip:hover {
+				background: var(--surface);
+			}
+
+			.chip.on {
+				color: var(--text);
+				background: var(--primary-subtle);
+				border-color: oklch(0.75 0.14 350 / 0.35);
+			}
+
+			.primary {
+				padding: 7px 14px;
+				border-radius: 7px;
+				font-size: 12px;
+				font-weight: 500;
+				color: var(--bg);
+				background: var(--primary);
+				white-space: nowrap;
+			}
+
+			.primary:hover {
+				background: oklch(0.8 0.14 350);
+			}
+
+			/* ---------- cards ---------- */
+
+			.card {
+				background: var(--card-bg);
+				border: 1px solid var(--border-subtle);
+				border-radius: 8px;
+				margin-bottom: 16px;
+			}
+
+			.card-head {
+				display: flex;
+				align-items: baseline;
+				gap: 10px;
+				padding: 13px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.card-head h2 {
+				font-size: 13px;
+				font-weight: 600;
+			}
+
+			.card-head .sub {
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.card-head .right {
+				margin-left: auto;
+				display: flex;
+				align-items: center;
+				gap: 6px;
+			}
+
+			.note {
+				padding: 11px 16px 14px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			/* ---------- hero: the pool, and whether it is keeping up ---------- */
+
+			.pool-hero {
+				display: grid;
+				grid-template-columns: 240px 1fr;
+				gap: 20px;
+				padding: 18px;
+			}
+
+			.pool-hero .figure .big {
+				display: flex;
+				align-items: baseline;
+				gap: 8px;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 44px;
+				font-weight: 600;
+				letter-spacing: -0.03em;
+				line-height: 1;
+			}
+
+			.pool-hero .figure .unit {
+				font-size: 18px;
+				font-weight: 400;
+				color: var(--text-3);
+			}
+
+			.pool-hero .figure .what {
+				margin-top: 10px;
+				font-size: 12px;
+				color: var(--text-2);
+			}
+
+			.pool-hero .figure .who {
+				margin-top: 8px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.breakdown {
+				margin-top: 14px;
+				padding-top: 12px;
+				border-top: 1px solid var(--border-subtle);
+				display: flex;
+				flex-direction: column;
+				gap: 5px;
+			}
+
+			.breakdown div {
+				display: flex;
+				justify-content: space-between;
+				gap: 10px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.breakdown div span {
+				display: flex;
+				align-items: center;
+				gap: 7px;
+			}
+
+			.sw {
+				width: 8px;
+				height: 8px;
+				border-radius: 2px;
+				flex-shrink: 0;
+			}
+
+			.breakdown div b {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-weight: 500;
+				color: var(--text-2);
+			}
+
+			svg.pool-chart {
+				display: block;
+				width: 100%;
+				height: 150px;
+			}
+
+			.axis-x {
+				display: flex;
+				justify-content: space-between;
+				margin-top: 6px;
+				font-family: var(--mono);
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.trend {
+				font-family: var(--mono);
+				font-size: 13px;
+				font-weight: 500;
+			}
+
+			.trend.good {
+				color: var(--ok);
+			}
+			.trend.bad {
+				color: var(--bad);
+			}
+			.trend.flat {
+				color: var(--text-3);
+			}
+
+			/* ---------- numbers strip: the flow rates you steer by ---------- */
+
+			.strip {
+				display: grid;
+				grid-template-columns: repeat(3, 1fr);
+				gap: 1px;
+				background: var(--border-subtle);
+				border: 1px solid var(--border-subtle);
+				border-radius: 8px;
+				overflow: hidden;
+				margin-bottom: 16px;
+			}
+
+			.cell {
+				background: var(--card-bg);
+				padding: 15px 17px;
+			}
+
+			.cell .label {
+				display: block;
+				font-size: 11px;
+				color: var(--text-2);
+			}
+
+			.cell .value {
+				display: flex;
+				align-items: baseline;
+				gap: 7px;
+				margin-top: 5px;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 24px;
+				font-weight: 600;
+				letter-spacing: -0.02em;
+			}
+
+			.cell .unit {
+				font-size: 12px;
+				font-weight: 400;
+				color: var(--text-3);
+			}
+
+			.cell .value .slash {
+				color: var(--text-3);
+				font-weight: 400;
+			}
+
+			.cell .meta {
+				display: block;
+				margin-top: 4px;
+				font-size: 11px;
+				color: var(--text-3);
+			}
+
+			.v-warn {
+				color: var(--warn);
+			}
+			.v-bad {
+				color: var(--bad);
+			}
+			.v-ok {
+				color: var(--ok);
+			}
+
+			svg.mini {
+				display: block;
+				width: 100%;
+				height: 46px;
+				margin-top: 11px;
+			}
+
+			.leg {
+				display: flex;
+				align-items: center;
+				gap: 12px;
+				margin-top: 7px;
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.leg span {
+				display: flex;
+				align-items: center;
+				gap: 5px;
+			}
+
+			.leg i {
+				width: 8px;
+				height: 2px;
+				border-radius: 1px;
+			}
+
+			/* ---------- rollouts (jobs) ---------- */
+
+			.jobline {
+				display: flex;
+				align-items: center;
+				gap: 12px;
+				padding: 12px 16px;
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.jobline:last-child {
+				border-bottom: none;
+			}
+
+			.jobline.running {
+				background: var(--primary-subtle);
+			}
+
+			.jobline .jname {
+				font-family: var(--mono);
+				font-size: 12px;
+				font-weight: 600;
+				width: 90px;
+				flex-shrink: 0;
+			}
+
+			.jstatus {
+				padding: 2px 8px;
+				border-radius: 4px;
+				font-size: 11px;
+				white-space: nowrap;
+				flex-shrink: 0;
+			}
+
+			.js-running {
+				color: var(--primary);
+				background: var(--primary-subtle);
+			}
+			.js-done {
+				color: var(--ok);
+				background: oklch(0.72 0.15 155 / 0.12);
+			}
+			.js-failed {
+				color: var(--bad);
+				background: oklch(0.65 0.2 25 / 0.12);
+			}
+
+			.jobline .step {
+				flex: 1;
+				min-width: 0;
+				font-size: 12px;
+				color: var(--text-2);
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+
+			.jobline .ago {
+				font-family: var(--mono);
+				font-size: 10px;
+				color: var(--text-3);
+				white-space: nowrap;
+			}
+
+			.jobline .retry {
+				font-size: 11px;
+				color: var(--text-3);
+				border: 1px solid var(--border);
+				border-radius: 5px;
+				padding: 3px 9px;
+			}
+
+			.jobline .retry:hover {
+				color: var(--text);
+				background: var(--surface);
+			}
+
+			.prog {
+				height: 2px;
+				background: var(--primary);
+				animation: slide 1.6s ease-in-out infinite;
+			}
+
+			@keyframes slide {
+				0% {
+					margin-left: 0;
+					width: 20%;
+				}
+				50% {
+					margin-left: 40%;
+					width: 45%;
+				}
+				100% {
+					margin-left: 100%;
+					width: 10%;
+				}
+			}
+
+			/* ---------- pool: machines you operate ---------- */
+
+			.filters {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+			}
+
+			.machine {
+				border-bottom: 1px solid var(--border-subtle);
+			}
+
+			.machine:last-child {
+				border-bottom: none;
+			}
+
+			.m-head {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				padding: 12px 16px 10px;
+			}
+
+			.m-head .mname {
+				font-family: var(--mono);
+				font-size: 13px;
+				font-weight: 600;
+			}
+
+			.badge {
+				padding: 2px 7px;
+				border-radius: 4px;
+				font-size: 10px;
+				white-space: nowrap;
+				background: var(--surface);
+				color: var(--text-2);
+			}
+
+			.badge.proto-reality {
+				color: var(--c-reality);
+				background: oklch(0.75 0.14 350 / 0.12);
+			}
+
+			.badge.proto-hyst {
+				color: var(--c-hyst);
+				background: oklch(0.72 0.12 200 / 0.12);
+			}
+
+			.badge.proto-xhttp {
+				color: var(--c-xhttp);
+				background: oklch(0.78 0.12 85 / 0.12);
+			}
+
+			.verdict {
+				padding: 2px 8px;
+				border-radius: 4px;
+				font-size: 11px;
+				white-space: nowrap;
+			}
+
+			.ver-ok {
+				color: var(--ok);
+				background: oklch(0.72 0.15 155 / 0.12);
+			}
+			.ver-warn {
+				color: var(--warn);
+				background: oklch(0.78 0.12 85 / 0.12);
+			}
+			.ver-bad {
+				color: var(--bad);
+				background: oklch(0.65 0.2 25 / 0.12);
+			}
+			.ver-mute {
+				color: var(--text-3);
+				background: oklch(0.52 0 0 / 0.12);
+			}
+
+			.m-acts {
+				margin-left: auto;
+				display: flex;
+				gap: 4px;
+			}
+
+			.btn {
+				padding: 4px 11px;
+				font-size: 11px;
+				color: var(--text-2);
+				background: var(--surface);
+				border: 1px solid var(--border);
+				border-radius: 6px;
+				white-space: nowrap;
+			}
+
+			.btn:hover {
+				color: var(--text);
+				background: var(--bg-raised);
+			}
+
+			/* the layer-appropriate cheap fix, lifted so the eye lands on it */
+			.btn.fix {
+				color: var(--primary);
+				border-color: oklch(0.75 0.14 350 / 0.4);
+			}
+
+			.btn.fix:hover {
+				color: var(--primary);
+				background: var(--primary-subtle);
+			}
+
+			.btn.danger:hover {
+				color: var(--bad);
+				border-color: oklch(0.65 0.2 25 / 0.5);
+			}
+
+			/* relay rows: operational columns, not monitoring (that is censor) */
+			.r-grid {
+				padding: 0 16px 12px;
+			}
+
+			.r-head,
+			.r-row {
+				display: grid;
+				grid-template-columns: 150px 150px minmax(120px, 1fr) 62px 96px 92px;
+				align-items: center;
+				gap: 14px;
+			}
+
+			.r-head {
+				padding-bottom: 5px;
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.r-head span:nth-child(4),
+			.r-head span:nth-child(5),
+			.r-row .grants,
+			.r-row .ttl {
+				text-align: right;
+			}
+
+			.r-row {
+				padding: 5px 0;
+			}
+
+			.r-row .rname {
+				display: flex;
+				align-items: center;
+				gap: 7px;
+				font-family: var(--mono);
+				font-size: 11px;
+				color: var(--text);
+			}
+
+			.tag-out {
+				font-family: var(--sans);
+				font-size: 10px;
+				color: var(--warn);
+			}
+			.tag-kind {
+				font-family: var(--sans);
+				font-size: 10px;
+				color: var(--text-3);
+			}
+
+			.r-row .cover {
+				font-family: var(--mono);
+				font-size: 11px;
+				color: var(--text-2);
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+
+			.r-row .grants,
+			.r-row .ttl {
+				font-family: var(--mono);
+				font-variant-numeric: tabular-nums;
+				font-size: 11px;
+				color: var(--text-2);
+				white-space: nowrap;
+			}
+
+			.r-row .ttl.warn {
+				color: var(--warn);
+			}
+
+			.r-row .act {
+				text-align: right;
+			}
+
+			.r-row .kill {
+				font-size: 11px;
+				color: var(--text-3);
+				padding: 2px 7px;
+				border-radius: 5px;
+			}
+
+			.r-row .kill:hover {
+				color: var(--bad);
+				background: oklch(0.65 0.2 25 / 0.1);
+			}
+
+			.r-row .swap {
+				font-size: 11px;
+				color: var(--primary);
+				padding: 2px 7px;
+				border: 1px solid oklch(0.75 0.14 350 / 0.4);
+				border-radius: 5px;
+			}
+
+			.r-row .swap:hover {
+				background: var(--primary-subtle);
+			}
+
+			.dot {
+				width: 6px;
+				height: 6px;
+				border-radius: 50%;
+				flex-shrink: 0;
+			}
+
+			.dot.ok {
+				background: var(--ok);
+			}
+			.dot.warn {
+				background: var(--warn);
+			}
+			.dot.bad {
+				background: var(--bad);
+			}
+			.dot.mute {
+				background: var(--unknown);
+			}
+
+			.fold {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				width: 100%;
+				padding: 12px 16px;
+				text-align: left;
+				font-size: 12px;
+				color: var(--text-3);
+				border-top: 1px solid var(--border-subtle);
+			}
+
+			.fold:hover {
+				color: var(--text-2);
+				background: var(--inset);
+			}
+
+			.fold .caret {
+				font-family: var(--mono);
+				color: var(--text-3);
+			}
+
+			.fold .dots {
+				margin-left: auto;
+				display: flex;
+				gap: 2px;
+			}
+
+			.fold .dots i {
+				width: 5px;
+				height: 5px;
+				border-radius: 50%;
+				background: var(--ok);
+			}
+
+			.empty {
+				padding: 16px;
+				font-size: 12px;
+				color: var(--text-3);
+				text-align: center;
+			}
+
+			[hidden] {
+				display: none !important;
+			}
+
+			@media (max-width: 1100px) {
+				.strip,
+				.pool-hero {
+					grid-template-columns: 1fr;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<main class="page">
+			<div class="head">
+				<div>
+					<h1>точки входа</h1>
+					<p>
+						парк машин и релеи на них. хаб разворачивает, пересаживает на новые имена и хоронит сам. сюда — когда
+						нужна рука: заменить машину, свопнуть домен, завести новую.
+					</p>
+				</div>
+				<div class="right">
+					<div class="ranges">
+						<button class="chip">24 ч</button>
+						<button class="chip on">7 дн</button>
+						<button class="chip">30 дн</button>
+					</div>
+					<button class="primary">+ завести машину</button>
+				</div>
+			</div>
+
+			<!-- ======== 1. the pool, and whether replacement keeps up ======== -->
+			<section class="card">
+				<div class="card-head">
+					<h2>пул</h2>
+					<span class="sub">сколько рабочих релеев прямо сейчас раздаётся людям</span>
+					<div class="right">
+						<span class="sub">держит уровень, пока замена успевает за смертью</span>
+					</div>
+				</div>
+				<div class="pool-hero">
+					<div class="figure">
+						<div class="big">
+							128<span class="unit">релеев</span>
+							<span class="trend bad">&minus;2</span>
+						</div>
+						<div class="what">в раздаче, на 47 машинах</div>
+						<div class="who">5 провайдеров · 9 регионов · адрес каждой машины запечатан, открывается в строке</div>
+						<div class="breakdown">
+							<div>
+								<span><i class="sw" style="background: var(--ok)"></i>в раздаче</span>
+								<b>128</b>
+							</div>
+							<div>
+								<span><i class="sw" style="background: var(--warn)"></i>ждут допуска</span>
+								<b>6</b>
+							</div>
+							<div>
+								<span><i class="sw" style="background: var(--c-hyst)"></i>на раскатке новой версии</span>
+								<b>4</b>
+							</div>
+							<div>
+								<span><i class="sw" style="background: var(--bad)"></i>умерло за сутки</span>
+								<b style="color: var(--bad)">17</b>
+							</div>
+						</div>
+					</div>
+					<div>
+						<svg class="pool-chart" id="pool" viewBox="0 0 900 150" preserveAspectRatio="none"></svg>
+						<div class="axis-x">
+							<span>16 окт</span><span>18 окт</span><span>20 окт</span><span>22 окт</span><span>сейчас</span>
+						</div>
+					</div>
+				</div>
+				<div class="note">
+					зелёная линия — размер пула, серая под ней — сколько из него дошло до людей по пробам. за сутки умерло
+					17, заказано 15 — пул просел на 2.
+				</div>
+			</section>
+
+			<!-- ======== 2. flow rates over time ======== -->
+			<div class="strip">
+				<div class="cell">
+					<span class="label">смертность / замена, сут</span>
+					<div class="value"><span class="v-bad">17</span> <span class="slash">/</span> <span class="v-ok">15</span></div>
+					<svg class="mini" data-chart="deaths" viewBox="0 0 400 48" preserveAspectRatio="none"></svg>
+					<div class="leg">
+						<span><i style="background: var(--bad)"></i>смерть</span>
+						<span><i style="background: var(--ok)"></i>замена</span>
+						<span style="margin-left: auto">отстаём на 2</span>
+					</div>
+				</div>
+				<div class="cell">
+					<span class="label">развороты, сут</span>
+					<div class="value">38 <span class="unit">ок</span> <span class="v-bad" style="font-size: 18px">· 2 упало</span></div>
+					<svg class="mini" data-chart="rollouts" viewBox="0 0 400 48" preserveAspectRatio="none"></svg>
+					<div class="leg">
+						<span><i style="background: oklch(0.72 0.15 155 / 0.55)"></i>ок</span>
+						<span><i style="background: var(--bad)"></i>упало</span>
+						<span style="margin-left: auto">2 упало · hetzner 403</span>
+					</div>
+				</div>
+				<div class="cell">
+					<span class="label">от смерти до замены, медиана</span>
+					<div class="value v-ok">7 <span class="unit">мин</span></div>
+					<svg class="mini" data-chart="ttr" viewBox="0 0 400 48" preserveAspectRatio="none"></svg>
+					<div class="leg">
+						<span>p50 за 7 дней</span>
+						<span style="margin-left: auto">пик 14 мин</span>
+					</div>
+				</div>
+			</div>
+
+			<!-- ======== 4. rollouts in flight ======== -->
+			<section class="card">
+				<div class="card-head">
+					<h2>развороты</h2>
+					<span class="sub">что хаб сейчас разворачивает и что из этого упало</span>
+					<div class="right"><button class="chip">журнал целиком</button></div>
+				</div>
+
+				<div class="jobline running">
+					<span class="jname">tok1</span>
+					<span class="jstatus js-running">идёт</span>
+					<span class="step">ставит edge, сажает reality-ключ · шаг 4 из 6</span>
+					<span class="ago">поставлена 2 мин</span>
+				</div>
+				<div class="prog"></div>
+
+				<div class="jobline">
+					<span class="jname">hel3</span>
+					<span class="jstatus js-failed">упало</span>
+					<span class="step">hetzner: 403, лимит серверов на аккаунте исчерпан</span>
+					<button class="retry">повторить</button>
+					<span class="ago">14 мин</span>
+				</div>
+				<div class="jobline">
+					<span class="jname">hel2</span>
+					<span class="jstatus js-failed">упало</span>
+					<span class="step">hetzner: 403, лимит серверов на аккаунте исчерпан</span>
+					<button class="retry">повторить</button>
+					<span class="ago">16 мин</span>
+				</div>
+				<div class="jobline">
+					<span class="jname">waw1</span>
+					<span class="jstatus js-done">готово</span>
+					<span class="step">развёрнута, 2 релея приняты в пул</span>
+					<span class="ago">1 ч</span>
+				</div>
+				<div class="jobline">
+					<span class="jname">fra4</span>
+					<span class="jstatus js-done">готово</span>
+					<span class="step">развёрнута, 2 релея приняты в пул</span>
+					<span class="ago">3 ч</span>
+				</div>
+			</section>
+
+			<!-- ======== 5. the fleet — only what needs eyes is open ======== -->
+			<section class="card">
+				<div class="card-head">
+					<h2>парк</h2>
+					<span class="sub">47 машин</span>
+					<div class="right filters">
+						<button class="chip on">требуют глаз · 3</button>
+						<button class="chip">все</button>
+						<button class="chip">по провайдеру</button>
+					</div>
+				</div>
+
+				<!-- box: ip banned whole — expensive, machine must be replaced -->
+				<div class="machine">
+					<div class="m-head">
+						<span class="mname">ams1</span>
+						<span class="badge">vultr</span>
+						<span class="badge">amsterdam</span>
+						<span class="badge proto-reality">vless-reality</span>
+						<span class="verdict ver-bad">ip забанен целиком</span>
+						<div class="m-acts">
+							<button class="btn danger">заменить машину</button>
+							<button class="btn">сдать</button>
+						</div>
+					</div>
+					<div class="r-grid">
+						<div class="r-head">
+							<span>релей</span><span>протокол</span><span>прикрытие</span><span>выдач</span
+							><span>запись живёт</span><span></span>
+						</div>
+						<div class="r-row">
+							<span class="rname"><i class="dot bad"></i>ams1-1</span>
+							<span class="cover"><span class="badge proto-reality">reality:443</span></span>
+							<span class="cover">www.cloudflare.com</span>
+							<span class="grants">2 140</span>
+							<span class="ttl">22 дн</span>
+							<span class="act"><button class="kill">мёртв</button></span>
+						</div>
+						<div class="r-row">
+							<span class="rname"><i class="dot bad"></i>ams1-2</span>
+							<span class="cover"><span class="badge proto-reality">reality:443</span></span>
+							<span class="cover">cdn.jsdelivr.net</span>
+							<span class="grants">1 980</span>
+							<span class="ttl">22 дн</span>
+							<span class="act"><button class="kill">мёртв</button></span>
+						</div>
+					</div>
+				</div>
+
+				<!-- box: domain blocked — cheap, swap the domain, machine stays -->
+				<div class="machine">
+					<div class="m-head">
+						<span class="mname">fra2</span>
+						<span class="badge">hetzner</span>
+						<span class="badge">frankfurt</span>
+						<span class="badge proto-xhttp">xhttp</span>
+						<span class="verdict ver-warn">домен заблокирован · машина рабочая</span>
+						<div class="m-acts">
+							<button class="btn fix">свопнуть домен</button>
+							<button class="btn">сдать</button>
+						</div>
+					</div>
+					<div class="r-grid">
+						<div class="r-head">
+							<span>релей</span><span>протокол</span><span>домен</span><span>выдач</span
+							><span>запись живёт</span><span></span>
+						</div>
+						<div class="r-row">
+							<span class="rname"><i class="dot ok"></i>fra2-1</span>
+							<span class="cover"><span class="badge proto-xhttp">xhttp:443</span></span>
+							<span class="cover">files-origin-cdn.org</span>
+							<span class="grants">860</span>
+							<span class="ttl">9 дн</span>
+							<span class="act"><button class="kill">мёртв</button></span>
+						</div>
+						<div class="r-row">
+							<span class="rname"><i class="dot warn"></i>fra2-2</span>
+							<span class="cover"><span class="badge proto-xhttp">xhttp:443</span></span>
+							<span class="cover">adress-cdn-pool.net</span>
+							<span class="grants">0</span>
+							<span class="ttl warn">19 ч</span>
+							<span class="act"><button class="swap">свопнуть</button></span>
+						</div>
+					</div>
+				</div>
+
+				<!-- box: prober blind — observability, not a real break -->
+				<div class="machine">
+					<div class="m-head">
+						<span class="mname">sin1</span>
+						<span class="badge">vultr</span>
+						<span class="badge">singapore</span>
+						<span class="badge proto-hyst">hysteria2</span>
+						<span class="badge">голос · sfu-sg</span>
+						<span class="verdict ver-mute">пробник без сети · поломки не видно</span>
+						<div class="m-acts">
+							<button class="btn">сдать</button>
+							<button class="btn">забыть ключ</button>
+						</div>
+					</div>
+					<div class="r-grid">
+						<div class="r-head">
+							<span>релей</span><span>протокол</span><span>регион голоса</span><span>выдач</span
+							><span>запись живёт</span><span></span>
+						</div>
+						<div class="r-row">
+							<span class="rname"><i class="dot mute"></i>sin1-1 <span class="tag-kind">bootstrap</span></span>
+							<span class="cover"><span class="badge proto-hyst">hysteria2:8443</span></span>
+							<span class="cover">sfu-sg-1, sfu-sg-2</span>
+							<span class="grants">&mdash;</span>
+							<span class="ttl">41 дн</span>
+							<span class="act"><button class="kill">мёртв</button></span>
+						</div>
+					</div>
+				</div>
+
+				<!-- the clean fleet, folded -->
+				<button class="fold">
+					<span class="caret">+</span>
+					<span>44 машины чисто — 118 релеев в раздаче</span>
+					<span class="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+				</button>
+
+				<button class="fold">
+					<span class="caret">+</span>
+					<span>мёртвые релеи · 17 за сутки</span>
+				</button>
+				<button class="fold">
+					<span class="caret">+</span>
+					<span>сданные машины · 3</span>
+				</button>
+			</section>
+		</main>
+
+		<script>
+			function wobble(i, seed) {
+				return (Math.sin(i * 0.7 + seed) + Math.sin(i * 0.23 + seed * 3)) / 2;
+			}
+
+			function path(vals, w, h, pad, min, max) {
+				const n = vals.length;
+				const x = (i) => (i / (n - 1)) * w;
+				const y = (v) => h - pad - ((v - min) / (max - min)) * (h - pad * 2);
+				return vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+			}
+
+			// --- pool size over 7 days: the pool, and how much of it actually reached people ---
+			(function pool() {
+				const svg = document.getElementById('pool');
+				const W = 900,
+					H = 150,
+					PAD = 12;
+				const n = 48;
+
+				const size = Array.from({ length: n }, (_, i) => {
+					const base = 130 + wobble(i, 3) * 4;
+					return base - (i > 40 ? (i - 40) * 1.1 : 0);
+				});
+				const reached = size.map((v, i) => v - (3 + wobble(i, 7) * 1.5) - (i > 40 ? (i - 40) * 0.6 : 0));
+
+				const lo = Math.min(...reached) - 6;
+				const hi = Math.max(...size) + 6;
+
+				let out = '';
+				for (let g = 0; g <= 3; g++) {
+					const y = PAD + (g / 3) * (H - PAD * 2);
+					out += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="oklch(0.22 0 0)" stroke-width="1" />`;
+				}
+				const dSize = path(size, W, H, PAD, lo, hi);
+				const dReached = path(reached, W, H, PAD, lo, hi);
+
+				out += `<path d="${dSize} L${W},${H} L0,${H} Z" fill="oklch(0.72 0.15 155 / 0.1)" />`;
+				out += `<path d="${dReached}" fill="none" stroke="oklch(0.62 0 0)" stroke-width="1.4" stroke-dasharray="4 3" />`;
+				out += `<path d="${dSize}" fill="none" stroke="var(--ok)" stroke-width="1.8" stroke-linejoin="round" />`;
+				svg.innerHTML = out;
+			})();
+
+			// --- flow strip mini charts: 7 daily points each ---
+			const MINI = {
+				// two lines: when replacement dips under deaths, the pool shrinks
+				deaths: {
+					type: 'lines',
+					series: [
+						{ vals: [9, 10, 8, 11, 12, 14, 17], color: 'var(--bad)' },
+						{ vals: [9, 11, 9, 10, 12, 13, 15], color: 'var(--ok)' },
+					],
+				},
+				// stacked daily bars: green ok, red failures on top
+				rollouts: { type: 'bars', ok: [30, 34, 28, 41, 36, 44, 38], bad: [0, 1, 0, 0, 0, 0, 2] },
+				// median minutes from death to a fresh relay in the pool
+				ttr: { type: 'area', vals: [6, 7, 6, 14, 8, 6, 7], color: 'var(--ok)' },
+			};
+			for (const svg of document.querySelectorAll('svg.mini')) {
+				const cfg = MINI[svg.dataset.chart];
+				const W = 400,
+					H = 48,
+					PAD = 6;
+				if (cfg.type === 'lines') {
+					const all = cfg.series.flatMap((s) => s.vals);
+					const min = Math.min(...all) * 0.75,
+						max = Math.max(...all) * 1.12;
+					let out = '';
+					for (const s of cfg.series) {
+						const d = path(s.vals, W, H, PAD, min, max);
+						out += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="1.6" stroke-linejoin="round" />`;
+					}
+					svg.innerHTML = out;
+				} else if (cfg.type === 'area') {
+					const min = Math.min(...cfg.vals) * 0.55,
+						max = Math.max(...cfg.vals) * 1.12;
+					const d = path(cfg.vals, W, H, PAD, min, max);
+					svg.innerHTML =
+						`<path d="${d} L${W},${H} L0,${H} Z" fill="oklch(0.72 0.15 155 / 0.12)" />` +
+						`<path d="${d}" fill="none" stroke="${cfg.color}" stroke-width="1.6" stroke-linejoin="round" />`;
+				} else if (cfg.type === 'bars') {
+					const n = cfg.ok.length;
+					const totals = cfg.ok.map((v, i) => v + cfg.bad[i]);
+					const max = Math.max(...totals) * 1.12;
+					const slot = W / n;
+					const bw = slot * 0.54;
+					let out = '';
+					for (let i = 0; i < n; i++) {
+						const x = slot * i + (slot - bw) / 2;
+						const okH = (cfg.ok[i] / max) * (H - PAD * 2);
+						const okY = H - PAD - okH;
+						out += `<rect x="${x.toFixed(1)}" y="${okY.toFixed(1)}" width="${bw.toFixed(1)}" height="${okH.toFixed(1)}" fill="oklch(0.72 0.15 155 / 0.5)" rx="1" />`;
+						if (cfg.bad[i] > 0) {
+							const badH = Math.max((cfg.bad[i] / max) * (H - PAD * 2), 2.5);
+							out += `<rect x="${x.toFixed(1)}" y="${(okY - badH).toFixed(1)}" width="${bw.toFixed(1)}" height="${badH.toFixed(1)}" fill="var(--bad)" rx="1" />`;
+						}
+					}
+					svg.innerHTML = out;
+				}
+			}
+
+			// --- mockup interactions: range + filter chips, folds ---
+			for (const group of document.querySelectorAll('.ranges, .filters')) {
+				group.addEventListener('click', (e) => {
+					if (!e.target.classList.contains('chip')) return;
+					for (const c of group.children) c.classList.toggle('on', c === e.target);
+				});
+			}
+			for (const f of document.querySelectorAll('.fold')) {
+				f.addEventListener('click', () => {
+					const c = f.querySelector('.caret');
+					if (c) c.textContent = c.textContent === '+' ? '–' : '+';
+				});
+			}
+		</script>
+	</body>
+</html>
