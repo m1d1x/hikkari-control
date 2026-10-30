@@ -1,0 +1,20 @@
+# Downdetector config. Secrets (tokens) live in secrets/secrets.yaml,
+# decrypted from deploy/secrets.enc.yaml with SOPS.
+listen: ":8080"
+db_path: /data/downdetector.db
+secrets_path: /run/secrets/downdetector.yaml
+
+# Minimum distinct installs for a group to count in a verdict and for an
+# aggregate row to be stored. 3 by default; 2 while it is friends only.
+k: 2
+
+token_rate_per_min: 120
+overview_max_hours: 720
+
+# Servers the outside prober TCP-connects to every 60 s. id is
+# s:<sha256(lower(host):port:proto)[:16]>, or n:<slug> for our own nodes.
+nodes:
+  - name: example
+    host: example.com
+    port: 443
+    proto: vless-reality-xhttp
