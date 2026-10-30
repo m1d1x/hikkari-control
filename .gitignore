@@ -1,0 +1,16 @@
+# Decrypted secrets never get committed; only deploy/secrets.enc.yaml does.
+secrets/
+*.agekey
+keys.txt
+
+# Local data
+data/
+*.db
+*.db-wal
+*.db-shm
+
+bin/
+dist/
+.DS_Store
+.idea/
+.vscode/
