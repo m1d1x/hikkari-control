@@ -171,7 +171,7 @@ func testAccount(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	if err := pool.QueryRow(context.Background(),
-		`INSERT INTO users (username) VALUES ($1) RETURNING id`,
+		`INSERT INTO hub_accounts (name) VALUES ($1) RETURNING id`,
 		"e"+uuid.NewString()[:12]).Scan(&id); err != nil {
 		t.Fatal(err)
 	}

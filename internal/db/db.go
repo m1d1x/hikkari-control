@@ -109,70 +109,57 @@ func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// RunMigrations executes all SQL migration files in order.
+// RunMigrations atomically applies the control-plane schema. A database lock
+// serializes startup and CLI processes before either checks migration history.
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
-	// Create migrations tracking table
-	_, err := pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			filename TEXT PRIMARY KEY,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("create schema_migrations table: %w", err)
-	}
-
 	entries, err := migrationsFS.ReadDir("migrations")
 	if err != nil {
 		return fmt.Errorf("read migrations dir: %w", err)
 	}
-
-	// Sort by filename
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Name() < entries[j].Name()
-	})
-
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
-			continue
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	filenames := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
+			filenames = append(filenames, e.Name())
 		}
-
-		// Check if already applied
-		var exists bool
-		err := pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE filename=$1)", entry.Name()).Scan(&exists)
-		if err != nil {
-			return fmt.Errorf("check migration %s: %w", entry.Name(), err)
-		}
-		if exists {
-			continue
-		}
-
-		// Read and execute
-		data, err := migrationsFS.ReadFile("migrations/" + entry.Name())
-		if err != nil {
-			return fmt.Errorf("read migration %s: %w", entry.Name(), err)
-		}
-
-		// Wrap each migration in a transaction so a partial failure
-		// rolls back fully — no half-applied state that would dead-lock
-		// the next boot (e.g. migration 101 wiped legacy plaintext IPs
-		// without an INSERT INTO schema_migrations, leaving the row
-		// missing while column-level UPDATEs were committed; every
-		// subsequent restart re-ran the failing UPDATE forever).
-		if err := withTx(ctx, pool, func(tx pgx.Tx) error {
-			if _, err := tx.Exec(ctx, string(data)); err != nil {
-				return fmt.Errorf("execute migration %s: %w", entry.Name(), err)
-			}
-			if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations (filename) VALUES ($1)", entry.Name()); err != nil {
-				return fmt.Errorf("mark migration %s: %w", entry.Name(), err)
-			}
-			return nil
-		}); err != nil {
+	}
+	return withTx(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(84001)`); err != nil {
 			return err
 		}
-
-		log.Printf("Applied migration: %s", entry.Name())
-	}
-
-	return nil
+		if _, err := tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+			filename text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
+			return fmt.Errorf("create schema_migrations table: %w", err)
+		}
+		// A fresh baseline must never silently coexist with the experimental
+		// messenger schema. Refuse startup; leave the operator's data intact.
+		var foreign bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations
+			WHERE NOT (filename = ANY($1::text[])))`, filenames).Scan(&foreign); err != nil {
+			return err
+		}
+		if foreign {
+			return fmt.Errorf("legacy schema detected: configure a fresh Hikkari database; existing data was left intact")
+		}
+		for _, name := range filenames {
+			var exists bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE filename=$1)`, name).Scan(&exists); err != nil {
+				return err
+			}
+			if exists {
+				continue
+			}
+			data, err := migrationsFS.ReadFile("migrations/" + name)
+			if err != nil {
+				return fmt.Errorf("read migration %s: %w", name, err)
+			}
+			if _, err := tx.Exec(ctx, string(data)); err != nil {
+				return fmt.Errorf("execute migration %s: %w", name, err)
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (filename) VALUES ($1)`, name); err != nil {
+				return fmt.Errorf("mark migration %s: %w", name, err)
+			}
+		}
+		return nil
+	})
 }

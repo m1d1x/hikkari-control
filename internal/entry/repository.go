@@ -163,7 +163,7 @@ const (
 		INSERT INTO entry_grants (account_id, relay_id, trigger, meta_ct)
 		VALUES ($1, $2, $3, $4)`
 	selectAccountCreated = `
-		SELECT created_at FROM users WHERE id = $1`
+		SELECT created_at FROM hub_accounts WHERE id = $1`
 
 	// A report counts only for a relay this account was handed (live grant or
 	// not), and at most once per (account, relay, stage) per hour.

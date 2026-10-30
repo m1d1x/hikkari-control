@@ -497,8 +497,16 @@ func TestEntryOverviewSplitsIncidentsByWhoCanFinishThem(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM entry_boxes WHERE name = $1`, box)
 	})
 
-	// domain_blocked spends money, so it waits for a person; fingerprint is a
-	// free key rotation the hub may do alone.
+	// Queue ownership follows the saved mode. Domain eviction is free and
+	// automatic since Nekko P9.19; explicitly ask for operator approval here
+	// instead of asserting the obsolete "paid domain swap" default.
+	if _, err := pool.Exec(ctx, `INSERT INTO entry_playbook_modes (cause, mode) VALUES ('domain_blocked', 'ask') ON CONFLICT (cause) DO UPDATE SET mode = 'ask'`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entry_playbook_modes WHERE cause = 'domain_blocked'`)
+	})
+
 	for _, cause := range []string{"domain_blocked", "fingerprint"} {
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO entry_incidents (box, cause, advice, evidence)
@@ -535,7 +543,7 @@ func TestEntryOverviewSplitsIncidentsByWhoCanFinishThem(t *testing.T) {
 		}
 	}
 	if inQueue != "domain_blocked" {
-		t.Errorf("the repair that spends money is not in the queue (got %q)", inQueue)
+		t.Errorf("the repair requiring approval is not in the queue (got %q)", inQueue)
 	}
 	if inLog != "fingerprint" {
 		t.Errorf("the free repair is not in the log (got %q)", inLog)

@@ -40,7 +40,7 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 	}
 
 	// Unique name so parallel packages cannot collide on it.
-	scratch := fmt.Sprintf("nekko_baseline_%d", time.Now().UnixNano())
+	scratch := fmt.Sprintf("hikkari_baseline_%d", time.Now().UnixNano())
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+scratch); err != nil {
 		t.Fatalf("create scratch database: %v", err)
 	}
@@ -60,8 +60,15 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 	}
 	defer pool.Close()
 
-	if err := RunMigrations(ctx, pool); err != nil {
-		t.Fatalf("RunMigrations on an empty database: %v", err)
+	// A hub and a CLI may start together against an empty database.
+	results := make(chan error, 2)
+	for range 2 {
+		go func() { results <- RunMigrations(ctx, pool) }()
+	}
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatalf("concurrent migration on empty database: %v", err)
+		}
 	}
 
 	var tables int
@@ -70,38 +77,69 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 	).Scan(&tables); err != nil {
 		t.Fatalf("count tables: %v", err)
 	}
-	// 70 at the squash; the assertion is "the schema landed", not an exact
-	// count, so it does not have to be edited every time a table is added.
-	if tables < 60 {
-		t.Fatalf("expected the full schema, got %d tables", tables)
+	// The baseline must contain ONLY the control plane: a forgotten chat,
+	// file or SFU table is a regression, even when all fleet queries work.
+	rows, err := pool.Query(ctx, `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	// Seed rows are the half a schema-only dump loses silently: the schema
-	// looks perfect and the process dies later on a missing support user or an
-	// empty fraud config. Assert the rows the code assumes it will find.
-	for _, want := range []struct {
-		what  string
-		query string
-	}{
-		{"support system user", `SELECT count(*) FROM users WHERE id = '00000000-0000-0000-0000-000000000001' AND is_system`},
-		{"fraud datacenter patterns", `SELECT count(*) FROM fraud_datacenter_patterns`},
-		{"fraud scoring signals", `SELECT count(*) FROM fraud_scoring_signals`},
-		{"fraud action thresholds", `SELECT count(*) FROM fraud_action_thresholds WHERE id = 1`},
-		{"mailer settings singleton", `SELECT count(*) FROM mailer_settings WHERE id = 1`},
-	} {
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		if name != "schema_migrations" && name != "hub_accounts" && name != "hub_subscriptions" &&
+			!strings.HasPrefix(name, "entry_") && !strings.HasPrefix(name, "admin_") && name != "admins" {
+			t.Errorf("non-control table in baseline: %s", name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if tables < 30 {
+		t.Fatalf("fleet schema incomplete: %d tables", tables)
+	}
+	for _, table := range []string{"entry_detection_policy", "entry_bench_policy", "entry_spend_caps"} {
 		var n int
-		if err := pool.QueryRow(ctx, want.query).Scan(&n); err != nil {
-			t.Fatalf("%s: %v", want.what, err)
+		if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil {
+			t.Fatal(err)
 		}
 		if n == 0 {
-			t.Errorf("%s: baseline seeded no rows", want.what)
+			t.Errorf("missing seed: %s", table)
 		}
+	}
+	var references int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND confrelid = 'hub_accounts'::regclass`).Scan(&references); err != nil {
+		t.Fatal(err)
+	}
+	if references != 3 {
+		t.Errorf("account foreign keys: %d, want grants, fail reports and subscriptions", references)
+	}
+	var cap int
+	if err := pool.QueryRow(ctx, `SELECT sum(daily_cap_cents + monthly_cap_cents) FROM entry_spend_caps`).Scan(&cap); err != nil {
+		t.Fatal(err)
+	}
+	if cap != 0 {
+		t.Error("fresh hub can spend before owner configured caps")
 	}
 
 	// Re-running must be a no-op: the runner keys on filename, and a second
 	// pass that re-executed CREATE TABLE would fail here.
 	if err := RunMigrations(ctx, pool); err != nil {
 		t.Fatalf("RunMigrations is not idempotent: %v", err)
+	}
+	// A previous experimental database is refused, without erasing accounts
+	// or updating migration history to pretend the baseline landed.
+	if _, err := pool.Exec(ctx, `INSERT INTO hub_accounts (name) VALUES ('preserved'); INSERT INTO schema_migrations(filename) VALUES ('001_baseline.sql')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunMigrations(ctx, pool); err == nil || !strings.Contains(err.Error(), "legacy schema") {
+		t.Fatalf("legacy database accepted: %v", err)
+	}
+	var preserved bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hub_accounts WHERE name='preserved')`).Scan(&preserved); err != nil || !preserved {
+		t.Fatalf("legacy refusal lost data: %v", err)
 	}
 	t.Logf("baseline applied to an empty database: %d tables", tables)
 }

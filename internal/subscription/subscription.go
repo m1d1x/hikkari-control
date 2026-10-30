@@ -62,10 +62,10 @@ func (s *Service) Add(ctx context.Context, name string) (string, error) {
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
 	// The entry pool grants relays to accounts (entry_grants.account_id →
-	// users.id), so a subscriber is an account row with no way to sign in.
+	// hub_accounts.id), independent of administrator credentials.
 	var account uuid.UUID
 	if err := tx.QueryRow(ctx,
-		`INSERT INTO users (username, display_name) VALUES ($1, $1) RETURNING id`, name).Scan(&account); err != nil {
+		`INSERT INTO hub_accounts (name) VALUES ($1) RETURNING id`, name).Scan(&account); err != nil {
 		return "", fmt.Errorf("subscription: account %q: %w", name, err)
 	}
 	if _, err := tx.Exec(ctx,
@@ -80,7 +80,7 @@ func (s *Service) Add(ctx context.Context, name string) (string, error) {
 func (s *Service) Revoke(ctx context.Context, name string) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE hub_subscriptions SET revoked_at = now()
-		WHERE revoked_at IS NULL AND account_id = (SELECT id FROM users WHERE username = $1)`, name)
+		WHERE revoked_at IS NULL AND account_id = (SELECT id FROM hub_accounts WHERE name = $1)`, name)
 	if err != nil {
 		return err
 	}
