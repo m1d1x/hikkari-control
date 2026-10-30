@@ -12,6 +12,10 @@
 # It wipes that operator's passkeys, recovery codes and sessions. Running it
 # takes your SSH key — which is the point: the box is the root of trust.
 #
+# First owner on a new box — asks for the password, prints the enrolment code:
+#
+#   scripts/admin.sh create <login> <ssh-host|local>
+#
 # Forgotten password — set a new one on the box:
 #
 #   scripts/admin.sh passwd <login> <ssh-host|local>
@@ -60,8 +64,9 @@ if [[ "${1:-}" == "enroll" ]]; then
 	exit 0
 fi
 
-if [[ "${1:-}" == "passwd" ]]; then
-	check_login "${2:-}" passwd "${3:-}"
+if [[ "${1:-}" == "passwd" || "${1:-}" == "create" ]]; then
+	ACTION="$1"
+	check_login "${2:-}" "$ACTION" "${3:-}"
 	LOGIN="$2"
 	read -rsp "new password for $LOGIN (empty = generate): " PW
 	echo
@@ -79,7 +84,12 @@ if [[ "${1:-}" == "passwd" ]]; then
 
 	# The password travels on stdin, never in argv: argv is visible in ps on
 	# both ends.
-	printf '%s\n' "$PW" | on "$3" admin-passwd "$LOGIN"
+	if [[ "$ACTION" == "create" ]]; then
+		# Prints the one-time enrolment code for the first passkey.
+		printf '%s\n' "$PW" | on "$3" admin-create --role=owner "$LOGIN"
+	else
+		printf '%s\n' "$PW" | on "$3" admin-passwd "$LOGIN"
+	fi
 
 	if ((GENERATED)); then
 		if command -v pbcopy >/dev/null 2>&1; then
