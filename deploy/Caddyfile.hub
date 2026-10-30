@@ -15,8 +15,7 @@
     }
 }
 
-https://localhost:8444 {
-    tls internal
+http://localhost:8444 {
     request_body {
         max_size 1MB
     }

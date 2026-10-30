@@ -29,12 +29,15 @@
 # key, no panel, whatever the password. The script holds the tunnel in the
 # foreground — Ctrl-C closes it, and with it the panel.
 #
+# The panel speaks plain HTTP: SSH encrypts the tunnel, and http://localhost
+# is a secure context, so passkeys work with no certificate to trust.
+#
 # The port is the same on both ends: the panel's runtime config names
-# https://localhost:9443 as its API origin, and the passkeys are bound to it.
+# http://localhost:9443 as its API origin, and the passkeys are bound to it.
 set -euo pipefail
 
-PORT="${ADMIN_HTTPS_PORT:-9443}"
-URL="https://localhost:${PORT}"
+PORT="${ADMIN_PORT:-9443}"
+URL="http://localhost:${PORT}"
 BOX_DIR="${HIKKARI_DEPLOY_DIR:-/opt/hikkari-control}"
 COMPOSE="docker compose -f compose.hub.yaml"
 
@@ -117,38 +120,14 @@ open_browser() {
 	fi
 }
 
-# Caddy's certificate on this port is its internal CA's: the check here is
-# "something answers", not trust — the browser does that.
 wait_for_panel() {
 	for _ in $(seq 1 50); do
-		if curl -ksS -o /dev/null --max-time 1 "$URL" 2>/dev/null; then
+		if curl -fsS -o /dev/null --max-time 1 "$URL" 2>/dev/null; then
 			return 0
 		fi
 		sleep 0.2
 	done
 	return 1
-}
-
-# Passkeys work only on a page the browser trusts, and the panel's certificate
-# is issued by the box's own Caddy CA. On macOS, trust that root once (sudo
-# asks for the Mac's password; the browser must be restarted after). The root
-# is fetched over SSH from the box itself, so the key is the trust anchor.
-trust_box_ca() {
-	[[ "$(uname)" == "Darwin" ]] || return 0
-	local dir crt
-	dir="$(cd "$(dirname "$0")/.." && pwd)/secrets"
-	mkdir -p "$dir"
-	crt="$dir/$1-caddy-root.crt"
-	ssh -o BatchMode=yes "$1" \
-		"cd $BOX_DIR && $COMPOSE exec -T caddy cat /data/caddy/pki/authorities/local/root.crt" >"$crt.tmp" ||
-		die "could not read the panel's root certificate from $1"
-	mv "$crt.tmp" "$crt"
-	if security verify-cert -c "$crt" >/dev/null 2>&1; then
-		return 0
-	fi
-	say "trusting the panel certificate of $1 (asks for this Mac's password)"
-	sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$crt"
-	say "restart the browser (Cmd+Q) so it picks up the new trust"
 }
 
 if [[ "$TARGET" == "local" ]]; then
@@ -178,7 +157,6 @@ if ! wait_for_panel; then
 	die "tunnel is up but the panel does not answer — is the stack running on $TARGET?"
 fi
 
-trust_box_ca "$TARGET"
 open_browser
 say "panel: $URL"
 wait "$SSH_PID"

@@ -37,8 +37,8 @@ services:
       ADMIN_LISTEN_ADDR: :3310
       HUB_DOWNDETECTOR_CONFIG: /etc/hub/downdetector.yaml
       ADMIN_WEBAUTHN_RP_ID: localhost
-      ADMIN_WEBAUTHN_ORIGINS: https://localhost:${ADMIN_HTTPS_PORT:-9443}
-      PUBLIC_ADMIN_EXTRA_ORIGINS: https://localhost:${ADMIN_HTTPS_PORT:-9443}
+      ADMIN_WEBAUTHN_ORIGINS: http://localhost:${ADMIN_PORT:-9443}
+      PUBLIC_ADMIN_EXTRA_ORIGINS: http://localhost:${ADMIN_PORT:-9443}
       ENTRY_AUTOPILOT_ENABLED: '0'
       # Where boxes send their pulse and clients fetch /sub. On a server these
       # name the public host (deploy/README); locally nothing outside dials them.
@@ -60,7 +60,7 @@ services:
   admin:
     build: ./admin
     environment:
-      NEKKO_API_URL: https://localhost:${ADMIN_HTTPS_PORT:-9443}
+      NEKKO_API_URL: http://localhost:${ADMIN_PORT:-9443}
   caddy:
     image: caddy:2.10-alpine
     environment:
@@ -68,8 +68,11 @@ services:
     ports:
       - '${PUBLISH_ADDR:-127.0.0.1}:${HTTP_PORT:-9080}:80'
       - '${PUBLISH_ADDR:-127.0.0.1}:${HTTPS_PORT:-9444}:443'
-      # Operator plane is always loopback, even with a public hub domain.
-      - '127.0.0.1:${ADMIN_HTTPS_PORT:-9443}:8444'
+      # Operator plane is always loopback, even with a public hub domain, and
+      # plain HTTP: it is reached through an SSH tunnel (scripts/admin.sh),
+      # and http://localhost is a secure context, so passkeys work without a
+      # certificate the browser would first have to be taught to trust.
+      - '127.0.0.1:${ADMIN_PORT:-9443}:8444'
     volumes:
       - ./deploy/Caddyfile.hub:/etc/caddy/Caddyfile:ro
       - hub-caddy:/data

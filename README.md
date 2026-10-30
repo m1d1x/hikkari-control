@@ -15,7 +15,7 @@ docker compose ps
 
 Хаб, Postgres 16 с TLS, ClickHouse 24.8, Svelte-админка и Caddy поднимаются одним
 стеком. Данные — в именованных томах. БД и API администратора не публикуются отдельно.
-Админка: `https://localhost:9443`, публичный API: `https://localhost:9444`.
+Админка: `http://localhost:9443`, публичный API: `https://localhost:9444`.
 Caddy выпускает локальный сертификат; для браузера импортируйте локальный CA:
 
 ```sh
