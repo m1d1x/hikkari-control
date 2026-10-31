@@ -18,9 +18,7 @@
 	// The editor works on a copy: nothing reaches the hub until «сохранить»,
 	// and nothing reaches a device until a preset holding the group is released.
 	let edit = $state<Group | null>(null);
-	/** the id is the hub's key, so it is typed once, before the first save */
 	let fresh = $state(false);
-	let idEdited = $state(false);
 	let busy = $state(false);
 	let error = $state('');
 	let nameEl = $state<HTMLInputElement | null>(null);
@@ -37,7 +35,6 @@
 		const g = db.groups.find((x) => x.id === id);
 		edit = g ? structuredClone($state.snapshot(g)) : null;
 		fresh = false;
-		idEdited = false;
 		error = '';
 	}
 
@@ -50,7 +47,6 @@
 		if (dirty && !confirm('несохранённые правки пропадут')) return;
 		edit = { id: '', name: '', icon: '', rules: emptyRules() };
 		fresh = true;
-		idEdited = false;
 		error = '';
 		await tick();
 		nameEl?.focus();
@@ -71,6 +67,14 @@
 	const save = () =>
 		act(async () => {
 			const g = $state.snapshot(edit!) as Group;
+			if (fresh) {
+				g.id = slugify(g.name) || 'group';
+				let base = g.id;
+				let n = 2;
+				while (db.groups.some((x) => x.id === g.id)) {
+					g.id = `${base}-${n++}`;
+				}
+			}
 			await saveGroup(g);
 			db.groups = await fetchGroups();
 			fresh = false;
@@ -136,29 +140,17 @@
 							bind:this={nameEl}
 							bind:value={edit.name}
 							oninput={() => {
-								if (fresh && !idEdited && edit) edit.id = slugify(edit.name);
+								if (fresh && edit) edit.id = slugify(edit.name);
 							}}
 						/>
 					</label>
 					{#if !fresh}<button class="btn" onclick={remove} disabled={busy}>удалить</button>{/if}
 					<button class="btn primary" onclick={save} disabled={busy || !dirty || !!problem}>сохранить</button>
 				</div>
-				<div class="ids">
-					<label>
-						<span class="dim">id</span>
-						<input
-							class="field mono"
-							placeholder="steam"
-							bind:value={edit.id}
-							oninput={() => {
-								idEdited = true;
-							}}
-							disabled={!fresh}
-						/>
-					</label>
-					<label>
+				<div class="meta-row">
+					<label class="icon-box">
 						<span class="dim">иконка</span>
-						<input class="field mono" placeholder="id иконки в клиенте" bind:value={edit.icon} />
+						<input class="field mono" placeholder="например, steam или discord" bind:value={edit.icon} />
 					</label>
 				</div>
 				{#if problem}
@@ -219,17 +211,15 @@
 		text-align: left;
 	}
 
-	.ids {
-		display: flex;
-		gap: 16px;
+	.meta-row {
 		margin-top: 8px;
-		font-size: 12px;
 	}
 
-	.ids label {
-		display: flex;
+	.icon-box {
+		display: inline-flex;
 		align-items: center;
 		gap: 8px;
+		font-size: 12px;
 	}
 
 	.item {

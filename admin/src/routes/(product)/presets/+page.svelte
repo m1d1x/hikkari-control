@@ -40,7 +40,6 @@
 	// only a release sends anything to devices.
 	let edit = $state<Draft | null>(null);
 	let fresh = $state(false);
-	let idEdited = $state(false);
 	let busy = $state(false);
 	let error = $state('');
 	let releaseStage = $state(5);
@@ -63,7 +62,6 @@
 		const x = db.presets.find((y) => y.id === id);
 		edit = x ? draftOf(x) : null;
 		fresh = false;
-		idEdited = false;
 		error = '';
 		showJson = false;
 	}
@@ -181,7 +179,6 @@
 		if (dirty && !confirm('несохранённые правки пропадут')) return;
 		edit = { id: '', name: '', default: db.presets.length === 0, bypass: [], proxy: [], disabled: [] };
 		fresh = true;
-		idEdited = false;
 		error = '';
 		await tick();
 		nameEl?.focus();
@@ -190,6 +187,14 @@
 	const save = () =>
 		act(async () => {
 			const d = $state.snapshot(edit!) as Draft;
+			if (fresh) {
+				d.id = slugify(d.name) || 'preset';
+				let base = d.id;
+				let n = 2;
+				while (db.presets.some((x) => x.id === d.id)) {
+					d.id = `${base}-${n++}`;
+				}
+			}
 			const body = {
 				name: d.name,
 				default: d.default,
@@ -278,32 +283,22 @@
 							bind:this={nameEl}
 							bind:value={edit.name}
 							oninput={() => {
-								if (fresh && !idEdited && edit) edit.id = slugify(edit.name);
+								if (fresh && edit) edit.id = slugify(edit.name);
 							}}
 						/>
 					</label>
 					{#if !fresh}<button class="btn" onclick={remove} disabled={busy || edit.default}>удалить</button>{/if}
-					<button class="btn primary" onclick={save} disabled={busy || !dirty || !edit.name.trim() || !edit.id}
-						>сохранить</button
-					>
+					<button class="btn primary" onclick={save} disabled={busy || !dirty || !edit.name.trim()}>сохранить</button>
 				</div>
-				<div class="ids">
-					<label>
-						<span class="dim">id</span>
-						<input
-							class="field mono"
-							placeholder="ru"
-							bind:value={edit.id}
-							oninput={() => {
-								idEdited = true;
-							}}
-							disabled={!fresh}
-						/>
-					</label>
-					<label class="check">
-						<input type="checkbox" bind:checked={edit.default} disabled={!fresh && p?.default} />
-						<span>по умолчанию — его получают все устройства</span>
-					</label>
+				<div class="preset-meta">
+					{#if p?.default}
+						<div class="default-badge">★ пресет по умолчанию — его получают все устройства</div>
+					{:else}
+						<label class="check">
+							<input type="checkbox" bind:checked={edit.default} />
+							<span>по умолчанию — его получают все устройства</span>
+						</label>
+					{/if}
 				</div>
 				{#if p && unserved(p)}
 					<div class="dim hint">не раздаётся: устройства получают только пресет по умолчанию</div>
@@ -424,17 +419,14 @@
 {/if}
 
 <style>
-	.ids {
-		display: flex;
-		gap: 16px;
-		margin: 8px 0 12px;
+	.preset-meta {
+		margin: 8px 0 14px;
 		font-size: 12px;
 	}
 
-	.ids label {
-		display: flex;
-		align-items: center;
-		gap: 8px;
+	.default-badge {
+		color: var(--primary, #8ab4f8);
+		font-size: 12px;
 	}
 
 	.problem {
