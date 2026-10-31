@@ -46,6 +46,7 @@
 			<SidebarItem href="/support" icon="search" label="Обращения" {collapsed} />
 			<SidebarItem href="/donations" icon="jobs" label="Донаты" {collapsed} />
 			<SidebarItem href="/presets" icon="system" label="Пресеты" {collapsed} />
+			<SidebarItem href="/groups" icon="system" label="Группы" {collapsed} />
 		</SidebarSection>
 
 		<SidebarSection label="Staff" {collapsed}>
