@@ -154,6 +154,11 @@ func (s *Service) URL(ctx context.Context, account uuid.UUID) (string, error) {
 	return LinkURL(token), nil
 }
 
+// RenewURL is the page that sells token's subscription its next period.
+func RenewURL(token string) string {
+	return config.Default().BaseURL() + "/pay#renew=" + token
+}
+
 // LinkURL is the subscription link of token.
 func LinkURL(token string) string {
 	return config.Default().SubURL() + "/sub/" + token
@@ -274,6 +279,9 @@ func (s *Service) Handler() http.HandlerFunc {
 		// out: the relays no longer let the key through (keys.go), and the
 		// client reads why from here.
 		w.Header().Set("Subscription-Userinfo", terms.userinfo())
+		// Where the subscriber renews: the landing's checkout, told which
+		// subscription to extend in the fragment, which reaches no server.
+		w.Header().Set("Profile-Web-Page-Url", RenewURL(token))
 		_, _ = w.Write([]byte(base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))))
 	}
 }

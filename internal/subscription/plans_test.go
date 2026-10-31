@@ -116,6 +116,10 @@ func TestTheLinkCarriesItsTerms(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(info, "total=5368709120") || !strings.Contains(info, "expire=") {
 		t.Fatalf("%d %q", rec.Code, info)
 	}
+	// An ended subscription is told where it is renewed.
+	if page := rec.Header().Get("Profile-Web-Page-Url"); !strings.HasSuffix(page, "/pay#renew="+token) {
+		t.Fatalf("renewal page %q", page)
+	}
 }
 
 // Only plans on sale are sold.
