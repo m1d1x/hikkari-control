@@ -58,6 +58,12 @@ func (s *Store) QueryRow(ctx context.Context, dest any, query string, args ...an
 	return s.conn.QueryRow(ctx, query, args...).Scan(dest)
 }
 
+// Row executes a query expected to return one row and hands it back for a
+// multi-column Scan.
+func (s *Store) Row(ctx context.Context, query string, args ...any) driver.Row {
+	return s.conn.QueryRow(ctx, query, args...)
+}
+
 // Query executes a query and returns rows via the driver.
 func (s *Store) Query(ctx context.Context, query string, args ...any) (driver.Rows, error) {
 	return s.conn.Query(ctx, query, args...)

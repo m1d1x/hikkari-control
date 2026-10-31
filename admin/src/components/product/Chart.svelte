@@ -9,7 +9,7 @@
 </script>
 
 <script lang="ts">
-	import { bucketText, compact, type Win } from '$lib/product/mock';
+	import { bucketText, compact, type Win } from '$lib/product/format';
 
 	interface Props {
 		buckets: number[];

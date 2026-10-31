@@ -1,13 +1,17 @@
 <script lang="ts">
-	// Product screens carried over as-is from the Hikkari admin mock: every
-	// figure comes from $lib/product/mock, no hub endpoint feeds them yet.
+	// Product screens. Metrics and errors read the hub (client telemetry);
+	// the rest still render $lib/product/mock and say so.
+	import { page } from '$app/state';
 	import '$lib/styles/product.css';
+
+	const REAL = ['/metrics', '/errors'];
+	const mock = $derived(!REAL.includes(page.url.pathname));
 
 	let { children } = $props();
 </script>
 
 <main class="product">
-	<div class="mock-note">Макет: данные демонстрационные, бэкенд для этого раздела ещё не сделан.</div>
+	{#if mock}<div class="mock-note">Макет: данные демонстрационные, бэкенд для этого раздела ещё не сделан.</div>{/if}
 	{@render children()}
 </main>
 

@@ -1,65 +1,97 @@
 <script lang="ts">
 	import WinChips from '$components/product/WinChips.svelte';
-	import { errors, num, ago, PLATFORMS, type Platform, type Win } from '$lib/product/mock';
+	import { fetchProductErrors } from '$lib/api/product';
+	import { num, ago } from '$lib/product/format';
+	import { Windowed } from '$lib/product/windowed.svelte';
 
-	let win = $state<Win>('24h');
-	let platform = $state<Platform | null>(null);
+	// Groups of the same scrubbed failure (code, component, fingerprint),
+	// counted by the hub from client telemetry. There is no stack trace: the
+	// client never sends one.
+	const e = new Windowed('24h', fetchProductErrors);
+	let os = $state<string | null>(null);
 	let query = $state('');
 	let open = $state<string | null>(null);
 
+	const oses = $derived([...new Set((e.data?.groups ?? []).flatMap((g) => g.oses))].sort());
 	const list = $derived(
-		errors(win).filter(
-			(e) =>
-				(!platform || e.platforms.includes(platform)) &&
-				(e.message + e.where).toLowerCase().includes(query.trim().toLowerCase()),
+		(e.data?.groups ?? []).filter(
+			(g) =>
+				(!os || g.oses.includes(os)) &&
+				(g.message + g.code + g.component).toLowerCase().includes(query.trim().toLowerCase()),
 		),
 	);
-	const total = $derived(list.reduce((s, e) => s + e.count, 0));
+	const shown = $derived(list.reduce((s, g) => s + g.occurrences, 0));
+	/** first seen inside the window's last day: a fresh breakage, not a known one */
+	const isNew = (t: number) => Date.now() - t < 24 * 3600_000;
 </script>
 
 <div class="head">
 	<h1>ошибки</h1>
-	<div class="chips">
-		<button class="chip" class:on={!platform} onclick={() => (platform = null)}>все</button>
-		{#each PLATFORMS as p (p)}
-			<button class="chip" class:on={platform === p} onclick={() => (platform = p)}>{p}</button>
-		{/each}
-	</div>
-	<WinChips bind:value={win} />
+	{#if oses.length > 1}
+		<div class="chips">
+			<button class="chip" class:on={!os} onclick={() => (os = null)}>все</button>
+			{#each oses as o (o)}
+				<button class="chip" class:on={os === o} onclick={() => (os = o)}>{o}</button>
+			{/each}
+		</div>
+	{/if}
+	<WinChips bind:value={e.win} />
 </div>
 
-<section class="card">
-	<div class="top">
-		<input class="field" placeholder="поиск по тексту или модулю" bind:value={query} />
-		<span class="dim">{list.length} групп · <b>{num(total)}</b> раз</span>
-	</div>
+{#if e.error}
+	<p class="warn">не загрузилось: {e.error}</p>
+{/if}
 
-	{#if list.length === 0}
-		<p class="empty">ничего не нашлось</p>
-	{:else}
-		<table class="rows">
-			<thead>
-				<tr><th class="r">раз</th><th>ошибка</th><th class="r">устройств</th><th class="r">последняя</th></tr>
-			</thead>
-			<tbody>
-				{#each list as e (e.id)}
-					<tr class="err" onclick={() => (open = open === e.id ? null : e.id)}>
-						<td class="r"><b>{num(e.count)}</b></td>
-						<td>
-							<div class="msg">{e.message}</div>
-							<div class="dim">{e.where} · {e.platforms.join(', ')} · {e.versions.join(', ')}</div>
-							{#if open === e.id}
-								<pre>{e.stack}</pre>
-							{/if}
-						</td>
-						<td class="r"><b>{num(e.devices)}</b></td>
-						<td class="r dim">{ago(e.last)}</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
-	{/if}
-</section>
+{#if e.data}
+	<section class="card">
+		<div class="top">
+			<input class="field" placeholder="поиск по тексту, коду или модулю" bind:value={query} />
+			<span class="dim">
+				{list.length} групп · <b>{num(shown)}</b> раз
+				{#if !os && !query.trim()}· <b>{num(e.data.installs)}</b> установок задето{/if}
+				{#if e.loading}· обновляю…{/if}
+			</span>
+		</div>
+
+		{#if e.data.groups.length === 0}
+			<p class="empty">за окно ошибок не пришло</p>
+		{:else if list.length === 0}
+			<p class="empty">ничего не нашлось</p>
+		{:else}
+			<table class="rows">
+				<thead>
+					<tr><th class="r">раз</th><th>ошибка</th><th class="r">установок</th><th class="r">последняя</th></tr>
+				</thead>
+				<tbody>
+					{#each list as g (g.id)}
+						<tr class="err" onclick={() => (open = open === g.id ? null : g.id)}>
+							<td class="r"><b>{num(g.occurrences)}</b></td>
+							<td>
+								<div class="msg" class:clip={open !== g.id}>{g.message || g.code}</div>
+								<div class="dim">
+									{#if isNew(g.firstSeen)}<span class="warn">новая</span> ·{/if}
+									{g.code} · {g.component} · {g.oses.join(', ')} · {g.versions.slice(0, 3).join(', ')}{g.versions.length > 3 ? ' …' : ''}
+								</div>
+								{#if open === g.id}
+									<div class="full">
+										впервые {ago(g.firstSeen)} назад · версии: {g.versions.join(', ')}
+									</div>
+								{/if}
+							</td>
+							<td class="r"><b>{num(g.installs)}</b></td>
+							<td class="r dim">{ago(g.lastSeen)}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+			{#if e.data.truncated}
+				<p class="empty">показаны {e.data.groups.length} самых частых групп</p>
+			{/if}
+		{/if}
+	</section>
+{:else if e.loading}
+	<p class="empty">загружаю…</p>
+{/if}
 
 <style>
 	.top {
@@ -96,11 +128,18 @@
 		font-size: 12px;
 	}
 
+	.msg.clip {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 720px;
+	}
+
 	.rows .dim {
 		font-size: 11px;
 	}
 
-	pre {
+	.full {
 		margin-top: 8px;
 		padding: 10px 12px;
 		background: var(--inset);

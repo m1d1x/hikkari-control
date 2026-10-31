@@ -7,7 +7,8 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/db"
 )
 
-// RegisterRoutes wires the fleet console's read-only screens. The routes that
+// RegisterRoutes wires the console's read-only screens: the fleet's and the
+// product section's. The routes that
 // act on the fleet are registered by entry.RegisterAdminRoutes.
 func RegisterRoutes(mux *http.ServeMux, h *Handlers, adminKeys *auth.KeySet, pool db.Pool) {
 	adminAuth := func(handler http.HandlerFunc) http.HandlerFunc {
@@ -48,4 +49,9 @@ func RegisterRoutes(mux *http.ServeMux, h *Handlers, adminKeys *auth.KeySet, poo
 	// from the fuse's own record. The thresholds beside the chart are
 	// internal/entry's, because turning one acts. See entry_pressure.go.
 	mux.HandleFunc("GET /api/v1/admin/entry/pressure", adminAuth(h.EntryPressure))
+	// The product section's screens, counted from the clients' telemetry:
+	// people, connects and activation (product_metrics.go), and the error
+	// groups (product_errors.go). Read-only.
+	mux.HandleFunc("GET /api/v1/admin/product/metrics", adminAuth(h.ProductMetrics))
+	mux.HandleFunc("GET /api/v1/admin/product/errors", adminAuth(h.ProductErrors))
 }

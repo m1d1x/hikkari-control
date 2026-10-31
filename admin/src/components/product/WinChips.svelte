@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { WINDOWS, type Win } from '$lib/product/mock';
+	import { WINDOWS, type Win } from '$lib/product/format';
 
 	let { value = $bindable() }: { value: Win } = $props();
 </script>
