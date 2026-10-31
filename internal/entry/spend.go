@@ -312,6 +312,10 @@ func billedHours(start, end, from, to time.Time) int {
 // machineAffordable is the hosting gate: one more machine of monthlyCents
 // fits under both caps of the hosting group, read on q. A refusal is
 // ErrBudget with the sentence the console shows.
+//
+// The month is read first: when both caps refuse — on a month's last day
+// the rest of the day is the rest of the month — the month is the one to
+// name, since raising the day's cap alone would buy nothing.
 func (s *Service) machineAffordable(ctx context.Context, q db.DBTX, monthlyCents int) error {
 	if monthlyCents <= 0 {
 		return fmt.Errorf("%w: хостер не назвал цену плана — без цены машину не заказываем", ErrRejected)
@@ -322,30 +326,31 @@ func (s *Service) machineAffordable(ctx context.Context, q db.DBTX, monthlyCents
 	}
 	day, month := newMachineCents(monthlyCents, s.now().UTC())
 	switch {
-	case r.dayExact+day > float64(r.DailyCents):
-		return fmt.Errorf("%w: за день хостинг выйдет в %s, с новой машиной %s — потолок дня %s",
-			ErrBudget, money(r.DayProjectedCents), money(ceilCents(r.dayExact+day)), money(r.DailyCents))
 	case r.monthExact+month > float64(r.MonthlyCents):
 		return fmt.Errorf("%w: за месяц хостинг выйдет в %s, с новой машиной %s — потолок месяца %s",
 			ErrBudget, money(r.MonthProjectedCents), money(ceilCents(r.monthExact+month)), money(r.MonthlyCents))
+	case r.dayExact+day > float64(r.DailyCents):
+		return fmt.Errorf("%w: за день хостинг выйдет в %s, с новой машиной %s — потолок дня %s",
+			ErrBudget, money(r.DayProjectedCents), money(ceilCents(r.dayExact+day)), money(r.DailyCents))
 	}
 	return nil
 }
 
 // domainAffordable is the registrar gate: a purchase of costCents fits under
-// both caps of the registrar group, read on q.
+// both caps of the registrar group, read on q. The month is read first, for
+// the reason machineAffordable gives.
 func (s *Service) domainAffordable(ctx context.Context, q db.DBTX, costCents int) error {
 	r, err := s.spendOf(ctx, q, SpendRegistrar)
 	if err != nil {
 		return err
 	}
 	switch {
-	case r.DayCents+costCents > r.DailyCents:
-		return fmt.Errorf("%w: на домены за день потрачено %s, с этим %s — потолок дня %s",
-			ErrBudget, money(r.DayCents), money(r.DayCents+costCents), money(r.DailyCents))
 	case r.MonthCents+costCents > r.MonthlyCents:
 		return fmt.Errorf("%w: на домены за месяц потрачено %s, с этим %s — потолок месяца %s",
 			ErrBudget, money(r.MonthCents), money(r.MonthCents+costCents), money(r.MonthlyCents))
+	case r.DayCents+costCents > r.DailyCents:
+		return fmt.Errorf("%w: на домены за день потрачено %s, с этим %s — потолок дня %s",
+			ErrBudget, money(r.DayCents), money(r.DayCents+costCents), money(r.DailyCents))
 	}
 	return nil
 }

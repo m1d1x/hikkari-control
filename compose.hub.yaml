@@ -1,8 +1,13 @@
 # Isolated local control-plane stack. No cloud API is called on startup:
 # providers start disabled and both spend groups have zero caps.
+#
+# The same file runs the server (README, «Сервер и CI/CD»): there CI has built the
+# images, HUB_REGISTRY and HUB_REVISION in the server's .env name them, and
+# the stack starts with --no-build. Locally `--build` tags them :local.
 name: hikkari-fleet
 services:
   postgres:
+    image: ${HUB_REGISTRY:-hikkari-fleet}/postgres:${HUB_REVISION:-local}
     build:
       context: .
       dockerfile: deploy/Dockerfile.postgres
@@ -27,6 +32,7 @@ services:
       timeout: 3s
       retries: 30
   hub:
+    image: ${HUB_REGISTRY:-hikkari-fleet}/hub:${HUB_REVISION:-local}
     build:
       context: .
       dockerfile: Dockerfile.hub
@@ -39,7 +45,9 @@ services:
       ADMIN_WEBAUTHN_RP_ID: localhost
       ADMIN_WEBAUTHN_ORIGINS: http://localhost:${ADMIN_PORT:-9443}
       PUBLIC_ADMIN_EXTRA_ORIGINS: http://localhost:${ADMIN_PORT:-9443}
-      ENTRY_AUTOPILOT_ENABLED: '0'
+      # Detector, mechanic and second-chance loops. Off unless the host's
+      # .env turns them on: a local stack never acts on the fleet by itself.
+      ENTRY_AUTOPILOT_ENABLED: ${ENTRY_AUTOPILOT_ENABLED:-0}
       # API host: boxes' pulse, probers, client telemetry and downdetector.
       # Sub host: subscribers' /sub links only. On a server these name the
       # public hosts (deploy/README); locally nothing outside dials them.
@@ -60,6 +68,7 @@ services:
       timeout: 3s
       retries: 30
   admin:
+    image: ${HUB_REGISTRY:-hikkari-fleet}/admin:${HUB_REVISION:-local}
     build: ./admin
     environment:
       NEKKO_API_URL: http://localhost:${ADMIN_PORT:-9443}

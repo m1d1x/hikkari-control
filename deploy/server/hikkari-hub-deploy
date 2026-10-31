@@ -1,0 +1,90 @@
+#!/bin/sh
+# Installs one release of the hub stack on the server.
+#
+# Runs as root through sudo, and only as the forced command of the
+# hub-deploy SSH key (scripts/server-install-deploy.sh): CI cannot run
+# anything else here. stdin is the release bundle, a gzipped tar of
+#
+#   REVISION                      the commit, 40 hex digits
+#   REGISTRY                      where the images live, ghcr.io/<owner>/<repo>
+#   TOKEN                         the CI job's registry token, read once
+#   compose.hub.yaml              the stack
+#   deploy/Caddyfile.hub, deploy/hub-downdetector.yaml,
+#   deploy/clickhouse-privacy.xml the files the stack mounts
+#
+# The token never touches disk outside the release's own temporary directory
+# and dies with the CI job. Secrets in /opt/hikkari-control/secrets and the
+# host's .env stay the server's own: a release only sets HUB_REGISTRY and
+# HUB_REVISION there. A release that does not come up healthy is rolled back
+# to the files and images it replaced.
+set -eu
+umask 077
+
+root=/opt/hikkari-control
+project=hikkari-fleet
+files='compose.hub.yaml deploy/Caddyfile.hub deploy/hub-downdetector.yaml deploy/clickhouse-privacy.xml'
+
+exec 9>/run/hikkari-hub-deploy.lock
+flock -n 9 || { echo "another release is being installed" >&2; exit 1; }
+
+work=$(mktemp -d /run/hikkari-release.XXXXXX)
+trap 'rm -rf "$work"' EXIT
+mkdir "$work/in" "$work/prev" "$work/docker"
+export DOCKER_CONFIG="$work/docker"
+
+tar -xzf - -C "$work/in" --no-same-owner --no-same-permissions
+for f in REVISION REGISTRY TOKEN $files; do
+	[ -s "$work/in/$f" ] || { echo "release bundle lacks $f" >&2; exit 1; }
+done
+revision=$(cat "$work/in/REVISION")
+registry=$(cat "$work/in/REGISTRY")
+printf '%s' "$revision" | grep -Eqx '[0-9a-f]{40}' || { echo "bad revision" >&2; exit 1; }
+printf '%s' "$registry" | grep -Eqx 'ghcr\.io/[a-z0-9._-]+/[a-z0-9._-]+' || { echo "bad registry" >&2; exit 1; }
+
+compose() { docker compose -p "$project" -f "$root/compose.hub.yaml" --project-directory "$root" "$@"; }
+
+# setenv FILE KEY VALUE: KEY=VALUE in a dotenv file, other lines kept.
+setenv() {
+	{ grep -v "^$2=" "$1" 2>/dev/null || true; printf '%s=%s\n' "$2" "$3"; } > "$1.next"
+	chmod 600 "$1.next"
+	mv "$1.next" "$1"
+}
+
+# What this release replaces, to come back to.
+cp -p "$root/.env" "$work/prev/.env"
+for f in $files; do
+	mkdir -p "$work/prev/$(dirname "$f")"
+	cp -p "$root/$f" "$work/prev/$f" 2>/dev/null || true
+done
+previous=$(sed -n 's/^HUB_REVISION=//p' "$root/.env")
+
+docker login ghcr.io --username ci --password-stdin < "$work/in/TOKEN" >/dev/null
+for f in $files; do
+	install -D -m 0644 "$work/in/$f" "$root/$f.next"
+	mv "$root/$f.next" "$root/$f"
+done
+setenv "$root/.env" HUB_REGISTRY "$registry"
+setenv "$root/.env" HUB_REVISION "$revision"
+
+if compose pull --quiet && compose up -d --no-build --remove-orphans --wait --wait-timeout 240; then
+	echo "release $revision is up"
+else
+	echo "release $revision did not come up; returning to ${previous:-the pre-CI stack}" >&2
+	compose ps -a >&2 || true
+	compose logs --no-color --tail 60 hub >&2 || true
+	for f in $files; do
+		if [ -e "$work/prev/$f" ]; then cp -p "$work/prev/$f" "$root/$f"; fi
+	done
+	cp -p "$work/prev/.env" "$root/.env"
+	compose up -d --no-build --remove-orphans --wait --wait-timeout 240 >&2 || true
+	exit 1
+fi
+
+# Keep the running release and the one before it; the rest only fill disk.
+docker image ls --format '{{.Repository}}:{{.Tag}}' --filter "reference=$registry/*" | while read -r ref; do
+	case "${ref##*:}" in
+	"$revision" | "$previous") ;;
+	*) docker image rm "$ref" >/dev/null 2>&1 || true ;;
+	esac
+done
+docker image prune -f >/dev/null

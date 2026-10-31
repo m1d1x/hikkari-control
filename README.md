@@ -72,8 +72,9 @@ Sing-box должен явно отказаться от таких профил
 В «Антиблок → Провайдеры» выберите Vultr и введите API-ключ в форме подключения;
 сохранение требует passkey. Ключ хранится зашифрованным ключом хаба и не возвращается
 в API/аудите. Поля и доступность аккаунта проверяются перед включением.
-Начальные суточный и месячный лимиты обеих групп равны **0**, автопилот выключен
-в `compose.hub.yaml`. Сам запуск стека не заказывает машины. Установку ненулевого
+Начальные суточный и месячный лимиты обеих групп равны **0**; автопилот локально
+выключен (`ENTRY_AUTOPILOT_ENABLED` по умолчанию `0`), на сервере его включает `.env`.
+Сам запуск стека не заказывает машины. Установку ненулевого
 лимита, включение автопилота и живой заказ выполняйте только с явного разрешения владельца.
 Для этой задачи ключ для живого прогона передаётся через SOPS, не через чат.
 
@@ -96,6 +97,37 @@ Sing-box должен явно отказаться от таких профил
 При смене адреса исключаются старые окна отчётов и результаты незавершённых проб.
 Для первого допуска новой машины по-прежнему нужен доверенный admission-пробник:
 анонимная клиентская статистика не заменяет проверку допуска.
+
+### Сервер и CI/CD
+
+`.github/workflows/ci.yml`: на каждый push и PR — `go vet` и `go test` с Postgres 16
+и ClickHouse 24.8, тесты `edge/`, `npm test`, `svelte-check` и сборка админки. Зелёный
+push в `main` собирает образы `hub`, `admin`, `postgres` в приватный
+`ghcr.io/m1d1x/hikkari-control/*:<commit>` и выкатывает их на сервер.
+
+Сервер принимает релиз только через ключ пользователя `hub-deploy`: его единственная
+команда — `sudo /usr/local/sbin/hikkari-hub-deploy` (`deploy/server/`), на stdin бандл
+из ревизии, `compose.hub.yaml`, монтируемых конфигов и токена GHCR этого CI-прогона.
+Скрипт тянет образы, ставит `HUB_REGISTRY`/`HUB_REVISION` в `/opt/hikkari-control/.env`
+и ждёт healthy всего стека; иначе возвращает прежние файлы и образы, и CI краснеет.
+Секреты (`secrets/`) и остальные ключи `.env` остаются серверными, CI их не видит.
+Хранятся образы текущей и предыдущей ревизии.
+
+`.env` сервера: `DOMAIN`, `PUBLIC_BASE_DOMAIN`, `PUBLIC_API_HOST`, `PUBLIC_SUB_HOST`,
+`ENTRY_AUTOPILOT_ENABLED=1`, плюс записываемые деплоем `HUB_REGISTRY`, `HUB_REVISION`.
+
+Разовая настройка (и после правки `deploy/server/hikkari-hub-deploy`):
+
+```sh
+ssh-keygen -t ed25519 -N '' -C hub-deploy -f /tmp/hub-deploy
+scripts/server-install-deploy.sh root@<server> /tmp/hub-deploy.pub
+gh secret set HUB_DEPLOY_SSH_KEY < /tmp/hub-deploy
+ssh-keyscan -t ed25519 <server> | gh secret set HUB_DEPLOY_KNOWN_HOSTS
+gh variable set HUB_DEPLOY_HOST --body <server>
+rm /tmp/hub-deploy /tmp/hub-deploy.pub
+```
+
+Ручной откат: перезапустить job `deploy` у нужного коммита в Actions.
 
 ### Хранилище, обновление, приватность
 

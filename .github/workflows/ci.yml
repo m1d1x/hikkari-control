@@ -1,0 +1,145 @@
+# Tests on every push and pull request; a green push to main ships the hub
+# stack to the server (README, «Сервер и CI/CD»).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: hub
+          POSTGRES_PASSWORD: hub
+          POSTGRES_DB: hub
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U hub -d hub"
+          --health-interval 3s --health-timeout 3s --health-retries 30
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8-alpine
+        env:
+          CLICKHOUSE_USER: hub
+          CLICKHOUSE_PASSWORD: hub
+          CLICKHOUSE_DB: hub
+          # Admin tests give each test a database of its own.
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: '1'
+        ports: ['9000:9000']
+        options: >-
+          --health-cmd "wget -qO- http://127.0.0.1:8123/ping"
+          --health-interval 3s --health-timeout 3s --health-retries 30
+    env:
+      TEST_DATABASE_URL: postgres://hub:hub@127.0.0.1:5432/hub?sslmode=disable
+      NEKKO_TEST_DB: postgres://hub:hub@127.0.0.1:5432/hub?sslmode=disable
+      CLICKHOUSE_TEST_DSN: clickhouse://hub:hub@127.0.0.1:9000/hub
+      NEKKO_TEST_CLICKHOUSE: clickhouse://hub:hub@127.0.0.1:9000/hub
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            edge/go.sum
+      - run: go vet ./...
+      - run: go test -p 1 -count=1 ./...
+      - name: edge
+        working-directory: edge
+        run: go vet ./... && go test -count=1 ./...
+
+  admin:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: admin/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run check
+      - run: npm run build
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [go, admin]
+    runs-on: ubuntu-24.04
+    environment: production
+    concurrency:
+      group: deploy-hub
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: hub image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.hub
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REGISTRY }}/hub:${{ github.sha }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=hub
+          cache-to: type=gha,scope=hub,mode=max
+      - name: admin image
+        uses: docker/build-push-action@v6
+        with:
+          context: admin
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REGISTRY }}/admin:${{ github.sha }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=admin
+          cache-to: type=gha,scope=admin,mode=max
+      - name: postgres image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.postgres
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.REGISTRY }}/postgres:${{ github.sha }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=postgres
+          cache-to: type=gha,scope=postgres,mode=max
+      - name: ship to the server
+        env:
+          DEPLOY_KEY: ${{ secrets.HUB_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HUB_DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ vars.HUB_DEPLOY_HOST }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          umask 077
+          mkdir -p ~/.ssh release/deploy
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/hub-deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cp compose.hub.yaml release/
+          cp deploy/Caddyfile.hub deploy/hub-downdetector.yaml deploy/clickhouse-privacy.xml release/deploy/
+          printf '%s' "$GITHUB_SHA" > release/REVISION
+          printf '%s' "${REGISTRY,,}" > release/REGISTRY
+          printf '%s' "$TOKEN" > release/TOKEN
+          tar -czf - -C release . | ssh -i ~/.ssh/hub-deploy -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes "hub-deploy@$HOST"
