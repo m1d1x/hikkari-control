@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/m1d1x/hikkari-control/internal/applog"
 	"github.com/m1d1x/hikkari-control/internal/config"
@@ -48,6 +49,9 @@ var nameRe = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 // ErrUnknown: no subscription under that token.
 var ErrUnknown = errors.New("subscription: unknown token")
 
+// ErrName: an account name that is malformed or already taken.
+var ErrName = errors.New("subscription: account name")
+
 // Add creates an account for name and a subscription for it on plan's first
 // period, and returns the token — shown once, never stored in the clear.
 func (s *Service) Add(ctx context.Context, name, plan string) (string, error) {
@@ -71,7 +75,7 @@ func (s *Service) Add(ctx context.Context, name, plan string) (string, error) {
 // retired since it was bought. email is the buyer's, "" for none.
 func (s *Service) AddIn(ctx context.Context, tx pgx.Tx, name, plan, email string) (string, uuid.UUID, error) {
 	if !nameRe.MatchString(name) {
-		return "", uuid.Nil, fmt.Errorf("subscription: name %q: want [a-z0-9_-], 1..32", name)
+		return "", uuid.Nil, fmt.Errorf("%w %q: want [a-z0-9_-], 1..32", ErrName, name)
 	}
 	raw := make([]byte, 24)
 	if _, err := rand.Read(raw); err != nil {
@@ -91,6 +95,9 @@ func (s *Service) AddIn(ctx context.Context, tx pgx.Tx, name, plan, email string
 	var account uuid.UUID
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO hub_accounts (name, email) VALUES ($1, nullif($2, '')) RETURNING id`, name, email).Scan(&account); err != nil {
+		if pg := (*pgconn.PgError)(nil); errors.As(err, &pg) && pg.Code == "23505" {
+			return "", uuid.Nil, fmt.Errorf("%w %q: taken", ErrName, name)
+		}
 		return "", uuid.Nil, fmt.Errorf("subscription: account %q: %w", name, err)
 	}
 	if _, err := tx.Exec(ctx,

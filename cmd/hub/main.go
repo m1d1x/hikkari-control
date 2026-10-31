@@ -249,6 +249,14 @@ func run() error {
 		func(next http.HandlerFunc) http.HandlerFunc {
 			return admin.RequireAdmin(adminKeys.Public, pool, admin.RequireOwner(next))
 		})
+	// Subscriptions, plans and orders: money and access, the owner's alone.
+	billing.RegisterAdminRoutes(adminMux, billing.NewAdmin(billingSvc, pool),
+		func(next http.HandlerFunc) http.HandlerFunc {
+			return admin.RequireAdmin(adminKeys.Public, pool, admin.RequireOwner(next))
+		},
+		func(next http.HandlerFunc) http.HandlerFunc {
+			return admin.RequireAdmin(adminKeys.Public, pool, admin.RequireOwner(admin.RequireStepUp(next)))
+		})
 	entry.RegisterAdminRoutes(adminMux, entry.NewAdminHandlers(svc, prov, pool),
 		func(next http.HandlerFunc) http.HandlerFunc {
 			return admin.RequireAdmin(adminKeys.Public, pool, admin.RequireOwner(next))
