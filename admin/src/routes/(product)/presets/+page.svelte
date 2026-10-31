@@ -342,7 +342,7 @@
 					{/each}
 				</div>
 
-				{#if p && diff.length}
+				{#if p && p.bypass.length + p.proxy.length + (p.disabled?.length ?? 0) > 0}
 					<div class="block">
 						<div class="release">
 							<div class="label">что уйдёт людям в v{(latest(p)?.v ?? 0) + 1}</div>
@@ -364,6 +364,9 @@
 							{/if}
 						</div>
 						<div class="diff">
+							{#if !diff.length}
+								<div class="dim">без изменений — повтор v{latest(p)?.v} под новой версией</div>
+							{/if}
 							{#each diff as d (d.text)}
 								<div class:ok={d.kind === 'add'} class:bad={d.kind === 'drop'}>{d.text}</div>
 							{/each}
