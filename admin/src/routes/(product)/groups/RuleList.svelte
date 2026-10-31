@@ -61,6 +61,7 @@
 		placeholder={hint}
 		bind:value={input}
 		onkeydown={(e) => e.key === 'Enter' && add(input)}
+		onblur={() => input.trim() && add(input)}
 		onpaste={paste}
 	/>
 	{#each refused as r (r)}
