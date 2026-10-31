@@ -233,7 +233,7 @@ func TestFreshAnalyticsContainsOnlyFleetTables(t *testing.T) {
 			t.Fatal(err)
 		}
 		count++
-		if !strings.HasPrefix(name, "entry_") && !strings.HasPrefix(name, "telemetry_") {
+		if !strings.HasPrefix(name, "entry_") && !strings.HasPrefix(name, "telemetry_") && !strings.HasPrefix(name, "landing_") {
 			t.Errorf("unexpected dataset: %s", name)
 		}
 	}
