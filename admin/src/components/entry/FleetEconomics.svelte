@@ -15,8 +15,10 @@
 
 	const PROVIDER_COLORS: Record<string, string> = {
 		vultr: '#ec4899',
+		vdsina: '#ff6600',
 		hetzner: '#06b6d4',
 		digitalocean: '#3b82f6',
+		openstack: '#ed1944',
 		linode: '#10b981',
 		scaleway: '#8b5cf6',
 		ovh: '#f59e0b',

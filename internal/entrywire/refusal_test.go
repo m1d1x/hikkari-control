@@ -7,8 +7,12 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/m1d1x/hikkari-control/internal/digitalocean"
 	"github.com/m1d1x/hikkari-control/internal/entry"
+	"github.com/m1d1x/hikkari-control/internal/hetzner"
+	"github.com/m1d1x/hikkari-control/internal/openstack"
 	"github.com/m1d1x/hikkari-control/internal/porkbun"
+	"github.com/m1d1x/hikkari-control/internal/vdsina"
 	"github.com/m1d1x/hikkari-control/internal/vultr"
 )
 
@@ -42,13 +46,41 @@ func TestOnlyAProvidersOwnNoIsARefusal(t *testing.T) {
 		{"vultr funds", vultr.ErrInsufficientFunds, true},
 		{"vultr bad plan", &vultr.APIError{HTTPStatus: http.StatusBadRequest, Message: "Invalid plan"}, true},
 		{"vultr 503", &vultr.APIError{HTTPStatus: http.StatusServiceUnavailable}, false},
-		// Audit 42 recheck НН7: neither says the order was looked at. A
-		// 404 on POST /instances is a route or a proxy, a 429 a limiter in
-		// front of whatever may have run — kept in the budget until the
-		// listing says no machine came of it.
 		{"vultr 404 on an order", vultr.ErrNotFound, false},
 		{"vultr 429 on an order", fmt.Errorf("wrap: %w", vultr.ErrRateLimited), false},
 		{"vultr reset", errors.New("vultr: http: connection reset by peer"), false},
+
+		{"hetzner capacity", hetzner.ErrOutOfCapacity, true},
+		{"hetzner funds", hetzner.ErrInsufficientFunds, true},
+		{"hetzner bad plan", &hetzner.APIError{HTTPStatus: http.StatusBadRequest, Message: "invalid plan"}, true},
+		{"hetzner 503", &hetzner.APIError{HTTPStatus: http.StatusServiceUnavailable}, false},
+		{"hetzner 404 on an order", hetzner.ErrNotFound, false},
+		{"hetzner 429 on an order", fmt.Errorf("wrap: %w", hetzner.ErrRateLimited), false},
+		{"hetzner reset", errors.New("hetzner: http: connection reset by peer"), false},
+
+		{"digitalocean capacity", digitalocean.ErrOutOfCapacity, true},
+		{"digitalocean funds", digitalocean.ErrInsufficientFunds, true},
+		{"digitalocean bad plan", &digitalocean.APIError{HTTPStatus: http.StatusBadRequest, Message: "invalid size"}, true},
+		{"digitalocean 503", &digitalocean.APIError{HTTPStatus: http.StatusServiceUnavailable}, false},
+		{"digitalocean 404 on an order", digitalocean.ErrNotFound, false},
+		{"digitalocean 429 on an order", fmt.Errorf("wrap: %w", digitalocean.ErrRateLimited), false},
+		{"digitalocean reset", errors.New("digitalocean: http: connection reset by peer"), false},
+
+		{"vdsina capacity", vdsina.ErrOutOfCapacity, true},
+		{"vdsina funds", vdsina.ErrInsufficientFunds, true},
+		{"vdsina bad plan", &vdsina.APIError{HTTPStatus: http.StatusBadRequest, Message: "invalid plan"}, true},
+		{"vdsina 503", &vdsina.APIError{HTTPStatus: http.StatusServiceUnavailable}, false},
+		{"vdsina 404 on an order", vdsina.ErrNotFound, false},
+		{"vdsina 429 on an order", fmt.Errorf("wrap: %w", vdsina.ErrRateLimited), false},
+		{"vdsina reset", errors.New("vdsina: http: connection reset by peer"), false},
+
+		{"openstack capacity", openstack.ErrOutOfCapacity, true},
+		{"openstack funds", openstack.ErrInsufficientFunds, true},
+		{"openstack bad plan", &openstack.APIError{HTTPStatus: http.StatusBadRequest, Message: "flavor not found"}, true},
+		{"openstack 503", &openstack.APIError{HTTPStatus: http.StatusServiceUnavailable}, false},
+		{"openstack 404 on an order", openstack.ErrNotFound, false},
+		{"openstack 429 on an order", fmt.Errorf("wrap: %w", openstack.ErrRateLimited), false},
+		{"openstack reset", errors.New("openstack: http: connection reset by peer"), false},
 	} {
 		if got := errors.Is(hosterRefusal(tc.err), entry.ErrProviderRefused); got != tc.refused {
 			t.Errorf("hoster %s: refused = %v, want %v", tc.name, got, tc.refused)
@@ -57,11 +89,22 @@ func TestOnlyAProvidersOwnNoIsARefusal(t *testing.T) {
 }
 
 func TestRegionalCapacityRemainsADefiniteRefusal(t *testing.T) {
-	err := hosterRefusal(vultr.ErrOutOfCapacity)
-	if !errors.Is(err, entry.ErrRegionCapacity) || !errors.Is(err, entry.ErrProviderRefused) {
-		t.Fatalf("capacity classification lost: %v", err)
+	for _, err := range []error{
+		hosterRefusal(vultr.ErrOutOfCapacity),
+		hosterRefusal(hetzner.ErrOutOfCapacity),
+		hosterRefusal(digitalocean.ErrOutOfCapacity),
+		hosterRefusal(vdsina.ErrOutOfCapacity),
+		hosterRefusal(openstack.ErrOutOfCapacity),
+	} {
+		if !errors.Is(err, entry.ErrRegionCapacity) || !errors.Is(err, entry.ErrProviderRefused) {
+			t.Fatalf("capacity classification lost: %v", err)
+		}
 	}
-	if errors.Is(hosterRefusal(vultr.ErrInsufficientFunds), entry.ErrRegionCapacity) {
+	if errors.Is(hosterRefusal(vultr.ErrInsufficientFunds), entry.ErrRegionCapacity) ||
+		errors.Is(hosterRefusal(hetzner.ErrInsufficientFunds), entry.ErrRegionCapacity) ||
+		errors.Is(hosterRefusal(digitalocean.ErrInsufficientFunds), entry.ErrRegionCapacity) ||
+		errors.Is(hosterRefusal(vdsina.ErrInsufficientFunds), entry.ErrRegionCapacity) ||
+		errors.Is(hosterRefusal(openstack.ErrInsufficientFunds), entry.ErrRegionCapacity) {
 		t.Fatal("account credit cannot be solved by another region")
 	}
 }

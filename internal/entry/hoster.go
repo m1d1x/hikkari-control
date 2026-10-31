@@ -165,7 +165,8 @@ type BoxInstance struct {
 type HostingAccount struct {
 	// BalanceCents is the credit left, in whole cents. It can be negative on
 	// a post-paid account, which is a figure to show and not an error.
-	BalanceCents int
+	// Nil when the hoster does not report balance via API (e.g. Hetzner).
+	BalanceCents *int
 	// PendingCents is what has accrued this period and is not billed yet.
 	PendingCents int
 }

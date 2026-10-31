@@ -217,7 +217,7 @@ func (f *fakeHoster) Account(context.Context) (HostingAccount, error) {
 	if f.badKey {
 		return HostingAccount{}, errors.New("hoster: key rejected")
 	}
-	return HostingAccount{BalanceCents: f.balance, PendingCents: 700}, nil
+	return HostingAccount{BalanceCents: &f.balance, PendingCents: 700}, nil
 }
 
 func (f *fakeHoster) orderCount() int {

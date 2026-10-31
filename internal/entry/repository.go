@@ -151,12 +151,17 @@ const (
 	// Personal, alive, not past expiry, and not already in this account's
 	// batch. A relay this account held before and that died is dead, so it
 	// cannot come back through here.
+	// A candidate stands on a machine the account holds nothing on yet (a
+	// batch spans distinct addresses) and that is shared by fewer than $3
+	// accounts (subscribers.go).
 	grantCandidates = `
-		SELECT r.id, r.name, b.proto, coalesce(b.region, '')
+		SELECT r.id, r.name, b.proto, coalesce(b.region, ''), b.name
 		FROM entry_relays r JOIN entry_boxes b ON b.name = r.box
 		WHERE r.kind = 'personal' AND r.status = 'alive' AND r.expires_at > $2
-		  AND r.id NOT IN (SELECT relay_id FROM entry_grants
-		                   WHERE account_id = $1 AND revoked_at IS NULL)`
+		  AND NOT EXISTS (SELECT 1 FROM entry_grants g JOIN entry_relays gr ON gr.id = g.relay_id
+		                  WHERE g.account_id = $1 AND g.revoked_at IS NULL AND gr.box = r.box)
+		  AND (SELECT count(DISTINCT g.account_id) FROM entry_grants g JOIN entry_relays gr ON gr.id = g.relay_id
+		       WHERE g.revoked_at IS NULL AND gr.box = r.box) < $3`
 	selectAliveEnvelope = `
 		SELECT envelope_ct FROM entry_relays WHERE name = $1 AND status = 'alive'`
 	insertGrant = `
@@ -591,10 +596,12 @@ type candidate struct {
 	id   int64
 	name string
 	lane lane
+	// box is the machine the relay stands on: one per batch (pick).
+	box string
 }
 
 func (r *Repository) candidates(ctx context.Context, tx pgx.Tx, account uuid.UUID, now time.Time) ([]candidate, error) {
-	rows, err := tx.Query(ctx, grantCandidates, account, now)
+	rows, err := tx.Query(ctx, grantCandidates, account, now, SubscribersPerBox)
 	if err != nil {
 		return nil, err
 	}
@@ -602,7 +609,7 @@ func (r *Repository) candidates(ctx context.Context, tx pgx.Tx, account uuid.UUI
 	var out []candidate
 	for rows.Next() {
 		var c candidate
-		if err := rows.Scan(&c.id, &c.name, &c.lane.proto, &c.lane.region); err != nil {
+		if err := rows.Scan(&c.id, &c.name, &c.lane.proto, &c.lane.region, &c.box); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

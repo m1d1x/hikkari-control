@@ -52,6 +52,8 @@ type CredentialField struct {
 	// Secret fields are typed into a password input; a non-secret one (a
 	// public key id) is what the masked hint is cut from.
 	Secret bool `json:"secret"`
+	// Optional fields may be left blank.
+	Optional bool `json:"optional,omitempty"`
 }
 
 // ProviderKind describes one built-in adapter.
@@ -461,8 +463,7 @@ func (s *Service) checkAccount(ctx context.Context, k ProviderKind, creds map[st
 			return nil, err
 		}
 		c := &ProviderCheck{At: s.now(), OK: true}
-		bal := acct.BalanceCents
-		c.BalanceCents = &bal
+		c.BalanceCents = acct.BalanceCents
 		// What a hoster has accrued and not billed is the nearest thing it has
 		// to the registrar's month-to-date spend, and it is read into the same
 		// field so the console shows one money row for both roles.
@@ -506,7 +507,7 @@ func completeCreds(k ProviderKind, in map[string]string) (map[string]string, err
 	out := make(map[string]string, len(k.Fields))
 	for _, f := range k.Fields {
 		v := strings.TrimSpace(in[f.Name])
-		if v == "" {
+		if v == "" && !f.Optional {
 			return nil, fmt.Errorf("%w: %s is empty", ErrRejected, f.Label)
 		}
 		out[f.Name] = v

@@ -177,6 +177,9 @@ func (s *Service) fleetForecast(ctx context.Context, policy DetectionPolicy, poo
 		return f, fmt.Errorf("entry: live machines of %s: %w", pool, err)
 	}
 	f.Target, f.Keep, f.TargetWhy = loadTarget(sz, f.Live)
+	if err := s.applySubscriberFloor(ctx, &f, proto); err != nil {
+		return f, err
+	}
 	target := f.Target
 	f.Need = target - f.Live
 

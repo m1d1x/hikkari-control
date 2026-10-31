@@ -133,6 +133,8 @@ type Service struct {
 	// relayKeys owns subscribers' access keys (pulse.go); nil leaves relays
 	// on their shared credential.
 	relayKeys RelayKeys
+	// subscribers sizes the stream pools by subscriptions (subscribers.go).
+	subscribers SubscriberCount
 	// traffic takes the gateway's per-socket byte counts into the dataset
 	// (П9.9, traffic.go); nil drops them.
 	traffic UserTrafficSink
@@ -1311,11 +1313,20 @@ func (s *Service) pick(account uuid.UUID, held []grantedRelay, cands []candidate
 		if missing <= 0 {
 			continue
 		}
-		ranked := s.rank(account, byLane[l])
-		if len(ranked) > missing {
-			ranked = ranked[:missing]
+		// One relay per machine: two relays of one box are one address,
+		// and a batch is there to survive an address going.
+		boxes := map[string]bool{}
+		for _, c := range s.rank(account, byLane[l]) {
+			if missing == 0 {
+				break
+			}
+			if boxes[c.box] {
+				continue
+			}
+			boxes[c.box] = true
+			out = append(out, c)
+			missing--
 		}
-		out = append(out, ranked...)
 	}
 	return out
 }
