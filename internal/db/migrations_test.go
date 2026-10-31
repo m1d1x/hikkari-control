@@ -93,6 +93,7 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 		}
 		if name != "schema_migrations" && name != "hub_accounts" && name != "hub_subscriptions" &&
 			name != "hub_access_keys" && name != "hub_key_usage" && name != "hub_plans" &&
+			name != "hub_orders" && name != "hub_mail_outbox" &&
 			!strings.HasPrefix(name, "entry_") && !strings.HasPrefix(name, "admin_") && name != "admins" &&
 			name != "presets" && !strings.HasPrefix(name, "preset_") {
 			t.Errorf("non-control table in baseline: %s", name)
@@ -117,8 +118,8 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND confrelid = 'hub_accounts'::regclass`).Scan(&references); err != nil {
 		t.Fatal(err)
 	}
-	if references != 5 {
-		t.Errorf("account foreign keys: %d, want grants, fail reports, subscriptions, access keys and key usage", references)
+	if references != 6 {
+		t.Errorf("account foreign keys: %d, want grants, fail reports, subscriptions, access keys, key usage and orders", references)
 	}
 	var cap int
 	if err := pool.QueryRow(ctx, `SELECT sum(daily_cap_cents + monthly_cap_cents) FROM entry_spend_caps`).Scan(&cap); err != nil {
