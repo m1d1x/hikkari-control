@@ -33,6 +33,7 @@ var (
 	ErrNothingToShip = errors.New("preset has no groups")
 	ErrNoNext        = errors.New("no release is rolling out")
 	ErrExists        = errors.New("already exists")
+	ErrInvalid       = errors.New("the client would reject the catalog")
 )
 
 // Rules are a group's rules in the catalog's own shape: domains and ips hold
@@ -345,6 +346,12 @@ func (s *Store) Release(ctx context.Context, id string, stage int, by string) (R
 		services, err := freeze(ctx, tx, bypass, proxy)
 		if err != nil {
 			return err
+		}
+		// Groups are checked when saved, but a release is the last gate
+		// before devices: a group saved before a check existed, or the
+		// catalog's size, is caught here.
+		if err := ValidateCatalog(services); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalid, err)
 		}
 		raw, err := json.Marshal(services)
 		if err != nil {

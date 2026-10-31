@@ -213,3 +213,19 @@ func TestDraftsAndGroupsGuardEachOther(t *testing.T) {
 		t.Fatalf("second delete: %v", err)
 	}
 }
+
+// Saving checks a group, but the release is the last gate: a group stored
+// before a rule was refused still cannot reach a device.
+func TestAReleaseTheClientWouldRejectIsRefused(t *testing.T) {
+	s, ctx := liveStore(t), context.Background()
+	bad := steam()
+	bad.Rules.Domains = []string{"Steampowered.com"}
+	must(t, s.PutGroup(ctx, bad))
+	must(t, s.CreatePreset(ctx, "ru", PresetDraft{Name: "россия", Default: true, Bypass: []string{"steam"}}))
+	if _, err := s.Release(ctx, "ru", 100, "owner"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("released a catalog the client rejects: %v", err)
+	}
+	if _, ok := serve(t, s, "", 0); ok {
+		t.Fatal("the refused release is served")
+	}
+}
