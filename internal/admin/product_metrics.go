@@ -26,8 +26,8 @@ package admin
 //
 // # What it does not count
 //
-// Landing-page download clicks: the landing sends nothing, so the mock's
-// "клики «скачать»" card has no source and is gone rather than invented.
+// Landing-page download clicks: the card is on the screen, but the landing
+// does not report clicks yet, so Downloads.Clicks is null until it does.
 // A figure with no rows behind it is null, never zero: "0% connect" and "no
 // connects yet" are different statements.
 
@@ -48,6 +48,7 @@ type productMetrics struct {
 	People     metricsPeople     `json:"people"`
 	Connect    metricsConnect    `json:"connect"`
 	Activation metricsActivation `json:"activation"`
+	Downloads  metricsDownloads  `json:"downloads"`
 	// Platforms and Versions split the window's active installs. An install
 	// that changed version inside the window counts under each version it ran.
 	Platforms []metricsShare `json:"platforms"`
@@ -75,6 +76,19 @@ type metricsConnect struct {
 	SecsP50 *float64 `json:"secsP50"`
 	// TunnelMinutesP50 is the median of daily_active.connected_minutes.
 	TunnelMinutesP50 *float64 `json:"tunnelMinutesP50"`
+}
+
+// metricsDownloads is the download funnel: landing clicks → first launch.
+// The first launch is the client's `install` event (its series is
+// people.series.fresh). Clicks, ClicksSeries and ConvPct stay null until the
+// landing reports its download button.
+type metricsDownloads struct {
+	Clicks       *uint64  `json:"clicks"`
+	ClicksSeries []uint64 `json:"clicksSeries"`
+	Installs     uint64   `json:"installs"`
+	ConvPct      *float64 `json:"convPct"`
+	// Platforms splits the window's first launches by OS.
+	Platforms []metricsShare `json:"platforms"`
 }
 
 type metricsActivation struct {
@@ -122,6 +136,7 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 			Fresh:  make([]uint64, win.N),
 		}},
 		Platforms: []metricsShare{},
+		Downloads: metricsDownloads{Platforms: []metricsShare{}},
 		Versions:  []metricsShare{},
 	}
 
@@ -208,22 +223,30 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 		return nil, err
 	}
 
-	if out.Platforms, err = h.metricsShares(ctx, "os", since, end, out.People.Active, 0); err != nil {
+	if out.Platforms, err = h.metricsShares(ctx, "os", false, since, end, out.People.Active, 0); err != nil {
 		return nil, err
 	}
-	if out.Versions, err = h.metricsShares(ctx, "version", since, end, out.People.Active, 8); err != nil {
+	if out.Versions, err = h.metricsShares(ctx, "version", false, since, end, out.People.Active, 8); err != nil {
+		return nil, err
+	}
+	out.Downloads.Installs = out.People.Fresh
+	if out.Downloads.Platforms, err = h.metricsShares(ctx, "os", true, since, end, out.People.Fresh, 0); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// metricsShares splits the window's active installs by one column. column is
-// one of the two literals above, never request input.
-func (h *Handlers) metricsShares(ctx context.Context, column string, since, end time.Time, active uint64, limit int) ([]metricsShare, error) {
+// metricsShares splits the window's installs by one column: the active ones,
+// or with fresh only those whose first launch fell in the window. column is
+// one of the literals above, never request input.
+func (h *Handlers) metricsShares(ctx context.Context, column string, fresh bool, since, end time.Time, active uint64, limit int) ([]metricsShare, error) {
 	q := `SELECT ` + column + ` AS k, uniq(install) AS n
 		FROM telemetry_events
-		WHERE ts >= ? AND ts < ? AND k != ''
-		GROUP BY k ORDER BY n DESC, k`
+		WHERE ts >= ? AND ts < ? AND k != ''`
+	if fresh {
+		q += ` AND name = 'install'`
+	}
+	q += ` GROUP BY k ORDER BY n DESC, k`
 	if limit > 0 {
 		q += ` LIMIT ` + strconv.Itoa(limit)
 	}

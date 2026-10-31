@@ -73,6 +73,44 @@
 		</div>
 	</section>
 
+	<section class="card">
+		<div class="split">
+			<div>
+				<div class="big">{or(d.downloads.clicks, num)}</div>
+				<div class="what"><i class="sw" style="background: var(--blue)"></i>кликов «скачать»</div>
+				<div class="breakdown">
+					<div><span><i class="sw" style="background: var(--violet)"></i>первых запусков</span><b>{num(d.downloads.installs)}</b></div>
+					<div class="sep"><span>клик → запуск</span><b>{or(d.downloads.convPct, pct)}</b></div>
+				</div>
+				{#if d.downloads.clicks === null}
+					<div class="dim note">лендинг пока не передаёт клики</div>
+				{/if}
+			</div>
+			<Chart
+				buckets={d.buckets}
+				win={m.win}
+				series={[
+					...(d.downloads.clicksSeries
+						? [{ label: 'клики', color: 'var(--blue)', values: d.downloads.clicksSeries, primary: true }]
+						: []),
+					{ label: 'запуски', color: 'var(--violet)', values: d.people.series.fresh, primary: !d.downloads.clicksSeries },
+				]}
+			/>
+		</div>
+		{#if d.downloads.platforms.length > 0}
+			<div class="strip">
+				<div class="bar">
+					{#each d.downloads.platforms as p (p.key)}
+						<i style="width: {p.pct}%; background: {osColor(p)}"></i>
+					{/each}
+				</div>
+				{#each d.downloads.platforms as p (p.key)}
+					<span><i class="sw" style="background: {osColor(p)}"></i> {p.key}<b>{num(p.installs)}</b><span class="dim">&nbsp;· {p.pct.toFixed(0)}%</span></span>
+				{/each}
+			</div>
+		{/if}
+	</section>
+
 	{@render shares('платформы', d.platforms, osColor)}
 	{@render shares('версии', d.versions, (_s, i) => versionColor(i))}
 {:else if m.loading}
@@ -100,6 +138,11 @@
 {/snippet}
 
 <style>
+	.note {
+		margin-top: 10px;
+		font-size: 11px;
+	}
+
 	.bar {
 		flex-basis: 100%;
 		display: flex;

@@ -108,6 +108,13 @@ func TestProductScreens_AgainstClickHouse(t *testing.T) {
 		t.Fatalf("platforms: %+v", m.Platforms)
 	}
 
+	if m.Downloads.Installs != 2 || m.Downloads.Clicks != nil || m.Downloads.ConvPct != nil {
+		t.Fatalf("downloads: %+v", m.Downloads)
+	}
+	if len(m.Downloads.Platforms) != 2 || m.Downloads.Platforms[0].Installs != 1 {
+		t.Fatalf("download platforms: %+v", m.Downloads.Platforms)
+	}
+
 	e, err := h.productErrors(ctx, productWindows["24h"], now)
 	if err != nil {
 		t.Fatal(err)

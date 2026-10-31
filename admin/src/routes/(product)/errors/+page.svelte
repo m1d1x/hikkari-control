@@ -5,8 +5,8 @@
 	import { Windowed } from '$lib/product/windowed.svelte';
 
 	// Groups of the same scrubbed failure (code, component, fingerprint),
-	// counted by the hub from client telemetry. There is no stack trace: the
-	// client never sends one.
+	// counted by the hub from client telemetry. The stack block is part of the
+	// approved design; the client does not send stacks yet.
 	const e = new Windowed('24h', fetchProductErrors);
 	let os = $state<string | null>(null);
 	let query = $state('');
@@ -73,8 +73,10 @@
 									{g.code} · {g.component} · {g.oses.join(', ')} · {g.versions.slice(0, 3).join(', ')}{g.versions.length > 3 ? ' …' : ''}
 								</div>
 								{#if open === g.id}
+									<pre>{g.message}</pre>
 									<div class="full">
 										впервые {ago(g.firstSeen)} назад · версии: {g.versions.join(', ')}
+										<div class="dim">стек: клиент пока не передаёт</div>
 									</div>
 								{/if}
 							</td>
@@ -139,6 +141,7 @@
 		font-size: 11px;
 	}
 
+	pre,
 	.full {
 		margin-top: 8px;
 		padding: 10px 12px;

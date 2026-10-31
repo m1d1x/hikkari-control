@@ -40,6 +40,14 @@ export interface ProductMetrics {
 		pct: number | null;
 		secsP50: number | null;
 	};
+	/** landing click → first launch; clicks are null until the landing reports them */
+	downloads: {
+		clicks: number | null;
+		clicksSeries: number[] | null;
+		installs: number;
+		convPct: number | null;
+		platforms: MetricsShare[];
+	};
 	platforms: MetricsShare[];
 	versions: MetricsShare[];
 }
