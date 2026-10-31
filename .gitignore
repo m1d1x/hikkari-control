@@ -2,6 +2,8 @@
 secrets/
 *.agekey
 keys.txt
+.env
+.env.*
 
 # Local data (the repo root's; admin/src/components/data is source)
 /data/
