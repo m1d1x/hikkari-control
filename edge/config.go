@@ -155,6 +155,7 @@ func (c Config) XrayConfig() map[string]any {
 					"shortIds":    c.ShortIDs,
 				},
 			},
+			"sniffing": tunnelSniffing(),
 		})
 		hop := "to-" + cover
 		outbounds = append(outbounds, map[string]any{
@@ -176,8 +177,8 @@ func (c Config) XrayConfig() map[string]any {
 		"inboundTag":  []string{"sni-router"},
 		"outboundTag": "to-" + c.Covers[0],
 	})
-	// Everything a VLESS user asks for leaves through the exit.
-	rules = append(rules, egressRule(realityTags))
+	// Everything a VLESS user asks for leaves through the exit, minus blocked RU destinations.
+	rules = append(rules, egressRules(realityTags)...)
 
 	doc := map[string]any{
 		"log":       map[string]any{"loglevel": c.LogLevel},

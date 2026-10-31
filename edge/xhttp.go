@@ -170,6 +170,7 @@ func (c XhttpConfig) XrayConfig() map[string]any {
 				// relay.
 				"xhttpSettings": map[string]any{"path": c.Path, "mode": "auto"},
 			},
+			"sniffing": tunnelSniffing(),
 		}},
 		"outbounds": []map[string]any{
 			// First outbound is Xray's default: the drop, as on a Reality edge.
@@ -178,7 +179,7 @@ func (c XhttpConfig) XrayConfig() map[string]any {
 		},
 		"routing": map[string]any{
 			"domainStrategy": "AsIs",
-			"rules":          []map[string]any{egressRule([]string{tag})},
+			"rules":          egressRules([]string{tag}),
 		},
 	}
 	withStats(doc)

@@ -126,8 +126,16 @@ func (c VoiceConfig) XrayConfig() map[string]any {
 			"protocol":       "hysteria",
 			"settings":       map[string]any{"version": 2, "clients": []map[string]any{{"auth": c.Auth}}},
 			"streamSettings": stream,
+			"sniffing":       tunnelSniffing(),
 		}},
-		"outbounds": []map[string]any{directOutbound(c.EchoPort)},
+		"outbounds": []map[string]any{
+			{"tag": dropTag, "protocol": "blackhole"},
+			directOutbound(c.EchoPort),
+		},
+		"routing": map[string]any{
+			"domainStrategy": "AsIs",
+			"rules":          egressRules([]string{voiceTag}),
+		},
 	}
 	withStats(doc)
 	return doc
