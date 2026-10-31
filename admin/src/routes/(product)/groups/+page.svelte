@@ -124,7 +124,10 @@
 		{#if edit}
 			<section class="card">
 				<div class="top">
-					<input class="name" placeholder="название группы" bind:this={nameEl} bind:value={edit.name} />
+					<label class="name-box">
+						<span class="dim">название</span>
+						<input class="field name-input" placeholder="например, Steam или Discord" bind:this={nameEl} bind:value={edit.name} />
+					</label>
 					{#if !fresh}<button class="btn" onclick={remove} disabled={busy}>удалить</button>{/if}
 					<button class="btn primary" onclick={save} disabled={busy || !dirty || !!problem}>сохранить</button>
 				</div>
@@ -239,14 +242,17 @@
 		gap: 16px;
 	}
 
-	.name {
+	.name-box {
 		flex: 1;
-		font-size: 15px;
-		font-weight: 600;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 12px;
 	}
 
-	.name::placeholder {
-		color: var(--text-3);
+	.name-input {
+		font-size: 14px;
+		font-weight: 600;
 	}
 
 	.used {
