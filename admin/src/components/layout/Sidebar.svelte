@@ -44,6 +44,7 @@
 			<SidebarItem href="/metrics" icon="overview" label="Обзор" {collapsed} />
 			<SidebarItem href="/errors" icon="events" label="Ошибки" {collapsed} />
 			<SidebarItem href="/support" icon="search" label="Обращения" {collapsed} />
+			<SidebarItem href="/subscriptions" icon="jobs" label="Подписки" {collapsed} />
 			<SidebarItem href="/donations" icon="jobs" label="Донаты" {collapsed} />
 			<SidebarItem href="/presets" icon="system" label="Пресеты" {collapsed} />
 			<SidebarItem href="/groups" icon="system" label="Группы" {collapsed} />

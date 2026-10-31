@@ -82,7 +82,7 @@ func TestTheConsoleEditsPlans(t *testing.T) {
 	id := "t-c-" + uuid.NewString()[:6]
 	code, _ := call(t, mux, "PUT", "/api/v1/admin/billing/plans/"+id,
 		`{"title":"3 месяца","days":90,"trafficGiB":3000,"priceCents":25000}`)
-	if code != http.StatusNoContent {
+	if code != http.StatusOK {
 		t.Fatalf("put %d", code)
 	}
 	plans, err := s.subs.Plans(context.Background())
@@ -99,7 +99,7 @@ func TestTheConsoleEditsPlans(t *testing.T) {
 	if code, _ := call(t, mux, "PUT", "/api/v1/admin/billing/plans/"+id, `{"days":0}`); code != http.StatusUnprocessableEntity {
 		t.Fatalf("a zero-day plan: %d", code)
 	}
-	if code, _ := call(t, mux, "POST", "/api/v1/admin/billing/plans/"+id+"/retire", ""); code != http.StatusNoContent {
+	if code, _ := call(t, mux, "POST", "/api/v1/admin/billing/plans/"+id+"/retire", ""); code != http.StatusOK {
 		t.Fatalf("retire %d", code)
 	}
 	code, out := call(t, mux, "GET", "/api/v1/admin/billing", "")

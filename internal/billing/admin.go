@@ -275,7 +275,7 @@ func (h *Admin) PutPlan(w http.ResponseWriter, r *http.Request) {
 	h.log(r, "plan.set", id, map[string]any{
 		"title": in.Title, "days": in.Days, "trafficGiB": in.TrafficGiB, "priceCents": in.PriceCents,
 	})
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
 
 // RetirePlan takes a plan off sale.
@@ -285,7 +285,7 @@ func (h *Admin) RetirePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.log(r, "plan.retire", id, nil)
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
 
 // ---------- plumbing ----------
