@@ -87,6 +87,46 @@ type PulseReport struct {
 	// (П6.14) is seen to have landed from the relay's own mouth, rather than
 	// from the hub's record of what it pushed.
 	Version string
+	// Boot names this run of the edge process, so per-key totals are filed
+	// against the run they count from.
+	Boot string
+	// Keys is what each access key carried since the edge started, totals
+	// keyed by the key itself (RelayKeys says whose it is).
+	Keys map[string]KeyUsage
+}
+
+// KeyUsage is bytes one access key carried: up from the client, down to it.
+type KeyUsage struct {
+	Up, Down int64
+}
+
+// RelayKeys owns the access keys subscribers dial with (internal/subscription).
+// The pool grants relays to accounts; which key an account dials with, and
+// what that key has carried, are the subscription's business, not the pool's.
+type RelayKeys interface {
+	// KeysOf is every key relay must let through, in proto's credential.
+	KeysOf(ctx context.Context, relay, proto string) ([]string, error)
+	// RecordUsage files per-key totals of one edge run.
+	RecordUsage(ctx context.Context, relay, boot string, usage map[string]KeyUsage) error
+}
+
+// SetRelayKeys attaches the access keys; nil leaves relays on their shared
+// credential alone and their pulse answered with nothing to change.
+func (s *Service) SetRelayKeys(k RelayKeys) { s.relayKeys = k }
+
+// PulseKeys is the key list a relay's pulse is answered with. ok is false
+// when the hub keeps no access keys — the relay then leaves its own list as
+// it is. Called only after [Service.RecordPulse] took the pulse.
+func (s *Service) PulseKeys(ctx context.Context, relay string) (keys []string, ok bool, err error) {
+	if s.relayKeys == nil {
+		return nil, false, nil
+	}
+	src, err := s.repo.pulseSource(ctx, relay)
+	if err != nil {
+		return nil, false, err
+	}
+	keys, err = s.relayKeys.KeysOf(ctx, relay, src.proto)
+	return keys, err == nil, err
 }
 
 // PulseRecord is one row of the dataset, as the sink takes it.
@@ -142,6 +182,11 @@ func (s *Service) RecordPulse(ctx context.Context, master, bearer string, p Puls
 		return ErrPulseRefused
 	}
 	proto := src.proto
+	if s.relayKeys != nil && len(p.Keys) > 0 {
+		if err := s.relayKeys.RecordUsage(ctx, p.Relay, p.Boot, p.Keys); err != nil {
+			return err
+		}
+	}
 	if s.pulses == nil {
 		return nil
 	}

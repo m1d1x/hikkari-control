@@ -90,6 +90,10 @@ type edge struct {
 	xray  *core.Config
 	echo  int
 	front *XhttpConfig
+	// proto and userTags say where access keys go (keys.go): the protocol's
+	// credential, and the inbounds that let users through.
+	proto    string
+	userTags []string
 }
 
 // load reads the env and builds an Xray config, without starting anything.
@@ -97,25 +101,33 @@ func load() (edge, error) {
 	var doc map[string]any
 	var echo int
 	var front *XhttpConfig
-	switch proto := osEnv("EDGE_PROTO"); proto {
+	var userTags []string
+	proto := osEnv("EDGE_PROTO")
+	switch proto {
 	case "", protoReality:
+		proto = protoReality
 		cfg, err := ConfigFromEnv(osEnv)
 		if err != nil {
 			return edge{}, err
 		}
 		doc, echo = cfg.XrayConfig(), cfg.EchoPort
+		for _, cover := range cfg.Covers {
+			userTags = append(userTags, realityTag(cover))
+		}
 	case protoHysteria:
 		cfg, err := VoiceConfigFromEnv(osEnv)
 		if err != nil {
 			return edge{}, err
 		}
 		doc, echo = cfg.XrayConfig(), cfg.EchoPort
+		userTags = []string{voiceTag}
 	case protoXhttp:
 		cfg, err := XhttpConfigFromEnv(osEnv)
 		if err != nil {
 			return edge{}, err
 		}
 		doc, front = cfg.XrayConfig(), &cfg
+		userTags = []string{xhttpTag}
 	default:
 		return edge{}, fmt.Errorf("EDGE_PROTO: %q is not %s, %s or %s", proto, protoReality, protoHysteria, protoXhttp)
 	}
@@ -127,7 +139,7 @@ func load() (edge, error) {
 	if err != nil {
 		return edge{}, fmt.Errorf("xray config: %w", err)
 	}
-	return edge{xray: xc, echo: echo, front: front}, nil
+	return edge{xray: xc, echo: echo, front: front, proto: proto, userTags: userTags}, nil
 }
 
 func run() error {
@@ -159,7 +171,11 @@ func run() error {
 	// The half-minute self-report to the hub (П9.3), if this box was given
 	// one. Started last: it reads counters the running instance owns.
 	if pc, ok := pulseFromEnv(osEnv); ok {
-		spawnPulse(ctx, inst, pc)
+		keys, err := newKeyring(inst, e)
+		if err != nil {
+			return err
+		}
+		spawnPulse(ctx, inst, pc, keys)
 	}
 
 	log.Printf("nekko-edge: up (xray %s)", core.Version())

@@ -130,6 +130,9 @@ type Service struct {
 	// pulses takes relays' self-reports into the dataset (П9.3); nil leaves
 	// the hub without relay stats.
 	pulses PulseSink
+	// relayKeys owns subscribers' access keys (pulse.go); nil leaves relays
+	// on their shared credential.
+	relayKeys RelayKeys
 	// traffic takes the gateway's per-socket byte counts into the dataset
 	// (П9.9, traffic.go); nil drops them.
 	traffic UserTrafficSink

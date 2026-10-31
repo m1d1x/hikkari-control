@@ -98,6 +98,9 @@ func echoPortFromEnv(getenv func(string) string) (int, error) {
 
 func pemLines(pem string) []string { return strings.Split(strings.TrimSpace(pem), "\n") }
 
+// voiceTag is a voice edge's one inbound.
+const voiceTag = "voice"
+
 // XrayConfig renders the Xray JSON document of a voice edge.
 func (c VoiceConfig) XrayConfig() map[string]any {
 	host, portStr, _ := net.SplitHostPort(c.Listen)
@@ -117,7 +120,7 @@ func (c VoiceConfig) XrayConfig() map[string]any {
 	doc := map[string]any{
 		"log": map[string]any{"loglevel": c.LogLevel},
 		"inbounds": []map[string]any{{
-			"tag":            "voice",
+			"tag":            voiceTag,
 			"listen":         host,
 			"port":           port,
 			"protocol":       "hysteria",

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xtls/xray-core/core"
 )
 
 const (
@@ -117,7 +119,7 @@ func tcpEcho(t *testing.T, port int, tag string) {
 }
 
 // startXhttpEdge brings up the edge the way run() does: Xray, then the front.
-func startXhttpEdge(t *testing.T, m map[string]string, sites ...int) XhttpConfig {
+func startXhttpEdge(t *testing.T, m map[string]string, sites ...int) (XhttpConfig, *core.Instance) {
 	t.Helper()
 	c, err := XhttpConfigFromEnv(env(m))
 	if err != nil {
@@ -125,11 +127,11 @@ func startXhttpEdge(t *testing.T, m map[string]string, sites ...int) XhttpConfig
 	}
 	doc := c.XrayConfig()
 	asInternet(t, doc, "tcp", sites...)
-	startXray(t, doc)
+	inst := startXray(t, doc)
 	if err := serveFront(t.Context(), c); err != nil {
 		t.Fatal(err)
 	}
-	return c
+	return c, inst
 }
 
 // xhttpClient is a real Xray client: VLESS over XHTTP over TLS to the edge,
@@ -137,6 +139,12 @@ func startXhttpEdge(t *testing.T, m map[string]string, sites ...int) XhttpConfig
 // to the address — what the app does with a signed record. One local door per
 // destination.
 func xhttpClient(t *testing.T, edgePort int, pin, mode string, dests map[string]int) map[string]int {
+	t.Helper()
+	return xhttpClientAs(t, testClient, edgePort, pin, mode, dests)
+}
+
+// xhttpClientAs is xhttpClient dialing as user id.
+func xhttpClientAs(t *testing.T, id string, edgePort int, pin, mode string, dests map[string]int) map[string]int {
 	t.Helper()
 	doors := map[string]int{}
 	var inbounds []map[string]any
@@ -157,7 +165,7 @@ func xhttpClient(t *testing.T, edgePort int, pin, mode string, dests map[string]
 			"protocol": "vless",
 			"settings": map[string]any{"vnext": []map[string]any{{
 				"address": "127.0.0.1", "port": edgePort,
-				"users": []map[string]any{{"id": testClient, "encryption": "none"}},
+				"users": []map[string]any{{"id": id, "encryption": "none"}},
 			}}},
 			"streamSettings": map[string]any{
 				"network":       "xhttp",
@@ -201,7 +209,7 @@ func TestAnXhttpEdgeTunnelsUnderTheSecretPathAndIsASiteElsewhere(t *testing.T) {
 	tcpEcho(t, sitePort, "site")
 	tcpEcho(t, strangerPort, "stranger")
 	m, pin := xhttpEnv(t, edgePort, local)
-	startXhttpEdge(t, m, sitePort)
+	_, _ = startXhttpEdge(t, m, sitePort)
 
 	for _, mode := range []string{"packet-up", "stream-up", "stream-one"} {
 		t.Run(mode, func(t *testing.T) {

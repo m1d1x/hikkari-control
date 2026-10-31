@@ -138,7 +138,7 @@ func udpEcho(t *testing.T, port int, tag string) {
 	}()
 }
 
-func startXray(t *testing.T, doc map[string]any) {
+func startXray(t *testing.T, doc map[string]any) *core.Instance {
 	t.Helper()
 	raw, err := json.Marshal(doc)
 	if err != nil {
@@ -156,6 +156,7 @@ func startXray(t *testing.T, doc map[string]any) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = inst.Close() })
+	return inst
 }
 
 // ask sends one datagram to the client's local door and waits for a reply.

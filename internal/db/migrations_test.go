@@ -79,7 +79,8 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 	}
 	// The baseline must contain ONLY the control plane: a forgotten chat,
 	// file or SFU table is a regression, even when all fleet queries work.
-	// The routing presets clients fetch are the control plane's too.
+	// The routing presets clients fetch are the control plane's too, and so
+	// are subscribers' access keys and what those keys carried.
 	rows, err := pool.Query(ctx, `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`)
 	if err != nil {
 		t.Fatal(err)
@@ -91,6 +92,7 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 			t.Fatal(err)
 		}
 		if name != "schema_migrations" && name != "hub_accounts" && name != "hub_subscriptions" &&
+			name != "hub_access_keys" && name != "hub_key_usage" &&
 			!strings.HasPrefix(name, "entry_") && !strings.HasPrefix(name, "admin_") && name != "admins" &&
 			name != "presets" && !strings.HasPrefix(name, "preset_") {
 			t.Errorf("non-control table in baseline: %s", name)
@@ -115,8 +117,8 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND confrelid = 'hub_accounts'::regclass`).Scan(&references); err != nil {
 		t.Fatal(err)
 	}
-	if references != 3 {
-		t.Errorf("account foreign keys: %d, want grants, fail reports and subscriptions", references)
+	if references != 5 {
+		t.Errorf("account foreign keys: %d, want grants, fail reports, subscriptions, access keys and key usage", references)
 	}
 	var cap int
 	if err := pool.QueryRow(ctx, `SELECT sum(daily_cap_cents + monthly_cap_cents) FROM entry_spend_caps`).Scan(&cap); err != nil {

@@ -73,6 +73,9 @@ func (s *Service) Add(ctx context.Context, name string) (string, error) {
 		`INSERT INTO hub_subscriptions (token_hash, account_id) VALUES ($1, $2)`, tokenHash(token), account); err != nil {
 		return "", err
 	}
+	if err := insertAccessKey(ctx, tx, account); err != nil {
+		return "", err
+	}
 	return token, tx.Commit(ctx)
 }
 
@@ -120,6 +123,10 @@ func (s *Service) LinksFor(ctx context.Context, token, engine string) ([]string,
 	if err != nil {
 		return nil, err
 	}
+	key, err := s.accessKey(ctx, account)
+	if err != nil {
+		return nil, err
+	}
 	b, err := s.batch.BundleFor(ctx, account, entry.GrantMeta{}, "")
 	if err != nil {
 		return nil, err
@@ -146,7 +153,7 @@ func (s *Service) LinksFor(ctx context.Context, token, engine string) ([]string,
 		if rec.Proto == entry.ProtoHysteria2 && engine != "xray" {
 			continue
 		}
-		link, err := Link(rec)
+		link, err := Link(withKey(rec, key))
 		if err == nil && nodes[rec.Name] != "" {
 			u, _ := url.Parse(link)
 			q := u.Query()

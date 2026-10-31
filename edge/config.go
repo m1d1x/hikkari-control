@@ -134,7 +134,7 @@ func (c Config) XrayConfig() map[string]any {
 
 	for i, cover := range c.Covers {
 		local := c.LocalPortBase + i
-		tag := "reality-" + cover
+		tag := realityTag(cover)
 		realityTags = append(realityTags, tag)
 		inbounds = append(inbounds, map[string]any{
 			"tag":      tag,
@@ -192,11 +192,15 @@ func (c Config) XrayConfig() map[string]any {
 	return doc
 }
 
-// withStats turns on Xray's per-inbound byte counters, which the pulse reads
-// (roadmap 42 П9.3). Inbound totals only: a per-user counter would key traffic
-// by the VLESS id a person dials with, which is the one thing an edge must not
-// be able to tell anyone — the whole point of §0.1 is that holding the machine
-// says nothing about who was on it.
+// realityTag is the inbound of one cover.
+func realityTag(cover string) string { return "reality-" + cover }
+
+// withStats turns on Xray's per-inbound byte counters and the per-user ones of
+// access keys, which the pulse reads (roadmap 42 П9.3, keys.go). A per-user
+// counter is keyed by the access key, a random string only the hub can tie to
+// an account; the shared credential carries no email and is counted in the
+// inbound totals alone. Holding the machine still says nothing about who was
+// on it (§0.1).
 //
 // Applied to every protocol's document through this one helper, so the three
 // cannot drift into counting different things.
@@ -206,6 +210,12 @@ func withStats(doc map[string]any) {
 		"system": map[string]any{
 			"statsInboundUplink":   true,
 			"statsInboundDownlink": true,
+		},
+		"levels": map[string]any{
+			fmt.Sprint(userLevel): map[string]any{
+				"statsUserUplink":   true,
+				"statsUserDownlink": true,
+			},
 		},
 	}
 }

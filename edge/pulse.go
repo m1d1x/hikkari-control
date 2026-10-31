@@ -7,11 +7,16 @@ package main
 // # What goes up, and what never does
 //
 // Counters, and nothing that identifies whoever made them. The edge reads
-// Xray's per-INBOUND byte totals, never its per-user ones: a per-user counter
-// is keyed by the VLESS id a person dials with, and an edge that kept those
-// would become the thing plan 42 §0.1 forbids — a machine whose seizure tells
-// you about the people who used it. Bytes and a connection count say how
-// loaded a box is and nothing about who loaded it.
+// Xray's per-inbound byte totals, and per access key (keys.go): a key is a
+// random string only the hub can tie to an account, so the counts let the hub
+// add up a subscription's traffic across relays while the box still holds
+// nothing that names a person (plan 42 §0.1). The shared credential is counted
+// in the inbound totals only.
+//
+// # The answer
+//
+// The hub answers with every access key granted to this relay, and the edge
+// makes its users exactly that list. No body (204) leaves the list as it is.
 //
 // # Totals, not deltas
 //
@@ -30,6 +35,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -118,11 +124,28 @@ type pulseBody struct {
 	CPUPct    float64 `json:"cpuPct"`
 	MemMB     int64   `json:"memMb"`
 	Version   string  `json:"version"`
+	// Boot names this run of the process: per-key totals count from it.
+	Boot string              `json:"boot,omitempty"`
+	Keys map[string]pulseKey `json:"keys,omitempty"`
 }
+
+type pulseKey struct {
+	Up   int64 `json:"up"`
+	Down int64 `json:"down"`
+}
+
+// pulseAnswer is the hub's reply, shared by contract with
+// internal/entry/pulse_api.go.
+type pulseAnswer struct {
+	Keys *[]string `json:"keys"`
+}
+
+// maxPulseAnswer bounds the reply: a key list of some thousands of keys.
+const maxPulseAnswer = 1 << 20
 
 // spawnPulse starts the reporting loop, if the box was given one. It returns
 // at once; the loop stops with ctx.
-func spawnPulse(ctx context.Context, inst *core.Instance, cfg pulseConfig) {
+func spawnPulse(ctx context.Context, inst *core.Instance, cfg pulseConfig, keys *keyring) {
 	counters, _ := inst.GetFeature(stats.ManagerType()).(stats.Manager)
 	if counters == nil {
 		// Xray without its stats manager: the config says to count and the
@@ -132,6 +155,7 @@ func spawnPulse(ctx context.Context, inst *core.Instance, cfg pulseConfig) {
 		return
 	}
 	started := time.Now()
+	boot := newBoot()
 	client := &http.Client{Timeout: pulseTimeout}
 
 	go func() {
@@ -143,8 +167,16 @@ func spawnPulse(ctx context.Context, inst *core.Instance, cfg pulseConfig) {
 				return
 			case <-t.C:
 				body := readPulse(counters, cfg, started)
-				if err := sendPulse(ctx, client, cfg, body); err != nil {
+				body.Boot = boot
+				answer, err := sendPulse(ctx, client, cfg, body)
+				if err != nil {
 					log.Printf("nekko-edge: pulse not delivered: %v", err)
+					continue
+				}
+				if answer.Keys != nil {
+					if err := keys.Set(ctx, *answer.Keys); err != nil {
+						log.Printf("nekko-edge: %v", err)
+					}
 				}
 			}
 		}
@@ -164,7 +196,19 @@ func readPulse(counters stats.Manager, cfg pulseConfig, started time.Time) pulse
 		CPUPct:    cpu,
 		MemMB:     mem,
 		Version:   cfg.version,
+		Keys:      keyTotals(counters),
 	}
+}
+
+// newBoot names one run of the process.
+func newBoot() string {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		// Without a random name the per-key totals of two runs could share a
+		// row; the time of the start still keeps them apart.
+		return fmt.Sprintf("%016x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(raw)
 }
 
 // inboundTotals sums every inbound's byte counters. Summed rather than
@@ -261,27 +305,34 @@ func establishedConns() int64 {
 	return n
 }
 
-// sendPulse delivers one report.
-func sendPulse(ctx context.Context, client *http.Client, cfg pulseConfig, body pulseBody) error {
+// sendPulse delivers one report and reads the hub's answer to it.
+func sendPulse(ctx context.Context, client *http.Client, cfg pulseConfig, body pulseBody) (pulseAnswer, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return err
+		return pulseAnswer{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, pulseTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.url, bytes.NewReader(raw))
 	if err != nil {
-		return err
+		return pulseAnswer{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.token)
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return pulseAnswer{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("hub answered %s", resp.Status)
+		return pulseAnswer{}, fmt.Errorf("hub answered %s", resp.Status)
 	}
-	return nil
+	var answer pulseAnswer
+	if resp.StatusCode == http.StatusNoContent {
+		return answer, nil
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxPulseAnswer)).Decode(&answer); err != nil {
+		return pulseAnswer{}, fmt.Errorf("hub answer: %w", err)
+	}
+	return answer, nil
 }

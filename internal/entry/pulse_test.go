@@ -263,3 +263,57 @@ func TestProvisioningPlantsTheBoxsOwnPulseToken(t *testing.T) {
 		t.Fatalf("relay env:\n%s", env)
 	}
 }
+
+// relayKeysFake is the subscription side of a pulse.
+type relayKeysFake struct {
+	keys  []string
+	proto string
+	boot  string
+	usage map[string]KeyUsage
+}
+
+func (f *relayKeysFake) KeysOf(_ context.Context, _, proto string) ([]string, error) {
+	f.proto = proto
+	return f.keys, nil
+}
+
+func (f *relayKeysFake) RecordUsage(_ context.Context, _, boot string, usage map[string]KeyUsage) error {
+	f.boot, f.usage = boot, usage
+	return nil
+}
+
+// A pulse files its per-key totals and is answered with the relay's keys, in
+// the protocol of its box; without access keys the answer is empty (204), so
+// the relay leaves its list alone.
+func TestAPulseIsAnsweredWithTheRelaysKeys(t *testing.T) {
+	h := newHarness(t)
+	box, _ := h.box()
+	relay := h.relay(box, KindPersonal)
+	post := func() *httptest.ResponseRecorder {
+		mux := http.NewServeMux()
+		RegisterPulseRoutes(mux, h.svc, "s")
+		body := `{"relay":"` + relay + `","uptimeS":60,"boot":"00112233445566778899aabbccddeeff","keys":{"k1":{"up":5,"down":7}}}`
+		req := httptest.NewRequest("POST", "/api/v1/internal/entry-pulse", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+PulseToken("s", box))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := post(); rec.Code != http.StatusNoContent {
+		t.Fatalf("without keys: %d", rec.Code)
+	}
+
+	keys := &relayKeysFake{keys: []string{"k1", "k2"}}
+	h.svc.SetRelayKeys(keys)
+	rec := post()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d %s", rec.Code, rec.Body)
+	}
+	var answer pulseAnswer
+	if err := json.Unmarshal(rec.Body.Bytes(), &answer); err != nil || len(answer.Keys) != 2 {
+		t.Fatalf("answer %s %v", rec.Body, err)
+	}
+	if keys.proto == "" || keys.boot != "00112233445566778899aabbccddeeff" || keys.usage["k1"] != (KeyUsage{Up: 5, Down: 7}) {
+		t.Fatalf("filed %+v", keys)
+	}
+}

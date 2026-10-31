@@ -140,6 +140,9 @@ func XhttpConfigFromEnv(getenv func(string) string) (XhttpConfig, error) {
 	return c, errors.Join(errs...)
 }
 
+// xhttpTag is an XHTTP edge's one tunnel inbound.
+const xhttpTag = "xhttp"
+
 // XrayConfig renders the Xray JSON document of the tunnel half: an XHTTP
 // inbound on loopback, plaintext (TLS ends in the front), reachable only
 // through the front's secret path.
@@ -148,7 +151,7 @@ func (c XhttpConfig) XrayConfig() map[string]any {
 	for _, id := range c.Clients {
 		clients = append(clients, map[string]any{"id": id})
 	}
-	const tag = "xhttp"
+	const tag = xhttpTag
 	doc := map[string]any{
 		"log": map[string]any{"loglevel": c.LogLevel},
 		"inbounds": []map[string]any{{

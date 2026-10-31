@@ -23,9 +23,10 @@ import (
 	"strings"
 )
 
-// maxPulseBody bounds one pulse. A pulse is a dozen numbers; anything larger
+// maxPulseBody bounds one pulse: a dozen numbers plus a pair of totals per
+// access key on the relay. Room for some thousands of keys; anything larger
 // is not a pulse.
-const maxPulseBody = 4096
+const maxPulseBody = 1 << 20
 
 // pulseBody is the wire shape, shared by contract with edge/pulse.go. The edge
 // is a module of its own and cannot import this type, so the contract is the
@@ -41,6 +42,21 @@ type pulseBody struct {
 	CPUPct    float64 `json:"cpuPct"`
 	MemMB     int64   `json:"memMb"`
 	Version   string  `json:"version"`
+	// Boot and Keys: per-access-key totals of this edge run (pulse.go).
+	Boot string                  `json:"boot,omitempty"`
+	Keys map[string]pulseKeyBody `json:"keys,omitempty"`
+}
+
+type pulseKeyBody struct {
+	Up   int64 `json:"up"`
+	Down int64 `json:"down"`
+}
+
+// pulseAnswer is the reply to a pulse: every access key the relay must let
+// through, the whole list each time, so a relay that missed answers catches
+// up on the next one. No answer body (204) leaves the relay's list as it is.
+type pulseAnswer struct {
+	Keys []string `json:"keys"`
 }
 
 // RegisterPulseRoutes mounts the relay pulse on the public mux, behind a
@@ -72,6 +88,8 @@ func RegisterPulseRoutes(mux *http.ServeMux, svc *Service, token string) {
 			CPUPct:    body.CPUPct,
 			MemMB:     body.MemMB,
 			Version:   body.Version,
+			Boot:      body.Boot,
+			Keys:      keyUsage(body.Keys),
 		})
 		switch {
 		case errors.Is(err, ErrPulseRefused):
@@ -84,7 +102,29 @@ func RegisterPulseRoutes(mux *http.ServeMux, svc *Service, token string) {
 			applog.Error(r.Context(), "entry", "relay pulse not recorded", applog.F("relay", body.Relay), applog.F("err", err.Error()))
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		default:
-			w.WriteHeader(http.StatusNoContent)
+			keys, ok, err := svc.PulseKeys(r.Context(), body.Relay)
+			switch {
+			case err != nil:
+				// The pulse is filed; only the key list failed. The relay
+				// keeps the list it has until the next pulse.
+				applog.Error(r.Context(), "entry", "relay keys not read", applog.F("relay", body.Relay), applog.F("err", err.Error()))
+				w.WriteHeader(http.StatusNoContent)
+			case ok:
+				writeJSON(w, http.StatusOK, pulseAnswer{Keys: keys})
+			default:
+				w.WriteHeader(http.StatusNoContent)
+			}
 		}
 	})
+}
+
+func keyUsage(keys map[string]pulseKeyBody) map[string]KeyUsage {
+	if len(keys) == 0 {
+		return nil
+	}
+	out := make(map[string]KeyUsage, len(keys))
+	for k, v := range keys {
+		out[k] = KeyUsage{Up: v.Up, Down: v.Down}
+	}
+	return out
 }
