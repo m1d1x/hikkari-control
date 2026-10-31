@@ -3,8 +3,8 @@ secrets/
 *.agekey
 keys.txt
 
-# Local data
-data/
+# Local data (the repo root's; admin/src/components/data is source)
+/data/
 *.db
 *.db-wal
 *.db-shm

@@ -141,11 +141,13 @@ func xhttpClient(t *testing.T, edgePort int, pin, mode string, dests map[string]
 	doors := map[string]int{}
 	var inbounds []map[string]any
 	for name, port := range dests {
+		// The address, not "localhost": the echoes listen on IPv4 only, and an
+		// exit that resolved localhost to ::1 would find nobody there.
 		door := freePort(t, "tcp")
 		doors[name] = door
 		inbounds = append(inbounds, map[string]any{
 			"tag": "door-" + name, "listen": "127.0.0.1", "port": door, "protocol": "dokodemo-door",
-			"settings": map[string]any{"address": "localhost", "port": port, "network": "tcp"},
+			"settings": map[string]any{"address": "127.0.0.1", "port": port, "network": "tcp"},
 		})
 	}
 	startXray(t, map[string]any{

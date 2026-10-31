@@ -156,9 +156,9 @@ func (h *harness) xhttpBoxNoDomain(t *testing.T) (name, addr string) {
 	t.Helper()
 	u := uuid.New()
 	name = fmt.Sprintf("x%d", uint64(u[0])<<24|uint64(u[1])<<16|uint64(u[2])<<8|uint64(u[3]))
-	// 198.18.0.0/15 (benchmarking range): ~130k addresses, so boxes left by
-	// earlier runs in the test database do not collide on one /24.
-	addr = fmt.Sprintf("198.%d.%d.%d", 18+int(u[4])%2, u[5], int(u[6])%254+1)
+	// 48 random bits of network: boxes left by earlier runs in the test
+	// database, and the many one run makes, never share an address.
+	addr = testAddr([6]byte(u[4:10]), 1)
 	if err := h.svc.CreateBox(context.Background(), BoxSpec{
 		Name: name, Address: addr, Provider: "vultr", Location: "amsterdam", Proto: ProtoVlessXhttp,
 	}); err != nil {
