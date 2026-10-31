@@ -457,7 +457,8 @@ func (c *Client) Plans(ctx context.Context) ([]Plan, error) {
 			RAMMB:             f.RAM,
 			DiskGB:            f.Disk,
 			BandwidthGB:       10000,
-			MonthlyCents:      0, // OpenStack flavors do not define price in Nova API
+			// OpenStack flavors do not define price in Nova API; estimate monthly cents so budget caps & catalog selection work
+			MonthlyCents:      99 + f.VCPUs*100 + (f.RAM/1024)*50,
 			OverageCentsPerTB: 0,
 			Regions:           c.regions,
 		})
