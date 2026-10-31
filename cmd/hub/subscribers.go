@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/m1d1x/hikkari-control/internal/config"
+	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 	"github.com/m1d1x/hikkari-control/internal/entry"
 	"github.com/m1d1x/hikkari-control/internal/subscription"
 )
@@ -22,8 +22,8 @@ const gib = 1 << 30
 //
 // subscriber-revoke <name>: the link stops working at once.
 //
-// plan-set <id> <days> <traffic GiB, 0 for none> <price cents>: a plan on
-// sale, or changed; subscriptions already sold keep their terms.
+// plan-set <id> <days> <traffic GiB, 0 for none> <price kopecks> <title>: a
+// plan on sale, or changed; subscriptions already sold keep their terms.
 //
 // plan-retire <id>: the plan is no longer sold.
 func runSubscriber(cmd string, args []string) {
@@ -33,10 +33,15 @@ func runSubscriber(cmd string, args []string) {
 	}
 	want := map[string]int{
 		"subscriber-add": 2, "subscriber-renew": 2, "subscriber-status": 1, "subscriber-revoke": 1,
-		"plan-set": 4, "plan-retire": 1,
+		"plan-set": 5, "plan-retire": 1,
 	}[cmd]
 	if len(args) != want {
 		fail(fmt.Errorf("wrong arguments, see cmd/hub/subscribers.go"))
+	}
+	// Tokens are sealed with the content key, so the link can be shown
+	// again (internal/subscription.URL).
+	if err := cryptobox.Configure(os.Getenv); err != nil {
+		fail(err)
 	}
 	ctx, cancel, pool := adminCLIPool()
 	defer cancel()
@@ -52,7 +57,7 @@ func runSubscriber(cmd string, args []string) {
 		if err != nil {
 			fail(err)
 		}
-		fmt.Println(config.Default().SubURL() + "/sub/" + token)
+		fmt.Println(subscription.LinkURL(token))
 	case "subscriber-renew":
 		if err := subs.Renew(ctx, args[0], args[1]); err != nil {
 			fail(err)
@@ -78,12 +83,12 @@ func runSubscriber(cmd string, args []string) {
 		fmt.Println("revoked")
 	case "plan-set":
 		var n [3]int64
-		for i, a := range args[1:] {
+		for i, a := range args[1:4] {
 			if n[i], err = strconv.ParseInt(a, 10, 64); err != nil {
 				fail(fmt.Errorf("%q is not a number", a))
 			}
 		}
-		if err := subs.SetPlan(ctx, subscription.Plan{ID: args[0], Days: int(n[0]), TrafficBytes: n[1] * gib, PriceCents: int(n[2])}); err != nil {
+		if err := subs.SetPlan(ctx, subscription.Plan{ID: args[0], Title: args[4], Days: int(n[0]), TrafficBytes: n[1] * gib, PriceCents: int(n[2])}); err != nil {
 			fail(err)
 		}
 		fmt.Println("plan set")

@@ -17,6 +17,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/m1d1x/hikkari-control/internal/applog"
+	"github.com/m1d1x/hikkari-control/internal/config"
+	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 	"github.com/m1d1x/hikkari-control/internal/db"
 	"github.com/m1d1x/hikkari-control/internal/entry"
 )
@@ -47,43 +49,62 @@ var nameRe = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 var ErrUnknown = errors.New("subscription: unknown token")
 
 // Add creates an account for name and a subscription for it on plan's first
-// period, and returns the token — shown once, never stored.
+// period, and returns the token — shown once, never stored in the clear.
 func (s *Service) Add(ctx context.Context, name, plan string) (string, error) {
-	if !nameRe.MatchString(name) {
-		return "", fmt.Errorf("subscription: name %q: want [a-z0-9_-], 1..32", name)
-	}
-	raw := make([]byte, 24)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	token := base64.RawURLEncoding.EncodeToString(raw)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
-	p, err := s.plan(ctx, tx, plan)
+	if _, err := s.plan(ctx, tx, plan, true); err != nil {
+		return "", err
+	}
+	token, _, err := s.AddIn(ctx, tx, name, plan, "")
 	if err != nil {
 		return "", err
+	}
+	return token, tx.Commit(ctx)
+}
+
+// AddIn is Add inside the caller's transaction, so a payment and the
+// subscription it buys commit together (internal/billing): plan may have been
+// retired since it was bought. email is the buyer's, "" for none.
+func (s *Service) AddIn(ctx context.Context, tx pgx.Tx, name, plan, email string) (string, uuid.UUID, error) {
+	if !nameRe.MatchString(name) {
+		return "", uuid.Nil, fmt.Errorf("subscription: name %q: want [a-z0-9_-], 1..32", name)
+	}
+	raw := make([]byte, 24)
+	if _, err := rand.Read(raw); err != nil {
+		return "", uuid.Nil, err
+	}
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	sealed, err := cryptobox.EncryptString(token)
+	if err != nil {
+		return "", uuid.Nil, fmt.Errorf("subscription: seal token: %w", err)
+	}
+	p, err := s.plan(ctx, tx, plan, false)
+	if err != nil {
+		return "", uuid.Nil, err
 	}
 	// The entry pool grants relays to accounts (entry_grants.account_id →
 	// hub_accounts.id), independent of administrator credentials.
 	var account uuid.UUID
 	if err := tx.QueryRow(ctx,
-		`INSERT INTO hub_accounts (name) VALUES ($1) RETURNING id`, name).Scan(&account); err != nil {
-		return "", fmt.Errorf("subscription: account %q: %w", name, err)
+		`INSERT INTO hub_accounts (name, email) VALUES ($1, nullif($2, '')) RETURNING id`, name, email).Scan(&account); err != nil {
+		return "", uuid.Nil, fmt.Errorf("subscription: account %q: %w", name, err)
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO hub_subscriptions (token_hash, account_id) VALUES ($1, $2)`, tokenHash(token), account); err != nil {
-		return "", err
+		`INSERT INTO hub_subscriptions (token_hash, token_sealed, account_id) VALUES ($1, $2, $3)`,
+		tokenHash(token), sealed, account); err != nil {
+		return "", uuid.Nil, err
 	}
 	if err := insertAccessKey(ctx, tx, account); err != nil {
-		return "", err
+		return "", uuid.Nil, err
 	}
 	if err := s.startPeriod(ctx, tx, account, p); err != nil {
-		return "", err
+		return "", uuid.Nil, err
 	}
-	return token, tx.Commit(ctx)
+	return token, account, nil
 }
 
 // Revoke ends name's subscription. The account and its grants stay, so the
@@ -104,6 +125,38 @@ func (s *Service) Revoke(ctx context.Context, name string) error {
 func tokenHash(token string) []byte {
 	h := sha256.Sum256([]byte(token))
 	return h[:]
+}
+
+// Account is the account a live-or-ended, unrevoked subscription token
+// belongs to.
+func (s *Service) Account(ctx context.Context, token string) (uuid.UUID, error) {
+	return s.account(ctx, token)
+}
+
+// URL is the account's subscription link, read back from the sealed token.
+// ErrUnknown for a revoked subscription or one issued before tokens were
+// sealed: its link exists only where it was handed out.
+func (s *Service) URL(ctx context.Context, account uuid.UUID) (string, error) {
+	var sealed []byte
+	err := s.pool.QueryRow(ctx, `
+		SELECT token_sealed FROM hub_subscriptions
+		WHERE account_id = $1 AND revoked_at IS NULL AND token_sealed IS NOT NULL`, account).Scan(&sealed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrUnknown
+	}
+	if err != nil {
+		return "", err
+	}
+	token, err := cryptobox.DecryptString(sealed)
+	if err != nil {
+		return "", fmt.Errorf("subscription: open token: %w", err)
+	}
+	return LinkURL(token), nil
+}
+
+// LinkURL is the subscription link of token.
+func LinkURL(token string) string {
+	return config.Default().SubURL() + "/sub/" + token
 }
 
 func (s *Service) account(ctx context.Context, token string) (uuid.UUID, error) {

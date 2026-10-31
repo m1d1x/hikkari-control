@@ -23,6 +23,8 @@ import (
 // Plan is one thing sold.
 type Plan struct {
 	ID string
+	// Title is what the landing shows the plan as.
+	Title string
 	// Days is the length of one period.
 	Days int
 	// TrafficBytes is the period's allowance; 0 is no limit.
@@ -42,11 +44,11 @@ func (s *Service) SetPlan(ctx context.Context, p Plan) error {
 		return fmt.Errorf("subscription: plan %+v", p)
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO hub_plans (id, days, traffic_bytes, price_cents) VALUES ($1, $2, $3, $4)
+		INSERT INTO hub_plans (id, title, days, traffic_bytes, price_cents) VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (id) DO UPDATE
-		SET days = EXCLUDED.days, traffic_bytes = EXCLUDED.traffic_bytes,
+		SET title = EXCLUDED.title, days = EXCLUDED.days, traffic_bytes = EXCLUDED.traffic_bytes,
 		    price_cents = EXCLUDED.price_cents, retired_at = NULL`,
-		p.ID, p.Days, p.TrafficBytes, p.PriceCents)
+		p.ID, p.Title, p.Days, p.TrafficBytes, p.PriceCents)
 	return err
 }
 
@@ -62,11 +64,32 @@ func (s *Service) RetirePlan(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *Service) plan(ctx context.Context, tx pgx.Tx, id string) (Plan, error) {
+// Plans is every plan on sale, shortest first.
+func (s *Service) Plans(ctx context.Context) ([]Plan, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, title, days, traffic_bytes, price_cents FROM hub_plans
+		WHERE retired_at IS NULL ORDER BY days, id`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Plan, error) {
+		var p Plan
+		return p, r.Scan(&p.ID, &p.Title, &p.Days, &p.TrafficBytes, &p.PriceCents)
+	})
+}
+
+// PlanIn is the plan on sale under id, read inside tx.
+func (s *Service) PlanIn(ctx context.Context, tx pgx.Tx, id string) (Plan, error) {
+	return s.plan(ctx, tx, id, true)
+}
+
+// plan reads a plan; onSale refuses a retired one. What was bought while a
+// plan was on sale is still delivered on it after it is retired.
+func (s *Service) plan(ctx context.Context, tx pgx.Tx, id string, onSale bool) (Plan, error) {
 	p := Plan{ID: id}
 	err := tx.QueryRow(ctx,
-		`SELECT days, traffic_bytes, price_cents FROM hub_plans WHERE id = $1 AND retired_at IS NULL`, id).
-		Scan(&p.Days, &p.TrafficBytes, &p.PriceCents)
+		`SELECT title, days, traffic_bytes, price_cents FROM hub_plans WHERE id = $1 AND ($2 = false OR retired_at IS NULL)`, id, onSale).
+		Scan(&p.Title, &p.Days, &p.TrafficBytes, &p.PriceCents)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Plan{}, ErrUnknownPlan
 	}
@@ -103,8 +126,7 @@ func (s *Service) Renew(ctx context.Context, name, plan string) error {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
-	p, err := s.plan(ctx, tx, plan)
-	if err != nil {
+	if _, err := s.plan(ctx, tx, plan, true); err != nil {
 		return err
 	}
 	var account uuid.UUID
@@ -114,10 +136,21 @@ func (s *Service) Renew(ctx context.Context, name, plan string) error {
 		}
 		return err
 	}
-	if err := s.startPeriod(ctx, tx, account, p); err != nil {
+	if err := s.RenewIn(ctx, tx, account, plan); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// RenewIn starts account's next period on plan inside the caller's
+// transaction (internal/billing), on sale or retired since it was bought.
+// ErrUnknown when the account has no unrevoked subscription.
+func (s *Service) RenewIn(ctx context.Context, tx pgx.Tx, account uuid.UUID, plan string) error {
+	p, err := s.plan(ctx, tx, plan, false)
+	if err != nil {
+		return err
+	}
+	return s.startPeriod(ctx, tx, account, p)
 }
 
 // Terms is where a subscription stands in its period.

@@ -54,6 +54,12 @@ services:
       PUBLIC_BASE_DOMAIN: ${PUBLIC_BASE_DOMAIN:-localhost}
       PUBLIC_API_HOST: ${PUBLIC_API_HOST:-localhost}
       PUBLIC_SUB_HOST: ${PUBLIC_SUB_HOST:-localhost}
+      # Payment provider (cmd/hub/billing.go): unset sells nothing, sandbox
+      # takes test payments on the hub's own page. A merchant's keys go to
+      # secrets/hub.env.
+      BILLING_PROVIDER: ${BILLING_PROVIDER:-}
+      # The landing's dev server, for checkout from it.
+      PUBLIC_WEB_EXTRA_ORIGINS: ${PUBLIC_WEB_EXTRA_ORIGINS:-}
     volumes:
       - hub-dd:/data
       - ./deploy/hub-downdetector.yaml:/etc/hub/downdetector.yaml:ro

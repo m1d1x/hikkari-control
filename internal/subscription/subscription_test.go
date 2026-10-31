@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 	"github.com/m1d1x/hikkari-control/internal/db"
 	"github.com/m1d1x/hikkari-control/internal/entry"
 )
@@ -127,6 +128,7 @@ func livePool(t *testing.T) db.Pool {
 	if err := db.RunMigrations(ctx, p); err != nil {
 		t.Fatal(err)
 	}
+	cryptobox.ConfigureEphemeralForTests()
 	return p
 }
 

@@ -19,6 +19,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/admin"
 	"github.com/m1d1x/hikkari-control/internal/analytics"
 	"github.com/m1d1x/hikkari-control/internal/auth"
+	"github.com/m1d1x/hikkari-control/internal/billing"
 	"github.com/m1d1x/hikkari-control/internal/config"
 	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 	"github.com/m1d1x/hikkari-control/internal/db"
@@ -172,6 +173,15 @@ func run() error {
 	mux.HandleFunc("GET /sub/{token}", subs.Handler())
 	// Relays learn subscribers' access keys from the answer to their pulse.
 	svc.SetRelayKeys(subs)
+	// Selling subscriptions (internal/billing): the landing's checkout and the
+	// payment provider's notifications.
+	payments, err := billingProvider(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("billing: %w", err)
+	}
+	billingSvc := billing.New(pool, subs, payments, config.Default().BaseURL()+"/pay/done")
+	billing.NewPublic(billingSvc, config.Default().AllWebOrigins()).Register(mux)
+	go billingSvc.Run(ctx, time.Minute)
 	if store != nil {
 		// Client telemetry (hikkari-client docs/TELEMETRY.md). Shares /v1/
 		// with the downdetector; the more specific pattern wins.
