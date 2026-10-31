@@ -85,6 +85,18 @@ func TestProductScreens_AgainstClickHouse(t *testing.T) {
 	if m.People.DAU != 3 || m.People.WAU != 3 || m.People.MAU != 3 || m.People.Stickiness == nil || *m.People.Stickiness != 100 {
 		t.Fatalf("dau/wau/mau: %+v", m.People)
 	}
+	if len(m.People.DAUTimeSeries.Data) != 30 {
+		t.Fatalf("dau series len: %d", len(m.People.DAUTimeSeries.Data))
+	}
+	if len(m.People.WAUTimeSeries.Data) != 12 {
+		t.Fatalf("wau series len: %d", len(m.People.WAUTimeSeries.Data))
+	}
+	if len(m.People.MAUTimeSeries.Data) != 6 {
+		t.Fatalf("mau series len: %d", len(m.People.MAUTimeSeries.Data))
+	}
+	if len(m.People.StickinessTimeSeries.Data) != 30 {
+		t.Fatalf("stickiness series len: %d", len(m.People.StickinessTimeSeries.Data))
+	}
 	if len(m.Buckets) != 24 || len(m.People.Series.Active) != 24 {
 		t.Fatalf("buckets: %d, series %d", len(m.Buckets), len(m.People.Series.Active))
 	}

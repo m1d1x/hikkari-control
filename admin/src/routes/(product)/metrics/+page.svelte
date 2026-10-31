@@ -1,6 +1,9 @@
 <script lang="ts">
 	import Chart from '$components/product/Chart.svelte';
 	import WinChips from '$components/product/WinChips.svelte';
+	import EChart from '$components/charts/EChart.svelte';
+	import EmptyChart from '$components/charts/EmptyChart.svelte';
+	import type { EChartsOption } from '$lib/utils/echarts';
 	import { fetchProductMetrics, type MetricsShare } from '$lib/api/product';
 	import { num, pct, secs } from '$lib/product/format';
 	import { Windowed } from '$lib/product/windowed.svelte';
@@ -22,6 +25,81 @@
 	const or = (v: number | null, f: (v: number) => string) => (v === null ? '—' : f(v));
 	const osColor = (s: MetricsShare) => OS_COLOR[s.key] ?? 'var(--text-3)';
 	const versionColor = (i: number) => VERSION_COLORS[i] ?? 'var(--text-3)';
+
+	function makeChart(
+		data: number[],
+		labels: string[],
+		color: string,
+		opts?: { compact?: boolean; unit?: string },
+	): EChartsOption {
+		const compact = opts?.compact ?? true;
+		const labelInterval = compact
+			? Math.max(Math.floor(labels.length / 8) - 1, 0)
+			: Math.max(Math.floor(labels.length / 6) - 1, 0);
+		return {
+			grid: { left: compact ? 36 : 48, right: 12, top: 12, bottom: 24 },
+			xAxis: {
+				type: 'category',
+				data: labels,
+				axisLabel: {
+					show: true,
+					fontSize: 10,
+					color: '#787878',
+					interval: labelInterval,
+				},
+				axisLine: { lineStyle: { color: '#3a3a3a' } },
+				axisTick: { show: false },
+			},
+			yAxis: {
+				type: 'value',
+				min: 0,
+				axisLabel: { fontSize: 10, color: '#787878' },
+				splitLine: { lineStyle: { color: '#2c2c2c' } },
+			},
+			tooltip: {
+				trigger: 'axis',
+				backgroundColor: '#262626',
+				borderColor: '#3a3a3a',
+				textStyle: { color: '#ededed', fontSize: 12 },
+				formatter: opts?.unit
+					? (params: any) => {
+							const p = Array.isArray(params) ? params[0] : params;
+							return `${p.axisValue}<br/>${p.value}${opts.unit}`;
+						}
+					: undefined,
+			},
+			series: [
+				{
+					type: 'line',
+					data,
+					smooth: false,
+					symbol: 'none',
+					lineStyle: { width: 1.5, color },
+					areaStyle: { opacity: 0.1, color },
+				},
+			],
+		};
+	}
+
+	let dauData = $derived(d?.people?.dauTimeSeries?.data ?? []);
+	let dauLabels = $derived(dauData.map((pt) => (pt.timestamp.length > 5 ? pt.timestamp.slice(5) : pt.timestamp)));
+	let dauValues = $derived(dauData.map((pt) => pt.value));
+	let dauChart = $derived(makeChart(dauValues, dauLabels, '#45b97c'));
+
+	let wauData = $derived(d?.people?.wauTimeSeries?.data ?? []);
+	let wauLabels = $derived(wauData.map((pt) => (pt.timestamp.length > 5 ? pt.timestamp.slice(5) : pt.timestamp)));
+	let wauValues = $derived(wauData.map((pt) => pt.value));
+	let wauChart = $derived(makeChart(wauValues, wauLabels, '#6192d4'));
+
+	let mauData = $derived(d?.people?.mauTimeSeries?.data ?? []);
+	let mauLabels = $derived(mauData.map((pt) => pt.timestamp));
+	let mauValues = $derived(mauData.map((pt) => pt.value));
+	let mauChart = $derived(makeChart(mauValues, mauLabels, '#b07cd8'));
+
+	let stickData = $derived(d?.people?.stickinessTimeSeries?.data ?? []);
+	let stickLabels = $derived(stickData.map((pt) => (pt.timestamp.length > 5 ? pt.timestamp.slice(5) : pt.timestamp)));
+	let stickValues = $derived(stickData.map((pt) => pt.value));
+	let stickinessChart = $derived(makeChart(stickValues, stickLabels, '#e8a838', { unit: '%' }));
 </script>
 
 <div class="head">
@@ -35,23 +113,66 @@
 {/if}
 
 {#if d}
-	<section class="card kpi-card">
-		<div class="kpi-grid">
-			<div class="kpi-item">
-				<span class="kpi-label">DAU <span class="dim">· 24 часа</span></span>
-				<div class="kpi-val">{num(d.people.dau)}</div>
+	<section class="audience-section">
+		<div class="audience-grid">
+			<div class="chart-card">
+				<div class="chart-header">
+					<div>
+						<h3 class="chart-title">DAU</h3>
+						<span class="chart-hint">уникальные за сутки · 30 дней</span>
+					</div>
+					<span class="chart-value mono">{num(d.people.dau)}</span>
+				</div>
+				{#if dauValues.length >= 1}
+					<EChart option={dauChart} height="150px" />
+				{:else}
+					<EmptyChart note="Нет данных" height="150px" />
+				{/if}
 			</div>
-			<div class="kpi-item">
-				<span class="kpi-label">WAU <span class="dim">· 7 дней</span></span>
-				<div class="kpi-val">{num(d.people.wau)}</div>
+
+			<div class="chart-card">
+				<div class="chart-header">
+					<div>
+						<h3 class="chart-title">WAU</h3>
+						<span class="chart-hint">уникальные за неделю · 12 недель</span>
+					</div>
+					<span class="chart-value mono">{num(d.people.wau)}</span>
+				</div>
+				{#if wauValues.length >= 1}
+					<EChart option={wauChart} height="150px" />
+				{:else}
+					<EmptyChart note="Нет данных" height="150px" />
+				{/if}
 			</div>
-			<div class="kpi-item">
-				<span class="kpi-label">MAU <span class="dim">· 30 дней</span></span>
-				<div class="kpi-val">{num(d.people.mau)}</div>
+
+			<div class="chart-card">
+				<div class="chart-header">
+					<div>
+						<h3 class="chart-title">MAU</h3>
+						<span class="chart-hint">уникальные за месяц · 6 месяцев</span>
+					</div>
+					<span class="chart-value mono">{num(d.people.mau)}</span>
+				</div>
+				{#if mauValues.length >= 1}
+					<EChart option={mauChart} height="150px" />
+				{:else}
+					<EmptyChart note="Нет данных" height="150px" />
+				{/if}
 			</div>
-			<div class="kpi-item">
-				<span class="kpi-label">Липкость <span class="dim">· DAU / MAU</span></span>
-				<div class="kpi-val">{or(d.people.stickiness, pct)}</div>
+
+			<div class="chart-card">
+				<div class="chart-header">
+					<div>
+						<h3 class="chart-title">Липкость</h3>
+						<span class="chart-hint">DAU / MAU · 30 дней</span>
+					</div>
+					<span class="chart-value mono">{or(d.people.stickiness, pct)}</span>
+				</div>
+				{#if stickValues.length >= 1}
+					<EChart option={stickinessChart} height="150px" />
+				{:else}
+					<EmptyChart note="Нет данных" height="150px" />
+				{/if}
 			</div>
 		</div>
 	</section>
@@ -159,43 +280,67 @@
 {/snippet}
 
 <style>
-	.kpi-card {
-		padding: 16px 20px;
+	.audience-section {
+		margin-bottom: 24px;
 	}
 
-	.kpi-grid {
+	.audience-grid {
 		display: grid;
 		grid-template-columns: repeat(4, 1fr);
-		gap: 20px;
+		gap: 16px;
 	}
 
-	.kpi-item {
+	.chart-card {
+		background: var(--card);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		padding: 16px;
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
 	}
 
-	.kpi-label {
+	.chart-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
+		margin-bottom: 12px;
+	}
+
+	.chart-title {
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--text);
+		margin: 0;
+	}
+
+	.chart-hint {
 		font-size: 11px;
-		font-weight: 500;
-		color: var(--text-2);
-		letter-spacing: 0.02em;
+		color: var(--text-3);
+		display: block;
+		margin-top: 2px;
 	}
 
-	.kpi-val {
+	.chart-value {
 		font-family: var(--mono);
 		font-variant-numeric: tabular-nums;
-		font-size: 26px;
+		font-size: 22px;
 		font-weight: 600;
 		letter-spacing: -0.02em;
 		color: var(--text);
 		line-height: 1.1;
 	}
 
-	@media (max-width: 720px) {
-		.kpi-grid {
+	@media (max-width: 1100px) {
+		.audience-grid {
 			grid-template-columns: repeat(2, 1fr);
 			gap: 14px;
+		}
+	}
+
+	@media (max-width: 640px) {
+		.audience-grid {
+			grid-template-columns: 1fr;
+			gap: 12px;
 		}
 	}
 

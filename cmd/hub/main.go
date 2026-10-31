@@ -29,6 +29,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/presets"
 	"github.com/m1d1x/hikkari-control/internal/probesink"
 	"github.com/m1d1x/hikkari-control/internal/subscription"
+	"github.com/m1d1x/hikkari-control/internal/support"
 	"github.com/m1d1x/hikkari-control/internal/telemetry"
 )
 
@@ -194,6 +195,11 @@ func run() error {
 	billingSvc := billing.New(pool, subs, payments, config.Default().BaseURL(), outbox)
 	billing.NewPublic(billingSvc, config.Default().AllWebOrigins()).Register(mux)
 	go billingSvc.Run(ctx, time.Minute)
+
+	// Support reports (tickets) from clients
+	supportStore := support.NewStore(pool)
+	supportLimiter := support.NewLimiter(5, 10*time.Minute)
+	support.RegisterPublicRoutes(mux, supportStore, supportLimiter)
 	if store != nil {
 		// Client telemetry (hikkari-client docs/TELEMETRY.md). Shares /v1/
 		// with the downdetector; the more specific pattern wins.
@@ -277,6 +283,7 @@ func run() error {
 		func(next http.HandlerFunc) http.HandlerFunc {
 			return admin.RequireAdmin(adminKeys.Public, pool, admin.RequireOwner(admin.RequireStepUp(next)))
 		})
+	support.RegisterAdminRoutes(adminMux, supportStore, adminSecurity)
 
 	port := os.Getenv("PORT")
 	if port == "" {

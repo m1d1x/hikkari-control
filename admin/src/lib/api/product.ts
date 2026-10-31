@@ -6,6 +6,16 @@ import type { Win } from '$lib/product/format';
 // is an install: a random per-install pseudonym, never an account. A figure
 // with no rows behind it is null, not zero.
 
+export interface TsPoint<T = number> {
+	timestamp: string;
+	value: T;
+}
+
+export interface TimeSeries<T = number> {
+	label: string;
+	data: TsPoint<T>[];
+}
+
 export interface MetricsShare {
 	key: string;
 	installs: number;
@@ -27,6 +37,10 @@ export interface ProductMetrics {
 		wau: number;
 		mau: number;
 		stickiness: number | null;
+		dauTimeSeries?: TimeSeries<number>;
+		wauTimeSeries?: TimeSeries<number>;
+		mauTimeSeries?: TimeSeries<number>;
+		stickinessTimeSeries?: TimeSeries<number>;
 		series: { active: number[]; fresh: number[] };
 	};
 	connect: {

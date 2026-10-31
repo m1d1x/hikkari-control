@@ -55,16 +55,40 @@ type productMetrics struct {
 	Versions  []metricsShare `json:"versions"`
 }
 
+type tsPoint struct {
+	Timestamp string `json:"timestamp"`
+	Value     uint64 `json:"value"`
+}
+
+type tsPointFloat struct {
+	Timestamp string  `json:"timestamp"`
+	Value     float64 `json:"value"`
+}
+
+type timeSeries struct {
+	Label string    `json:"label"`
+	Data  []tsPoint `json:"data"`
+}
+
+type timeSeriesFloat struct {
+	Label string         `json:"label"`
+	Data  []tsPointFloat `json:"data"`
+}
+
 type metricsPeople struct {
-	Active     uint64        `json:"active"`
-	Fresh      uint64        `json:"fresh"`
-	Returning  uint64        `json:"returning"`
-	Total      uint64        `json:"total"`
-	DAU        uint64        `json:"dau"`
-	WAU        uint64        `json:"wau"`
-	MAU        uint64        `json:"mau"`
-	Stickiness *float64      `json:"stickiness"`
-	Series     metricsSeries `json:"series"`
+	Active               uint64          `json:"active"`
+	Fresh                uint64          `json:"fresh"`
+	Returning            uint64          `json:"returning"`
+	Total                uint64          `json:"total"`
+	DAU                  uint64          `json:"dau"`
+	WAU                  uint64          `json:"wau"`
+	MAU                  uint64          `json:"mau"`
+	Stickiness           *float64        `json:"stickiness"`
+	DAUTimeSeries        timeSeries      `json:"dauTimeSeries"`
+	WAUTimeSeries        timeSeries      `json:"wauTimeSeries"`
+	MAUTimeSeries        timeSeries      `json:"mauTimeSeries"`
+	StickinessTimeSeries timeSeriesFloat `json:"stickinessTimeSeries"`
+	Series               metricsSeries   `json:"series"`
 }
 
 type metricsSeries struct {
@@ -135,10 +159,16 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 		Window:        win.Name,
 		BucketSeconds: int(win.Step.Seconds()),
 		Buckets:       win.buckets(since),
-		People: metricsPeople{Series: metricsSeries{
-			Active: make([]uint64, win.N),
-			Fresh:  make([]uint64, win.N),
-		}},
+		People: metricsPeople{
+			DAUTimeSeries:        timeSeries{Label: "DAU", Data: []tsPoint{}},
+			WAUTimeSeries:        timeSeries{Label: "WAU", Data: []tsPoint{}},
+			MAUTimeSeries:        timeSeries{Label: "MAU", Data: []tsPoint{}},
+			StickinessTimeSeries: timeSeriesFloat{Label: "Stickiness", Data: []tsPointFloat{}},
+			Series: metricsSeries{
+				Active: make([]uint64, win.N),
+				Fresh:  make([]uint64, win.N),
+			},
+		},
 		Platforms: []metricsShare{},
 		Downloads: metricsDownloads{Platforms: []metricsShare{}},
 		Versions:  []metricsShare{},
@@ -249,6 +279,133 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 	out.People.MAU = mau
 	if mau > 0 {
 		out.People.Stickiness = ptr(float64(dau) / float64(mau) * 100)
+	}
+
+	// DAU series: 30 days
+	if dauRows, err := h.analytics.Query(ctx, `
+		WITH days AS (
+			SELECT toDate(?) - INTERVAL number DAY AS d
+			FROM numbers(30)
+		),
+		daily AS (
+			SELECT toDate(ts) AS d, uniq(install) AS cnt
+			FROM telemetry_events
+			WHERE ts >= ? AND ts < ? AND install != ''
+			GROUP BY d
+		)
+		SELECT days.d, COALESCE(daily.cnt, 0)
+		FROM days
+		LEFT JOIN daily ON daily.d = days.d
+		ORDER BY days.d`,
+		now, now.Add(-30*24*time.Hour), now); err == nil {
+		for dauRows.Next() {
+			var d time.Time
+			var cnt uint64
+			if err := dauRows.Scan(&d, &cnt); err == nil {
+				out.People.DAUTimeSeries.Data = append(out.People.DAUTimeSeries.Data, tsPoint{
+					Timestamp: d.Format("2006-01-02"),
+					Value:     cnt,
+				})
+			}
+		}
+		dauRows.Close()
+	}
+
+	// WAU series: 12 weeks
+	if wauRows, err := h.analytics.Query(ctx, `
+		WITH weeks AS (
+			SELECT toMonday(toDate(?) - INTERVAL number WEEK) AS w
+			FROM numbers(12)
+		),
+		weekly AS (
+			SELECT toMonday(ts) AS w, uniq(install) AS cnt
+			FROM telemetry_events
+			WHERE ts >= ? AND ts < ? AND install != ''
+			GROUP BY w
+		)
+		SELECT DISTINCT weeks.w, COALESCE(weekly.cnt, 0)
+		FROM weeks
+		LEFT JOIN weekly ON weekly.w = weeks.w
+		ORDER BY weeks.w`,
+		now, now.Add(-12*7*24*time.Hour), now); err == nil {
+		for wauRows.Next() {
+			var w time.Time
+			var cnt uint64
+			if err := wauRows.Scan(&w, &cnt); err == nil {
+				out.People.WAUTimeSeries.Data = append(out.People.WAUTimeSeries.Data, tsPoint{
+					Timestamp: w.Format("2006-01-02"),
+					Value:     cnt,
+				})
+			}
+		}
+		wauRows.Close()
+	}
+
+	// MAU series: 6 months
+	if mauRows, err := h.analytics.Query(ctx, `
+		WITH months AS (
+			SELECT toStartOfMonth(addMonths(toDate(?), -number)) AS m
+			FROM numbers(6)
+		),
+		monthly AS (
+			SELECT toStartOfMonth(ts) AS m, uniq(install) AS cnt
+			FROM telemetry_events
+			WHERE ts >= ? AND ts < ? AND install != ''
+			GROUP BY m
+		)
+		SELECT DISTINCT months.m, COALESCE(monthly.cnt, 0)
+		FROM months
+		LEFT JOIN monthly ON monthly.m = months.m
+		ORDER BY months.m`,
+		now, now.Add(-180*24*time.Hour), now); err == nil {
+		for mauRows.Next() {
+			var m time.Time
+			var cnt uint64
+			if err := mauRows.Scan(&m, &cnt); err == nil {
+				out.People.MAUTimeSeries.Data = append(out.People.MAUTimeSeries.Data, tsPoint{
+					Timestamp: m.Format("2006-01"),
+					Value:     cnt,
+				})
+			}
+		}
+		mauRows.Close()
+	}
+
+	// Stickiness series: 30 days
+	if stickRows, err := h.analytics.Query(ctx, `
+		WITH days AS (
+			SELECT toDate(?) - INTERVAL number DAY AS d
+			FROM numbers(30)
+		),
+		mau AS (
+			SELECT uniq(install) AS cnt
+			FROM telemetry_events
+			WHERE ts >= ? AND ts < ? AND install != ''
+		),
+		daily AS (
+			SELECT toDate(ts) AS d, uniq(install) AS dau_cnt
+			FROM telemetry_events
+			WHERE ts >= ? AND ts < ? AND install != ''
+			GROUP BY d
+		)
+		SELECT days.d,
+			IF(mau.cnt > 0, round(COALESCE(daily.dau_cnt, 0) * 100.0 / mau.cnt, 1), 0) AS stick
+		FROM days
+		CROSS JOIN mau
+		LEFT JOIN daily ON daily.d = days.d
+		ORDER BY days.d`,
+		now, now.Add(-30*24*time.Hour), now, now.Add(-30*24*time.Hour), now); err == nil {
+		for stickRows.Next() {
+			var d time.Time
+			var stick float64
+			if err := stickRows.Scan(&d, &stick); err == nil {
+				out.People.StickinessTimeSeries.Data = append(out.People.StickinessTimeSeries.Data, tsPointFloat{
+					Timestamp: d.Format("2006-01-02"),
+					Value:     stick,
+				})
+			}
+		}
+		stickRows.Close()
 	}
 
 	if out.Platforms, err = h.metricsShares(ctx, "os", false, since, end, out.People.Active, 0); err != nil {
