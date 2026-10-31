@@ -514,6 +514,7 @@ export interface CredentialField {
 	name: string;
 	label: string;
 	secret: boolean;
+	optional?: boolean;
 }
 
 export interface ProviderCheck {

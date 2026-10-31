@@ -53,7 +53,7 @@
 
 	const hosting = $derived(account.role === 'hosting');
 	const typedAny = $derived(Object.values(creds).some((v) => v.trim() !== ''));
-	const typedAll = $derived(account.fields.every((f) => (creds[f.name] ?? '').trim() !== ''));
+	const typedAll = $derived(account.fields.filter((f) => !f.optional).every((f) => (creds[f.name] ?? '').trim() !== ''));
 	// A different hoster's active catalog must never populate this account.
 	const offer = $derived(draftCatalog ?? (!typedAny && catalog?.kind === account.kind ? catalog : null));
 	const regions = $derived(
