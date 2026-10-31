@@ -4,6 +4,15 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>{{.Title}}</title>
+<style>
+  a, a:visited { color: #ff7eb9; text-decoration: none; }
+  *[x-apple-data-detectors],
+  .x-gmail-data-detectors,
+  .x-gmail-data-detectors * {
+    color: #ff7eb9 !important;
+    text-decoration: none !important;
+  }
+</style>
 </head>
 <body style="margin:0;padding:0;background-color:#0e0e10;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#ededee;-webkit-font-smoothing:antialiased;">
   <div style="display:none;max-height:0;overflow:hidden;">{{.Title}}</div>
@@ -23,7 +32,7 @@
           {{range .Codes}}
           <tr>
             <td style="padding:8px 36px;">
-              <div style="padding:14px 16px;background-color:#0e0e10;border:1px solid #4d2a3c;border-radius:14px;font-family:'IBM Plex Mono','SF Mono',Menlo,Consolas,monospace;font-size:13px;line-height:1.5;color:#ededee;word-break:break-all;">{{.}}</div>
+              <div style="padding:14px 16px;background-color:#0e0e10;border:1px solid #4d2a3c;border-radius:14px;font-family:'IBM Plex Mono','SF Mono',Menlo,Consolas,monospace;font-size:13px;line-height:1.5;color:#ff7eb9;word-break:break-all;"><a href="{{.}}" style="color:#ff7eb9;text-decoration:none;word-break:break-all;">{{.}}</a></div>
             </td>
           </tr>
           {{end}}
