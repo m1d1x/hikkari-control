@@ -4,6 +4,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/admin"
 	"github.com/m1d1x/hikkari-control/internal/auth"
 	"github.com/m1d1x/hikkari-control/internal/entry"
+	"github.com/m1d1x/hikkari-control/internal/presets"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,7 +17,8 @@ func TestFullAdminMuxRegistersWithoutConflicts(t *testing.T) {
 	gate := func(h http.HandlerFunc) http.HandlerFunc { return h }
 	admin.RegisterRoutes(mux, admin.NewHandlers(nil, nil), &auth.KeySet{}, nil)
 	entry.RegisterAdminRoutes(mux, entry.NewAdminHandlers(nil, nil, nil), gate, gate)
-	for _, path := range []string{"/api/v1/admin/entry/machines", "/api/v1/admin/entry/fleet"} {
+	presets.RegisterAdminRoutes(mux, presets.NewAdminHandlers(nil, nil), gate, gate)
+	for _, path := range []string{"/api/v1/admin/entry/machines", "/api/v1/admin/entry/fleet", "/api/v1/admin/presets", "/api/v1/admin/presets/groups"} {
 		_, pattern := mux.Handler(&http.Request{Method: "GET", URL: &url.URL{Path: path}})
 		if pattern == "" {
 			t.Fatalf("route missing: %s", path)

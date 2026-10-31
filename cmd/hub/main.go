@@ -23,6 +23,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 	"github.com/m1d1x/hikkari-control/internal/db"
 	"github.com/m1d1x/hikkari-control/internal/entry"
+	"github.com/m1d1x/hikkari-control/internal/presets"
 	"github.com/m1d1x/hikkari-control/internal/probesink"
 	"github.com/m1d1x/hikkari-control/internal/subscription"
 	"github.com/m1d1x/hikkari-control/internal/telemetry"
@@ -215,6 +216,15 @@ func run() error {
 	if store != nil {
 		admin.RegisterRoutes(adminMux, admin.NewHandlers(pool, store), adminKeys, pool)
 	}
+	// Routing presets (hikkari-client engine/core/presets): editing reaches
+	// no device; what changes what devices are served is the owner's.
+	presets.RegisterAdminRoutes(adminMux, presets.NewAdminHandlers(presets.NewStore(pool), pool),
+		func(next http.HandlerFunc) http.HandlerFunc {
+			return admin.RequireAdmin(adminKeys.Public, pool, next)
+		},
+		func(next http.HandlerFunc) http.HandlerFunc {
+			return admin.RequireAdmin(adminKeys.Public, pool, admin.RequireOwner(next))
+		})
 	entry.RegisterAdminRoutes(adminMux, entry.NewAdminHandlers(svc, prov, pool),
 		func(next http.HandlerFunc) http.HandlerFunc {
 			return admin.RequireAdmin(adminKeys.Public, pool, admin.RequireOwner(next))
