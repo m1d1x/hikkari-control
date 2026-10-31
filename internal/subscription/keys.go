@@ -78,15 +78,15 @@ func withKey(rec entry.RelayRecord, k accessKey) entry.RelayRecord {
 	return rec
 }
 
-// Relay keys: the keys of accounts with a live subscription and a live grant
-// on the relay, in the relay protocol's own credential.
+// Relay keys: the keys of accounts with a live subscription (plans.go) and a
+// live grant on the relay, in the relay protocol's own credential.
 const relayKeys = `
 	SELECT CASE WHEN $2 = 'hysteria2' THEN k.hy2_auth ELSE k.vless_id::text END
 	FROM entry_grants g
 	JOIN entry_relays r ON r.id = g.relay_id
 	JOIN hub_access_keys k ON k.account_id = g.account_id
 	WHERE r.name = $1 AND g.revoked_at IS NULL
-	  AND EXISTS (SELECT 1 FROM hub_subscriptions s WHERE s.account_id = g.account_id AND s.revoked_at IS NULL)
+	  AND EXISTS (SELECT 1 FROM hub_subscriptions s WHERE s.account_id = g.account_id AND ` + liveTerms + `)
 	ORDER BY 1`
 
 // KeysOf is the full list of keys relay must let through ([entry.RelayKeys]).

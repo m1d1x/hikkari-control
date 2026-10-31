@@ -46,9 +46,9 @@ var nameRe = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 // ErrUnknown: no subscription under that token.
 var ErrUnknown = errors.New("subscription: unknown token")
 
-// Add creates an account for name and a subscription for it, and returns the
-// token — shown once, never stored.
-func (s *Service) Add(ctx context.Context, name string) (string, error) {
+// Add creates an account for name and a subscription for it on plan's first
+// period, and returns the token — shown once, never stored.
+func (s *Service) Add(ctx context.Context, name, plan string) (string, error) {
 	if !nameRe.MatchString(name) {
 		return "", fmt.Errorf("subscription: name %q: want [a-z0-9_-], 1..32", name)
 	}
@@ -62,6 +62,10 @@ func (s *Service) Add(ctx context.Context, name string) (string, error) {
 		return "", err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+	p, err := s.plan(ctx, tx, plan)
+	if err != nil {
+		return "", err
+	}
 	// The entry pool grants relays to accounts (entry_grants.account_id →
 	// hub_accounts.id), independent of administrator credentials.
 	var account uuid.UUID
@@ -74,6 +78,9 @@ func (s *Service) Add(ctx context.Context, name string) (string, error) {
 		return "", err
 	}
 	if err := insertAccessKey(ctx, tx, account); err != nil {
+		return "", err
+	}
+	if err := s.startPeriod(ctx, tx, account, p); err != nil {
 		return "", err
 	}
 	return token, tx.Commit(ctx)
@@ -118,11 +125,14 @@ func (s *Service) Links(ctx context.Context, token string) ([]string, error) {
 // LinksFor opts into the full Hysteria2 contract only for an explicit Xray
 // subscription. A sing-box client must not import a link while dropping pins.
 func (s *Service) LinksFor(ctx context.Context, token, engine string) ([]string, error) {
-
 	account, err := s.account(ctx, token)
 	if err != nil {
 		return nil, err
 	}
+	return s.links(ctx, account, engine)
+}
+
+func (s *Service) links(ctx context.Context, account uuid.UUID, engine string) ([]string, error) {
 	key, err := s.accessKey(ctx, account)
 	if err != nil {
 		return nil, err
@@ -185,10 +195,18 @@ func (s *Service) Handler() http.HandlerFunc {
 			http.Error(w, "unsupported subscription engine", http.StatusBadRequest)
 			return
 		}
-		links, err := s.LinksFor(r.Context(), token, engine)
+		account, err := s.account(r.Context(), token)
 		if errors.Is(err, ErrUnknown) {
 			http.NotFound(w, r)
 			return
+		}
+		var links []string
+		var terms Terms
+		if err == nil {
+			terms, err = s.terms(r.Context(), account)
+		}
+		if err == nil {
+			links, err = s.links(r.Context(), account, engine)
 		}
 		if err != nil {
 			applog.Error(r.Context(), "subscription", "batch failed", applog.F("err", err.Error()))
@@ -199,6 +217,10 @@ func (s *Service) Handler() http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Profile-Title", "base64:"+base64.StdEncoding.EncodeToString([]byte("Hikkari")))
 		w.Header().Set("Profile-Update-Interval", "1")
+		// The links stay served after the period ends or the traffic runs
+		// out: the relays no longer let the key through (keys.go), and the
+		// client reads why from here.
+		w.Header().Set("Subscription-Userinfo", terms.userinfo())
 		_, _ = w.Write([]byte(base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))))
 	}
 }

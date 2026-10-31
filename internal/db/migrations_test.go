@@ -80,7 +80,7 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 	// The baseline must contain ONLY the control plane: a forgotten chat,
 	// file or SFU table is a regression, even when all fleet queries work.
 	// The routing presets clients fetch are the control plane's too, and so
-	// are subscribers' access keys and what those keys carried.
+	// are plans, subscribers' access keys and what those keys carried.
 	rows, err := pool.Query(ctx, `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`)
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 			t.Fatal(err)
 		}
 		if name != "schema_migrations" && name != "hub_accounts" && name != "hub_subscriptions" &&
-			name != "hub_access_keys" && name != "hub_key_usage" &&
+			name != "hub_access_keys" && name != "hub_key_usage" && name != "hub_plans" &&
 			!strings.HasPrefix(name, "entry_") && !strings.HasPrefix(name, "admin_") && name != "admins" &&
 			name != "presets" && !strings.HasPrefix(name, "preset_") {
 			t.Errorf("non-control table in baseline: %s", name)

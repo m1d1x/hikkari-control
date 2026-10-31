@@ -67,7 +67,7 @@ func TestARelayLearnsTheKeysOfItsLiveGrants(t *testing.T) {
 	ctx := context.Background()
 	a, b := "t-"+uuid.NewString()[:8], "t-"+uuid.NewString()[:8]
 	for _, n := range []string{a, b} {
-		if _, err := s.Add(ctx, n); err != nil {
+		if _, err := s.Add(ctx, n, unlimited(t, s)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -113,7 +113,7 @@ func TestUsageIsSummedPerSubscription(t *testing.T) {
 	s := New(pool, &fakeBatch{}, nil)
 	ctx := context.Background()
 	name := "t-" + uuid.NewString()[:8]
-	if _, err := s.Add(ctx, name); err != nil {
+	if _, err := s.Add(ctx, name, unlimited(t, s)); err != nil {
 		t.Fatal(err)
 	}
 	k := keyOf(t, pool, name)
@@ -150,7 +150,7 @@ func TestLinksCarryTheSubscribersKey(t *testing.T) {
 	s := New(pool, batch, []entry.Key{signer.Key()})
 	ctx := context.Background()
 	name := "t-" + uuid.NewString()[:8]
-	token, err := s.Add(ctx, name)
+	token, err := s.Add(ctx, name, unlimited(t, s))
 	if err != nil {
 		t.Fatal(err)
 	}

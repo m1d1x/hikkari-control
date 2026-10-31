@@ -139,7 +139,7 @@ func TestASubscriptionServesTheBatchAndStopsWhenRevoked(t *testing.T) {
 	s := New(pool, batch, []entry.Key{signer.Key()})
 	ctx := context.Background()
 	name := "t-" + uuid.NewString()[:8]
-	token, err := s.Add(ctx, name)
+	token, err := s.Add(ctx, name, unlimited(t, s))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestARecordUnderAnUnknownKeyIsLeftOut(t *testing.T) {
 	batch := &fakeBatch{envelopes: [][]byte{signed(t, theirs, realityRecord()), signed(t, ours, xhttpRecord())}}
 	s := New(pool, batch, []entry.Key{ours.Key()})
 	ctx := context.Background()
-	token, err := s.Add(ctx, "t-"+uuid.NewString()[:8])
+	token, err := s.Add(ctx, "t-"+uuid.NewString()[:8], unlimited(t, s))
 	if err != nil {
 		t.Fatal(err)
 	}
