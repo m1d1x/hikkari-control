@@ -78,7 +78,7 @@
 			await saveGroup(g);
 			db.groups = await fetchGroups();
 			fresh = false;
-			edit = structuredClone(db.groups.find((x) => x.id === g.id) ?? g);
+			edit = structuredClone($state.snapshot(db.groups.find((x) => x.id === g.id) ?? g));
 		});
 
 	const remove = () =>
