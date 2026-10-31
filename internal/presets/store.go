@@ -498,9 +498,10 @@ type Served struct {
 }
 
 // Serve picks the preset claiming the country, else the default, and its
-// next release for buckets below the stage, else current. ok is false when
-// there is nothing released for the device: it keeps its bundled catalog.
-func (s *Store) Serve(ctx context.Context, country string, bucket int) (Served, bool, error) {
+// next release for testers and for buckets below the stage, else current.
+// ok is false when there is nothing released for the device: it keeps its
+// bundled catalog.
+func (s *Store) Serve(ctx context.Context, country string, bucket int, tester bool) (Served, bool, error) {
 	var sv Served
 	var raw []byte
 	err := s.pool.QueryRow(ctx, `
@@ -513,8 +514,8 @@ func (s *Store) Serve(ctx context.Context, country string, bucket int) (Served, 
 		)
 		SELECT e.value, r.id, r.services
 		FROM e, p JOIN preset_releases r
-		  ON r.id = CASE WHEN p.next_release IS NOT NULL AND $2 < p.stage THEN p.next_release ELSE p.current_release END`,
-		country, bucket).Scan(&sv.Version, &sv.Release, &raw)
+		  ON r.id = CASE WHEN p.next_release IS NOT NULL AND ($3 OR $2 < p.stage) THEN p.next_release ELSE p.current_release END`,
+		country, bucket, tester).Scan(&sv.Version, &sv.Release, &raw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sv, false, nil
 	}

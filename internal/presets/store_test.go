@@ -54,7 +54,7 @@ func must(t *testing.T, err error) {
 
 func serve(t *testing.T, s *Store, country string, bucket int) (Served, bool) {
 	t.Helper()
-	sv, ok, err := s.Serve(context.Background(), country, bucket)
+	sv, ok, err := s.Serve(context.Background(), country, bucket, false)
 	must(t, err)
 	return sv, ok
 }
@@ -239,5 +239,34 @@ func TestCheckSides(t *testing.T) {
 	}
 	if err := checkSides([]string{"a"}, []string{"b", "b"}, []string{}); !errors.Is(err, ErrGroupTwice) {
 		t.Fatalf("expected ErrGroupTwice, got %v", err)
+	}
+}
+
+// A tester gets the release rolling out whatever its bucket, also at stage
+// 0, where nobody else does; with nothing rolling out it gets current.
+func TestTestersGetTheReleaseRollingOutAtAnyStage(t *testing.T) {
+	s, ctx := liveStore(t), context.Background()
+	must(t, s.PutGroup(ctx, steam()))
+	must(t, s.PutGroup(ctx, discord()))
+	must(t, s.CreatePreset(ctx, "ru", PresetDraft{Name: "россия", Default: true, Bypass: []string{"steam"}}))
+	v1, err := s.Release(ctx, "ru", 100, "owner")
+	must(t, err)
+	tester := func() int64 {
+		sv, _, err := s.Serve(ctx, "", 99, true)
+		must(t, err)
+		return sv.Release
+	}
+	if tester() != v1.ID {
+		t.Fatal("a tester with nothing rolling out did not get current")
+	}
+
+	must(t, s.UpdatePreset(ctx, "ru", PresetDraft{Name: "россия", Default: true, Bypass: []string{"steam"}, Proxy: []string{"discord"}}))
+	v2, err := s.Release(ctx, "ru", 0, "owner")
+	must(t, err)
+	if tester() != v2.ID {
+		t.Fatal("a tester did not get the release at stage 0")
+	}
+	if sv, _ := serve(t, s, "", 0); sv.Release != v1.ID {
+		t.Fatal("stage 0 reached a device that is not a tester")
 	}
 }

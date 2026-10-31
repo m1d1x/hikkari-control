@@ -40,6 +40,8 @@
 	let busy = $state(false);
 	let error = $state('');
 	let releaseStage = $state(5);
+	/** A share of devices as the admin reads it; 0 reaches testers only. */
+	const share = (st: number) => (st === 0 ? 'тестерам' : st === 100 ? 'всем' : `${st}%`);
 	/** Where the rollout slider points; follows the live stage until moved. */
 	let rolloutStage = $state(0);
 	let showJson = $state(false);
@@ -153,7 +155,7 @@
 	const json = $derived(p && latest(p) ? JSON.stringify(servicesOf(latest(p)!), null, 2) : '');
 
 	function status(x: Preset): { text: string; cls: string } {
-		if (x.next) return { text: `${x.stage}%`, cls: 'on' };
+		if (x.next) return { text: share(x.stage), cls: 'on' };
 		if (!x.current) return { text: 'черновик', cls: 'dim' };
 		if (changes(x).length) return { text: 'изменён', cls: 'dim' };
 		return { text: `v${x.current.v}`, cls: 'dim' };
@@ -354,8 +356,8 @@
 								<div class="actions">
 									{#if p.next}<span class="dim hint">заменит раскатку v{p.next.v}</span>{/if}
 									<label class="share">
-										<input type="range" min="1" max="100" bind:value={releaseStage} />
-										<span class="mono">{releaseStage === 100 ? 'всем' : `${releaseStage}%`}</span>
+										<input type="range" min="0" max="100" bind:value={releaseStage} />
+										<span class="mono">{share(releaseStage)}</span>
 									</label>
 									<button class="btn primary" onclick={release} disabled={busy}
 										>выпустить v{(latest(p)?.v ?? 0) + 1}</button
@@ -378,7 +380,7 @@
 					<div class="block">
 						<div class="release">
 							<span class="label"
-								>раскатка v{p.next.v} · {p.stage}% устройств, остальные на {p.current
+								>раскатка v{p.next.v} · {p.stage === 0 ? 'только тестерам' : `тестерам и ${p.stage}% устройств`}, остальные на {p.current
 									? `v${p.current.v}`
 									: 'встроенном каталоге'}</span
 							>
@@ -389,8 +391,8 @@
 						</div>
 						<div class="actions rollout">
 							<label class="share">
-								<input type="range" min="1" max="100" bind:value={rolloutStage} />
-								<span class="mono">{rolloutStage}%</span>
+								<input type="range" min="0" max="100" bind:value={rolloutStage} />
+								<span class="mono">{share(rolloutStage)}</span>
 							</label>
 							<button
 								class="btn"
@@ -634,7 +636,7 @@
 	}
 
 	.share span {
-		min-width: 36px;
+		min-width: 64px;
 		font-size: 12px;
 	}
 

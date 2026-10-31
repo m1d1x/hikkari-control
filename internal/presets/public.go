@@ -27,9 +27,10 @@ const (
 )
 
 // Public serves the catalog to clients: GET /v1/presets/catalog?bucket=NN
-// and the change stream GET /v1/presets/events. Neither identifies a
-// device: the bucket is the client's own random 0-99, the country comes
-// from the request's address and is not kept.
+// (&tester=1) and the change stream GET /v1/presets/events. Neither
+// identifies a device: the bucket is the client's own random 0-99, tester a
+// flag its user switched on, the country comes from the request's address
+// and is not kept.
 type Public struct {
 	store *Store
 	// country places the request's address; "" when unknown, which serves
@@ -63,7 +64,8 @@ func (p *Public) Catalog(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bucket: 0-99", http.StatusBadRequest)
 		return
 	}
-	sv, ok, err := p.store.Serve(r.Context(), p.country(httputil.ClientIP(r)), bucket)
+	tester := r.URL.Query().Get("tester") == "1"
+	sv, ok, err := p.store.Serve(r.Context(), p.country(httputil.ClientIP(r)), bucket, tester)
 	if err != nil {
 		applog.Error(r.Context(), "presets", "serve catalog", applog.F("err", err.Error()))
 		http.Error(w, "internal", http.StatusInternalServerError)
