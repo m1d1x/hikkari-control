@@ -26,9 +26,11 @@ func runMailTest(args []string) {
 		os.Exit(1)
 	}
 	msg, err := mailer.Letter{
-		Title: "проверка почты hikkari",
-		Lines: []string{"если вы читаете это письмо, хаб умеет отправлять почту."},
-		Codes: []string{"https://sub.hikkari.net/sub/example"},
+		Title:       "проверка почты hikkari",
+		Lines:       []string{"если вы читаете это письмо, хаб умеет отправлять почту.", "ниже ссылка на подписку и кнопка для приложения."},
+		Codes:       []string{"https://sub.hikkari.net/sub/example"},
+		Action:      "https://hikkari.net/open#url=https%3A%2F%2Fsub.hikkari.net%2Fsub%2Fexample",
+		ActionLabel: "открыть в hikkari",
 	}.Render(sender, args[0])
 	if err == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
