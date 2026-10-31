@@ -35,7 +35,7 @@ func runSubscriber(cmd string, args []string) {
 		if err != nil {
 			fail(err)
 		}
-		fmt.Println(config.Default().APIURL() + "/sub/" + token)
+		fmt.Println(config.Default().SubURL() + "/sub/" + token)
 	case "subscriber-revoke":
 		if err := subs.Revoke(ctx, args[0]); err != nil {
 			fail(err)

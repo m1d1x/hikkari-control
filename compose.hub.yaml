@@ -40,10 +40,12 @@ services:
       ADMIN_WEBAUTHN_ORIGINS: http://localhost:${ADMIN_PORT:-9443}
       PUBLIC_ADMIN_EXTRA_ORIGINS: http://localhost:${ADMIN_PORT:-9443}
       ENTRY_AUTOPILOT_ENABLED: '0'
-      # Where boxes send their pulse and clients fetch /sub. On a server these
-      # name the public host (deploy/README); locally nothing outside dials them.
+      # API host: boxes' pulse, probers, client telemetry and downdetector.
+      # Sub host: subscribers' /sub links only. On a server these name the
+      # public hosts (deploy/README); locally nothing outside dials them.
       PUBLIC_BASE_DOMAIN: ${PUBLIC_BASE_DOMAIN:-localhost}
       PUBLIC_API_HOST: ${PUBLIC_API_HOST:-localhost}
+      PUBLIC_SUB_HOST: ${PUBLIC_SUB_HOST:-localhost}
     volumes:
       - hub-dd:/data
       - ./deploy/hub-downdetector.yaml:/etc/hub/downdetector.yaml:ro

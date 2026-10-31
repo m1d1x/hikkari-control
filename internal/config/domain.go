@@ -18,9 +18,12 @@ import (
 // can be overridden via their own env var when the convention doesn't fit
 // (e.g. "adminus" instead of "admin").
 type Domain struct {
-	Base      string // e.g. "nekkochat.com" — landing / marketing root
-	WebHost   string // e.g. "web.nekkochat.com" — browser app (chat) host
-	APIHost   string // e.g. "api.nekkochat.com"
+	Base    string // e.g. "nekkochat.com" — landing / marketing root
+	WebHost string // e.g. "web.nekkochat.com" — browser app (chat) host
+	APIHost string // e.g. "api.nekkochat.com"
+	// SubHost serves subscribers' links (/sub/{token}) and nothing else, so
+	// the link users paste never names the API they also talk to.
+	SubHost   string
 	WSHost    string // reserved for the future WS split — defaults to APIHost
 	AdminHost string // e.g. "adminus.nekkochat.com"
 	// Static update channel: the layout it must serve is defined by
@@ -67,6 +70,7 @@ func Load() Domain {
 		Base:       base,
 		WebHost:    envOr("PUBLIC_WEB_HOST", "web."+base),
 		APIHost:    apiHost,
+		SubHost:    envOr("PUBLIC_SUB_HOST", "sub."+base),
 		WSHost:     envOr("PUBLIC_WS_HOST", apiHost),
 		AdminHost:  envOr("PUBLIC_ADMIN_HOST", "adminus."+base),
 		UpdateHost: envOr("PUBLIC_UPDATE_HOST", "update."+base),
@@ -86,6 +90,9 @@ func (d Domain) WebURL() string { return "https://" + d.WebHost }
 
 // APIURL returns "https://<APIHost>".
 func (d Domain) APIURL() string { return "https://" + d.APIHost }
+
+// SubURL returns "https://<SubHost>".
+func (d Domain) SubURL() string { return "https://" + d.SubHost }
 
 // AdminURL returns "https://<AdminHost>".
 func (d Domain) AdminURL() string { return "https://" + d.AdminHost }
