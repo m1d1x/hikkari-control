@@ -217,6 +217,8 @@ func TestEntryReachRTTAndBenchPeaks(t *testing.T) {
 	}
 }
 
+// The analytics database holds the fleet's datasets and the clients'
+// telemetry — nothing carried over from the messenger.
 func TestFreshAnalyticsContainsOnlyFleetTables(t *testing.T) {
 	s := liveStore(t)
 	rows, err := s.Query(context.Background(), `SELECT name FROM system.tables WHERE database=currentDatabase()`)
@@ -231,14 +233,14 @@ func TestFreshAnalyticsContainsOnlyFleetTables(t *testing.T) {
 			t.Fatal(err)
 		}
 		count++
-		if !strings.HasPrefix(name, "entry_") {
-			t.Errorf("non-fleet dataset: %s", name)
+		if !strings.HasPrefix(name, "entry_") && !strings.HasPrefix(name, "telemetry_") {
+			t.Errorf("unexpected dataset: %s", name)
 		}
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if count != 5 {
-		t.Errorf("fleet datasets=%d, want 5", count)
+	if count != 5+len(telemetrySchema) {
+		t.Errorf("datasets=%d, want %d", count, 5+len(telemetrySchema))
 	}
 }

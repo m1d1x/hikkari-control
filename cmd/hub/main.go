@@ -25,6 +25,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/entry"
 	"github.com/m1d1x/hikkari-control/internal/probesink"
 	"github.com/m1d1x/hikkari-control/internal/subscription"
+	"github.com/m1d1x/hikkari-control/internal/telemetry"
 )
 
 func main() {
@@ -157,6 +158,9 @@ func run() error {
 	// Subscribers' links (internal/subscription): their batch of the pool.
 	mux.HandleFunc("GET /sub/{token}", subscription.New(pool, svc, entry.PinnedKeys()).Handler())
 	if store != nil {
+		// Client telemetry (hikkari-client docs/TELEMETRY.md). Shares /v1/
+		// with the downdetector; the more specific pattern wins.
+		mux.HandleFunc("POST /v1/events", (&telemetry.Server{Sink: store}).Handler())
 		mux.HandleFunc("POST /api/v1/internal/entry-probes", probesink.IngestEntry(store, svc))
 		entry.RegisterProberRoutes(mux, svc)
 		entry.RegisterPulseRoutes(mux, svc, os.Getenv("EDGE_PULSE_TOKEN"))

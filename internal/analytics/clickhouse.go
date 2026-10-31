@@ -192,7 +192,7 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 	`); err != nil {
 		return fmt.Errorf("fleet analytics schema 9: %w", err)
 	}
-	return nil
+	return s.migrateTelemetry(ctx)
 }
 
 // InsertEntryRelayStats writes a batch of relay pulses (plan 42 П9.3). Async
