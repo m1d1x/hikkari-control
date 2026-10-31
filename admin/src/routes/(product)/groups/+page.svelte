@@ -28,7 +28,7 @@
 	const problem = $derived(edit ? groupProblem(edit) : null);
 
 	const count = (x: Group) => RULE_KINDS.reduce((n, k) => n + x.rules[k.key].length, 0);
-	const usedIn = (id: string) => db.presets.filter((p) => p.bypass.includes(id) || p.proxy.includes(id));
+	const usedIn = (id: string) => db.presets.filter((p) => p.bypass.includes(id) || p.proxy.includes(id) || (p.disabled ?? []).includes(id));
 
 	function pick(id: string | undefined) {
 		if (dirty && !confirm('несохранённые правки пропадут')) return;

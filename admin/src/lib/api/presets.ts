@@ -20,6 +20,7 @@ export interface Release {
 	v: number;
 	bypass: Group[];
 	proxy: Group[];
+	disabled: Group[];
 	createdBy: string;
 	createdAt: string;
 }
@@ -33,6 +34,7 @@ export interface Preset {
 	/** the draft: group ids per side */
 	bypass: string[];
 	proxy: string[];
+	disabled: string[];
 	/** what every device of the preset gets */
 	current: Release | null;
 	/** the release rolling out, to the buckets below stage */
@@ -61,18 +63,25 @@ type WirePreset = Omit<Preset, 'current' | 'next'> & { current: WireRelease | nu
 function release(r: WireRelease | null): Release | null {
 	if (!r) return null;
 	const side = (s: 'bypass' | 'proxy') => r.services.filter((x) => x.defaultModes.includes(s)).map(groupFromService);
+	const disabled = r.services.filter((x) => !x.defaultModes || !x.defaultModes.length).map(groupFromService);
 	return {
 		id: r.id,
 		v: r.v,
 		bypass: side('bypass'),
 		proxy: side('proxy'),
+		disabled,
 		createdBy: r.createdBy,
 		createdAt: r.createdAt,
 	};
 }
 
 function preset(p: WirePreset): Preset {
-	return { ...p, current: release(p.current), next: release(p.next) };
+	return {
+		...p,
+		disabled: p.disabled ?? [],
+		current: release(p.current),
+		next: release(p.next),
+	};
 }
 
 export async function fetchGroups(): Promise<Group[]> {
@@ -106,7 +115,7 @@ export async function fetchPresets(): Promise<Preset[]> {
 	return presets.map(preset);
 }
 
-type Draft = Pick<Preset, 'name' | 'default' | 'countries' | 'bypass' | 'proxy'>;
+type Draft = Pick<Preset, 'name' | 'default' | 'countries' | 'bypass' | 'proxy' | 'disabled'>;
 
 export async function createPreset(id: string, d: Draft): Promise<Preset> {
 	return preset((await post<{ preset: WirePreset }>('/api/v1/admin/presets', { id, ...d })).preset);

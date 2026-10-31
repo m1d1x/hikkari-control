@@ -72,10 +72,11 @@ export interface Group {
 	rules: Rules;
 }
 
-export type Side = 'bypass' | 'proxy';
+export type Side = 'bypass' | 'proxy' | 'disabled';
 export const SIDES: { key: Side; label: string }[] = [
 	{ key: 'bypass', label: 'мимо vpn' },
 	{ key: 'proxy', label: 'через vpn' },
+	{ key: 'disabled', label: 'выключено' },
 ];
 
 export const emptyRules = (r: Partial<Rules> = {}): Rules => ({

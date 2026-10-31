@@ -32,6 +32,7 @@
 		default: boolean;
 		bypass: string[];
 		proxy: string[];
+		disabled: string[];
 	}
 
 	// The editor works on a copy of the draft; «сохранить» writes it, and
@@ -51,6 +52,7 @@
 		default: x.default,
 		bypass: [...x.bypass],
 		proxy: [...x.proxy],
+		disabled: [...(x.disabled ?? [])],
 	});
 	const dirty = $derived(!!edit && (fresh || !p || JSON.stringify(edit) !== JSON.stringify(draftOf(p))));
 
@@ -95,7 +97,7 @@
 		return SIDES.flatMap(({ key, label }) => {
 			const was = base?.[key] ?? [];
 			const out: { text: string; kind: 'add' | 'drop' | 'edit' }[] = [];
-			for (const id of x[key]) {
+			for (const id of x[key] ?? []) {
 				const g = groupOf(id);
 				const old = was.find((o) => o.id === id);
 				if (!g) continue;
@@ -107,18 +109,26 @@
 				}
 			}
 			for (const old of was) {
-				if (!x[key].includes(old.id)) out.push({ text: `− ${old.name} из «${label}»`, kind: 'drop' });
+				if (!x[key]?.includes(old.id)) out.push({ text: `− ${old.name} из «${label}»`, kind: 'drop' });
 			}
 			return out;
 		});
 	}
 
 	const diff = $derived(p ? changes(p) : []);
-	const free = $derived(db.groups.filter((g) => edit && !edit.bypass.includes(g.id) && !edit.proxy.includes(g.id)));
+	const free = $derived(
+		db.groups.filter(
+			(g) =>
+				edit &&
+				!edit.bypass.includes(g.id) &&
+				!edit.proxy.includes(g.id) &&
+				!(edit.disabled ?? []).includes(g.id),
+		),
+	);
 	/** Quick checks while editing; the hub runs the client's full ones on release. */
 	const problems = $derived(
 		p
-			? [...p.bypass, ...p.proxy]
+			? [...p.bypass, ...p.proxy, ...(p.disabled ?? [])]
 					.map(groupOf)
 					.filter((g): g is Group => !!g)
 					.flatMap((g) => {
@@ -131,7 +141,13 @@
 	/** The services of a release exactly as a client gets them; the version it is served under is the hub's. */
 	function servicesOf(r: Release) {
 		return SIDES.flatMap(({ key }) =>
-			r[key].map((g) => ({ id: g.id, name: g.name, icon: g.icon, ...rulesToWire(g.rules), defaultModes: [key] })),
+			(r[key] ?? []).map((g) => ({
+				id: g.id,
+				name: g.name,
+				icon: g.icon,
+				...rulesToWire(g.rules),
+				defaultModes: key === 'disabled' ? [] : [key],
+			})),
 		);
 	}
 	const json = $derived(p && latest(p) ? JSON.stringify(servicesOf(latest(p)!), null, 2) : '');
@@ -160,7 +176,7 @@
 
 	async function create() {
 		if (dirty && !confirm('несохранённые правки пропадут')) return;
-		edit = { id: '', name: '', default: db.presets.length === 0, bypass: [], proxy: [] };
+		edit = { id: '', name: '', default: db.presets.length === 0, bypass: [], proxy: [], disabled: [] };
 		fresh = true;
 		error = '';
 		await tick();
@@ -176,6 +192,7 @@
 				countries: p?.countries ?? [],
 				bypass: d.bypass,
 				proxy: d.proxy,
+				disabled: d.disabled ?? [],
 			};
 			const saved = fresh ? await createPreset(d.id, body) : await savePreset(d.id, body);
 			// Taking the default flag clears it elsewhere: reread them all.
@@ -238,7 +255,7 @@
 						<span class="st {st.cls}">{st.text}</span>
 					</div>
 					<div class="dim meta">
-						{plural(x.bypass.length + x.proxy.length, ['группа', 'группы', 'групп'])}{x.default
+						{plural(x.bypass.length + x.proxy.length + (x.disabled?.length ?? 0), ['группа', 'группы', 'групп'])}{x.default
 							? ' · по умолчанию'
 							: ''}
 					</div>
@@ -282,7 +299,7 @@
 							<div class="groups">
 								{#each edit[s.key] as id (id)}
 									{@const g = groupOf(id)}
-									<span class="g">
+									<span class="g" class:off={s.key === 'disabled'}>
 										<a href="/groups?g={id}">{g?.name ?? id}</a>
 										{#if g}<small>{ruleCount(g.rules)}</small>{/if}
 										<button onclick={() => dropGroup(s.key, id)} title="убрать">×</button>
@@ -485,8 +502,8 @@
 
 	.sides {
 		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 24px;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 20px;
 	}
 
 	.sides .label {
@@ -508,6 +525,11 @@
 		border-radius: 6px;
 		background: var(--inset);
 		font-size: 12px;
+	}
+
+	.g.off {
+		opacity: 0.7;
+		border-style: dashed;
 	}
 
 	.g a:hover {

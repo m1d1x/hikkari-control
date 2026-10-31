@@ -77,6 +77,7 @@ type presetJSON struct {
 	Countries []string     `json:"countries"`
 	Bypass    []string     `json:"bypass"`
 	Proxy     []string     `json:"proxy"`
+	Disabled  []string     `json:"disabled"`
 	Current   *releaseJSON `json:"current"`
 	Next      *releaseJSON `json:"next"`
 	Stage     int          `json:"stage"`
@@ -93,7 +94,7 @@ func toReleaseJSON(r *Release) *releaseJSON {
 func toPresetJSON(p Preset) presetJSON {
 	return presetJSON{
 		ID: p.ID, Name: p.Name, Default: p.Default,
-		Countries: nonNil(p.Countries), Bypass: nonNil(p.Bypass), Proxy: nonNil(p.Proxy),
+		Countries: nonNil(p.Countries), Bypass: nonNil(p.Bypass), Proxy: nonNil(p.Proxy), Disabled: nonNil(p.Disabled),
 		Current: toReleaseJSON(p.Current), Next: toReleaseJSON(p.Next),
 		Stage: p.Stage, UpdatedAt: p.UpdatedAt,
 	}
@@ -106,6 +107,7 @@ type draftJSON struct {
 	Countries []string `json:"countries"`
 	Bypass    []string `json:"bypass"`
 	Proxy     []string `json:"proxy"`
+	Disabled  []string `json:"disabled"`
 }
 
 // ---------- groups ----------
@@ -240,7 +242,7 @@ func (h *AdminHandlers) UpdatePreset(w http.ResponseWriter, r *http.Request) {
 }
 
 func draft(w http.ResponseWriter, body draftJSON) (PresetDraft, bool) {
-	d := PresetDraft{Name: body.Name, Default: body.Default, Countries: body.Countries, Bypass: body.Bypass, Proxy: body.Proxy}
+	d := PresetDraft{Name: body.Name, Default: body.Default, Countries: body.Countries, Bypass: body.Bypass, Proxy: body.Proxy, Disabled: body.Disabled}
 	if len(d.Name) == 0 || len(d.Name) > 100 {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "название пресета: от 1 до 100 символов"})
 		return d, false

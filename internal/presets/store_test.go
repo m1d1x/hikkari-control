@@ -229,3 +229,15 @@ func TestAReleaseTheClientWouldRejectIsRefused(t *testing.T) {
 		t.Fatal("the refused release is served")
 	}
 }
+
+func TestCheckSides(t *testing.T) {
+	if err := checkSides([]string{"a"}, []string{"b"}, []string{"c"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := checkSides([]string{"a"}, []string{"b"}, []string{"a"}); !errors.Is(err, ErrGroupTwice) {
+		t.Fatalf("expected ErrGroupTwice, got %v", err)
+	}
+	if err := checkSides([]string{"a"}, []string{"b", "b"}, []string{}); !errors.Is(err, ErrGroupTwice) {
+		t.Fatalf("expected ErrGroupTwice, got %v", err)
+	}
+}

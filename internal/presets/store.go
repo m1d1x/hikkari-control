@@ -81,6 +81,7 @@ type Preset struct {
 	Countries []string
 	Bypass    []string
 	Proxy     []string
+	Disabled  []string
 	// Current is what every device of the preset gets; Next, while set,
 	// goes to the buckets below Stage instead.
 	Current   *Release
@@ -96,6 +97,7 @@ type PresetDraft struct {
 	Countries []string
 	Bypass    []string
 	Proxy     []string
+	Disabled  []string
 }
 
 type Store struct {
@@ -147,7 +149,7 @@ func (s *Store) DeleteGroup(ctx context.Context, id string) error {
 			return err
 		}
 		var used bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM presets WHERE $1 = ANY(bypass) OR $1 = ANY(proxy))`, id).Scan(&used); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM presets WHERE $1 = ANY(bypass) OR $1 = ANY(proxy) OR $1 = ANY(disabled))`, id).Scan(&used); err != nil {
 			return err
 		}
 		if used {
@@ -167,7 +169,7 @@ func (s *Store) DeleteGroup(ctx context.Context, id string) error {
 // ---------- presets ----------
 
 const presetColumns = `
-	p.id, p.name, p.is_default, p.countries, p.bypass, p.proxy, p.stage, p.updated_at,
+	p.id, p.name, p.is_default, p.countries, p.bypass, p.proxy, p.disabled, p.stage, p.updated_at,
 	c.id, c.v, c.services, c.created_by, c.created_at,
 	n.id, n.v, n.services, n.created_by, n.created_at
 	FROM presets p
@@ -177,7 +179,7 @@ const presetColumns = `
 func scanPreset(row pgx.CollectableRow) (Preset, error) {
 	var p Preset
 	var cur, next releaseCols
-	err := row.Scan(&p.ID, &p.Name, &p.Default, &p.Countries, &p.Bypass, &p.Proxy, &p.Stage, &p.UpdatedAt,
+	err := row.Scan(&p.ID, &p.Name, &p.Default, &p.Countries, &p.Bypass, &p.Proxy, &p.Disabled, &p.Stage, &p.UpdatedAt,
 		&cur.id, &cur.v, &cur.services, &cur.by, &cur.at,
 		&next.id, &next.v, &next.services, &next.by, &next.at)
 	if err != nil {
@@ -231,9 +233,9 @@ func (s *Store) Preset(ctx context.Context, id string) (Preset, error) {
 func (s *Store) CreatePreset(ctx context.Context, id string, d PresetDraft) error {
 	return s.writePreset(ctx, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
-			INSERT INTO presets (id, name, is_default, countries, bypass, proxy)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
-			id, d.Name, d.Default, nonNil(d.Countries), nonNil(d.Bypass), nonNil(d.Proxy))
+			INSERT INTO presets (id, name, is_default, countries, bypass, proxy, disabled)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			id, d.Name, d.Default, nonNil(d.Countries), nonNil(d.Bypass), nonNil(d.Proxy), nonNil(d.Disabled))
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "presets_pkey" {
 			return ErrExists
@@ -247,9 +249,9 @@ func (s *Store) CreatePreset(ctx context.Context, id string, d PresetDraft) erro
 func (s *Store) UpdatePreset(ctx context.Context, id string, d PresetDraft) error {
 	return s.writePreset(ctx, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
-			UPDATE presets SET name = $2, is_default = $3, countries = $4, bypass = $5, proxy = $6, updated_at = now()
+			UPDATE presets SET name = $2, is_default = $3, countries = $4, bypass = $5, proxy = $6, disabled = $7, updated_at = now()
 			WHERE id = $1`,
-			id, d.Name, d.Default, nonNil(d.Countries), nonNil(d.Bypass), nonNil(d.Proxy))
+			id, d.Name, d.Default, nonNil(d.Countries), nonNil(d.Bypass), nonNil(d.Proxy), nonNil(d.Disabled))
 		if err == nil && tag.RowsAffected() == 0 {
 			return ErrNotFound
 		}
@@ -258,7 +260,7 @@ func (s *Store) UpdatePreset(ctx context.Context, id string, d PresetDraft) erro
 }
 
 func (s *Store) writePreset(ctx context.Context, write func(pgx.Tx) error, d PresetDraft) error {
-	if err := checkSides(d.Bypass, d.Proxy); err != nil {
+	if err := checkSides(d.Bypass, d.Proxy, d.Disabled); err != nil {
 		return err
 	}
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
@@ -267,12 +269,14 @@ func (s *Store) writePreset(ctx context.Context, write func(pgx.Tx) error, d Pre
 			return err
 		}
 		var known int
-		ids := append(slices.Clone(d.Bypass), d.Proxy...)
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM preset_groups WHERE id = ANY($1)`, ids).Scan(&known); err != nil {
-			return err
-		}
-		if known != len(ids) {
-			return ErrUnknownGroup
+		ids := append(slices.Clone(d.Bypass), append(slices.Clone(d.Proxy), d.Disabled...)...)
+		if len(ids) > 0 {
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM preset_groups WHERE id = ANY($1)`, ids).Scan(&known); err != nil {
+				return err
+			}
+			if known != len(ids) {
+				return ErrUnknownGroup
+			}
 		}
 		if d.Default {
 			if _, err := tx.Exec(ctx, `UPDATE presets SET is_default = false WHERE is_default`); err != nil {
@@ -286,9 +290,9 @@ func (s *Store) writePreset(ctx context.Context, write func(pgx.Tx) error, d Pre
 	})
 }
 
-func checkSides(bypass, proxy []string) error {
+func checkSides(bypass, proxy, disabled []string) error {
 	seen := map[string]bool{}
-	for _, id := range append(slices.Clone(bypass), proxy...) {
+	for _, id := range append(slices.Clone(bypass), append(slices.Clone(proxy), disabled...)...) {
 		if seen[id] {
 			return ErrGroupTwice
 		}
@@ -332,18 +336,18 @@ func (s *Store) DeletePreset(ctx context.Context, id string) error {
 func (s *Store) Release(ctx context.Context, id string, stage int, by string) (Release, error) {
 	var r Release
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		var bypass, proxy []string
-		err := tx.QueryRow(ctx, `SELECT bypass, proxy FROM presets WHERE id = $1 FOR UPDATE`, id).Scan(&bypass, &proxy)
+		var bypass, proxy, disabled []string
+		err := tx.QueryRow(ctx, `SELECT bypass, proxy, disabled FROM presets WHERE id = $1 FOR UPDATE`, id).Scan(&bypass, &proxy, &disabled)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		if err != nil {
 			return err
 		}
-		if len(bypass)+len(proxy) == 0 {
+		if len(bypass)+len(proxy)+len(disabled) == 0 {
 			return ErrNothingToShip
 		}
-		services, err := freeze(ctx, tx, bypass, proxy)
+		services, err := freeze(ctx, tx, bypass, proxy, disabled)
 		if err != nil {
 			return err
 		}
@@ -372,11 +376,11 @@ func (s *Store) Release(ctx context.Context, id string, stage int, by string) (R
 	return r, err
 }
 
-// freeze copies the groups into catalog services, bypass first, each side in
-// draft order.
-func freeze(ctx context.Context, tx pgx.Tx, bypass, proxy []string) ([]Service, error) {
-	rows, err := tx.Query(ctx, `SELECT id, name, icon, rules, updated_at FROM preset_groups WHERE id = ANY($1)`,
-		append(slices.Clone(bypass), proxy...))
+// freeze copies the groups into catalog services: bypass first, then proxy, then disabled,
+// each side in draft order. Disabled groups have empty DefaultModes so they are off for all users by default.
+func freeze(ctx context.Context, tx pgx.Tx, bypass, proxy, disabled []string) ([]Service, error) {
+	allIDs := append(slices.Clone(bypass), append(slices.Clone(proxy), disabled...)...)
+	rows, err := tx.Query(ctx, `SELECT id, name, icon, rules, updated_at FROM preset_groups WHERE id = ANY($1)`, allIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -389,10 +393,15 @@ func freeze(ctx context.Context, tx pgx.Tx, bypass, proxy []string) ([]Service, 
 		byID[g.ID] = g
 	}
 	var out []Service
-	for _, side := range []struct {
-		mode string
-		ids  []string
-	}{{SideBypass, bypass}, {SideProxy, proxy}} {
+	sides := []struct {
+		modes []string
+		ids   []string
+	}{
+		{[]string{SideBypass}, bypass},
+		{[]string{SideProxy}, proxy},
+		{[]string{}, disabled},
+	}
+	for _, side := range sides {
 		for _, id := range side.ids {
 			g, ok := byID[id]
 			if !ok {
@@ -402,7 +411,7 @@ func freeze(ctx context.Context, tx pgx.Tx, bypass, proxy []string) ([]Service, 
 				ID: g.ID, Name: g.Name, Icon: g.Icon,
 				Domains: nonNil(g.Rules.Domains), IPs: nonNil(g.Rules.IPs),
 				Processes: nonNilMap(g.Rules.Processes), Folders: g.Rules.Folders,
-				DefaultModes: []string{side.mode},
+				DefaultModes: nonNil(side.modes),
 			})
 		}
 	}
