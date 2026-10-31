@@ -8,6 +8,7 @@
 		BUNDLED_GROUPS,
 		RULE_KINDS,
 		RULE_SECTIONS,
+		SERVICE_ICONS,
 		emptyRules,
 		groupProblem,
 		slugify,
@@ -150,7 +151,17 @@
 				<div class="meta-row">
 					<label class="icon-box">
 						<span class="dim">иконка</span>
-						<input class="field mono" placeholder="например, steam или discord" bind:value={edit.icon} />
+						<input
+							class="field mono"
+							list="service-icons"
+							placeholder="например, ru, steam, discord, youtube"
+							bind:value={edit.icon}
+						/>
+						<datalist id="service-icons">
+							{#each SERVICE_ICONS as item (item.id)}
+								<option value={item.id}>{item.label}</option>
+							{/each}
+						</datalist>
 					</label>
 				</div>
 				{#if problem}

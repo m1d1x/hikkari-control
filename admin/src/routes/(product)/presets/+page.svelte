@@ -8,12 +8,15 @@
 		refusal,
 		releasePreset,
 		revertPreset,
+		saveGroup,
 		savePreset,
 		setStage,
 		type Preset,
 		type Release,
 	} from '$lib/api/presets';
 	import {
+		BUNDLED_GROUPS,
+		BUNDLED_PRESET,
 		SIDES,
 		RULE_KINDS,
 		groupProblem,
@@ -246,6 +249,26 @@
 	function dropGroup(side: Side, id: string) {
 		if (edit) edit[side] = edit[side].filter((x) => x !== id);
 	}
+
+	/** Seeds an empty hub with the client's bundled groups and the default RU preset. */
+	const seed = () =>
+		act(async () => {
+			for (const g of BUNDLED_GROUPS) {
+				if (!db.groups.some((x) => x.id === g.id)) {
+					await saveGroup(g);
+				}
+			}
+			await createPreset(BUNDLED_PRESET.id, {
+				name: BUNDLED_PRESET.name,
+				default: BUNDLED_PRESET.default,
+				countries: BUNDLED_PRESET.countries,
+				bypass: BUNDLED_PRESET.bypass,
+				proxy: BUNDLED_PRESET.proxy,
+				disabled: BUNDLED_PRESET.disabled,
+			});
+			await load();
+			pick(BUNDLED_PRESET.id);
+		});
 </script>
 
 <div class="head">
@@ -274,6 +297,8 @@
 							: ''}
 					</div>
 				</button>
+			{:else}
+				<button class="btn seed" onclick={seed} disabled={busy}>взять базовый пресет РФ</button>
 			{/each}
 		</section>
 
@@ -457,7 +482,8 @@
 		padding: 6px;
 	}
 
-	.add {
+	.add,
+	.seed {
 		width: 100%;
 		margin-bottom: 4px;
 		text-align: left;
