@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 	"github.com/m1d1x/hikkari-control/internal/db"
 	"github.com/m1d1x/hikkari-control/internal/entry"
+	"github.com/m1d1x/hikkari-control/internal/mailer"
 	"github.com/m1d1x/hikkari-control/internal/subscription"
 )
 
@@ -48,15 +50,52 @@ func (noBatch) BundleFor(context.Context, uuid.UUID, entry.GrantMeta, string) (e
 	return entry.Bundle{}, nil
 }
 
+// postbox is a mail provider that keeps what it is given.
+type postbox struct {
+	mu   sync.Mutex
+	sent []mailer.Message
+}
+
+func (*postbox) Name() string { return "postbox" }
+
+func (p *postbox) Send(_ context.Context, m mailer.Message) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sent = append(p.sent, m)
+	return nil
+}
+
 // shop is a hub selling one month for 99 ₽ through the sandbox.
 type shop struct {
-	t    *testing.T
-	subs *subscription.Service
-	svc  *Service
-	sb   *Sandbox
-	mux  *http.ServeMux
-	plan string
+	t      *testing.T
+	subs   *subscription.Service
+	svc    *Service
+	sb     *Sandbox
+	mux    *http.ServeMux
+	plan   string
+	box    *postbox
+	outbox *mailer.Outbox
 }
+
+// mailTo delivers what is queued and answers the letters to addr.
+func (s *shop) mailTo(addr string) []mailer.Message {
+	s.t.Helper()
+	if err := s.outbox.Flush(context.Background()); err != nil {
+		s.t.Fatal(err)
+	}
+	s.box.mu.Lock()
+	defer s.box.mu.Unlock()
+	var out []mailer.Message
+	for _, m := range s.box.sent {
+		if m.To == addr {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// buyer is an address no other run has used.
+func buyer(name string) string { return name + "-" + uuid.NewString()[:8] + "@example.com" }
 
 func newShop(t *testing.T, open bool) *shop {
 	t.Helper()
@@ -74,10 +113,12 @@ func newShop(t *testing.T, open bool) *shop {
 	if open {
 		provider = sb
 	}
-	svc := New(pool, subs, provider, "https://hikkari.test/pay/done")
+	box := &postbox{}
+	outbox := mailer.NewOutbox(pool, box, mailer.Sender{From: "no-reply@hikkari.test", FromName: "hikkari"})
+	svc := New(pool, subs, provider, "https://hikkari.test", outbox)
 	mux := http.NewServeMux()
 	NewPublic(svc, []string{"https://hikkari.test"}).Register(mux)
-	return &shop{t: t, subs: subs, svc: svc, sb: sb, mux: mux, plan: plan}
+	return &shop{t: t, subs: subs, svc: svc, sb: sb, mux: mux, plan: plan, box: box, outbox: outbox}
 }
 
 func (s *shop) do(method, path, auth string, body any, header ...string) *httptest.ResponseRecorder {
@@ -322,5 +363,53 @@ func TestTheSandboxPagePaysAndReturns(t *testing.T) {
 	}
 	if st := s.status(p); st.Status != "paid" {
 		t.Fatalf("after the page: %s", st.Status)
+	}
+}
+
+// The buyer gets their link by mail when the payment settles, the renewal's
+// new end when they renew, and every link of their address again on request.
+func TestTheBuyerIsWrittenTo(t *testing.T) {
+	s := newShop(t, true)
+	addr := buyer("mail")
+	p := s.order(addr, "")
+	s.notify(s.ref(p), Paid, 9900)
+	link := s.status(p).URL
+	letters := s.mailTo(addr)
+	if len(letters) != 1 || !strings.Contains(letters[0].TextBody, link) ||
+		!strings.Contains(letters[0].HTMLBody, "/open#url=") || letters[0].Subject != "ваша подписка hikkari" {
+		t.Fatalf("purchase letters %+v", letters)
+	}
+	s.notify(s.ref(p), Paid, 9900)
+	if n := len(s.mailTo(addr)); n != 1 {
+		t.Fatalf("a repeated notification wrote again: %d letters", n)
+	}
+
+	renewal := s.order(addr, s.token(link))
+	s.notify(s.ref(renewal), Paid, 9900)
+	letters = s.mailTo(addr)
+	if len(letters) != 2 || letters[1].Subject != "подписка hikkari продлена" || strings.Contains(letters[1].TextBody, link) {
+		t.Fatalf("renewal letter %+v", letters[len(letters)-1])
+	}
+
+	w := s.do("POST", "/v1/billing/recover", "", map[string]string{"email": strings.ToUpper(addr)})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("recover %d %s", w.Code, w.Body)
+	}
+	letters = s.mailTo(addr)
+	if len(letters) != 3 || !strings.Contains(letters[2].TextBody, link) {
+		t.Fatalf("recovery letter %+v", letters[len(letters)-1])
+	}
+
+	// An address that bought nothing is told so, in its own inbox; the page
+	// answers the same.
+	stranger := buyer("stranger")
+	for range recoveriesPerHour + 2 {
+		if w := s.do("POST", "/v1/billing/recover", "", map[string]string{"email": stranger}); w.Code != http.StatusAccepted {
+			t.Fatalf("recover a stranger %d", w.Code)
+		}
+	}
+	letters = s.mailTo(stranger)
+	if len(letters) != recoveriesPerHour || strings.Contains(letters[0].TextBody, "/sub/") {
+		t.Fatalf("stranger got %d letters: %+v", len(letters), letters)
 	}
 }

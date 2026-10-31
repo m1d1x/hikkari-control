@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>{{.Title}}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#0e0e10;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#ededee;-webkit-font-smoothing:antialiased;">
+  <div style="display:none;max-height:0;overflow:hidden;">{{.Title}}</div>
+  <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color:#0e0e10;padding:40px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width:520px;background-color:#18181b;border-radius:18px;border:1px solid #26262b;">
+          <tr>
+            <td style="padding:36px 36px 8px;font-family:'IBM Plex Mono','SF Mono',Menlo,Consolas,monospace;font-size:22px;font-weight:700;color:#ff7eb9;letter-spacing:-0.02em;">hikkari</td>
+          </tr>
+          <tr>
+            <td style="padding:16px 36px 8px;">
+              <h1 style="margin:0 0 16px;font-size:22px;font-weight:600;color:#ffffff;letter-spacing:-0.01em;">{{.Title}}</h1>
+              {{range .Lines}}<p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:#c8c8ca;">{{.}}</p>{{end}}
+            </td>
+          </tr>
+          {{range .Codes}}
+          <tr>
+            <td style="padding:8px 36px;">
+              <div style="padding:14px 16px;background-color:#0e0e10;border:1px solid #4d2a3c;border-radius:14px;font-family:'IBM Plex Mono','SF Mono',Menlo,Consolas,monospace;font-size:13px;line-height:1.5;color:#ededee;word-break:break-all;">{{.}}</div>
+            </td>
+          </tr>
+          {{end}}
+          {{if .Action}}
+          <tr>
+            <td style="padding:16px 36px 8px;">
+              <a href="{{.Action}}" style="display:inline-block;padding:14px 22px;background-color:#ff7eb9;border-radius:14px;color:#0e0e10;font-family:'IBM Plex Mono','SF Mono',Menlo,Consolas,monospace;font-size:14px;font-weight:700;text-decoration:none;">{{.ActionLabel}}</a>
+            </td>
+          </tr>
+          {{end}}
+          <tr>
+            <td style="padding:24px 36px 32px;font-size:12px;line-height:1.6;color:#5b5b60;">
+              письмо отправлено автоматически, отвечать на него не нужно.
+            </td>
+          </tr>
+        </table>
+        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width:520px;">
+          <tr>
+            <td align="center" style="padding-top:20px;font-size:12px;color:#5b5b60;">
+              <a href="https://hikkari.net" style="color:#5b5b60;text-decoration:none;">hikkari.net</a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

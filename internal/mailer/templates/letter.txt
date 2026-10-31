@@ -1,0 +1,10 @@
+{{.Title}}
+{{range .Lines}}
+{{.}}
+{{end}}{{range .Codes}}
+{{.}}
+{{end}}{{if .Action}}
+{{.ActionLabel}}: {{.Action}}
+{{end}}
+письмо отправлено автоматически, отвечать на него не нужно.
+hikkari.net

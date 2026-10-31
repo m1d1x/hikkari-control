@@ -58,6 +58,10 @@ services:
       # takes test payments on the hub's own page. A merchant's keys go to
       # secrets/hub.env.
       BILLING_PROVIDER: ${BILLING_PROVIDER:-}
+      # Letters (internal/mailer): MAILER_PROVIDER=smtp with SMTP_HOST,
+      # SMTP_PORT (587 STARTTLS | 465 TLS), SMTP_USER, SMTP_PASSWORD and
+      # MAIL_FROM in secrets/hub.env (smtp.bz panel). Unset keeps letters
+      # queued in hub_mail_outbox until it is set.
       # The landing's dev server, for checkout from it.
       PUBLIC_WEB_EXTRA_ORIGINS: ${PUBLIC_WEB_EXTRA_ORIGINS:-}
     volumes:

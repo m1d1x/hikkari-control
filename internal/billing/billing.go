@@ -25,6 +25,7 @@ import (
 
 	"github.com/m1d1x/hikkari-control/internal/applog"
 	"github.com/m1d1x/hikkari-control/internal/db"
+	"github.com/m1d1x/hikkari-control/internal/mailer"
 	"github.com/m1d1x/hikkari-control/internal/subscription"
 )
 
@@ -59,13 +60,16 @@ type Service struct {
 	// provider is nil while no merchant is connected: plans are shown,
 	// orders refused.
 	provider Provider
-	// returnURL is the landing's page the buyer comes back to (/pay/done).
-	returnURL string
-	now       func() time.Time
+	// siteURL is the landing: the buyer comes back to its /pay/done, and
+	// letters link to its /open.
+	siteURL string
+	// mail delivers the letters settling queues (letters.go).
+	mail *mailer.Outbox
+	now  func() time.Time
 }
 
-func New(pool db.Pool, subs *subscription.Service, provider Provider, returnURL string) *Service {
-	return &Service{pool: pool, subs: subs, provider: provider, returnURL: returnURL, now: time.Now}
+func New(pool db.Pool, subs *subscription.Service, provider Provider, siteURL string, mail *mailer.Outbox) *Service {
+	return &Service{pool: pool, subs: subs, provider: provider, siteURL: siteURL, mail: mail, now: time.Now}
 }
 
 // Open says whether orders are taken.
@@ -135,7 +139,7 @@ func (s *Service) Place(ctx context.Context, plan, email, renewToken string) (Pl
 		AmountCents: p.PriceCents,
 		Description: description(p),
 		Email:       email,
-		ReturnURL:   s.returnURL + "?order=" + id.String() + "#key=" + secret,
+		ReturnURL:   s.siteURL + "/pay/done?order=" + id.String() + "#key=" + secret,
 	})
 	if err != nil {
 		if _, cerr := s.pool.Exec(ctx,
@@ -213,6 +217,7 @@ func (s *Service) Settle(ctx context.Context, ev Event) error {
 	}
 	// Even an order this side gave up on (expired, canceled) is honoured:
 	// the money is taken, so the access is given.
+	var link string
 	if renewal {
 		if account == nil {
 			return fmt.Errorf("billing: renewal %s lost its account", id)
@@ -221,17 +226,25 @@ func (s *Service) Settle(ctx context.Context, ev Event) error {
 			return fmt.Errorf("billing: renew for order %s: %w", id, err)
 		}
 	} else {
-		_, a, err := s.subs.AddIn(ctx, tx, accountName(id), plan, email)
+		token, a, err := s.subs.AddIn(ctx, tx, accountName(id), plan, email)
 		if err != nil {
 			return fmt.Errorf("billing: issue for order %s: %w", id, err)
 		}
-		account = &a
+		account, link = &a, subscription.LinkURL(token)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE hub_orders SET status = 'paid', account_id = $2, closed_at = now() WHERE id = $1`, id, account); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	// The letter commits with the payment: paid means written to.
+	if err := s.queuePaid(ctx, tx, email, plan, *account, renewal, link); err != nil {
+		return fmt.Errorf("billing: letter for order %s: %w", id, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	s.mail.Nudge()
+	return nil
 }
 
 // accountName is the account a paid order creates: derived from the order,

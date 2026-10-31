@@ -17,8 +17,8 @@ import (
 
 const (
 	maxBody = 4 << 10
-	// ordersPerHour bounds the orders one address opens: each costs a
-	// payment at the provider.
+	// ordersPerHour bounds what one address asks for that costs something
+	// elsewhere: orders open payments at the provider, recoveries send mail.
 	ordersPerHour = 20
 	// maxTracked bounds the limiter's memory; past it, new addresses wait
 	// for the next window rather than evicting someone mid-window.
@@ -31,6 +31,7 @@ const (
 //	GET  /v1/billing/plans               what is on sale
 //	POST /v1/billing/orders              {plan, email, renew?} → {id, secret, pay_url}
 //	GET  /v1/billing/orders/{id}         Authorization: Bearer <secret>
+//	POST /v1/billing/recover             {email}: the address's links, by mail
 //	POST /v1/billing/webhook/{provider}  the provider's notifications
 //
 // The landing is another origin: origins lists the ones answered.
@@ -51,6 +52,7 @@ func (p *Public) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/billing/plans", p.cors(p.plans))
 	mux.HandleFunc("POST /v1/billing/orders", p.cors(p.place))
 	mux.HandleFunc("GET /v1/billing/orders/{id}", p.cors(p.order))
+	mux.HandleFunc("POST /v1/billing/recover", p.cors(p.recover))
 	mux.HandleFunc("OPTIONS /v1/billing/", p.cors(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -167,6 +169,32 @@ func (p *Public) order(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, out)
+}
+
+// recover answers 202 whether or not the address bought anything: the
+// letter, not the page, says so (letters.go).
+func (p *Public) recover(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody)).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, "body")
+		return
+	}
+	if !p.allow(httputil.ClientIP(r)) {
+		writeErr(w, http.StatusTooManyRequests, "rate")
+		return
+	}
+	err := p.svc.Recover(r.Context(), in.Email)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "queued"})
+	case errors.Is(err, ErrEmail):
+		writeErr(w, http.StatusBadRequest, "email")
+	default:
+		applog.Error(r.Context(), "billing", "recover", applog.F("err", err.Error()))
+		writeErr(w, http.StatusInternalServerError, "internal")
+	}
 }
 
 // webhook answers 2xx for every notification that needs no retry, and an

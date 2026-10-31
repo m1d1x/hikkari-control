@@ -25,6 +25,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/db"
 	"github.com/m1d1x/hikkari-control/internal/entry"
 	"github.com/m1d1x/hikkari-control/internal/geoip"
+	"github.com/m1d1x/hikkari-control/internal/mailer"
 	"github.com/m1d1x/hikkari-control/internal/presets"
 	"github.com/m1d1x/hikkari-control/internal/probesink"
 	"github.com/m1d1x/hikkari-control/internal/subscription"
@@ -179,7 +180,13 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("billing: %w", err)
 	}
-	billingSvc := billing.New(pool, subs, payments, config.Default().BaseURL()+"/pay/done")
+	mailProvider, mailSender, err := mailer.FromEnv(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("mailer: %w", err)
+	}
+	outbox := mailer.NewOutbox(pool, mailProvider, mailSender)
+	go outbox.Run(ctx, 30*time.Second)
+	billingSvc := billing.New(pool, subs, payments, config.Default().BaseURL(), outbox)
 	billing.NewPublic(billingSvc, config.Default().AllWebOrigins()).Register(mux)
 	go billingSvc.Run(ctx, time.Minute)
 	if store != nil {
