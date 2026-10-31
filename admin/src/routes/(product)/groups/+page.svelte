@@ -10,6 +10,7 @@
 		RULE_SECTIONS,
 		emptyRules,
 		groupProblem,
+		slugify,
 		type Group,
 		type RuleKind,
 	} from '$lib/product/presets';
@@ -19,6 +20,7 @@
 	let edit = $state<Group | null>(null);
 	/** the id is the hub's key, so it is typed once, before the first save */
 	let fresh = $state(false);
+	let idEdited = $state(false);
 	let busy = $state(false);
 	let error = $state('');
 	let nameEl = $state<HTMLInputElement | null>(null);
@@ -35,6 +37,7 @@
 		const g = db.groups.find((x) => x.id === id);
 		edit = g ? structuredClone($state.snapshot(g)) : null;
 		fresh = false;
+		idEdited = false;
 		error = '';
 	}
 
@@ -47,6 +50,7 @@
 		if (dirty && !confirm('несохранённые правки пропадут')) return;
 		edit = { id: '', name: '', icon: '', rules: emptyRules() };
 		fresh = true;
+		idEdited = false;
 		error = '';
 		await tick();
 		nameEl?.focus();
@@ -126,7 +130,15 @@
 				<div class="top">
 					<label class="name-box">
 						<span class="dim">название</span>
-						<input class="field name-input" placeholder="например, Steam или Discord" bind:this={nameEl} bind:value={edit.name} />
+						<input
+							class="field name-input"
+							placeholder="например, Steam или Discord"
+							bind:this={nameEl}
+							bind:value={edit.name}
+							oninput={() => {
+								if (fresh && !idEdited && edit) edit.id = slugify(edit.name);
+							}}
+						/>
 					</label>
 					{#if !fresh}<button class="btn" onclick={remove} disabled={busy}>удалить</button>{/if}
 					<button class="btn primary" onclick={save} disabled={busy || !dirty || !!problem}>сохранить</button>
@@ -134,7 +146,15 @@
 				<div class="ids">
 					<label>
 						<span class="dim">id</span>
-						<input class="field mono" placeholder="steam" bind:value={edit.id} disabled={!fresh} />
+						<input
+							class="field mono"
+							placeholder="steam"
+							bind:value={edit.id}
+							oninput={() => {
+								idEdited = true;
+							}}
+							disabled={!fresh}
+						/>
 					</label>
 					<label>
 						<span class="dim">иконка</span>

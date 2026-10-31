@@ -18,6 +18,7 @@
 		RULE_KINDS,
 		groupProblem,
 		rulesToWire,
+		slugify,
 		type Group,
 		type Rules,
 		type Side,
@@ -39,6 +40,7 @@
 	// only a release sends anything to devices.
 	let edit = $state<Draft | null>(null);
 	let fresh = $state(false);
+	let idEdited = $state(false);
 	let busy = $state(false);
 	let error = $state('');
 	let releaseStage = $state(5);
@@ -61,6 +63,7 @@
 		const x = db.presets.find((y) => y.id === id);
 		edit = x ? draftOf(x) : null;
 		fresh = false;
+		idEdited = false;
 		error = '';
 		showJson = false;
 	}
@@ -178,6 +181,7 @@
 		if (dirty && !confirm('несохранённые правки пропадут')) return;
 		edit = { id: '', name: '', default: db.presets.length === 0, bypass: [], proxy: [], disabled: [] };
 		fresh = true;
+		idEdited = false;
 		error = '';
 		await tick();
 		nameEl?.focus();
@@ -268,7 +272,15 @@
 				<div class="top">
 					<label class="name-box">
 						<span class="dim">название</span>
-						<input class="field name-input" placeholder="например, Россия или Общий" bind:this={nameEl} bind:value={edit.name} />
+						<input
+							class="field name-input"
+							placeholder="например, Россия или Общий"
+							bind:this={nameEl}
+							bind:value={edit.name}
+							oninput={() => {
+								if (fresh && !idEdited && edit) edit.id = slugify(edit.name);
+							}}
+						/>
 					</label>
 					{#if !fresh}<button class="btn" onclick={remove} disabled={busy || edit.default}>удалить</button>{/if}
 					<button class="btn primary" onclick={save} disabled={busy || !dirty || !edit.name.trim() || !edit.id}
@@ -278,7 +290,15 @@
 				<div class="ids">
 					<label>
 						<span class="dim">id</span>
-						<input class="field mono" placeholder="ru" bind:value={edit.id} disabled={!fresh} />
+						<input
+							class="field mono"
+							placeholder="ru"
+							bind:value={edit.id}
+							oninput={() => {
+								idEdited = true;
+							}}
+							disabled={!fresh}
+						/>
 					</label>
 					<label class="check">
 						<input type="checkbox" bind:checked={edit.default} disabled={!fresh && p?.default} />

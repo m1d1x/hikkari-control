@@ -150,6 +150,26 @@ export function groupFromService(s: CatalogService): Group {
 	return { id: s.id, name: s.name, icon: s.icon, rules: rulesFromWire(s) };
 }
 
+const RU_MAP: Record<string, string> = {
+	а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'yo', ж: 'zh',
+	з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o',
+	п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'kh', ц: 'ts',
+	ч: 'ch', ш: 'sh', щ: 'shch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
+};
+
+/** Converts a title to a valid client ID (`^[a-z0-9][a-z0-9-]{0,63}$`). */
+export function slugify(text: string): string {
+	const lower = text.toLowerCase();
+	let translit = '';
+	for (const ch of lower) {
+		translit += RU_MAP[ch] ?? ch;
+	}
+	return translit
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+|-+$/g, '')
+		.slice(0, 64);
+}
+
 /**
  * Why the engine would reject this group, or null: the quick checks, shown
  * while typing. The hub runs the engine's full checks on save and on release
