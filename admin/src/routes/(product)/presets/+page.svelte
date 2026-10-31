@@ -1,37 +1,73 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { page } from '$app/state';
-	import { db } from '$lib/product/store.svelte';
+	import { db, load, putPreset } from '$lib/product/store.svelte';
 	import {
-		num,
-		pct,
-		STAGES,
+		createPreset,
+		deletePreset,
+		refusal,
+		releasePreset,
+		revertPreset,
+		savePreset,
+		setStage,
+		type Preset,
+		type Release,
+	} from '$lib/api/presets';
+	import {
 		SIDES,
 		RULE_KINDS,
-		ACTIVE_DEVICES,
-		catalogOf,
 		groupProblem,
+		rulesToWire,
 		type Group,
-		type Preset,
 		type Rules,
 		type Side,
-	} from '$lib/product/mock';
+	} from '$lib/product/presets';
 
-	let currentId = $state<string | undefined>();
-	// The textarea holds its own text so a trailing newline survives typing;
-	// it is reset only when another preset is picked.
-	let testersText = $state('');
-	let nameEl = $state<HTMLInputElement | null>(null);
-	const p = $derived(db.presets.find((x) => x.id === currentId) ?? db.presets[0]);
+	/** Shares a release can go to; any is allowed, 100 makes it everyone's. */
+	const STAGES = [5, 25, 50, 100];
 
-	function select(id: string | undefined) {
-		currentId = id;
-		testersText = db.presets.find((x) => x.id === id)?.testers.join('\n') ?? '';
+	interface Draft {
+		id: string;
+		name: string;
+		default: boolean;
+		bypass: string[];
+		proxy: string[];
 	}
 
-	select(page.url.searchParams.get('p') ?? db.presets[0]?.id);
+	// The editor works on a copy of the draft; «сохранить» writes it, and
+	// only a release sends anything to devices.
+	let edit = $state<Draft | null>(null);
+	let fresh = $state(false);
+	let busy = $state(false);
+	let error = $state('');
+	let releaseStage = $state(5);
+	let showJson = $state(false);
+	let nameEl = $state<HTMLInputElement | null>(null);
 
-	const stageLabel = (i: number) => (i === 0 ? 'тестеры' : i === STAGES.length - 1 ? 'все' : `${STAGES[i]}%`);
+	const p = $derived(edit && !fresh ? db.presets.find((x) => x.id === edit!.id) : undefined);
+	const draftOf = (x: Preset): Draft => ({
+		id: x.id,
+		name: x.name,
+		default: x.default,
+		bypass: [...x.bypass],
+		proxy: [...x.proxy],
+	});
+	const dirty = $derived(!!edit && (fresh || !p || JSON.stringify(edit) !== JSON.stringify(draftOf(p))));
+
+	function pick(id: string | undefined) {
+		if (dirty && !confirm('несохранённые правки пропадут')) return;
+		const x = db.presets.find((y) => y.id === id);
+		edit = x ? draftOf(x) : null;
+		fresh = false;
+		error = '';
+		showJson = false;
+	}
+
+	onMount(async () => {
+		await load();
+		pick(page.url.searchParams.get('p') ?? db.presets[0]?.id);
+	});
+
 	const latest = (x: Preset) => x.next ?? x.current;
 	const groupOf = (id: string) => db.groups.find((g) => g.id === id);
 	const ruleCount = (r: Rules) => RULE_KINDS.reduce((n, k) => n + r[k.key].length, 0);
@@ -53,7 +89,7 @@
 		});
 	}
 
-	/** What a release would change against the latest version: groups in and out, and edits inside groups. */
+	/** What a release would change against the latest one: groups in and out, and edits inside groups. */
 	function changes(x: Preset): { text: string; kind: 'add' | 'drop' | 'edit' }[] {
 		const base = latest(x);
 		return SIDES.flatMap(({ key, label }) => {
@@ -66,7 +102,8 @@
 				if (!old) out.push({ text: `+ ${g.name} → ${label}`, kind: 'add' });
 				else {
 					const d = ruleDiff(old.rules, g.rules);
-					if (d.length) out.push({ text: `${g.name}: ${d.join('  ')}`, kind: 'edit' });
+					if (d.length || old.name !== g.name)
+						out.push({ text: `${g.name}: ${d.join('  ') || 'название'}`, kind: 'edit' });
 				}
 			}
 			for (const old of was) {
@@ -77,8 +114,8 @@
 	}
 
 	const diff = $derived(p ? changes(p) : []);
-	const free = $derived(db.groups.filter((g) => p && !p.bypass.includes(g.id) && !p.proxy.includes(g.id)));
-	/** Groups the engine would refuse; one of them blocks the whole catalog, so the release waits. */
+	const free = $derived(db.groups.filter((g) => edit && !edit.bypass.includes(g.id) && !edit.proxy.includes(g.id)));
+	/** Quick checks while editing; the hub runs the client's full ones on release. */
 	const problems = $derived(
 		p
 			? [...p.bypass, ...p.proxy]
@@ -90,93 +127,93 @@
 					})
 			: [],
 	);
-	let showJson = $state(false);
-	const json = $derived.by(() => {
-		const v = p?.next ?? p?.current;
-		return v ? JSON.stringify(catalogOf($state.snapshot(v) as typeof v), null, 2) : '';
-	});
-	const worse = $derived(!!p?.next && p.stage > 0 && p.errPct.next > p.errPct.current * 1.5);
+
+	/** The services of a release exactly as a client gets them; the version it is served under is the hub's. */
+	function servicesOf(r: Release) {
+		return SIDES.flatMap(({ key }) =>
+			r[key].map((g) => ({ id: g.id, name: g.name, icon: g.icon, ...rulesToWire(g.rules), defaultModes: [key] })),
+		);
+	}
+	const json = $derived(p && latest(p) ? JSON.stringify(servicesOf(latest(p)!), null, 2) : '');
 
 	function status(x: Preset): { text: string; cls: string } {
-		if (x.next) return x.paused ? { text: 'пауза', cls: 'warn' } : { text: stageLabel(x.stage), cls: 'on' };
+		if (x.next) return { text: `${x.stage}%`, cls: 'on' };
 		if (!x.current) return { text: 'черновик', cls: 'dim' };
 		if (changes(x).length) return { text: 'изменён', cls: 'dim' };
 		return { text: `v${x.current.v}`, cls: 'dim' };
 	}
 
-	/** Devices the stage is meant to reach: its share of everyone plus the testers. */
-	function target(x: Preset): number {
-		return Math.round((ACTIVE_DEVICES * STAGES[x.stage]) / 100) + x.testers.length;
+	/** A preset no device is assigned to: not the default and claiming no country. */
+	const unserved = (x: Preset) => !x.default && x.countries.length === 0;
+
+	async function act(fn: () => Promise<void>) {
+		busy = true;
+		error = '';
+		try {
+			await fn();
+		} catch (e) {
+			error = refusal(e);
+		} finally {
+			busy = false;
+		}
 	}
 
 	async function create() {
-		const x: Preset = {
-			id: Math.random().toString(36).slice(2, 8),
-			name: '',
-			bypass: [],
-			proxy: [],
-			current: null,
-			next: null,
-			stage: STAGES.length - 1,
-			testers: [],
-			paused: false,
-			received: 0,
-			errPct: { next: 0, current: 0 },
-		};
-		db.presets.push(x);
-		select(x.id);
+		if (dirty && !confirm('несохранённые правки пропадут')) return;
+		edit = { id: '', name: '', default: db.presets.length === 0, bypass: [], proxy: [] };
+		fresh = true;
+		error = '';
 		await tick();
 		nameEl?.focus();
 	}
 
-	function remove() {
-		if (!confirm(`удалить пресет «${p.name || 'без названия'}»? у людей он пропадёт`)) return;
-		db.presets = db.presets.filter((x) => x.id !== p.id);
-		select(db.presets[0]?.id);
-	}
+	const save = () =>
+		act(async () => {
+			const d = $state.snapshot(edit!) as Draft;
+			const body = {
+				name: d.name,
+				default: d.default,
+				countries: p?.countries ?? [],
+				bypass: d.bypass,
+				proxy: d.proxy,
+			};
+			const saved = fresh ? await createPreset(d.id, body) : await savePreset(d.id, body);
+			// Taking the default flag clears it elsewhere: reread them all.
+			if (d.default) await load();
+			else putPreset(saved);
+			fresh = false;
+			edit = draftOf(saved);
+		});
+
+	const remove = () =>
+		act(async () => {
+			if (!edit || !confirm(`удалить пресет «${edit.name || edit.id}»? его устройства перейдут на пресет по умолчанию`))
+				return;
+			await deletePreset(edit.id);
+			db.presets = db.presets.filter((x) => x.id !== edit!.id);
+			edit = null;
+			pick(db.presets[0]?.id);
+		});
+
+	const release = () => act(async () => putPreset(await releasePreset(p!.id, releaseStage)));
+	const stage = (to: number) => act(async () => putPreset(await setStage(p!.id, to)));
+	const revert = () =>
+		act(async () => {
+			if (
+				!confirm(
+					`откатить v${p!.next!.v}? все устройства вернутся на ${p!.current ? `v${p!.current.v}` : 'встроенный каталог клиента'}`,
+				)
+			)
+				return;
+			putPreset(await revertPreset(p!.id));
+		});
 
 	function addGroup(side: Side, id: string) {
-		if (id) p[side] = [...p[side], id];
+		if (id && edit) edit[side] = [...edit[side], id];
 	}
 
 	function dropGroup(side: Side, id: string) {
-		p[side] = p[side].filter((x) => x !== id);
-	}
-
-	/** Freezes the groups as they are now into the next version. */
-	function release() {
-		const freeze = (ids: string[]) =>
-			ids.map(groupOf).filter((g): g is Group => !!g).map((g) => $state.snapshot(g));
-		p.next = { v: (latest(p)?.v ?? 0) + 1, bypass: freeze(p.bypass), proxy: freeze(p.proxy) };
-		p.stage = 0;
-		p.received = 0;
-		p.paused = false;
-	}
-
-	function advance() {
-		if (!p.next) return;
-		if (p.stage < STAGES.length - 1) {
-			p.stage++;
-			p.received = Math.round(target(p) * 0.1);
-		} else {
-			p.current = p.next;
-			p.next = null;
-		}
-		p.paused = false;
-	}
-
-	/** Drops the version being rolled out; the groups stay as edited, so it can be fixed and released again. */
-	function rollback() {
-		p.next = null;
-		p.stage = STAGES.length - 1;
-		p.paused = false;
-	}
-
-	function setTesters(text: string) {
-		p.testers = text
-			.split('\n')
-			.map((s) => s.trim())
-			.filter(Boolean);
+		if (edit) edit[side] = edit[side].filter((x) => x !== id);
 	}
 </script>
 
@@ -187,144 +224,184 @@
 	</div>
 </div>
 
-<div class="presets">
-	<section class="card list">
-		<button class="btn add" onclick={create}>+ пресет</button>
-		{#each db.presets as x (x.id)}
-			{@const st = status(x)}
-			<button class="item" class:on={x.id === currentId} onclick={() => select(x.id)}>
-				<div class="line">
-					<span class:dim={!x.name}>{x.name || 'без названия'}</span>
-					<span class="st {st.cls}">{st.text}</span>
+{#if db.error}
+	<div class="card bad">хаб не ответил: {db.error}</div>
+{:else if db.loaded}
+	<div class="presets">
+		<section class="card list">
+			<button class="btn add" onclick={create}>+ пресет</button>
+			{#each db.presets as x (x.id)}
+				{@const st = status(x)}
+				<button class="item" class:on={!fresh && x.id === edit?.id} onclick={() => pick(x.id)}>
+					<div class="line">
+						<span>{x.name}</span>
+						<span class="st {st.cls}">{st.text}</span>
+					</div>
+					<div class="dim meta">
+						{plural(x.bypass.length + x.proxy.length, ['группа', 'группы', 'групп'])}{x.default
+							? ' · по умолчанию'
+							: ''}
+					</div>
+				</button>
+			{/each}
+		</section>
+
+		{#if edit}
+			<section class="card">
+				<div class="top">
+					<input class="name" placeholder="название пресета" bind:this={nameEl} bind:value={edit.name} />
+					{#if !fresh}<button class="btn" onclick={remove} disabled={busy || edit.default}>удалить</button>{/if}
+					<button class="btn primary" onclick={save} disabled={busy || !dirty || !edit.name.trim() || !edit.id}
+						>сохранить</button
+					>
 				</div>
-				<div class="dim meta">{plural(x.bypass.length + x.proxy.length, ['группа', 'группы', 'групп'])}</div>
-			</button>
-		{/each}
-	</section>
+				<div class="ids">
+					<label>
+						<span class="dim">id</span>
+						<input class="field mono" placeholder="ru" bind:value={edit.id} disabled={!fresh} />
+					</label>
+					<label class="check">
+						<input type="checkbox" bind:checked={edit.default} disabled={!fresh && p?.default} />
+						<span>по умолчанию — его получают все устройства</span>
+					</label>
+				</div>
+				{#if p && unserved(p)}
+					<div class="dim hint">не раздаётся: устройства получают только пресет по умолчанию</div>
+				{/if}
+				{#if error}
+					<div class="bad problem">{error}</div>
+				{/if}
 
-	{#if p}
-		<section class="card">
-			<div class="top">
-				<input class="name" placeholder="название пресета" bind:this={nameEl} bind:value={p.name} />
-				<button class="btn" onclick={remove}>удалить</button>
-			</div>
-
-			<div class="sides">
-				{#each SIDES as s (s.key)}
-					<div>
-						<div class="label">{s.label}</div>
-						<div class="groups">
-							{#each p[s.key] as id (id)}
-								{@const g = groupOf(id)}
-								{#if g}
+				<div class="sides">
+					{#each SIDES as s (s.key)}
+						<div>
+							<div class="label">{s.label}</div>
+							<div class="groups">
+								{#each edit[s.key] as id (id)}
+									{@const g = groupOf(id)}
 									<span class="g">
-										<a href="/groups?g={g.id}">{g.name || 'без названия'}</a>
-										<small>{ruleCount(g.rules)}</small>
+										<a href="/groups?g={id}">{g?.name ?? id}</a>
+										{#if g}<small>{ruleCount(g.rules)}</small>{/if}
 										<button onclick={() => dropGroup(s.key, id)} title="убрать">×</button>
 									</span>
+								{/each}
+								{#if free.length}
+									<select
+										class="pick"
+										onchange={(e) => {
+											addGroup(s.key, e.currentTarget.value);
+											e.currentTarget.value = '';
+										}}
+									>
+										<option value="">+ группа</option>
+										{#each free as g (g.id)}
+											<option value={g.id}>{g.name}</option>
+										{/each}
+									</select>
 								{/if}
-							{/each}
-							{#if free.length}
-								<select
-									class="pick"
-									onchange={(e) => {
-										addGroup(s.key, e.currentTarget.value);
-										e.currentTarget.value = '';
-									}}
-								>
-									<option value="">+ группа</option>
-									{#each free as g (g.id)}
-										<option value={g.id}>{g.name || 'без названия'}</option>
-									{/each}
-								</select>
+							</div>
+						</div>
+					{/each}
+				</div>
+
+				{#if p && diff.length}
+					<div class="block">
+						<div class="release">
+							<div class="label">что уйдёт людям в v{(latest(p)?.v ?? 0) + 1}</div>
+							{#if dirty}
+								<span class="dim hint">сначала сохрани пресет</span>
+							{:else if problems.length}
+								<span class="bad hint">клиент не примет каталог: {problems.join('; ')}</span>
+							{:else}
+								<div class="actions">
+									{#if p.next}<span class="dim hint">заменит раскатку v{p.next.v}</span>{/if}
+									<select class="pick" bind:value={releaseStage}>
+										{#each STAGES as st (st)}
+											<option value={st}>{st === 100 ? 'всем сразу' : `${st}% устройств`}</option>
+										{/each}
+									</select>
+									<button class="btn primary" onclick={release} disabled={busy}
+										>выпустить v{(latest(p)?.v ?? 0) + 1}</button
+									>
+								</div>
 							{/if}
 						</div>
-					</div>
-				{/each}
-			</div>
-
-
-			{#if diff.length}
-				<div class="block">
-					<div class="release">
-						<div class="label">что уйдёт людям в v{(latest(p)?.v ?? 0) + 1}</div>
-						{#if p.next}
-							<span class="dim hint">v{p.next.v} ещё раскатывается: заверши или откати, потом выпускай</span>
-						{:else if problems.length}
-							<span class="bad hint">клиент не примет каталог: {problems.join('; ')}</span>
-						{:else}
-							<button class="btn primary" onclick={release}>выпустить v{(latest(p)?.v ?? 0) + 1}</button>
-						{/if}
-					</div>
-					<div class="diff">
-						{#each diff as d (d.text)}
-							<div class:ok={d.kind === 'add'} class:bad={d.kind === 'drop'}>{d.text}</div>
-						{/each}
-					</div>
-				</div>
-			{/if}
-
-			{#if json}
-				<div class="block">
-					<div class="release">
-						<span class="label">каталог v{(p.next ?? p.current)?.v} для клиента</span>
-						<div class="actions">
-							<button class="btn" onclick={() => navigator.clipboard.writeText(json)}>скопировать</button>
-							<button class="btn" onclick={() => (showJson = !showJson)}>{showJson ? 'скрыть' : 'показать'}</button>
+						<div class="diff">
+							{#each diff as d (d.text)}
+								<div class:ok={d.kind === 'add'} class:bad={d.kind === 'drop'}>{d.text}</div>
+							{/each}
 						</div>
 					</div>
-					{#if showJson}
-						<pre class="json mono">{json}</pre>
-					{/if}
-				</div>
-			{/if}
+				{/if}
 
-			{#if p.next}
-				<div class="block">
-					<div class="release">
-						<span class="label">раскатка v{p.next.v}</span>
-						<div class="actions">
-							<button class="btn" onclick={rollback}>откатить</button>
-							<button class="btn" onclick={() => (p.paused = !p.paused)}>{p.paused ? 'продолжить' : 'пауза'}</button>
-							<button class="btn primary" onclick={advance}>
-								{p.stage < STAGES.length - 1 ? `дальше → ${stageLabel(p.stage + 1)}` : 'завершить'}
-							</button>
-						</div>
-					</div>
-					<div class="stages">
-						{#each STAGES as _, i (i)}
-							<div class="stage" class:done={i < p.stage} class:now={i === p.stage}>
-								<i></i>
-								<span>{stageLabel(i)}</span>
+				{#if p?.next}
+					{@const ahead = STAGES.find((st) => st > p.stage)}
+					<div class="block">
+						<div class="release">
+							<span class="label"
+								>раскатка v{p.next.v} · {p.stage}% устройств, остальные на {p.current
+									? `v${p.current.v}`
+									: 'встроенном каталоге'}</span
+							>
+							<div class="actions">
+								<button class="btn" onclick={revert} disabled={busy}>откатить</button>
+								{#if ahead && ahead < 100}
+									<button class="btn" onclick={() => stage(ahead)} disabled={busy}>дальше → {ahead}%</button>
+								{/if}
+								<button class="btn primary" onclick={() => stage(100)} disabled={busy}>всем</button>
 							</div>
-						{/each}
+						</div>
+						<div class="stages">
+							{#each STAGES as st (st)}
+								<div class="stage" class:done={st < p.stage} class:now={st === p.stage}>
+									<i></i>
+									<span>{st === 100 ? 'все' : `${st}%`}</span>
+								</div>
+							{/each}
+						</div>
 					</div>
-					<div class="figures">
-						<span>получили<b>{num(p.received)}</b><span class="dim">&nbsp;из ~{num(target(p))}</span></span>
-						{#if p.stage > 0}
-							<span>ошибки у них<b class:bad={worse}>{pct(p.errPct.next)}</b></span>
-							<span>у остальных<b>{pct(p.errPct.current)}</b></span>
+				{:else if p?.current}
+					<div class="block dim">v{p.current.v} у всех · выпустил {p.current.createdBy || '—'}</div>
+				{/if}
+
+				{#if json}
+					<div class="block">
+						<div class="release">
+							<span class="label">группы v{latest(p!)?.v} для клиента</span>
+							<div class="actions">
+								<button class="btn" onclick={() => navigator.clipboard.writeText(json)}>скопировать</button>
+								<button class="btn" onclick={() => (showJson = !showJson)}>{showJson ? 'скрыть' : 'показать'}</button>
+							</div>
+						</div>
+						{#if showJson}
+							<pre class="json mono">{json}</pre>
 						{/if}
 					</div>
-					<div class="form testers">
-						<span class="label">тестеры</span>
-						<textarea
-							class="field mono"
-							rows="3"
-							placeholder="id устройства или @ник, по одному в строке"
-							bind:value={testersText}
-							oninput={(e) => setTesters(e.currentTarget.value)}
-						></textarea>
-					</div>
-				</div>
-			{:else if p.current}
-				<div class="block dim">v{p.current.v} у всех · {num(p.received)} устройств</div>
-			{/if}
-		</section>
-	{/if}
-</div>
+				{/if}
+			</section>
+		{/if}
+	</div>
+{/if}
 
 <style>
+	.ids {
+		display: flex;
+		gap: 16px;
+		margin: 8px 0 12px;
+		font-size: 12px;
+	}
+
+	.ids label {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.problem {
+		margin-top: 6px;
+		font-size: 12px;
+	}
+
 	.sub {
 		font-size: 12px;
 	}
@@ -469,13 +546,6 @@
 		border-top: 1px solid var(--border-subtle);
 	}
 
-	.form {
-		display: grid;
-		grid-template-columns: 90px minmax(0, 420px);
-		gap: 10px 16px;
-		align-items: center;
-	}
-
 	.release {
 		display: flex;
 		align-items: center;
@@ -558,27 +628,6 @@
 	.stage.done,
 	.stage.now {
 		color: var(--text);
-	}
-
-	.figures {
-		display: flex;
-		gap: 22px;
-		margin-top: 14px;
-		font-size: 12px;
-		color: var(--text-2);
-	}
-
-	.figures b {
-		margin-left: 4px;
-		color: var(--text);
-	}
-
-	.testers {
-		margin-top: 16px;
-	}
-
-	textarea {
-		resize: vertical;
 	}
 
 	.json {

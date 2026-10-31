@@ -3,20 +3,41 @@
 		label: string;
 		hint: string;
 		items: string[];
+		/** the canonical form the client stores, or a refusal it would give */
+		normalize: (value: string) => Promise<string>;
 	}
 
-	let { label, hint, items = $bindable() }: Props = $props();
+	let { label, hint, items = $bindable(), normalize }: Props = $props();
 	let input = $state('');
+	let refused = $state<string[]>([]);
 
-	/** Adds every value in text, split on newlines and commas (paths and app names hold spaces), skipping ones already there. */
-	function add(text: string) {
-		const have = new Set(items.map((x) => x.toLowerCase()));
-		const fresh = text
+	/**
+	 * Adds every value in text, split on newlines and commas (paths and app
+	 * names hold spaces), each in the form the client stores, skipping ones
+	 * already there. What the client would refuse stays in the field, named.
+	 */
+	async function add(text: string) {
+		const values = text
 			.split(/[\n,]+/)
 			.map((x) => x.trim())
-			.filter((x) => x && !have.has(x.toLowerCase()) && have.add(x.toLowerCase()));
+			.filter(Boolean);
+		const results = await Promise.allSettled(values.map((v) => normalize(v)));
+		const have = new Set(items);
+		const fresh: string[] = [];
+		const bad: string[] = [];
+		const why: string[] = [];
+		results.forEach((r, i) => {
+			if (r.status === 'rejected') {
+				bad.push(values[i]);
+				why.push(r.reason instanceof Error ? r.reason.message : String(r.reason));
+			} else if (!have.has(r.value)) {
+				have.add(r.value);
+				fresh.push(r.value);
+			}
+		});
 		if (fresh.length) items = [...items, ...fresh];
-		input = '';
+		input = bad.join(', ');
+		refused = why;
 	}
 
 	function paste(e: ClipboardEvent) {
@@ -42,6 +63,9 @@
 		onkeydown={(e) => e.key === 'Enter' && add(input)}
 		onpaste={paste}
 	/>
+	{#each refused as r (r)}
+		<div class="bad refused">{r}</div>
+	{/each}
 </div>
 
 <style>
@@ -88,5 +112,10 @@
 
 	.field {
 		margin-top: 6px;
+	}
+
+	.refused {
+		margin-top: 4px;
+		font-size: 11px;
 	}
 </style>

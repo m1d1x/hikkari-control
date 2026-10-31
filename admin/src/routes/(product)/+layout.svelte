@@ -1,10 +1,11 @@
 <script lang="ts">
-	// Product screens. Metrics and errors read the hub (client telemetry);
-	// the rest still render $lib/product/mock and say so.
+	// Product screens. Metrics and errors read the hub (client telemetry),
+	// groups and presets its catalog; the rest still render $lib/product/mock
+	// and say so.
 	import { page } from '$app/state';
 	import '$lib/styles/product.css';
 
-	const REAL = ['/metrics', '/errors'];
+	const REAL = ['/metrics', '/errors', '/groups', '/presets'];
 	const mock = $derived(!REAL.includes(page.url.pathname));
 
 	let { children } = $props();
