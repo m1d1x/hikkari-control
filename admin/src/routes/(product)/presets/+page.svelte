@@ -24,9 +24,6 @@
 		type Side,
 	} from '$lib/product/presets';
 
-	/** Shares a release can go to; any is allowed, 100 makes it everyone's. */
-	const STAGES = [5, 25, 50, 100];
-
 	interface Draft {
 		id: string;
 		name: string;
@@ -43,6 +40,8 @@
 	let busy = $state(false);
 	let error = $state('');
 	let releaseStage = $state(5);
+	/** Where the rollout slider points; follows the live stage until moved. */
+	let rolloutStage = $state(0);
 	let showJson = $state(false);
 	let nameEl = $state<HTMLInputElement | null>(null);
 
@@ -221,6 +220,10 @@
 			pick(db.presets[0]?.id);
 		});
 
+	$effect(() => {
+		rolloutStage = p?.next ? p.stage : 0;
+	});
+
 	const release = () => act(async () => putPreset(await releasePreset(p!.id, releaseStage)));
 	const stage = (to: number) => act(async () => putPreset(await setStage(p!.id, to)));
 	const revert = () =>
@@ -350,11 +353,10 @@
 							{:else}
 								<div class="actions">
 									{#if p.next}<span class="dim hint">заменит раскатку v{p.next.v}</span>{/if}
-									<select class="pick" bind:value={releaseStage}>
-										{#each STAGES as st (st)}
-											<option value={st}>{st === 100 ? 'всем сразу' : `${st}% устройств`}</option>
-										{/each}
-									</select>
+									<label class="share">
+										<input type="range" min="1" max="100" bind:value={releaseStage} />
+										<span class="mono">{releaseStage === 100 ? 'всем' : `${releaseStage}%`}</span>
+									</label>
 									<button class="btn primary" onclick={release} disabled={busy}
 										>выпустить v{(latest(p)?.v ?? 0) + 1}</button
 									>
@@ -370,7 +372,6 @@
 				{/if}
 
 				{#if p?.next}
-					{@const ahead = STAGES.find((st) => st > p.stage)}
 					<div class="block">
 						<div class="release">
 							<span class="label"
@@ -380,19 +381,19 @@
 							>
 							<div class="actions">
 								<button class="btn" onclick={revert} disabled={busy}>откатить</button>
-								{#if ahead && ahead < 100}
-									<button class="btn" onclick={() => stage(ahead)} disabled={busy}>дальше → {ahead}%</button>
-								{/if}
 								<button class="btn primary" onclick={() => stage(100)} disabled={busy}>всем</button>
 							</div>
 						</div>
-						<div class="stages">
-							{#each STAGES as st (st)}
-								<div class="stage" class:done={st < p.stage} class:now={st === p.stage}>
-									<i></i>
-									<span>{st === 100 ? 'все' : `${st}%`}</span>
-								</div>
-							{/each}
+						<div class="actions rollout">
+							<label class="share">
+								<input type="range" min="1" max="100" bind:value={rolloutStage} />
+								<span class="mono">{rolloutStage}%</span>
+							</label>
+							<button
+								class="btn"
+								onclick={() => stage(rolloutStage)}
+								disabled={busy || rolloutStage === p.stage}>применить</button
+							>
 						</div>
 					</div>
 				{:else if p?.current}
@@ -618,56 +619,25 @@
 		gap: 6px;
 	}
 
-	/* rollout stepper: dots on a line, done ones filled */
-	.stages {
+	.share {
 		display: flex;
-		max-width: 520px;
-		margin-top: 4px;
+		align-items: center;
+		gap: 8px;
 	}
 
-	.stage {
-		flex: 1;
-		position: relative;
-		font-size: 11px;
-		color: var(--text-3);
+	.share input {
+		width: 200px;
+		accent-color: var(--primary);
 	}
 
-	.stage i {
-		position: relative;
-		z-index: 1;
-		display: block;
-		width: 10px;
-		height: 10px;
-		margin-bottom: 6px;
-		border-radius: 50%;
-		border: 1.5px solid var(--border);
-		background: var(--card);
+	.share span {
+		min-width: 36px;
+		font-size: 12px;
 	}
 
-	.stage:not(:last-child)::after {
-		content: '';
-		position: absolute;
-		top: 4px;
-		left: 10px;
-		right: 0;
-		height: 2px;
-		background: var(--border);
-	}
-
-	.stage.done::after,
-	.stage.done i {
-		background: var(--primary);
-		border-color: var(--primary);
-	}
-
-	.stage.now i {
-		border-color: var(--primary);
-		box-shadow: 0 0 0 3px var(--primary-subtle);
-	}
-
-	.stage.done,
-	.stage.now {
-		color: var(--text);
+	.rollout {
+		margin-left: 0;
+		align-items: center;
 	}
 
 	.json {
