@@ -23,6 +23,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 	"github.com/m1d1x/hikkari-control/internal/db"
 	"github.com/m1d1x/hikkari-control/internal/entry"
+	"github.com/m1d1x/hikkari-control/internal/geoip"
 	"github.com/m1d1x/hikkari-control/internal/presets"
 	"github.com/m1d1x/hikkari-control/internal/probesink"
 	"github.com/m1d1x/hikkari-control/internal/subscription"
@@ -156,8 +157,21 @@ func run() error {
 		return fmt.Errorf("downdetector: %w", err)
 	}
 	defer func() { stop(); closeDD() }()
+	// Routing presets clients fetch (internal/presets). The country picks a
+	// preset; without GEOIP_DB (a City MMDB) every device gets the default.
+	geo, err := geoip.New(os.Getenv("GEOIP_DB"))
+	if err != nil {
+		return fmt.Errorf("geoip: %w", err)
+	}
+	defer func() { _ = geo.Close() }()
+	presetsPublic := presets.NewPublic(presets.NewStore(pool), func(ip string) string { return geo.Lookup(ip).CountryCode })
+	presetsPublic.Register(mux)
+	go presetsPublic.Watch(ctx)
 	// Subscribers' links (internal/subscription): their batch of the pool.
-	mux.HandleFunc("GET /sub/{token}", subscription.New(pool, svc, entry.PinnedKeys()).Handler())
+	subs := subscription.New(pool, svc, entry.PinnedKeys())
+	mux.HandleFunc("GET /sub/{token}", subs.Handler())
+	// Relays learn subscribers' access keys from the answer to their pulse.
+	svc.SetRelayKeys(subs)
 	if store != nil {
 		// Client telemetry (hikkari-client docs/TELEMETRY.md). Shares /v1/
 		// with the downdetector; the more specific pattern wins.
