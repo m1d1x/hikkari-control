@@ -82,6 +82,9 @@ func TestProductScreens_AgainstClickHouse(t *testing.T) {
 	if m.People.Active != 3 || m.People.Fresh != 2 || m.People.Returning != 1 || m.People.Total != 3 {
 		t.Fatalf("people: %+v", m.People)
 	}
+	if m.People.DAU != 3 || m.People.WAU != 3 || m.People.MAU != 3 || m.People.Stickiness == nil || *m.People.Stickiness != 100 {
+		t.Fatalf("dau/wau/mau: %+v", m.People)
+	}
 	if len(m.Buckets) != 24 || len(m.People.Series.Active) != 24 {
 		t.Fatalf("buckets: %d, series %d", len(m.Buckets), len(m.People.Series.Active))
 	}
@@ -113,6 +116,31 @@ func TestProductScreens_AgainstClickHouse(t *testing.T) {
 	}
 	if len(m.Downloads.Platforms) != 2 || m.Downloads.Platforms[0].Installs != 1 {
 		t.Fatalf("download platforms: %+v", m.Downloads.Platforms)
+	}
+
+	// Now insert landing downloads and verify the funnel reflects them.
+	if err := store.InsertLandingDownload(ctx, at(2*time.Hour), "macos", ".pkg"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertLandingDownload(ctx, at(1*time.Hour), "windows", ".exe"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertLandingDownload(ctx, at(30*time.Minute), "windows", ".exe"); err != nil {
+		t.Fatal(err)
+	}
+	mWithClicks, err := h.productMetrics(ctx, productWindows["24h"], now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mWithClicks.Downloads.Clicks == nil || *mWithClicks.Downloads.Clicks != 3 {
+		t.Fatalf("clicks: %+v", mWithClicks.Downloads.Clicks)
+	}
+	// 2 installs / 3 clicks * 100 = 66.66%
+	if mWithClicks.Downloads.ConvPct == nil || int(*mWithClicks.Downloads.ConvPct) != 66 {
+		t.Fatalf("convPct: %+v", mWithClicks.Downloads.ConvPct)
+	}
+	if len(mWithClicks.Downloads.ClicksSeries) != 24 {
+		t.Fatalf("clicks series len: %d", len(mWithClicks.Downloads.ClicksSeries))
 	}
 
 	e, err := h.productErrors(ctx, productWindows["24h"], now)

@@ -23,6 +23,10 @@ export interface ProductMetrics {
 		returning: number;
 		/** every install ever, from the daily rollup */
 		total: number;
+		dau: number;
+		wau: number;
+		mau: number;
+		stickiness: number | null;
 		series: { active: number[]; fresh: number[] };
 	};
 	connect: {

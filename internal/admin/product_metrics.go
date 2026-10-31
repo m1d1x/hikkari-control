@@ -56,11 +56,15 @@ type productMetrics struct {
 }
 
 type metricsPeople struct {
-	Active    uint64        `json:"active"`
-	Fresh     uint64        `json:"fresh"`
-	Returning uint64        `json:"returning"`
-	Total     uint64        `json:"total"`
-	Series    metricsSeries `json:"series"`
+	Active     uint64        `json:"active"`
+	Fresh      uint64        `json:"fresh"`
+	Returning  uint64        `json:"returning"`
+	Total      uint64        `json:"total"`
+	DAU        uint64        `json:"dau"`
+	WAU        uint64        `json:"wau"`
+	MAU        uint64        `json:"mau"`
+	Stickiness *float64      `json:"stickiness"`
+	Series     metricsSeries `json:"series"`
 }
 
 type metricsSeries struct {
@@ -223,6 +227,30 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 		return nil, err
 	}
 
+	// High-level population benchmarks relative to now:
+	// DAU (last 24h), WAU (last 7d), MAU (last 30d).
+	var dau, wau, mau uint64
+	if err := h.analytics.Row(ctx, `
+		SELECT
+			uniqIf(install, ts >= ?),
+			uniqIf(install, ts >= ?),
+			uniq(install)
+		FROM telemetry_events
+		WHERE ts >= ? AND ts < ? AND install != ''`,
+		now.Add(-24*time.Hour),
+		now.Add(-7*24*time.Hour),
+		now.Add(-30*24*time.Hour),
+		now,
+	).Scan(&dau, &wau, &mau); err != nil {
+		return nil, err
+	}
+	out.People.DAU = dau
+	out.People.WAU = wau
+	out.People.MAU = mau
+	if mau > 0 {
+		out.People.Stickiness = ptr(float64(dau) / float64(mau) * 100)
+	}
+
 	if out.Platforms, err = h.metricsShares(ctx, "os", false, since, end, out.People.Active, 0); err != nil {
 		return nil, err
 	}
@@ -233,6 +261,48 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 	if out.Downloads.Platforms, err = h.metricsShares(ctx, "os", true, since, end, out.People.Fresh, 0); err != nil {
 		return nil, err
 	}
+
+	// Landing download clicks: if the landing has reported clicks, populate
+	// clicks, conversion rate and the bucket series.
+	var totalClicks uint64
+	_ = h.analytics.Row(ctx, `SELECT count() FROM landing_downloads`).Scan(&totalClicks)
+	if totalClicks > 0 {
+		var clicks uint64
+		if err := h.analytics.Row(ctx, `
+			SELECT count() FROM landing_downloads WHERE ts >= ? AND ts < ?`, since, end,
+		).Scan(&clicks); err != nil {
+			return nil, err
+		}
+		out.Downloads.Clicks = &clicks
+		if clicks > 0 {
+			out.Downloads.ConvPct = ptr(float64(out.Downloads.Installs) / float64(clicks) * 100)
+		}
+		out.Downloads.ClicksSeries = make([]uint64, win.N)
+		cRows, err := h.analytics.Query(ctx, `
+			SELECT toStartOfInterval(ts, toIntervalSecond(?)) AS b, count()
+			FROM landing_downloads
+			WHERE ts >= ? AND ts < ?
+			GROUP BY b`, uint32(win.Step.Seconds()), since, end)
+		if err != nil {
+			return nil, err
+		}
+		for cRows.Next() {
+			var b time.Time
+			var count uint64
+			if err := cRows.Scan(&b, &count); err != nil {
+				cRows.Close()
+				return nil, err
+			}
+			if i := win.index(since, b); i >= 0 {
+				out.Downloads.ClicksSeries[i] = count
+			}
+		}
+		cRows.Close()
+		if err := cRows.Err(); err != nil {
+			return nil, err
+		}
+	}
+
 	return out, nil
 }
 

@@ -3,6 +3,7 @@ package analytics
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 
@@ -76,6 +77,14 @@ var telemetrySchema = []string{
 		uniqState(install) AS installs, toUInt64(sum(count)) AS occurrences
 	FROM telemetry_errors
 	GROUP BY day, version, os, component, code`,
+	`CREATE TABLE IF NOT EXISTS landing_downloads (
+		ts   DateTime CODEC(ZSTD(1)),
+		os   LowCardinality(String),
+		file LowCardinality(String)
+	) ENGINE = MergeTree()
+	PARTITION BY toYYYYMMDD(ts)
+	ORDER BY (os, ts)
+	TTL ts + INTERVAL 90 DAY`,
 }
 
 func (s *Store) migrateTelemetry(ctx context.Context) error {
@@ -126,6 +135,18 @@ func (s *Store) InsertTelemetry(ctx context.Context, events []telemetry.EventRow
 		if err := batch.Send(); err != nil {
 			return fmt.Errorf("send telemetry_errors: %w", err)
 		}
+	}
+	return nil
+}
+
+// InsertLandingDownload writes one download click from the landing page.
+func (s *Store) InsertLandingDownload(ctx context.Context, ts time.Time, os, file string) error {
+	ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
+		"async_insert":          1,
+		"wait_for_async_insert": 1,
+	}))
+	if err := s.conn.Exec(ctx, "INSERT INTO landing_downloads (ts, os, file) VALUES (?, ?, ?)", ts, os, file); err != nil {
+		return fmt.Errorf("insert landing download: %w", err)
 	}
 	return nil
 }

@@ -176,6 +176,9 @@ func run() error {
 	mux.HandleFunc("GET /sub/{token}", subs.Handler())
 	// Relays learn subscribers' access keys from the answer to their pulse.
 	svc.SetRelayKeys(subs)
+	// Stream pools hold enough machines for every live subscription's batch
+	// (internal/entry/subscribers.go).
+	svc.SetSubscribers(subs)
 	// Selling subscriptions (internal/billing): the landing's checkout and the
 	// payment provider's notifications.
 	payments, err := billingProvider(os.Getenv)
@@ -195,6 +198,7 @@ func run() error {
 		// Client telemetry (hikkari-client docs/TELEMETRY.md). Shares /v1/
 		// with the downdetector; the more specific pattern wins.
 		mux.HandleFunc("POST /v1/events", (&telemetry.Server{Sink: store}).Handler())
+		telemetry.NewLandingServer(store, config.Default().AllWebOrigins()).Register(mux)
 		mux.HandleFunc("POST /api/v1/internal/entry-probes", probesink.IngestEntry(store, svc))
 		entry.RegisterProberRoutes(mux, svc)
 		entry.RegisterPulseRoutes(mux, svc, os.Getenv("EDGE_PULSE_TOKEN"))

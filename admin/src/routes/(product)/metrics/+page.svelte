@@ -35,6 +35,27 @@
 {/if}
 
 {#if d}
+	<section class="card kpi-card">
+		<div class="kpi-grid">
+			<div class="kpi-item">
+				<span class="kpi-label">DAU <span class="dim">· 24 часа</span></span>
+				<div class="kpi-val">{num(d.people.dau)}</div>
+			</div>
+			<div class="kpi-item">
+				<span class="kpi-label">WAU <span class="dim">· 7 дней</span></span>
+				<div class="kpi-val">{num(d.people.wau)}</div>
+			</div>
+			<div class="kpi-item">
+				<span class="kpi-label">MAU <span class="dim">· 30 дней</span></span>
+				<div class="kpi-val">{num(d.people.mau)}</div>
+			</div>
+			<div class="kpi-item">
+				<span class="kpi-label">Липкость <span class="dim">· DAU / MAU</span></span>
+				<div class="kpi-val">{or(d.people.stickiness, pct)}</div>
+			</div>
+		</div>
+	</section>
+
 	<section class="card">
 		<div class="split">
 			<div>
@@ -138,6 +159,46 @@
 {/snippet}
 
 <style>
+	.kpi-card {
+		padding: 16px 20px;
+	}
+
+	.kpi-grid {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 20px;
+	}
+
+	.kpi-item {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.kpi-label {
+		font-size: 11px;
+		font-weight: 500;
+		color: var(--text-2);
+		letter-spacing: 0.02em;
+	}
+
+	.kpi-val {
+		font-family: var(--mono);
+		font-variant-numeric: tabular-nums;
+		font-size: 26px;
+		font-weight: 600;
+		letter-spacing: -0.02em;
+		color: var(--text);
+		line-height: 1.1;
+	}
+
+	@media (max-width: 720px) {
+		.kpi-grid {
+			grid-template-columns: repeat(2, 1fr);
+			gap: 14px;
+		}
+	}
+
 	.note {
 		margin-top: 10px;
 		font-size: 11px;
