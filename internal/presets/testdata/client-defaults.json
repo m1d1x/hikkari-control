@@ -93,7 +93,9 @@
         "yastatic.net",
         "yandexcloud.net",
         "clck.ru",
-        "dzen.ru"
+        "dzen.ru",
+        "mail.yandex.ru",
+        "passport.yandex.ru"
       ],
       "ips": [
         "5.45.192.0/18",
@@ -111,20 +113,126 @@
       ],
       "processes": {
         "windows": [
-          "browser.exe",
-          "YandexDisk2.exe",
+          "browser.exe"
+        ],
+        "darwin": [
+          "Yandex"
+        ],
+        "linux": [
+          "yandex-browser"
+        ]
+      },
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "yandex-music",
+      "name": "Яндекс Музыка",
+      "icon": "yandex-music",
+      "domains": [
+        "music.yandex.ru",
+        "music.yandex.net",
+        "music.yandex.com",
+        "music.yandex.kz",
+        "music.yandex.by",
+        "music.ya.ru",
+        "yandex-music.ru"
+      ],
+      "ips": [],
+      "processes": {
+        "windows": [
           "YandexMusic.exe"
         ],
         "darwin": [
-          "Yandex",
-          "Yandex Disk",
           "Yandex Music"
         ],
         "linux": [
-          "yandex-browser",
+          "yandex-music"
+        ]
+      },
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "yandex-taxi",
+      "name": "Яндекс Go и Такси",
+      "icon": "yandex-taxi",
+      "domains": [
+        "taxi.yandex.ru",
+        "go.yandex",
+        "taxi.yandex.com",
+        "taxi.yandex.net",
+        "eda.yandex",
+        "eda.yandex.ru",
+        "lavka.yandex",
+        "lavka.yandex.ru",
+        "dostavka.yandex.ru",
+        "delivery.yandex.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "yandex-maps",
+      "name": "Яндекс Карты",
+      "icon": "yandex-maps",
+      "domains": [
+        "maps.yandex.ru",
+        "n.maps.yandex.ru",
+        "maps.yandex.com",
+        "maps.yandex.net",
+        "core-renderer-tiles.maps.yandex.net",
+        "api-maps.yandex.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "yandex-disk",
+      "name": "Яндекс Диск",
+      "icon": "yandex-disk",
+      "domains": [
+        "disk.yandex.ru",
+        "disk.yandex.com",
+        "disk.yandex.net",
+        "downloader.disk.yandex.ru"
+      ],
+      "ips": [],
+      "processes": {
+        "windows": [
+          "YandexDisk2.exe"
+        ],
+        "darwin": [
+          "Yandex Disk"
+        ],
+        "linux": [
           "yandex-disk"
         ]
       },
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "yandex-market",
+      "name": "Яндекс Маркет",
+      "icon": "yandex-market",
+      "domains": [
+        "market.yandex.ru",
+        "market-delivery.yandex.ru",
+        "pokupki.market.yandex.ru",
+        "m.market.yandex.ru"
+      ],
+      "ips": [],
+      "processes": {},
       "defaultModes": [
         "bypass"
       ]
@@ -137,12 +245,8 @@
         "vk.com",
         "vk.ru",
         "vk.me",
-        "vkvideo.ru",
-        "vkplay.ru",
         "userapi.com",
         "vkuser.net",
-        "vkuseraudio.net",
-        "vkuservideo.net",
         "vk-cdn.net",
         "vk-portal.net"
       ],
@@ -154,6 +258,33 @@
         "185.16.244.0/22",
         "185.32.187.0/24"
       ],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "vk-video",
+      "name": "VK Видео",
+      "icon": "vk-video",
+      "domains": [
+        "vkvideo.ru",
+        "vkuservideo.net"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "vk-play",
+      "name": "VK Play",
+      "icon": "vk-play",
+      "domains": [
+        "vkplay.ru"
+      ],
+      "ips": [],
       "processes": {
         "windows": [
           "VKPlayLoader.exe"
@@ -165,17 +296,14 @@
     },
     {
       "id": "mailru",
-      "name": "Mail.ru и ОК",
+      "name": "Mail.ru",
       "icon": "mailru",
       "domains": [
         "mail.ru",
         "imgsmail.ru",
-        "mycdn.me",
-        "ok.ru",
-        "odnoklassniki.ru"
+        "cloud.mail.ru"
       ],
       "ips": [
-        "217.20.144.0/20",
         "217.69.128.0/20"
       ],
       "processes": {},
@@ -184,14 +312,79 @@
       ]
     },
     {
+      "id": "ok",
+      "name": "Одноклассники",
+      "icon": "ok",
+      "domains": [
+        "ok.ru",
+        "odnoklassniki.ru",
+        "mycdn.me"
+      ],
+      "ips": [
+        "217.20.144.0/20"
+      ],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
       "id": "kinopoisk",
-      "name": "Кинопоиск и ТВ",
+      "name": "Кинопоиск",
       "icon": "kinopoisk",
       "domains": [
-        "kinopoisk.ru",
-        "ivi.ru",
-        "okko.tv",
-        "wink.ru",
+        "kinopoisk.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "ivi",
+      "name": "Иви",
+      "icon": "ivi",
+      "domains": [
+        "ivi.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "okko",
+      "name": "Okko",
+      "icon": "okko",
+      "domains": [
+        "okko.tv"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "wink",
+      "name": "Wink",
+      "icon": "wink",
+      "domains": [
+        "wink.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "streaming-ru",
+      "name": "Онлайн-кинотеатры РФ",
+      "icon": "streaming-ru",
+      "domains": [
         "premier.one",
         "start.ru",
         "kion.ru",
@@ -218,24 +411,76 @@
       ]
     },
     {
-      "id": "banks",
-      "name": "Банки РФ",
-      "icon": "banks",
+      "id": "sber",
+      "name": "Сбербанк",
+      "icon": "sber",
       "domains": [
         "sberbank.ru",
         "sberbank.com",
         "sber.ru",
-        "sberdevices.ru",
+        "sberdevices.ru"
+      ],
+      "ips": [
+        "194.54.14.0/23"
+      ],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "tbank",
+      "name": "Т-Банк (Тинькофф)",
+      "icon": "tbank",
+      "domains": [
         "tbank.ru",
         "tinkoff.ru",
         "tinkoff.com",
         "tcsbank.ru",
-        "cdn-tinkoff.ru",
+        "cdn-tinkoff.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "vtb",
+      "name": "ВТБ",
+      "icon": "vtb",
+      "domains": [
         "vtb.ru",
-        "vtb.com",
+        "vtb.com"
+      ],
+      "ips": [
+        "195.218.168.0/22"
+      ],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "alfa",
+      "name": "Альфа-Банк",
+      "icon": "alfa",
+      "domains": [
         "alfabank.ru",
         "alfabank.com",
-        "alfaclick.ru",
+        "alfaclick.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "banks",
+      "name": "Другие банки РФ",
+      "icon": "banks",
+      "domains": [
         "gazprombank.ru",
         "raiffeisen.ru",
         "psbank.ru",
@@ -250,10 +495,7 @@
         "qiwi.com",
         "moex.com"
       ],
-      "ips": [
-        "194.54.14.0/23",
-        "195.218.168.0/22"
-      ],
+      "ips": [],
       "processes": {},
       "defaultModes": [
         "bypass"
@@ -269,15 +511,29 @@
         "nalog.gov.ru",
         "mos.ru",
         "emiass.info",
-        "pochta.ru",
-        "rzd.ru",
-        "aeroflot.ru",
-        "s7.ru",
-        "pobeda.aero"
+        "pochta.ru"
       ],
       "ips": [
         "109.207.1.0/24"
       ],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "transport-ru",
+      "name": "РЖД и Авиабилеты",
+      "icon": "transport-ru",
+      "domains": [
+        "rzd.ru",
+        "aeroflot.ru",
+        "s7.ru",
+        "pobeda.aero",
+        "tutu.ru",
+        "aviasales.ru"
+      ],
+      "ips": [],
       "processes": {},
       "defaultModes": [
         "bypass"
@@ -407,6 +663,65 @@
           "steam",
           "steamwebhelper",
           "steam-runtime-launcher-service"
+        ]
+      },
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "faceit",
+      "name": "FACEIT",
+      "icon": "faceit",
+      "domains": [
+        "faceit.com",
+        "faceit-cdn.net",
+        "faceitcdn.com",
+        "faceitstatus.com",
+        "faceit.tv",
+        "faceit.media",
+        "faceittracker.com",
+        "faceitfinder.com",
+        "faceitstats.com",
+        "hiperz.com"
+      ],
+      "ips": [],
+      "processes": {
+        "windows": [
+          "FACEIT.exe",
+          "faceit.exe",
+          "faceitclient.exe",
+          "FACEITClient.exe",
+          "faceitservice.exe",
+          "FACEITService.exe",
+          "faceitac.exe",
+          "FACEITAC.exe",
+          "FACEIT AC.exe",
+          "FACEIT Anti-Cheat.exe",
+          "faceit_client.exe",
+          "faceit_anticheat.exe",
+          "FACEIT_Start_Protected_Game.exe",
+          "faceit_start_protected_game.exe",
+          "FACEITAC_Installer.exe",
+          "hiperz_test.exe",
+          "cs2.exe",
+          "csgo.exe"
+        ],
+        "darwin": [
+          "FACEIT",
+          "faceit"
+        ],
+        "linux": [
+          "faceit",
+          "faceit-client",
+          "cs2"
+        ]
+      },
+      "folders": {
+        "windows": [
+          "FACEIT Client/",
+          "FACEIT AC/",
+          "FACEIT/"
         ]
       },
       "defaultModes": [
