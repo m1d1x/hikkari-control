@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"net"
+	"testing"
+)
 
 func TestClassifyMatrix(t *testing.T) {
 	cases := []struct {
@@ -88,5 +91,18 @@ func TestTheTunnelAnswersWithAny2xx(t *testing.T) {
 		if got := tunnelAnswered(code); got != want {
 			t.Errorf("tunnelAnswered(%d) = %v, want %v", code, got, want)
 		}
+	}
+}
+
+// An engine never starts on a SOCKS port another process holds: its probes
+// would ride the other process's tunnels.
+func TestATakenSocksPortRefusesTheEngine(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if err := portsFree(map[string]int{"r-1": ln.Addr().(*net.TCPAddr).Port}); err == nil {
+		t.Fatal("a taken port was reported free")
 	}
 }

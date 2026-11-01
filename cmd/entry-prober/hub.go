@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os/exec"
 	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/m1d1x/hikkari-control/internal/entrybench"
@@ -121,6 +123,9 @@ func startEngine(ctx context.Context, bin string, edges []edge, socksBase int, f
 	if err != nil {
 		return nil, err
 	}
+	if err := portsFree(ports); err != nil {
+		return nil, err
+	}
 	var cmd *exec.Cmd
 	cmd, cleanup, err := startXray(ctx, bin, config)
 	if err != nil {
@@ -136,6 +141,23 @@ func startEngine(ctx context.Context, bin string, edges []edge, socksBase int, f
 		}
 	}
 	return e, nil
+}
+
+// portsFree refuses an engine whose SOCKS ports someone else already holds.
+// waitSocks only dials them, and a dial into another prober's xray succeeds:
+// on a vantage shared with Nekko's prober (both default to 10810) every
+// routine round rode Nekko's relays, read ours as `fingerprint`, and the hub
+// re-keyed a healthy box three times (01.11). Set ENTRY_PROBE_SOCKS_BASE
+// apart on such a machine.
+func portsFree(ports map[string]int) error {
+	for name, port := range ports {
+		ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err != nil {
+			return fmt.Errorf("socks port %d for %s is taken (another prober on this machine? set ENTRY_PROBE_SOCKS_BASE apart): %w", port, name, err)
+		}
+		ln.Close()
+	}
+	return nil
 }
 
 // serves reports whether the engine runs exactly this relay list.
