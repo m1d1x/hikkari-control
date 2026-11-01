@@ -545,6 +545,15 @@ func (s *Service) awaitAddress(ctx context.Context, bp BoxProvider, inst BoxInst
 		if got.Address != "" {
 			return got, nil
 		}
+		// A machine the hoster put in ERROR never gets an address: OpenStack
+		// does it when the scheduler finds no host for the flavor (HostVDS,
+		// 01.11: "No valid host was found"). Said at once, as the capacity
+		// refusal it is, instead of after the whole wait — the caller deletes
+		// the instance and may try the next region.
+		if strings.EqualFold(got.Status, "error") {
+			return BoxInstance{}, fmt.Errorf("%w: %w: машина %s у хостера в состоянии ERROR — хостер не нашёл под неё мощностей",
+				ErrProviderRefused, ErrRegionCapacity, inst.ID)
+		}
 		if s.now().After(deadline) {
 			return BoxInstance{}, fmt.Errorf(
 				"машина %s за %s не получила адрес (состояние %q) — инстанс заказан, его видно в списке хостера",

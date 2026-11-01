@@ -210,3 +210,13 @@ func TestDollarsToCents(t *testing.T) {
 		}
 	}
 }
+
+// domain/create's balance comes as cents (a number, like account/balance) or
+// as dollars (a string); both read as cents.
+func TestTheCreateBalanceReadsEitherWay(t *testing.T) {
+	for raw, want := range map[string]int{`2846`: 2846, `"28.46"`: 2846, `"$28.46"`: 2846, ``: 100, `null`: 100} {
+		if got := createBalanceCents(json.RawMessage(raw), "$1.00"); got != want {
+			t.Errorf("balance %s = %d cents, want %d", raw, got, want)
+		}
+	}
+}

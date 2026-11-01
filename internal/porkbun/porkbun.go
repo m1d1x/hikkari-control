@@ -399,22 +399,18 @@ func (c *Client) Create(ctx context.Context, p CreateParams) (CreateResult, erro
 	}{auth: c.auth(), Cost: p.CostCents, AgreeToTerms: "yes", DryRun: p.DryRun}
 
 	var out struct {
-		WouldSucceed       boolish `json:"wouldSucceed"`
-		SufficientFunds    boolish `json:"sufficientFunds"`
-		WithinMonthlyLimit boolish `json:"withinMonthlySpendLimit"`
-		BalanceDisplay     string  `json:"balanceDisplay"`
-		Balance            string  `json:"balance"`
-		OrderID            jsonNum `json:"orderId"`
+		WouldSucceed       boolish         `json:"wouldSucceed"`
+		SufficientFunds    boolish         `json:"sufficientFunds"`
+		WithinMonthlyLimit boolish         `json:"withinMonthlySpendLimit"`
+		BalanceDisplay     string          `json:"balanceDisplay"`
+		Balance            json.RawMessage `json:"balance"`
+		OrderID            jsonNum         `json:"orderId"`
 	}
 	const idemHeader = "Idempotency-Key"
 	if err := c.post(ctx, "domain/create/"+strings.ToLower(p.Domain), body, &out, idemHeader, p.IdempotencyKey); err != nil {
 		return CreateResult{}, err
 	}
-	bal := out.Balance
-	if bal == "" {
-		bal = out.BalanceDisplay
-	}
-	balCents, _ := dollarsToCents(strings.TrimPrefix(strings.TrimSpace(bal), "$"))
+	balCents := createBalanceCents(out.Balance, out.BalanceDisplay)
 	return CreateResult{
 		WouldSucceed:       bool(out.WouldSucceed),
 		SufficientFunds:    bool(out.SufficientFunds),
@@ -422,6 +418,26 @@ func (c *Client) Create(ctx context.Context, p CreateParams) (CreateResult, erro
 		BalanceCents:       balCents,
 		OrderID:            string(out.OrderID),
 	}, nil
+}
+
+// createBalanceCents reads domain/create's balance. Porkbun has sent it both
+// ways: a JSON number in whole cents, as account/balance does (live, 01.11 —
+// a string-only field failed every dry run), and a dollar string ("8.46").
+// Neither present falls back to balanceDisplay ("$8.46").
+func createBalanceCents(raw json.RawMessage, display string) int {
+	v := strings.TrimSpace(string(raw))
+	if v != "" && v != "null" && !strings.HasPrefix(v, `"`) {
+		var cents int
+		if err := json.Unmarshal(raw, &cents); err == nil {
+			return cents
+		}
+	}
+	bal := strings.Trim(v, `"`)
+	if bal == "" || bal == "null" {
+		bal = display
+	}
+	cents, _ := dollarsToCents(strings.TrimPrefix(strings.TrimSpace(bal), "$"))
+	return cents
 }
 
 // ── DNS ─────────────────────────────────────────────────────────────────

@@ -1354,3 +1354,25 @@ func TestAnUnreadableIdleMachineStopsNewOrders(t *testing.T) {
 		t.Fatal("provider outage bought a machine or retired the paid one")
 	}
 }
+
+// errorHoster answers every poll with a machine in ERROR, as OpenStack does
+// when its scheduler finds no host for the flavor.
+type errorHoster struct{ BoxProvider }
+
+func (errorHoster) Instance(_ context.Context, id string) (BoxInstance, error) {
+	return BoxInstance{ID: id, Status: "ERROR"}, nil
+}
+
+// A machine the hoster put in ERROR is a capacity refusal at once, not after
+// the whole wait for an address.
+func TestAnInstanceInErrorIsACapacityRefusal(t *testing.T) {
+	s := &Service{instancePoll: time.Millisecond, now: time.Now}
+	start := time.Now()
+	_, err := s.awaitAddress(context.Background(), errorHoster{}, BoxInstance{ID: "srv-1"})
+	if !errors.Is(err, ErrRegionCapacity) || !errors.Is(err, ErrProviderRefused) {
+		t.Fatalf("err = %v, want a capacity refusal", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("waited %s for a machine already in ERROR", time.Since(start))
+	}
+}
