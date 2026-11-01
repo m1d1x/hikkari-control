@@ -423,8 +423,20 @@ func (c *Client) Regions(ctx context.Context) ([]Region, error) {
 	if err := c.authenticate(ctx); err != nil {
 		return nil, err
 	}
-	regions := make([]Region, 0, len(c.regions))
-	for _, r := range c.regions {
+	// The client speaks to one region's endpoints (authenticate picks them
+	// for cfg.Region), so that region is the only one it can order in. The
+	// catalog's others — Keystone's own "admin" among them — offered as
+	// alternatives made the hub "fall back" to a region it then ordered in
+	// eu-north2 anyway (HostVDS, 01.11).
+	names := c.regions
+	if c.cfg.Region != "" {
+		names = []string{c.cfg.Region}
+	}
+	regions := make([]Region, 0, len(names))
+	for _, r := range names {
+		if r == "admin" {
+			continue
+		}
 		regions = append(regions, Region{
 			ID:        r,
 			City:      r,

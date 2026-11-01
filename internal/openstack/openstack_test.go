@@ -99,6 +99,10 @@ func (m *mockOpenStack) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 								"region":    "RegionOne",
 								"url":       m.baseURL + "/compute",
 							},
+							// Other regions of the catalog, Keystone's own
+							// among them: not where this client orders.
+							{"id": "ep-1b", "interface": "public", "region": "RegionTwo", "url": m.baseURL + "/elsewhere"},
+							{"id": "ep-1c", "interface": "public", "region": "admin", "url": m.baseURL + "/admin"},
 						},
 					},
 					{
