@@ -21,6 +21,9 @@ func RegisterRoutes(mux *http.ServeMux, h *Handlers, adminKeys *auth.KeySet, poo
 	// did people get through, what it cost, how fast what we buy is burnt.
 	// Read-only — the tools that act are their own pages. See entry_overview.go.
 	mux.HandleFunc("GET /api/v1/admin/entry/overview", adminAuth(h.EntryOverview))
+	// Each protocol and machine: alive, verdicts, traffic, subscribers, cost.
+	// See entry_protocol_stats.go.
+	mux.HandleFunc("GET /api/v1/admin/entry/protocols", adminAuth(h.EntryProtocolStats))
 	// The incidents screen in one request (plan 42 К2): how the autopilot is
 	// doing, how fast it notices and repairs, the queue and the feed. Also
 	// read-only — the buttons on a card are internal/entry's. See

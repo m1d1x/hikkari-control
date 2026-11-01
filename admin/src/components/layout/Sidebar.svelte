@@ -32,6 +32,7 @@
 		     П9.9 §6а): the overview only observes, the screens below it only act. -->
 		<SidebarSection label="Антиблок" {collapsed}>
 			<SidebarItem href="/antiblock" icon="overview" label="Обзор" {collapsed} />
+			<SidebarItem href="/protocols" icon="realtime" label="Протоколы" {collapsed} />
 			<SidebarItem href="/autopilot" icon="jobs" label="Автопилот" {collapsed} />
 			<SidebarItem href="/entry" icon="server" label="Машины" {collapsed} />
 			<SidebarItem href="/incidents" icon="events" label="Инциденты" {collapsed} />
