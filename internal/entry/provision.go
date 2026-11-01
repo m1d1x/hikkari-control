@@ -1030,13 +1030,30 @@ case "$effective" in
 	*"passwordauthentication no"*) ;;
 	*) echo "sshd still allows passwords" >&2; exit 1 ;;
 esac
-if ! command -v ufw >/dev/null; then
-	export DEBIAN_FRONTEND=noninteractive
-	apt-get update -qq >/dev/null && apt-get install -y -qq ufw >/dev/null
-fi
-ufw allow 22/tcp >/dev/null
+` + installUfwScript + `ufw allow 22/tcp >/dev/null
 for p in "$@"; do ufw allow "$p" >/dev/null; done
 ufw --force enable >/dev/null
+`
+
+// installUfwScript runs on a machine that has only just booted, and apt is not
+// the hub's alone there: apt-get update itself wakes PackageKit, which takes
+// apt's locks for its own refresh, and apt-get exits 100 on a lock it cannot
+// get. eun13 was lost at this step that way. DPkg::Lock::Timeout makes install
+// wait for the dpkg lock; it does not cover update's lock on the lists, so
+// update is tried again instead.
+const installUfwScript = `if ! command -v ufw >/dev/null; then
+	export DEBIAN_FRONTEND=noninteractive
+	updated=
+	for _ in 1 2 3 4 5 6 7 8; do
+		if apt-get update -qq >/dev/null; then
+			updated=1
+			break
+		fi
+		sleep 15
+	done
+	[ -n "$updated" ] || { echo "apt-get update failed" >&2; exit 1; }
+	apt-get -o DPkg::Lock::Timeout=300 install -y -qq ufw >/dev/null
+fi
 `
 
 // transport is what the box's relays listen on: a Reality relay on TCP, a
