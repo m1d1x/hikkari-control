@@ -333,7 +333,8 @@ var boxNameRe = regexp.MustCompile(`^[a-z]+[0-9]+$`)
 
 // CreateBox records a machine. One address, one box: a box IS its address —
 // the unit a censor bans — so a second box on it would hide that two relays
-// share one fate.
+// share one fate. A machine the hoster took back shares no fate with its
+// successor on the same address (holdsAddress).
 func (s *Service) CreateBox(ctx context.Context, b BoxSpec) error {
 	b.Provider, b.Location = strings.TrimSpace(b.Provider), strings.TrimSpace(b.Location)
 	b.Address = strings.TrimSpace(b.Address)
@@ -398,7 +399,7 @@ func (s *Service) CreateBox(ctx context.Context, b BoxSpec) error {
 		switch {
 		case st.Name == b.Name:
 			return fmt.Errorf("%w: box %s exists", ErrRejected, b.Name)
-		case !st.Unreadable && st.Address == b.Address:
+		case !st.Unreadable && st.Address == b.Address && st.holdsAddress():
 			return fmt.Errorf("%w: address of %s already belongs to box %s", ErrRejected, b.Name, st.Name)
 		case b.Domain != "" && st.Domain == b.Domain:
 			// One A record, one certificate, one fate: a domain is one box's.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -90,7 +91,7 @@ const (
 	listBoxes = `
 		SELECT name, address_ct, provider, location, rented_until, created_at,
 		       arch, edge_sha, edge_seen_at, proto, coalesce(region, ''), retired_at, domain_ct,
-		       provider_instance_id, provider_region, plan, monthly_cents
+		       provider_instance_id, provider_region, plan, monthly_cents, released_at, retired_reason
 		FROM entry_boxes ORDER BY name`
 	lockBoxes = `LOCK TABLE entry_boxes IN SHARE ROW EXCLUSIVE MODE`
 	// Any relay not dead yet can die: a pending one on a box that failed its
@@ -401,6 +402,18 @@ type PoolBox struct {
 
 	addressCT []byte
 	domainCT  []byte
+	// releasedAt: the hoster confirmed the machine gone, and with it the
+	// address. retiredReason: why it was handed back.
+	releasedAt    *time.Time
+	retiredReason *string
+}
+
+// holdsAddress is whether the box still rules its address out for a new box.
+// A hoster hands a released address to its next order, so a released machine
+// holds it only if the censor is why it left: a fresh box there would be born
+// banned.
+func (b PoolBox) holdsAddress() bool {
+	return b.releasedAt == nil || (b.retiredReason != nil && slices.Contains(CensorDeaths, *b.retiredReason))
 }
 
 func (r *Repository) boxes(ctx context.Context, q db.DBTX) ([]PoolBox, error) {
@@ -415,7 +428,7 @@ func (r *Repository) boxes(ctx context.Context, q db.DBTX) ([]PoolBox, error) {
 		var arch, sha, instanceID *string
 		if err := rows.Scan(&b.Name, &b.addressCT, &b.Provider, &b.Location, &b.RentedUntil,
 			&b.CreatedAt, &arch, &sha, &b.EdgeSeenAt, &b.Proto, &b.Region, &b.RetiredAt, &b.domainCT,
-			&instanceID, &b.ProviderRegion, &b.Plan, &b.MonthlyCents); err != nil {
+			&instanceID, &b.ProviderRegion, &b.Plan, &b.MonthlyCents, &b.releasedAt, &b.retiredReason); err != nil {
 			return nil, err
 		}
 		if arch != nil {

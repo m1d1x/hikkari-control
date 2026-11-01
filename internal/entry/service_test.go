@@ -1170,3 +1170,45 @@ func TestAnXhttpBoxServesItsDomainOneRelayAtATime(t *testing.T) {
 
 // testVantage is the slot the tests' vantages claim and answer as.
 const testVantage = "ru-test"
+
+// A hoster hands a released address to its next order: eun13 came back on
+// eun3's address and the order was refused and its machine deleted, the same
+// on every retry that drew it. The address rule is about machines that exist,
+// and about addresses the censor has marked.
+func TestAReleasedAddressMayComeBackOnANewBox(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	for _, c := range []struct {
+		name     string
+		retire   string
+		released bool
+		free     bool
+	}{
+		{"in service", "", false, false},
+		{"retired, machine not yet gone", DeathProviderDown, false, false},
+		{"released, nothing against the address", DeathProviderDown, true, true},
+		{"released as rotated", DeathRotated, true, true},
+		{"released as banned", DeathIPBanned, true, false},
+		{"released as fingerprinted", DeathFingerprint, true, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			old, addr := h.box()
+			if c.retire != "" {
+				if _, err := h.pool.Exec(ctx, `
+					UPDATE entry_boxes SET retired_at = now(), retired_reason = $2,
+					       released_at = CASE WHEN $3 THEN now() END
+					WHERE name = $1`, old, c.retire, c.released); err != nil {
+					t.Fatal(err)
+				}
+			}
+			next := boxName("r", uuid.New())
+			err := h.svc.CreateBox(ctx, BoxSpec{Name: next, Address: addr, Provider: "vultr", Location: "amsterdam"})
+			switch {
+			case c.free && err != nil:
+				t.Fatalf("a released address refused: %v", err)
+			case !c.free && !errors.Is(err, ErrRejected):
+				t.Fatalf("second box on the address: %v, want rejected", err)
+			}
+		})
+	}
+}
