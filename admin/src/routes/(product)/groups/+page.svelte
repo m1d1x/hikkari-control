@@ -22,11 +22,25 @@
 	let fresh = $state(false);
 	let busy = $state(false);
 	let error = $state('');
+	let query = $state('');
 	let nameEl = $state<HTMLInputElement | null>(null);
 
 	const saved = $derived(edit && !fresh ? db.groups.find((x) => x.id === edit!.id) : undefined);
 	const dirty = $derived(!!edit && (fresh || JSON.stringify(edit) !== JSON.stringify(saved)));
 	const problem = $derived(edit ? groupProblem(edit) : null);
+
+	const missingBundled = $derived(BUNDLED_GROUPS.filter((g) => !db.groups.some((x) => x.id === g.id)));
+
+	const filteredGroups = $derived.by(() => {
+		const q = query.trim().toLowerCase();
+		if (!q) return db.groups;
+		return db.groups.filter((x) => {
+			if (x.name.toLowerCase().includes(q)) return true;
+			if (x.id.toLowerCase().includes(q)) return true;
+			if (x.icon && x.icon.toLowerCase().includes(q)) return true;
+			return RULE_KINDS.some((k) => x.rules[k.key]?.some((r) => r.toLowerCase().includes(q)));
+		});
+	});
 
 	const count = (x: Group) => RULE_KINDS.reduce((n, k) => n + x.rules[k.key].length, 0);
 	const usedIn = (id: string) => db.presets.filter((p) => p.bypass.includes(id) || p.proxy.includes(id) || (p.disabled ?? []).includes(id));
@@ -39,8 +53,25 @@
 		error = '';
 	}
 
+	async function populateMissingBundled() {
+		const missing = BUNDLED_GROUPS.filter((g) => !db.groups.some((x) => x.id === g.id));
+		if (missing.length === 0) return;
+		const batchSize = 10;
+		for (let i = 0; i < missing.length; i += batchSize) {
+			await Promise.all(missing.slice(i, i + batchSize).map((g) => saveGroup(g)));
+		}
+		db.groups = await fetchGroups();
+		if (!edit && db.groups.length > 0) {
+			pick(db.groups[0].id);
+		}
+	}
+
 	onMount(async () => {
 		await load();
+		// Если база пустая — автоматически заполняем стандартным набором групп клиента
+		if (db.groups.length === 0 && !db.error) {
+			await act(populateMissingBundled);
+		}
 		pick(page.url.searchParams.get('g') ?? db.groups[0]?.id);
 	});
 
@@ -91,26 +122,6 @@
 			pick(db.groups[0]?.id);
 		});
 
-	/** An empty hub starts from the groups the client ships with. */
-	const seed = () =>
-		act(async () => {
-			for (const g of BUNDLED_GROUPS) await saveGroup(g);
-			db.groups = await fetchGroups();
-			pick(db.groups[0]?.id);
-		});
-
-	/** Imports bundled groups that are not yet in the hub. */
-	const seedMissing = () =>
-		act(async () => {
-			for (const g of BUNDLED_GROUPS) {
-				if (!db.groups.some((x) => x.id === g.id)) {
-					await saveGroup(g);
-				}
-			}
-			db.groups = await fetchGroups();
-			pick(db.groups[0]?.id);
-		});
-
 	const normalizer = (k: RuleKind) => (v: string) =>
 		normalizeRule(k, v).catch((e) => {
 			throw new Error(refusal(e));
@@ -129,25 +140,59 @@
 {:else if db.loaded}
 	<div class="groups">
 		<section class="card list">
-			<button class="btn add" onclick={create}>+ группа</button>
-			{#each db.groups as x (x.id)}
-				<button class="item" class:on={!fresh && x.id === edit?.id} onclick={() => pick(x.id)}>
-					<div class="line">
-						<span class="name-cell">
-							{#if x.icon}<span class="icon-tag mono">{x.icon}</span>{/if}
-							<span>{x.name}</span>
-						</span>
-						<span class="dim n">{count(x)}</span>
-					</div>
-				</button>
-			{:else}
-				<button class="btn seed" onclick={seed} disabled={busy}>взять встроенные группы клиента</button>
-			{/each}
-			{#if db.groups.length > 0}
-				<button class="btn sub-seed" onclick={seedMissing} disabled={busy} title="добавить недостающие встроенные группы">
-					+ встроенные ({BUNDLED_GROUPS.length})
-				</button>
+			<div class="list-head">
+				<button class="btn add" onclick={create}>+ группа</button>
+			</div>
+
+			{#if missingBundled.length > 0}
+				<div class="sync-banner">
+					<button
+						class="btn sync-btn"
+						onclick={() => act(populateMissingBundled)}
+						disabled={busy}
+						title="Добавить недостающие стандартные группы (Discord, YouTube, Steam, банки...)"
+					>
+						⚡ Добавить стандартные группы ({missingBundled.length})
+					</button>
+				</div>
 			{/if}
+
+			{#if db.groups.length > 0}
+				<div class="search-box">
+					<input
+						type="search"
+						class="field search-input"
+						placeholder="поиск по названию или правилу…"
+						bind:value={query}
+						onkeydown={(e) => {
+							if (e.key === 'Escape') query = '';
+						}}
+					/>
+					{#if query}
+						<button class="search-clear" onclick={() => (query = '')} title="очистить" type="button">×</button>
+					{/if}
+				</div>
+			{/if}
+
+			<div class="items-list">
+				{#each filteredGroups as x (x.id)}
+					<button class="item" class:on={!fresh && x.id === edit?.id} onclick={() => pick(x.id)}>
+						<div class="line">
+							<span class="name-cell">
+								{#if x.icon}<span class="icon-tag mono">{x.icon}</span>{/if}
+								<span>{x.name}</span>
+							</span>
+							<span class="dim n">{count(x)}</span>
+						</div>
+					</button>
+				{:else}
+					{#if query.trim()}
+						<div class="empty-hint dim">ничего не найдено</div>
+					{:else}
+						<div class="empty-hint dim">нет групп</div>
+					{/if}
+				{/each}
+			</div>
 		</section>
 
 		{#if edit}
@@ -226,20 +271,92 @@
 
 	.groups {
 		display: grid;
-		grid-template-columns: 220px minmax(0, 1fr);
+		grid-template-columns: 240px minmax(0, 1fr);
 		gap: 16px;
 		align-items: start;
 	}
 
 	.list {
 		padding: 6px;
+		display: flex;
+		flex-direction: column;
+		max-height: calc(100vh - 120px);
+		position: sticky;
+		top: 16px;
 	}
 
-	.add,
-	.seed {
+	.list-head {
+		flex-shrink: 0;
+	}
+
+	.search-box {
+		position: relative;
+		margin-bottom: 6px;
+		flex-shrink: 0;
+	}
+
+	.search-input {
+		width: 100%;
+		padding-right: 24px;
+		font-size: 11px;
+	}
+
+	.search-clear {
+		position: absolute;
+		right: 6px;
+		top: 50%;
+		transform: translateY(-50%);
+		background: none;
+		border: none;
+		color: var(--dim, #888);
+		cursor: pointer;
+		font-size: 14px;
+		line-height: 1;
+		padding: 2px 4px;
+	}
+
+	.search-clear:hover {
+		color: var(--text);
+	}
+
+	.items-list {
+		overflow-y: auto;
+		flex: 1;
+		min-height: 0;
+	}
+
+	.empty-hint {
+		padding: 16px 8px;
+		text-align: center;
+		font-size: 12px;
+	}
+
+	.add {
 		width: 100%;
 		margin-bottom: 4px;
 		text-align: left;
+	}
+
+	.sync-banner {
+		margin-bottom: 6px;
+		flex-shrink: 0;
+	}
+
+	.sync-btn {
+		width: 100%;
+		font-size: 11px;
+		padding: 6px 8px;
+		background: rgba(80, 160, 255, 0.1);
+		border-color: rgba(80, 160, 255, 0.3);
+		color: #58a6ff;
+		text-align: center;
+		white-space: normal;
+		line-height: 1.3;
+		border-radius: 6px;
+	}
+
+	.sync-btn:hover {
+		background: rgba(80, 160, 255, 0.18);
 	}
 
 	.meta-row {
@@ -298,14 +415,7 @@
 		flex-shrink: 0;
 	}
 
-	.sub-seed {
-		width: 100%;
-		margin-top: 6px;
-		padding: 6px 8px;
-		font-size: 11px;
-		color: var(--dim, #888);
-		text-align: center;
-	}
+
 
 	.n {
 		font-family: var(--mono);
