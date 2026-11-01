@@ -318,8 +318,8 @@ func TestEntryOverviewDerivesDomainLifetimeFromTheLedger(t *testing.T) {
 		burned := assigned.Add(time.Duration(hours) * time.Hour)
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO entry_domains (domain, tld, status, source, cost_cents, assigned_at, burned_at, created_at)
-			VALUES ($1, 'test', 'burned', 'purchased', $2, $3, $4, $3)
-		`, domain, 900+i, assigned, burned); err != nil {
+			VALUES ($1, 'test', 'burned', 'purchased', $2, $3, $4, $5)
+		`, domain, 900+i, assigned, burned, now); err != nil {
 			t.Fatalf("seed domain: %v", err)
 		}
 		t.Cleanup(func() {
