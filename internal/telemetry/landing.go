@@ -54,7 +54,8 @@ func (s *LandingServer) cors(next http.HandlerFunc) http.HandlerFunc {
 			h := w.Header()
 			h.Set("Access-Control-Allow-Origin", o)
 			h.Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-			h.Set("Access-Control-Allow-Headers", "Content-Type")
+			h.Set("Access-Control-Allow-Headers", "Content-Type, Accept")
+			h.Set("Access-Control-Allow-Credentials", "true")
 			h.Set("Access-Control-Max-Age", "600")
 			h.Add("Vary", "Origin")
 		}
