@@ -437,7 +437,7 @@ func probeTLS(addr, sni string, timeout time.Duration) bool {
 }
 
 // probeReality fetches tunnelURL through the relay's SOCKS outbound and reports
-// success (http 200), the round-trip time, and the status code seen.
+// success (tunnelAnswered), the round-trip time, and the status code seen.
 func probeReality(ctx context.Context, socksPort int, tunnelURL string, timeout time.Duration) (ok, dialled bool, rtt float32, code uint16) {
 	socksAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(socksPort))
 	dialer, err := proxy.SOCKS5("tcp", socksAddr, nil, &net.Dialer{Timeout: timeout})
@@ -475,8 +475,14 @@ func probeReality(ctx context.Context, socksPort int, tunnelURL string, timeout 
 	}
 	defer resp.Body.Close()
 	rttMs := float32(time.Since(start).Microseconds()) / 1000.0
-	return resp.StatusCode == http.StatusOK, dialled, rttMs, uint16(resp.StatusCode)
+	return tunnelAnswered(resp.StatusCode), dialled, rttMs, uint16(resp.StatusCode)
 }
+
+// tunnelAnswered says the gateway's /healthz came back through the tunnel:
+// any 2xx. Hikkari's hub answers 204 where Nekko's answered 200, and a prober
+// that wanted 200 read every healthy relay as refused — `fingerprint` on a
+// whole fresh fleet at admission (01.11).
+func tunnelAnswered(code int) bool { return code/100 == 2 }
 
 // tunnelDialled says the tunnel carried a connection to the upstream, and
 // nothing about what the upstream then answered (K3, П9.4).

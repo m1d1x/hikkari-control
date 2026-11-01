@@ -82,3 +82,11 @@ func TestClassifyReprobeMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestTheTunnelAnswersWithAny2xx(t *testing.T) {
+	for code, want := range map[int]bool{200: true, 204: true, 301: false, 404: false, 503: false} {
+		if got := tunnelAnswered(code); got != want {
+			t.Errorf("tunnelAnswered(%d) = %v, want %v", code, got, want)
+		}
+	}
+}
