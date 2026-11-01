@@ -16,6 +16,7 @@ type Message struct {
 	Staff bool   `json:"staff"`
 	Text  string `json:"text"`
 	TS    int64  `json:"ts"` // Unix milliseconds for frontend compatibility
+	Logs  string `json:"logs,omitempty"`
 }
 
 // Report represents a customer support ticket with diagnostics and conversation.

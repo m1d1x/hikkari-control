@@ -2,6 +2,7 @@ package support
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -289,5 +290,56 @@ func TestReportDeduplication(t *testing.T) {
 	}
 	if reports[0].Logs != "logs v2" {
 		t.Fatalf("expected logs to be updated to 'logs v2', got %q", reports[0].Logs)
+	}
+	if len(reports[0].Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(reports[0].Messages))
+	}
+	if reports[0].Messages[0].Logs != "logs v1" {
+		t.Fatalf("expected msg 0 to retain 'logs v1', got %q", reports[0].Messages[0].Logs)
+	}
+	if reports[0].Messages[1].Logs != "logs v2" {
+		t.Fatalf("expected msg 1 to have 'logs v2', got %q", reports[0].Messages[1].Logs)
+	}
+}
+
+func TestPurgeOldReports(t *testing.T) {
+	store := NewMemStore()
+	ctx := context.Background()
+
+	// Create an old report
+	rep, err := store.CreateReport(ctx, ReportRequest{
+		InstallID: "old-user",
+		Platform:  "macos",
+		Version:   "1.0.0",
+		Message:   "Old error",
+		Logs:      "old logs",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Backdate the report to 40 days ago
+	store.mu.Lock()
+	store.reports[rep.ID].CreatedAt = time.Now().Add(-40 * 24 * time.Hour)
+	store.mu.Unlock()
+
+	// Purge with 30-day cutoff
+	purged, err := store.PurgeOldReports(ctx, 30*24*time.Hour)
+	if err != nil {
+		t.Fatalf("purge error: %v", err)
+	}
+	if purged != 1 {
+		t.Fatalf("expected 1 purged report, got %d", purged)
+	}
+
+	remaining, _ := store.ListReports(ctx, "all")
+	if len(remaining) != 1 {
+		t.Fatalf("expected 1 report remaining (history preserved), got %d", len(remaining))
+	}
+	if remaining[0].Logs != "[лог старше 30 дней очищен]" {
+		t.Fatalf("expected logs to be wiped, got %q", remaining[0].Logs)
+	}
+	if remaining[0].Message != "Old error" {
+		t.Fatalf("expected message text to be preserved, got %q", remaining[0].Message)
 	}
 }

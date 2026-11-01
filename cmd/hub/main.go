@@ -200,6 +200,20 @@ func run() error {
 	supportStore := support.NewStore(pool)
 	supportLimiter := support.NewLimiter(5, 10*time.Minute)
 	support.RegisterPublicRoutes(mux, supportStore, supportLimiter)
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if n, err := supportStore.PurgeOldReports(ctx, 30*24*time.Hour); err == nil && n > 0 {
+					log.Printf("support: purged %d reports older than 30 days", n)
+				}
+			}
+		}
+	}()
 	if store != nil {
 		// Client telemetry (hikkari-client docs/TELEMETRY.md). Shares /v1/
 		// with the downdetector; the more specific pattern wins.
@@ -284,6 +298,7 @@ func run() error {
 			return admin.RequireAdmin(adminKeys.Public, pool, admin.RequireOwner(admin.RequireStepUp(next)))
 		})
 	support.RegisterAdminRoutes(adminMux, supportStore, adminSecurity)
+	support.RegisterPublicRoutes(adminMux, supportStore, supportLimiter)
 
 	port := os.Getenv("PORT")
 	if port == "" {

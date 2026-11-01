@@ -10,6 +10,7 @@ export interface SupportReportMessage {
 	staff: boolean;
 	text: string;
 	ts: number;
+	logs?: string;
 }
 
 export interface SupportReport {

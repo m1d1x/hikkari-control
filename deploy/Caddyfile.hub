@@ -15,9 +15,15 @@
     }
 }
 
-http://localhost:8444 {
+:8444 {
     request_body {
         max_size 1MB
+    }
+    handle /api/v1/support/report {
+        reverse_proxy hub:8090 {
+            header_up -X-Forwarded-For
+            header_up -X-Real-IP
+        }
     }
     handle /api/* {
         reverse_proxy hub:3310 {

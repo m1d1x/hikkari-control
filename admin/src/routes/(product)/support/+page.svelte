@@ -18,6 +18,7 @@
 	let list = $state<SupportReport[]>([]);
 	let onlyOpen = $state(true);
 	let currentId = $state<number | null>(null);
+	let selectedMsgIdx = $state<number | null>(null);
 	let reply = $state('');
 	let loading = $state(false);
 	let busy = $state(false);
@@ -27,6 +28,22 @@
 
 	const shown = $derived(list.filter((t) => !onlyOpen || t.status === 'open'));
 	const current = $derived(list.find((t) => t.id === currentId) ?? (shown.length > 0 ? shown[0] : null));
+
+	const selectedMsg = $derived(
+		current && selectedMsgIdx !== null && current.messages && current.messages[selectedMsgIdx]
+			? current.messages[selectedMsgIdx]
+			: null
+	);
+
+	const activeLogs = $derived(
+		selectedMsg?.logs || (selectedMsgIdx === null ? (current?.logs || '') : (selectedMsg ? current?.logs || '' : ''))
+	);
+
+	const hasSpecificLogs = $derived(!!selectedMsg?.logs);
+
+	function selectMsg(idx: number) {
+		selectedMsgIdx = selectedMsgIdx === idx ? null : idx;
+	}
 
 	async function load() {
 		loading = true;
@@ -85,9 +102,9 @@
 	}
 
 	async function copyLogs() {
-		if (!current?.logs) return;
+		if (!activeLogs) return;
 		try {
-			await navigator.clipboard.writeText(current.logs);
+			await navigator.clipboard.writeText(activeLogs);
 			copied = true;
 			clearTimeout(copyTimer);
 			copyTimer = setTimeout(() => {
@@ -117,7 +134,7 @@
 <div class="support">
 	<section class="card list">
 		{#each shown as t (t.id)}
-			<button class="item" class:on={t.id === current?.id} onclick={() => (currentId = t.id)}>
+			<button class="item" class:on={t.id === current?.id} onclick={() => { currentId = t.id; selectedMsgIdx = null; }}>
 				<div class="line">
 					<span class="sender">{t.from || t.install_id}</span>
 					<span class="dim">{ago(t.messages && t.messages.length > 0 ? t.messages[t.messages.length - 1].ts : new Date(t.created_at).getTime())}</span>
@@ -143,23 +160,59 @@
 				{/if}
 			</div>
 
-			{#if current.logs}
+			{#if activeLogs}
 				<div class="logs-card">
 					<div class="logs-head">
-						<span class="logs-title">Диагностические логи</span>
-						<button class="btn copy-btn" onclick={copyLogs}>
-							{copied ? 'Скопировано!' : 'Скопировать логи'}
-						</button>
+						<span class="logs-title">
+							Диагностический лог
+							{#if selectedMsgIdx !== null}
+								<span class="log-indicator accent">
+									· к сообщению #{selectedMsgIdx + 1}
+									{#if !hasSpecificLogs}<span class="fallback-note">(снимок из отчёта)</span>{/if}
+								</span>
+							{:else}
+								<span class="log-indicator dim">· самый свежий</span>
+							{/if}
+						</span>
+						<div class="logs-btns">
+							{#if selectedMsgIdx !== null}
+								<button class="btn reset-btn" onclick={() => (selectedMsgIdx = null)}>
+									к последнему
+								</button>
+							{/if}
+							<button class="btn copy-btn" onclick={copyLogs}>
+								{copied ? 'Скопировано!' : 'Скопировать логи'}
+							</button>
+						</div>
 					</div>
-					<pre class="logs-scroll">{current.logs}</pre>
+					<pre class="logs-scroll">{activeLogs}</pre>
 				</div>
 			{/if}
 
 			<div class="messages">
 				{#each current.messages as m, i (i)}
-					<div class="msg" class:staff={m.staff}>
-						<div>{m.text}</div>
-						<div class="dim">{ago(m.ts)}</div>
+					<div
+						class="msg"
+						class:staff={m.staff}
+						class:interactive={!m.staff}
+						class:selected={selectedMsgIdx === i}
+						tabindex={!m.staff ? 0 : -1}
+						role={!m.staff ? "button" : undefined}
+						onclick={() => !m.staff && selectMsg(i)}
+						onkeydown={(e) => !m.staff && (e.key === 'Enter' || e.key === ' ') && selectMsg(i)}
+					>
+						<div class="msg-header">
+							<div class="msg-text">{m.text}</div>
+							{#if m.logs}
+								<span class="log-chip" title="Прикреплён снимок лога">📋 лог</span>
+							{/if}
+						</div>
+						<div class="msg-footer">
+							<span class="dim">{ago(m.ts)}</span>
+							{#if selectedMsgIdx === i}
+								<span class="active-badge">просмотр лога</span>
+							{/if}
+						</div>
 					</div>
 				{/each}
 			</div>
@@ -333,10 +386,92 @@
 	}
 
 	.msg {
-		max-width: 70%;
+		max-width: 75%;
 		padding: 8px 12px;
 		background: var(--surface);
 		border-radius: 8px;
+		border: 1px solid transparent;
+	}
+
+	.msg.interactive {
+		cursor: pointer;
+		transition: background 0.15s, border-color 0.15s, transform 0.1s;
+	}
+
+	.msg.interactive:hover {
+		background: var(--surface-hover, oklch(0.25 0.02 260));
+		border-color: var(--border-subtle);
+	}
+
+	.msg.interactive.selected {
+		border-color: #38bdf8;
+		background: oklch(0.24 0.035 250);
+		box-shadow: 0 0 0 1px #38bdf8;
+	}
+
+	.msg-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
+		gap: 8px;
+	}
+
+	.msg-text {
+		word-break: break-word;
+	}
+
+	.log-chip {
+		flex-shrink: 0;
+		font-size: 10px;
+		font-weight: 500;
+		background: rgba(56, 189, 248, 0.15);
+		color: #38bdf8;
+		border: 1px solid rgba(56, 189, 248, 0.35);
+		border-radius: 4px;
+		padding: 1px 5px;
+	}
+
+	.msg-footer {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-top: 4px;
+	}
+
+	.active-badge {
+		font-size: 10px;
+		color: #38bdf8;
+		font-weight: 500;
+	}
+
+	.logs-btns {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+	}
+
+	.reset-btn {
+		font-size: 11px;
+		padding: 3px 8px;
+		background: transparent;
+		border: 1px dashed var(--border-subtle);
+	}
+
+	.log-indicator {
+		font-weight: 450;
+		text-transform: none;
+		letter-spacing: normal;
+		margin-left: 4px;
+	}
+
+	.log-indicator.accent {
+		color: #38bdf8;
+	}
+
+	.fallback-note {
+		font-size: 10px;
+		color: var(--dim, #888);
+		margin-left: 4px;
 	}
 
 	.msg.staff {
@@ -345,7 +480,6 @@
 	}
 
 	.msg .dim {
-		margin-top: 2px;
 		font-size: 10px;
 	}
 

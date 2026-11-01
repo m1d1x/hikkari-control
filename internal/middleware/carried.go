@@ -242,6 +242,8 @@ var csrfSkipPaths = map[string]bool{
 	"/api/auth/admin/refresh": true,
 	// Browsers cannot attach our cookies to a violation report.
 	"/api/csp-report": true,
+	// Public client support report submission.
+	"/api/v1/support/report": true,
 }
 
 // csrfSkipPrefixes lists path prefixes that bypass csrf enforcement.

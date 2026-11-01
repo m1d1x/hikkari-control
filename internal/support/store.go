@@ -24,6 +24,7 @@ type Store interface {
 	GetReport(ctx context.Context, id int64) (*Report, error)
 	AddReply(ctx context.Context, id int64, text string) (*Report, error)
 	UpdateStatus(ctx context.Context, id int64, status string) (*Report, error)
+	PurgeOldReports(ctx context.Context, olderThan time.Duration) (int64, error)
 }
 
 // NewStore returns a PostgreSQL-backed store if pool is provided, or an in-memory store otherwise.
@@ -68,7 +69,10 @@ func (s *MemStore) CreateReport(_ context.Context, req ReportRequest) (*Report, 
 					Staff: false,
 					Text:  req.Message,
 					TS:    now.UnixMilli(),
+					Logs:  req.Logs,
 				})
+			} else {
+				existing.Messages[len(existing.Messages)-1].Logs = req.Logs
 			}
 			return cloneReport(existing), nil
 		}
@@ -89,6 +93,7 @@ func (s *MemStore) CreateReport(_ context.Context, req ReportRequest) (*Report, 
 				Staff: false,
 				Text:  req.Message,
 				TS:    now.UnixMilli(),
+				Logs:  req.Logs,
 			},
 		},
 		CreatedAt: now,
@@ -174,6 +179,23 @@ func (s *MemStore) UpdateStatus(_ context.Context, id int64, status string) (*Re
 	return cloneReport(rep), nil
 }
 
+func (s *MemStore) PurgeOldReports(_ context.Context, olderThan time.Duration) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cutoff := time.Now().Add(-olderThan)
+	var purged int64
+	for _, rep := range s.reports {
+		if rep.CreatedAt.Before(cutoff) && rep.Logs != "[лог старше 30 дней очищен]" {
+			rep.Logs = "[лог старше 30 дней очищен]"
+			for i := range rep.Messages {
+				rep.Messages[i].Logs = ""
+			}
+			purged++
+		}
+	}
+	return purged, nil
+}
+
 func cloneReport(r *Report) *Report {
 	if r == nil {
 		return nil
@@ -219,7 +241,10 @@ func (s *DBStore) CreateReport(ctx context.Context, req ReportRequest) (*Report,
 				Staff: false,
 				Text:  req.Message,
 				TS:    now.UnixMilli(),
+				Logs:  req.Logs,
 			})
+		} else {
+			msgs[len(msgs)-1].Logs = req.Logs
 		}
 		msgsJSON, _ := json.Marshal(msgs)
 		_, updateErr := s.pool.Exec(ctx, `
@@ -237,6 +262,7 @@ func (s *DBStore) CreateReport(ctx context.Context, req ReportRequest) (*Report,
 			Staff: false,
 			Text:  req.Message,
 			TS:    now.UnixMilli(),
+			Logs:  req.Logs,
 		},
 	}
 	msgsJSON, err := json.Marshal(initMsg)
@@ -396,4 +422,19 @@ func (s *DBStore) UpdateStatus(ctx context.Context, id int64, status string) (*R
 	}
 
 	return s.GetReport(ctx, id)
+}
+
+func (s *DBStore) PurgeOldReports(ctx context.Context, olderThan time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-olderThan)
+	// Clears only the heavy diagnostic log text from reports older than cutoff,
+	// preserving the ticket metadata, messages, sender and history.
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE support_reports
+		SET logs = '[лог старше 30 дней очищен]'
+		WHERE created_at < $1 AND logs != '[лог старше 30 дней очищен]'
+	`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("purge old reports: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }
