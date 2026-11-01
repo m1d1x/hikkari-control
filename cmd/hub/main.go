@@ -58,6 +58,8 @@ func main() {
 			runAdminRole(os.Args[2:])
 		case "entry-box":
 			runEntryBox(os.Args[2:])
+		case "entry-front":
+			runEntryFront(os.Args[2:])
 		case "entry-bench":
 			runEntryBench(os.Args[2:])
 		case "entry-vantage-token":

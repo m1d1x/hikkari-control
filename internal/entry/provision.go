@@ -601,6 +601,9 @@ type jobRun struct {
 	// firstUse is whether this job's login may take the host key of a box
 	// with none on record. The zero value refuses.
 	firstUse firstUse
+	// front: box names a РФ-каскад front (fronts.go), whose host key lives in
+	// entry_fronts, not entry_boxes.
+	front bool
 }
 
 func (j *jobRun) step(name string) {
@@ -736,26 +739,32 @@ func (j *jobRun) provision(password string) error {
 // carries a domain keeps it; only the resolver wait runs. A fresh box with
 // none gets one from the pool, or a purchase when the pool is dry (Ф6).
 func (j *jobRun) ensureDomain() error {
+	// The domain points where clients dial: the box, or its РФ-каскад front
+	// while it has one (fronts.go).
+	target, via, err := j.p.svc.dialledAddress(j.ctx, j.box, j.acc.address)
+	if err != nil {
+		return err
+	}
 	domain := j.acc.domain
 	if domain == "" {
-		d, bought, err := j.p.svc.AcquireDomain(j.ctx, j.box, j.acc.address)
+		d, bought, err := j.p.svc.AcquireDomain(j.ctx, j.box, target)
 		if err != nil {
 			return fmt.Errorf("домен: %w", err)
 		}
 		// The address stays out of the log (migration 039): the A record
 		// points at "this box", which is what the line needs to say.
 		if bought {
-			j.log("куплен домен %s, A-запись → %s", d, j.box)
+			j.log("куплен домен %s, A-запись → %s", d, via)
 		} else {
-			j.log("домен из пула: %s, A-запись → %s", d, j.box)
+			j.log("домен из пула: %s, A-запись → %s", d, via)
 		}
 		j.acc.domain, domain = d, d
 	}
 	if len(j.p.dnsResolvers) == 0 {
 		return nil
 	}
-	j.log("жду, пока публичные резолверы отдают %s → %s", domain, j.box)
-	if err := j.waitDNS(domain, j.acc.address); err != nil {
+	j.log("жду, пока публичные резолверы отдают %s → %s", domain, via)
+	if err := j.waitDNS(domain, target); err != nil {
 		return err
 	}
 	j.log("резолверы отдают %s", domain)
@@ -896,7 +905,11 @@ func (j *jobRun) rememberHostKey(acc boxAccess, r Remote) error {
 	if acc.hostKey != "" {
 		return nil
 	}
-	if err := j.p.svc.setHostKey(j.ctx, j.box, r.HostKey()); err != nil {
+	record := j.p.svc.setHostKey
+	if j.front {
+		record = j.p.svc.setFrontHostKey
+	}
+	if err := record(j.ctx, j.box, r.HostKey()); err != nil {
 		return fmt.Errorf("запись ключа хоста: %w", err)
 	}
 	j.log("ключ хоста записан: %s", fingerprint(r.HostKey()))
@@ -1048,19 +1061,8 @@ func remoteWord(out string) string {
 
 func (j *jobRun) deploy(r Remote, build EdgeBuild, rel provRelay) error {
 	want := build.SHA
-	have := j.edgeOnBox(r, build.Arch)
-	if have != want {
-		binary, err := build.read()
-		if err != nil {
-			return err
-		}
-		if _, err := r.Run(j.ctx, "cat > /usr/local/bin/nekko-edge.new && chmod 755 /usr/local/bin/nekko-edge.new",
-			bytes.NewReader(binary)); err != nil {
-			return fmt.Errorf("загрузка бинаря: %w", err)
-		}
-		j.log("бинарь %s… загружен (%d МБ)", want[:12], len(binary)>>20)
-	} else {
-		j.log("бинарь %s… уже на месте", want[:12])
+	if err := j.stage(r, build, j.edgeOnBox(r, build.Arch)); err != nil {
+		return err
 	}
 	if err := j.install(r, rel); err != nil {
 		return err
@@ -1068,6 +1070,25 @@ func (j *jobRun) deploy(r Remote, build EdgeBuild, rel provRelay) error {
 	// A swap that fails after moving the binary into place leaves the box
 	// recorded at its old build; the next run reads the truth off the box.
 	j.recordEdge(build.Arch, want)
+	return nil
+}
+
+// stage uploads build as nekko-edge.new unless the box already runs it (have).
+func (j *jobRun) stage(r Remote, build EdgeBuild, have string) error {
+	want := build.SHA
+	if have == want {
+		j.log("бинарь %s… уже на месте", want[:12])
+		return nil
+	}
+	binary, err := build.read()
+	if err != nil {
+		return err
+	}
+	if _, err := r.Run(j.ctx, "cat > /usr/local/bin/nekko-edge.new && chmod 755 /usr/local/bin/nekko-edge.new",
+		bytes.NewReader(binary)); err != nil {
+		return fmt.Errorf("загрузка бинаря: %w", err)
+	}
+	j.log("бинарь %s… загружен (%d МБ)", want[:12], len(binary)>>20)
 	return nil
 }
 
@@ -1087,12 +1108,8 @@ func (j *jobRun) edgeOnBox(r Remote, arch string) string {
 // install puts one relay on whatever binary is staged at nekko-edge.new (or
 // the current one): unit, env, check, swap, restart, listening.
 func (j *jobRun) install(r Remote, rel provRelay) error {
-	if _, err := r.Run(j.ctx, "cat > /etc/systemd/system/nekko-edge@.service", strings.NewReader(edgeUnit)); err != nil {
-		return fmt.Errorf("unit-файл: %w", err)
-	}
 	// The relay's identity, rendered as the env nekko-edge runs with. Goes on
 	// stdin, never into the job log.
-	var env strings.Builder
 	envMap, err := rel.id.EdgeEnv()
 	if err != nil {
 		return fmt.Errorf("env релея %s: %w", rel.name, err)
@@ -1110,25 +1127,39 @@ func (j *jobRun) install(r Remote, rel provRelay) error {
 	if j.acc.proto == ProtoVlessXhttp {
 		j.log("%s: сайт на домене релея, туннель под секретным путём", rel.name)
 	}
-	keys := make([]string, 0, len(envMap))
-	for k := range envMap {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	env.WriteString("# Written by the nekko hub from entry_relays.identity_ct. Not the source of truth.\n")
-	for _, k := range keys {
-		env.WriteString(k + "=" + envMap[k] + "\n")
-	}
-	if _, err := r.Run(j.ctx, "umask 077 && mkdir -p /etc/nekko-edge && cat > /etc/nekko-edge/"+rel.name+".env.new",
-		strings.NewReader(env.String())); err != nil {
-		return fmt.Errorf("env релея: %w", err)
-	}
-	if _, err := r.Run(j.ctx, "bash -s -- "+rel.name+" "+strconv.Itoa(rel.id.Port)+" "+j.transport(), strings.NewReader(edgeSwapScript)); err != nil {
+	if err := j.swapIn(r, rel.name, "entry_relays.identity_ct", envMap, rel.id.Port, j.transport()); err != nil {
 		return err
 	}
 	// The hub's own words, not the script's last line (migration 043: the
 	// job log never carries raw remote output).
 	j.log("nekko-edge@%s запущен на :%d", rel.name, rel.id.Port)
+	return nil
+}
+
+// swapIn writes one nekko-edge instance's env and runs the swap: check the
+// staged binary against it, move both in, restart, wait until port listens.
+// source names where the env comes from, for the file's header.
+func (j *jobRun) swapIn(r Remote, instance, source string, envMap map[string]string, port int, transport string) error {
+	if _, err := r.Run(j.ctx, "cat > /etc/systemd/system/nekko-edge@.service", strings.NewReader(edgeUnit)); err != nil {
+		return fmt.Errorf("unit-файл: %w", err)
+	}
+	var env strings.Builder
+	keys := make([]string, 0, len(envMap))
+	for k := range envMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	env.WriteString("# Written by the nekko hub from " + source + ". Not the source of truth.\n")
+	for _, k := range keys {
+		env.WriteString(k + "=" + envMap[k] + "\n")
+	}
+	if _, err := r.Run(j.ctx, "umask 077 && mkdir -p /etc/nekko-edge && cat > /etc/nekko-edge/"+instance+".env.new",
+		strings.NewReader(env.String())); err != nil {
+		return fmt.Errorf("env %s: %w", instance, err)
+	}
+	if _, err := r.Run(j.ctx, "bash -s -- "+instance+" "+strconv.Itoa(port)+" "+transport, strings.NewReader(edgeSwapScript)); err != nil {
+		return err
+	}
 	return nil
 }
 

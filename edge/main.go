@@ -8,6 +8,9 @@
 //     domain with the tunnel under a secret path;
 //   - EDGE_PROTO=hysteria2 (voice.go): Hysteria2 over QUIC with masks.
 //
+// And one that is not a protocol: EDGE_PROTO=cascade (cascade.go), the
+// Russian entry of the РФ-каскад, which only hands TCP to an XHTTP exit.
+//
 // Every protocol leaves through the same exit (egress.go): the internet, minus
 // the box's own and the hoster's private networks and outbound SMTP. The edge
 // carries bytes and keeps nothing.
@@ -61,6 +64,13 @@ func main() {
 			log.Fatalf("nekko-edge: %v", err)
 		}
 	case "check":
+		if osEnv("EDGE_PROTO") == protoCascade {
+			if _, err := CascadeConfigFromEnv(osEnv); err != nil {
+				log.Fatalf("nekko-edge: %v", err)
+			}
+			fmt.Println("config OK")
+			return
+		}
 		if _, err := load(); err != nil {
 			log.Fatalf("nekko-edge: %v", err)
 		}
@@ -143,6 +153,9 @@ func load() (edge, error) {
 }
 
 func run() error {
+	if osEnv("EDGE_PROTO") == protoCascade {
+		return cascade()
+	}
 	e, err := load()
 	if err != nil {
 		return err
@@ -184,6 +197,24 @@ func run() error {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
 	return inst.Close()
+}
+
+// cascade runs a cascade edge: no Xray, no pulse (it carries no relay and no
+// subscriber key), only the forwards.
+func cascade() error {
+	c, err := CascadeConfigFromEnv(osEnv)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := runCascade(ctx, c); err != nil {
+		return err
+	}
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	<-stop
+	return nil
 }
 
 // runConfigFile starts an Xray instance directly from a JSON configuration

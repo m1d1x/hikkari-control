@@ -58,8 +58,14 @@ const (
 		SELECT r.box, r.status, b.proto FROM entry_relays r JOIN entry_boxes b ON b.name = r.box WHERE r.name = $1`
 	insertPendingRelay = `
 		INSERT INTO entry_relays (name, kind, box, identity_ct) VALUES ($1, $2, $3, $4)`
+	// The address a relay is signed with: its box's, or while the box has an
+	// active РФ-каскад front (migration 011), the front's — the client dials
+	// the front, which hands the connection to the box.
 	lockRelayByName = `
-		SELECT r.id, r.kind, r.status, r.box, r.identity_ct, b.address_ct, coalesce(b.region, '')
+		SELECT r.id, r.kind, r.status, r.box, r.identity_ct,
+		       coalesce((SELECT f.address_ct FROM entry_fronts f
+		                 WHERE f.exit_box = b.name AND f.retired_at IS NULL), b.address_ct),
+		       coalesce(b.region, '')
 		FROM entry_relays r JOIN entry_boxes b ON b.name = r.box
 		WHERE r.name = $1 FOR UPDATE OF r`
 	// $6: admitted now (pending → alive); a re-sign keeps the state.
