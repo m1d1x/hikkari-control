@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/entrywire"
 	"github.com/m1d1x/hikkari-control/internal/hetzner"
 	"github.com/m1d1x/hikkari-control/internal/openstack"
+	"github.com/m1d1x/hikkari-control/internal/porkbun"
 	"github.com/m1d1x/hikkari-control/internal/vdsina"
 	"github.com/m1d1x/hikkari-control/internal/vultr"
 )
@@ -26,12 +28,18 @@ func main() {
 		"DO_TOKEN":           os.Getenv("DO_TOKEN"),
 		"VDSINA_TOKEN":       os.Getenv("VDSINA_TOKEN"),
 		"OPENSTACK_AUTH_URL": os.Getenv("OPENSTACK_AUTH_URL"),
+		"PORKBUN_API_KEY":    os.Getenv("PORKBUN_API_KEY"),
+		"PORKBUN_SECRET_KEY": os.Getenv("PORKBUN_SECRET_KEY"),
 	}
 	loadEnv()
 
-	provider := flag.String("provider", "", "Provider kind: 'vdsina', 'vultr', 'hetzner', 'digitalocean', 'openstack'")
+	provider := flag.String("provider", "", "Provider kind: 'vdsina', 'vultr', 'hetzner', 'digitalocean', 'openstack', 'porkbun'")
 	key := flag.String("key", "", "API key / token (universal, works for any provider)")
-	token := flag.String("token", "", "API token / key (universal, works for any provider)")
+	token := flag.String("token", "", "API token / secret key (universal, works for any provider)")
+	secretKey := flag.String("secret-key", "", "Secret API key (sk1_… for Porkbun)")
+
+	porkbunKey := flag.String("porkbun-key", "", "Porkbun API key (pk1_… or PORKBUN_API_KEY)")
+	porkbunSecret := flag.String("porkbun-secret", "", "Porkbun Secret API key (sk1_… or PORKBUN_SECRET_KEY)")
 
 	vultrKey := flag.String("vultr-key", "", "Vultr API key (or set VULTR_API_KEY)")
 	hetznerToken := flag.String("hetzner-token", "", "Hetzner Cloud API token (or set HETZNER_TOKEN)")
@@ -49,7 +57,9 @@ func main() {
 
 	prov := strings.ToLower(strings.TrimSpace(*provider))
 	if prov == "" {
-		if *vultrKey != "" {
+		if *porkbunKey != "" || *porkbunSecret != "" {
+			prov = "porkbun"
+		} else if *vultrKey != "" {
 			prov = "vultr"
 		} else if *hetznerToken != "" {
 			prov = "hetzner"
@@ -68,6 +78,16 @@ func main() {
 	defer cancel()
 
 	switch prov {
+	case "porkbun", "pb":
+		k := resolveToken(*porkbunKey, *key, "", "PORKBUN_API_KEY")
+		s := resolveToken(*porkbunSecret, *secretKey, *token, "PORKBUN_SECRET_KEY")
+		if k == "" || s == "" {
+			fmt.Fprintln(os.Stderr, "Error: Porkbun requires both API key (pk1_…) and Secret key (sk1_…)")
+			fmt.Fprintln(os.Stderr, "  via -porkbun-key / -porkbun-secret, or -key / -secret-key, or PORKBUN_API_KEY / PORKBUN_SECRET_KEY env")
+			os.Exit(1)
+		}
+		probePorkbun(ctx, k, s, *apiURL)
+
 	case "vdsina":
 		tok := resolveToken(*vdsinaToken, *key, *token, "VDSINA_TOKEN")
 		if tok == "" {
@@ -152,9 +172,14 @@ func main() {
 		probeOpenStack(ctx, cfg)
 
 	default:
-		fmt.Println("Usage: probe-provider -provider <vdsina|vultr|hetzner|digitalocean|openstack> [flags]")
+		fmt.Println("Usage: probe-provider -provider <porkbun|vdsina|vultr|hetzner|digitalocean|openstack> [flags]")
 		fmt.Println("\nExamples:")
-		fmt.Println("  # VDSina check (Free / Read-only):")
+		fmt.Println("  # Porkbun check (Free / Read-only):")
+		fmt.Println("  export PORKBUN_API_KEY='pk1_...'")
+		fmt.Println("  export PORKBUN_SECRET_KEY='sk1_...'")
+		fmt.Println("  go run ./cmd/probe-provider -provider porkbun")
+		fmt.Println("  # or: go run ./cmd/probe-provider -provider porkbun -key 'pk1_...' -secret-key 'sk1_...'")
+		fmt.Println("\n  # VDSina check (Free / Read-only):")
 		fmt.Println("  export VDSINA_TOKEN='your_api_token'")
 		fmt.Println("  go run ./cmd/probe-provider -provider vdsina")
 		fmt.Println("  # or: go run ./cmd/probe-provider -provider vdsina -token 'your_api_token'")
@@ -204,6 +229,9 @@ func resolveDOToken(specificFlag, universalKey, universalToken string) string {
 
 func detectProvider(origEnv map[string]string) string {
 	var shellProv []string
+	if origEnv["PORKBUN_API_KEY"] != "" || origEnv["PORKBUN_SECRET_KEY"] != "" {
+		shellProv = append(shellProv, "porkbun")
+	}
 	if origEnv["VULTR_API_KEY"] != "" {
 		shellProv = append(shellProv, "vultr")
 	}
@@ -227,6 +255,9 @@ func detectProvider(origEnv map[string]string) string {
 	}
 
 	var fileProv []string
+	if os.Getenv("PORKBUN_API_KEY") != "" || os.Getenv("PORKBUN_SECRET_KEY") != "" {
+		fileProv = append(fileProv, "porkbun")
+	}
 	if os.Getenv("VULTR_API_KEY") != "" {
 		fileProv = append(fileProv, "vultr")
 	}
@@ -610,6 +641,72 @@ func probeOpenStack(ctx context.Context, cfg openstack.Config) {
 		}
 	}
 	fmt.Println("\n[SUCCESS] OpenStack credentials verified successfully! No money was spent.")
+}
+
+func probePorkbun(ctx context.Context, apiKey, secretKey, apiURL string) {
+	fmt.Println("==> Testing Porkbun connection (Read-Only / Free)...")
+	var opts []porkbun.Option
+	if apiURL != "" {
+		opts = append(opts, porkbun.WithBaseURL(apiURL))
+	} else if os.Getenv("PORKBUN_API_URL") != "" {
+		opts = append(opts, porkbun.WithBaseURL(os.Getenv("PORKBUN_API_URL")))
+	}
+	client := porkbun.New(apiKey, secretKey, opts...)
+
+	// 1. Ping / Auth
+	ip, err := client.Ping(ctx)
+	if err != nil {
+		fmt.Printf("[-] Ping / Auth failed: %v\n", err)
+		if errors.Is(err, porkbun.ErrBadCredentials) {
+			fmt.Println("    Hint: Check that both API key (pk1_…) and Secret key (sk1_…) are correct,")
+			fmt.Println("    and that 'API Access' is enabled in your Porkbun account (Account -> API Access).")
+		}
+		return
+	}
+	fmt.Printf("[+] Auth OK! Connected from IP: %s\n", ip)
+
+	// 2. Prepaid Balance
+	bal, err := client.Balance(ctx)
+	if err != nil {
+		fmt.Printf("[-] Balance check failed: %v\n", err)
+	} else {
+		fmt.Printf("[+] Prepaid Balance: $%.2f (%d cents)\n", float64(bal)/100.0, bal)
+	}
+
+	// 3. Spend Limit
+	lim, err := client.SpendLimit(ctx)
+	if err != nil {
+		fmt.Printf("[-] Spend limit check failed: %v\n", err)
+	} else {
+		if lim.Limited {
+			fmt.Printf("[+] Monthly Spend Limit: $%.2f (Spent this month: $%.2f)\n",
+				float64(lim.LimitCents)/100.0, float64(lim.SpentCents)/100.0)
+		} else {
+			fmt.Printf("[+] Monthly Spend Limit: Unlimited (Spent this month: $%.2f)\n",
+				float64(lim.SpentCents)/100.0)
+		}
+	}
+
+	// 4. Domains
+	domains, err := client.Domains(ctx)
+	if err != nil {
+		fmt.Printf("[-] Failed to list domains: %v\n", err)
+	} else {
+		fmt.Printf("[+] Existing domains on account: %d\n", len(domains))
+		limit := len(domains)
+		if limit > 10 {
+			limit = 10
+		}
+		for i := 0; i < limit; i++ {
+			d := domains[i]
+			fmt.Printf("    • %s (Status: %s, Expires: %s, API Access: %v)\n",
+				d.Domain, d.Status, d.ExpireDate, d.APIAccess)
+		}
+		if len(domains) > limit {
+			fmt.Printf("    ... and %d more domains\n", len(domains)-limit)
+		}
+	}
+	fmt.Println("\n[SUCCESS] Porkbun credentials verified successfully! No money was spent.")
 }
 
 func loadEnv() {

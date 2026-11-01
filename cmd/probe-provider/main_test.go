@@ -92,6 +92,8 @@ func TestDetectProvider(t *testing.T) {
 		{"DO_TOKEN", "digitalocean"},
 		{"VDSINA_TOKEN", "vdsina"},
 		{"OPENSTACK_AUTH_URL", "openstack"},
+		{"PORKBUN_API_KEY", "porkbun"},
+		{"PORKBUN_SECRET_KEY", "porkbun"},
 	}
 
 	for _, tc := range cases {
@@ -371,5 +373,95 @@ func TestProbeDigitalOcean_AuthError(t *testing.T) {
 
 	if !strings.Contains(out, "Account check failed") {
 		t.Errorf("expected account check failed, got:\n%s", out)
+	}
+}
+
+func TestProbePorkbun_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/ping":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "SUCCESS", "yourIp": "198.51.100.42",
+			})
+		case "/account/balance":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "SUCCESS", "balance": 2550,
+			})
+		case "/account/apiSettings":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "SUCCESS", "monthlySpend": 450,
+				"spendLimit": map[string]any{
+					"limit": 15000, "source": "user", "spent": 450,
+				},
+			})
+		case "/domain/listAll":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "SUCCESS", "count": 1,
+				"domains": []map[string]any{
+					{
+						"domain": "testrelay.lol", "tld": "lol",
+						"status": "ACTIVE", "expireDate": "2027-10-31 12:00:00",
+						"apiAccess": 1,
+					},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	origAPIURL := *apiURL
+	*apiURL = srv.URL
+	defer func() { *apiURL = origAPIURL }()
+
+	out := captureOutput(func() {
+		probePorkbun(context.Background(), "pk1_test", "sk1_test", srv.URL)
+	})
+
+	if !strings.Contains(out, "[+] Auth OK! Connected from IP: 198.51.100.42") {
+		t.Errorf("expected Auth OK IP, got:\n%s", out)
+	}
+	if !strings.Contains(out, "[+] Prepaid Balance: $25.50 (2550 cents)") {
+		t.Errorf("expected balance, got:\n%s", out)
+	}
+	if !strings.Contains(out, "[+] Monthly Spend Limit: $150.00 (Spent this month: $4.50)") {
+		t.Errorf("expected spend limit, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Existing domains on account: 1") {
+		t.Errorf("expected 1 domain, got:\n%s", out)
+	}
+	if !strings.Contains(out, "testrelay.lol (Status: ACTIVE") {
+		t.Errorf("expected testrelay.lol details, got:\n%s", out)
+	}
+	if !strings.Contains(out, "[SUCCESS] Porkbun credentials verified successfully!") {
+		t.Errorf("expected success message, got:\n%s", out)
+	}
+}
+
+func TestProbePorkbun_AuthError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ERROR", "message": "Invalid API key or secret key.",
+		})
+	}))
+	defer srv.Close()
+
+	origAPIURL := *apiURL
+	*apiURL = srv.URL
+	defer func() { *apiURL = origAPIURL }()
+
+	out := captureOutput(func() {
+		probePorkbun(context.Background(), "pk1_bad", "sk1_bad", srv.URL)
+	})
+
+	if !strings.Contains(out, "[-] Ping / Auth failed: porkbun: credentials rejected") {
+		t.Errorf("expected ping / auth failed, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Check that both API key (pk1_…) and Secret key (sk1_…) are correct") {
+		t.Errorf("expected hint, got:\n%s", out)
 	}
 }
