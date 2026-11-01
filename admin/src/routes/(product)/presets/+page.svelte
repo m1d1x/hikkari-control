@@ -250,6 +250,14 @@
 		if (edit) edit[side] = edit[side].filter((x) => x !== id);
 	}
 
+	function resetToBundled() {
+		if (!edit) return;
+		if (!confirm('сбросить состав групп пресета к базовому набору РФ?')) return;
+		edit.bypass = [...BUNDLED_PRESET.bypass];
+		edit.proxy = [...BUNDLED_PRESET.proxy];
+		edit.disabled = [...BUNDLED_PRESET.disabled];
+	}
+
 	/** Seeds an empty hub with the client's bundled groups and the default RU preset. */
 	const seed = () =>
 		act(async () => {
@@ -345,6 +353,7 @@
 								{#each edit[s.key] as id (id)}
 									{@const g = groupOf(id)}
 									<span class="g" class:off={s.key === 'disabled'}>
+										{#if g?.icon}<span class="icon-tag mono">{g.icon}</span>{/if}
 										<a href="/groups?g={id}">{g?.name ?? id}</a>
 										{#if g}<small>{ruleCount(g.rules)}</small>{/if}
 										<button onclick={() => dropGroup(s.key, id)} title="убрать">×</button>
@@ -360,13 +369,19 @@
 									>
 										<option value="">+ группа</option>
 										{#each free as g (g.id)}
-											<option value={g.id}>{g.name}</option>
+											<option value={g.id}>{g.icon ? `[${g.icon}] ` : ''}{g.name}</option>
 										{/each}
 									</select>
 								{/if}
 							</div>
 						</div>
 					{/each}
+				</div>
+
+				<div class="preset-sync-row">
+					<button class="btn sub-sync" onclick={resetToBundled} disabled={busy || !edit}>
+						сбросить группы пресета к базовым РФ ({BUNDLED_PRESET.bypass.length} мимо / {BUNDLED_PRESET.proxy.length} через)
+					</button>
 				</div>
 
 				{#if p && p.bypass.length + p.proxy.length + (p.disabled?.length ?? 0) > 0}
@@ -569,6 +584,26 @@
 		border-radius: 6px;
 		background: var(--inset);
 		font-size: 12px;
+	}
+
+	.icon-tag {
+		font-size: 10px;
+		line-height: 1;
+		padding: 1px 4px;
+		border-radius: 3px;
+		background: rgba(255, 255, 255, 0.08);
+		color: var(--dim, #888);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+	}
+
+	.preset-sync-row {
+		margin-top: 12px;
+	}
+
+	.sub-sync {
+		font-size: 11px;
+		padding: 4px 10px;
+		color: var(--dim, #888);
 	}
 
 	.g.off {

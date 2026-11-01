@@ -99,6 +99,18 @@
 			pick(db.groups[0]?.id);
 		});
 
+	/** Imports bundled groups that are not yet in the hub. */
+	const seedMissing = () =>
+		act(async () => {
+			for (const g of BUNDLED_GROUPS) {
+				if (!db.groups.some((x) => x.id === g.id)) {
+					await saveGroup(g);
+				}
+			}
+			db.groups = await fetchGroups();
+			pick(db.groups[0]?.id);
+		});
+
 	const normalizer = (k: RuleKind) => (v: string) =>
 		normalizeRule(k, v).catch((e) => {
 			throw new Error(refusal(e));
@@ -121,13 +133,21 @@
 			{#each db.groups as x (x.id)}
 				<button class="item" class:on={!fresh && x.id === edit?.id} onclick={() => pick(x.id)}>
 					<div class="line">
-						<span>{x.name}</span>
+						<span class="name-cell">
+							{#if x.icon}<span class="icon-tag mono">{x.icon}</span>{/if}
+							<span>{x.name}</span>
+						</span>
 						<span class="dim n">{count(x)}</span>
 					</div>
 				</button>
 			{:else}
 				<button class="btn seed" onclick={seed} disabled={busy}>взять встроенные группы клиента</button>
 			{/each}
+			{#if db.groups.length > 0}
+				<button class="btn sub-seed" onclick={seedMissing} disabled={busy} title="добавить недостающие встроенные группы">
+					+ встроенные ({BUNDLED_GROUPS.length})
+				</button>
+			{/if}
 		</section>
 
 		{#if edit}
@@ -248,8 +268,43 @@
 
 	.line {
 		display: flex;
+		align-items: center;
 		justify-content: space-between;
 		gap: 8px;
+	}
+
+	.name-cell {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+	}
+
+	.name-cell span:last-child {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.icon-tag {
+		display: inline-block;
+		font-size: 10px;
+		line-height: 1;
+		padding: 2px 4px;
+		border-radius: 4px;
+		background: rgba(255, 255, 255, 0.08);
+		color: var(--dim, #888);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		flex-shrink: 0;
+	}
+
+	.sub-seed {
+		width: 100%;
+		margin-top: 6px;
+		padding: 6px 8px;
+		font-size: 11px;
+		color: var(--dim, #888);
+		text-align: center;
 	}
 
 	.n {

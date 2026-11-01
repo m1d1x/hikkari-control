@@ -286,7 +286,7 @@ type DBTesterStore struct {
 
 func (s *DBTesterStore) AppendChunk(ctx context.Context, req TesterChunkRequest) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO tester_log_chunks (install_id, platform, version, lines, dropped, body)
+		INSERT INTO support_tester_log_chunks (install_id, platform, version, lines, dropped, body)
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`, req.InstallID, req.Platform, req.Version, len(req.Lines), req.Dropped, strings.Join(req.Lines, "\n"))
 	if err != nil {
@@ -301,7 +301,7 @@ func (s *DBTesterStore) ListInstalls(ctx context.Context) ([]TesterInstall, erro
 		       (array_agg(platform ORDER BY received_at DESC))[1],
 		       (array_agg(version ORDER BY received_at DESC))[1],
 		       count(*), sum(lines), sum(dropped), min(received_at), max(received_at)
-		FROM tester_log_chunks
+		FROM support_tester_log_chunks
 		GROUP BY install_id
 		ORDER BY max(received_at) DESC
 	`)
@@ -326,7 +326,7 @@ func (s *DBTesterStore) ReadChunks(ctx context.Context, installID string, since,
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, platform, version, lines, dropped, body, received_at FROM (
-			SELECT * FROM tester_log_chunks
+			SELECT * FROM support_tester_log_chunks
 			WHERE install_id = $1 AND received_at > $2 AND received_at <= $3
 			ORDER BY received_at DESC
 			LIMIT $4
@@ -348,7 +348,7 @@ func (s *DBTesterStore) ReadChunks(ctx context.Context, installID string, since,
 }
 
 func (s *DBTesterStore) PurgeChunks(ctx context.Context, olderThan time.Duration) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM tester_log_chunks WHERE received_at < $1`, time.Now().Add(-olderThan))
+	tag, err := s.pool.Exec(ctx, `DELETE FROM support_tester_log_chunks WHERE received_at < $1`, time.Now().Add(-olderThan))
 	if err != nil {
 		return 0, fmt.Errorf("purge tester chunks: %w", err)
 	}
