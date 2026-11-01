@@ -13,7 +13,9 @@ package entry
 //	machines ≥ ⌈ live subscriptions × batch / SubscribersPerBox ⌉, at least the batch
 //
 // The batch's relays sit on distinct machines (pick), so a subscription needs
-// at least `batch` machines in each lane before it holds a full batch. With no
+// at least `batch` machines in each lane before it holds a full batch; a
+// Hysteria2 lane is one relay per region (VoiceSlotsPerRegion), so its floor
+// counts one share per subscription and starts at one machine. With no
 // live subscription the floor is nothing and the traffic sizing alone holds
 // the pool (one machine for the first comer). The owner's one knob stays the
 // money cap: past it the hub asks instead of buying (fleetbudget.go).
@@ -47,17 +49,23 @@ func subscriberFloor(live int64, slots int) int {
 	return max(n, slots)
 }
 
-// applySubscriberFloor raises a stream pool's target and keep to what its
-// subscriptions need, and says so. Voice lanes are sized by their calls.
+// applySubscriberFloor raises a pool's target and keep to what its
+// subscriptions need, and says so. Hysteria2 is sold in the subscription as
+// well (owner, 01.11): its lanes are floored by subscriptions too, one relay
+// each.
 func (s *Service) applySubscriberFloor(ctx context.Context, f *FleetForecast, proto string) error {
-	if s.subscribers == nil || proto == ProtoHysteria2 {
+	if s.subscribers == nil {
 		return nil
 	}
 	live, err := s.subscribers.CountLive(ctx)
 	if err != nil {
 		return fmt.Errorf("entry: live subscriptions: %w", err)
 	}
-	floor := subscriberFloor(live, s.batchSize)
+	slots := s.batchSize
+	if proto == ProtoHysteria2 {
+		slots = VoiceSlotsPerRegion
+	}
+	floor := subscriberFloor(live, slots)
 	if floor == 0 {
 		return nil
 	}
@@ -65,7 +73,15 @@ func (s *Service) applySubscriberFloor(ctx context.Context, f *FleetForecast, pr
 	if floor > f.Target {
 		f.Target = floor
 		f.TargetWhy += fmt.Sprintf("; живых подписок %d по %d ноды, на машину не больше %d — нужно %d",
-			live, s.batchSize, SubscribersPerBox, floor)
+			live, slots, SubscribersPerBox, floor)
 	}
 	return nil
 }
+
+// StaticVoiceRegions is a VoiceRegionSource with a fixed list. Hikkari has no
+// SFU shards to name voice regions after; its Hysteria2 lanes are the regions
+// the hub is told to keep, so a lane exists, and is ordered for, before its
+// first machine (fleet.go, FleetForecasts).
+type StaticVoiceRegions []string
+
+func (r StaticVoiceRegions) VoiceRegions(context.Context) ([]string, error) { return r, nil }

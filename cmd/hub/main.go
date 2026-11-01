@@ -180,6 +180,9 @@ func run() error {
 	// Stream pools hold enough machines for every live subscription's batch
 	// (internal/entry/subscribers.go).
 	svc.SetSubscribers(subs)
+	// Hysteria2 lanes kept for subscriptions: one region until the fleet has
+	// more than one exit geography to sell.
+	svc.SetVoiceRegions(entry.StaticVoiceRegions{"eu"})
 	// Selling subscriptions (internal/billing): the landing's checkout and the
 	// payment provider's notifications.
 	payments, err := billingProvider(os.Getenv)

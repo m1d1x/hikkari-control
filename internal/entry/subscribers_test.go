@@ -22,8 +22,8 @@ func TestTheSubscriberFloor(t *testing.T) {
 	}
 }
 
-// Subscriptions raise a stream pool above what its traffic asks for, never
-// lower it, and leave voice pools alone.
+// Subscriptions raise a pool above what its traffic asks for and never lower
+// it; a Hysteria2 lane counts one relay per subscription.
 func TestSubscriptionsRaiseAStreamPool(t *testing.T) {
 	s := &Service{batchSize: 2, subscribers: liveCount(400)}
 	f := FleetForecast{Target: 1, Keep: 1, TargetWhy: "traffic"}
@@ -38,10 +38,16 @@ func TestSubscriptionsRaiseAStreamPool(t *testing.T) {
 	if f.Target != 9 || f.Keep != 12 {
 		t.Fatalf("a busier pool was lowered: %+v", f)
 	}
-	f = FleetForecast{Target: 1, Keep: 1}
+	f = FleetForecast{Target: 0, Keep: 0}
+	_ = s.applySubscriberFloor(context.Background(), &f, ProtoHysteria2)
+	if f.Target != 3 || f.Keep != 3 {
+		t.Fatalf("400 subscriptions on a Hysteria2 lane: target %d keep %d, want 3", f.Target, f.Keep)
+	}
+	s.subscribers = liveCount(1)
+	f = FleetForecast{}
 	_ = s.applySubscriberFloor(context.Background(), &f, ProtoHysteria2)
 	if f.Target != 1 {
-		t.Fatalf("a voice pool was sized by subscriptions: %+v", f)
+		t.Fatalf("the first subscription left the Hysteria2 lane empty: %+v", f)
 	}
 }
 
