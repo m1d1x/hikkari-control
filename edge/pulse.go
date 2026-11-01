@@ -49,7 +49,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/stats"
 )
 
@@ -145,15 +144,7 @@ const maxPulseAnswer = 1 << 20
 
 // spawnPulse starts the reporting loop, if the box was given one. It returns
 // at once; the loop stops with ctx.
-func spawnPulse(ctx context.Context, inst *core.Instance, cfg pulseConfig, keys *keyring) {
-	counters, _ := inst.GetFeature(stats.ManagerType()).(stats.Manager)
-	if counters == nil {
-		// Xray without its stats manager: the config says to count and the
-		// instance cannot. Said once, loudly, rather than reporting zeros
-		// that would read as an idle relay.
-		log.Printf("nekko-edge: pulse off — xray has no stats manager, byte counters would be zero")
-		return
-	}
+func spawnPulse(ctx context.Context, source pulseSource, cfg pulseConfig, keys keySetter) {
 	started := time.Now()
 	boot := newBoot()
 	client := &http.Client{Timeout: pulseTimeout}
@@ -166,7 +157,7 @@ func spawnPulse(ctx context.Context, inst *core.Instance, cfg pulseConfig, keys 
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				body := readPulse(counters, cfg, started)
+				body := readPulse(source, cfg, started)
 				body.Boot = boot
 				answer, err := sendPulse(ctx, client, cfg, body)
 				if err != nil {
@@ -183,9 +174,33 @@ func spawnPulse(ctx context.Context, inst *core.Instance, cfg pulseConfig, keys 
 	}()
 }
 
+// pulseSource is who counts a relay's traffic. Xray does for what passes
+// through its inbounds; an AmneziaWG device counts its own peers.
+type pulseSource interface {
+	read() (up, down, conns int64, keys map[string]pulseKey)
+}
+
+// keySetter takes the hub's list of keys.
+type keySetter interface {
+	Set(ctx context.Context, keys []string) error
+}
+
+type xraySource struct{ counters stats.Manager }
+
+func (s xraySource) read() (up, down, conns int64, keys map[string]pulseKey) {
+	up, down, conns = inboundTotals(s.counters)
+	return up, down, conns, keyTotals(s.counters)
+}
+
+type awgSource struct{ server *awgServer }
+
+func (s awgSource) read() (up, down, conns int64, keys map[string]pulseKey) {
+	return s.server.totals(time.Now())
+}
+
 // readPulse assembles one report from Xray's counters and the box's own load.
-func readPulse(counters stats.Manager, cfg pulseConfig, started time.Time) pulseBody {
-	up, down, conns := inboundTotals(counters)
+func readPulse(source pulseSource, cfg pulseConfig, started time.Time) pulseBody {
+	up, down, conns, keys := source.read()
 	cpu, mem := boxLoad()
 	return pulseBody{
 		Relay:     cfg.relay,
@@ -196,7 +211,7 @@ func readPulse(counters stats.Manager, cfg pulseConfig, started time.Time) pulse
 		CPUPct:    cpu,
 		MemMB:     mem,
 		Version:   cfg.version,
-		Keys:      keyTotals(counters),
+		Keys:      keys,
 	}
 }
 

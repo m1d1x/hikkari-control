@@ -1,12 +1,13 @@
 // Command nekko-edge is one Hikkari VPN exit, carried over from Nekko's edge
-// relay (embedded Xray). Three protocols, one binary, so the hub deploys and
+// relay (embedded Xray). Four protocols, one binary, so the hub deploys and
 // rolls them alike:
 //
 //   - EDGE_PROTO=vless-reality-vision (default, config.go): VLESS + Reality
 //     behind an SNI router that hands unknown handshakes to a real cover site;
 //   - EDGE_PROTO=vless-xhttp (xhttp.go): an HTTPS site on the relay's own
 //     domain with the tunnel under a secret path;
-//   - EDGE_PROTO=hysteria2 (voice.go): Hysteria2 over QUIC with masks.
+//   - EDGE_PROTO=hysteria2 (voice.go): Hysteria2 over QUIC with masks;
+//   - EDGE_PROTO=amneziawg (awg.go): obfuscated WireGuard, in the process.
 //
 // And one that is not a protocol: EDGE_PROTO=cascade (cascade.go), the
 // Russian entry of the РФ-каскад, which only hands TCP to an XHTTP exit.
@@ -39,6 +40,7 @@ import (
 	"syscall"
 
 	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/features/stats"
 	_ "github.com/xtls/xray-core/main/distro/all"
 	"golang.org/x/crypto/curve25519"
 )
@@ -100,6 +102,8 @@ type edge struct {
 	xray  *core.Config
 	echo  int
 	front *XhttpConfig
+	// awg is an AmneziaWG edge's device config (nil otherwise).
+	awg *AwgConfig
 	// proto and userTags say where access keys go (keys.go): the protocol's
 	// credential, and the inbounds that let users through.
 	proto    string
@@ -111,6 +115,7 @@ func load() (edge, error) {
 	var doc map[string]any
 	var echo int
 	var front *XhttpConfig
+	var awg *AwgConfig
 	var userTags []string
 	proto := osEnv("EDGE_PROTO")
 	switch proto {
@@ -138,6 +143,12 @@ func load() (edge, error) {
 		}
 		doc, front = cfg.XrayConfig(), &cfg
 		userTags = []string{xhttpTag}
+	case protoAwg:
+		cfg, err := AwgConfigFromEnv(osEnv)
+		if err != nil {
+			return edge{}, err
+		}
+		doc, awg = cfg.XrayConfig(), &cfg
 	default:
 		return edge{}, fmt.Errorf("EDGE_PROTO: %q is not %s, %s or %s", proto, protoReality, protoHysteria, protoXhttp)
 	}
@@ -149,7 +160,7 @@ func load() (edge, error) {
 	if err != nil {
 		return edge{}, fmt.Errorf("xray config: %w", err)
 	}
-	return edge{xray: xc, echo: echo, front: front, proto: proto, userTags: userTags}, nil
+	return edge{xray: xc, echo: echo, front: front, awg: awg, proto: proto, userTags: userTags}, nil
 }
 
 func run() error {
@@ -181,14 +192,35 @@ func run() error {
 			return fmt.Errorf("front: %w", err)
 		}
 	}
+	// The AmneziaWG device goes up after Xray too: what it carries leaves
+	// through the running instance's router.
+	var awg *awgServer
+	if e.awg != nil {
+		if awg, err = startAwg(ctx, *e.awg, xrayDialer(inst)); err != nil {
+			return err
+		}
+		defer awg.Close()
+	}
 	// The half-minute self-report to the hub (П9.3), if this box was given
 	// one. Started last: it reads counters the running instance owns.
 	if pc, ok := pulseFromEnv(osEnv); ok {
-		keys, err := newKeyring(inst, e)
-		if err != nil {
-			return err
+		if awg != nil {
+			spawnPulse(ctx, awgSource{awg}, pc, awg)
+		} else {
+			counters, _ := inst.GetFeature(stats.ManagerType()).(stats.Manager)
+			if counters == nil {
+				// Xray without its stats manager: the config says to count and
+				// the instance cannot. Said once, loudly, rather than reporting
+				// zeros that would read as an idle relay.
+				log.Printf("nekko-edge: pulse off — xray has no stats manager, byte counters would be zero")
+			} else {
+				keys, err := newKeyring(inst, e)
+				if err != nil {
+					return err
+				}
+				spawnPulse(ctx, xraySource{counters}, pc, keys)
+			}
 		}
-		spawnPulse(ctx, inst, pc, keys)
 	}
 
 	log.Printf("nekko-edge: up (xray %s)", core.Version())
