@@ -283,7 +283,7 @@ func (p *Provisioner) AttachFront(ctx context.Context, f NewFront) error {
 	// exit's own certificate for its domain, verified, answered through the
 	// front's address.
 	j.step("check")
-	if err := checkFront(ctx, f.Address, ports[0], exit.domain); err != nil {
+	if err := p.certCheck(ctx, f.Address, ports[0], exit.domain); err != nil {
 		return fmt.Errorf("через вход %s сертификат %s не отвечает: %w", f.Name, exit.domain, err)
 	}
 	j.log("через %s отвечает %s с действительным сертификатом", f.Name, exit.domain)
@@ -337,7 +337,8 @@ func (p *Provisioner) DetachFront(ctx context.Context, name string) error {
 	return err
 }
 
-// checkFront dials the front and expects the exit's certificate for domain,
+// checkFront dials address and expects the certificate for domain — through
+// a front, the exit's; on an XHTTP box itself, its own —
 // verified against the system roots — the same check a client's TLS makes.
 // Retried until frontCheckTimeout: the edge may still be coming up.
 func checkFront(ctx context.Context, address string, port int, domain string) error {

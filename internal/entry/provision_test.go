@@ -152,6 +152,7 @@ func newProvHarness(t *testing.T) *provHarness {
 	p := NewProvisioner(h.svc, b.dial, dir)
 	p.SetProber("https://api.example.org")
 	p.probeTimeout, p.probePoll = 10*time.Second, 50*time.Millisecond
+	p.certCheck = func(context.Context, string, int, string) error { return nil }
 	return &provHarness{harness: h, box: b, prov: p}
 }
 

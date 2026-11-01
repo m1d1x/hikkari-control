@@ -127,6 +127,9 @@ type Provisioner struct {
 	// tests, or on a hub that has no public DNS egress).
 	dnsResolvers []string
 	dnsPoll      time.Duration
+	// certCheck waits for a domain's certificate to verify on address:port
+	// (checkFront); a field so tests can stand without a real TLS server.
+	certCheck func(ctx context.Context, address string, port int, domain string) error
 	// pulse is where a relay reports its own counters (П9.3). Empty leaves
 	// the relays silent, which is what a hub without analytics wants: the
 	// edge simply does not start its reporting loop.
@@ -173,6 +176,7 @@ func NewProvisioner(svc *Service, dial Dialer, artifacts string) *Provisioner {
 		jobTimeout:   30 * time.Minute,
 		bootWait:     bootWait,
 		dnsResolvers: []string{"1.1.1.1:53", "8.8.8.8:53"},
+		certCheck:    checkFront,
 		dnsPoll:      5 * time.Second,
 	}
 }
@@ -709,6 +713,20 @@ func (j *jobRun) provision(password string) error {
 		if err := j.deploy(r, build, rel); err != nil {
 			return fmt.Errorf("разворот %s: %w", rel.name, err)
 		}
+	}
+
+	// An XHTTP edge orders its certificate on its first TLS handshake, and
+	// the vantage's probe can be that handshake: Let's Encrypt still
+	// validating, the named TLS fails, and a healthy fresh box reads as
+	// domain_blocked (01.11). The hub makes the first handshake itself and
+	// waits for the certificate to verify before anyone judges the box. The
+	// address is dialled directly, front or not: it is the box's own cert.
+	if acc.proto == ProtoVlessXhttp && len(relays) > 0 {
+		j.step("cert")
+		if err := j.p.certCheck(j.ctx, acc.address, relays[0].id.Port, j.acc.domain); err != nil {
+			return fmt.Errorf("сертификат %s так и не выпустился: %w", j.acc.domain, err)
+		}
+		j.log("сертификат %s выпущен и проверяется", j.acc.domain)
 	}
 
 	j.step("probe")
