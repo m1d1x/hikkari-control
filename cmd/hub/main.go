@@ -131,11 +131,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("entry pool: %w", err)
 	}
-	prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
-	if token := os.Getenv("EDGE_PULSE_TOKEN"); token != "" {
-		prov.SetPulse(config.Default().APIURL()+"/api/v1/internal/entry-pulse", token)
-	}
-	prov.SetProber(config.Default().APIURL())
+	prov := newProvisioner(svc)
 	mechanic := wireEntryDomains(ctx, svc, prov)
 	if n, err := svc.AbandonRunningJobs(ctx); err != nil {
 		log.Printf("entry pool: abandon running jobs: %v", err)
@@ -354,4 +350,17 @@ func validateFleetSecrets(getenv func(string) string) error {
 		return errors.New("EDGE_PULSE_TOKEN must contain at least 32 random characters")
 	}
 	return nil
+}
+
+// newProvisioner is the hub's provisioner as every deploy needs it, the
+// server's and the operator's CLI alike: a relay deployed without the pulse
+// never reports, so it never learns its subscribers' keys and refuses them
+// all (01.11: an `entry-box` re-run left a Hysteria2 relay answering 404).
+func newProvisioner(svc *entry.Service) *entry.Provisioner {
+	prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+	if token := os.Getenv("EDGE_PULSE_TOKEN"); token != "" {
+		prov.SetPulse(config.Default().APIURL()+"/api/v1/internal/entry-pulse", token)
+	}
+	prov.SetProber(config.Default().APIURL())
+	return prov
 }

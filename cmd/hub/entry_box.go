@@ -186,7 +186,7 @@ func runEntryBox(args []string) {
 	if err != nil {
 		fail(err)
 	}
-	prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+	prov := newProvisioner(svc)
 	ctx := context.Background()
 	// So `entry-box <box> <ip> <provider> <city> xhttp` (no domain) buys and
 	// points the domain itself, through the account saved in the console, and
