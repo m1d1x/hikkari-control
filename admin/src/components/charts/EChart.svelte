@@ -26,7 +26,7 @@
 	});
 
 	onMount(() => {
-		chart = echarts.init(container, 'nekko-admin');
+		chart = echarts.init(container, 'hikkari-admin');
 		chart.setOption(option);
 		ready = true;
 

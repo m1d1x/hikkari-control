@@ -60,7 +60,7 @@
 
 	function shortTag(tag: string | undefined): string {
 		if (!tag) return '—';
-		// Drop registry prefix for readability: ghcr.io/m1d1x/nekko:foo → :foo
+		// Drop registry prefix for readability: ghcr.io/m1d1x/hikkari:foo → :foo
 		const colon = tag.lastIndexOf(':');
 		return colon === -1 ? tag : tag.slice(colon + 1);
 	}

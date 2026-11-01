@@ -154,7 +154,19 @@
 </script>
 
 <div class="login-screen">
-	{#if step === 'password'}
+	<div class="login-container">
+		<div class="login-brand">
+			<svg class="login-brand-icon" viewBox="0 0 1101.2 947.8" fill="none" aria-hidden="true">
+				<path d="M720.6 62.6C787.5 101.2 841.4 155.1 880 222C918.6 288.9 937.9 364.7 937.9 440.6C937.9 516.4 918.6 592.3 880 659.2C841.4 726.1 787.5 780 720.6 818.6L678.9 746.4C733.9 714.6 778.2 670.3 810 615.3C841.8 560.3 857.7 497.9 857.7 440.6C857.7 383.2 841.8 320.8 810 265.8C778.2 210.8 733.9 166.5 678.9 134.7L720.6 62.6Z" fill="currentColor"/>
+				<path d="M574.6 146.9C629.6 178.7 673.9 223 705.7 278C737.5 333 753.4 395.4 753.4 452.8C753.4 510.1 737.5 572.5 705.7 627.5C673.9 682.5 629.6 726.8 574.6 758.6L532.9 686.4C576 661.5 610.7 626.8 635.6 583.7C660.5 540.6 673 491.7 673 452.8C673 413.8 660.5 364.9 635.6 321.8C610.7 278.7 576 244 532.9 219.1L574.6 146.9Z" fill="currentColor"/>
+				<path d="M428.6 231.2C471.7 256.1 506.4 290.8 531.3 333.9C556.2 377 568.7 425.9 568.7 464.9C568.7 503.9 556.2 552.8 531.3 595.9C506.4 639 471.7 673.7 428.6 698.6L386.9 626.4C418.1 608.4 443.2 583.3 461.2 552.1C479.2 520.9 488.3 485.5 488.3 464.9C488.3 444.3 479.2 408.8 461.2 377.7C443.2 346.5 418.1 321.4 386.9 303.4L428.6 231.2Z" fill="currentColor"/>
+				<path d="M282.6 315.6C313.8 333.6 338.9 358.7 356.9 389.9C374.9 421.1 384 456.5 384 477.1C384 497.7 374.9 533.1 356.9 564.3C338.9 595.5 313.8 620.6 282.6 638.6L240.9 566.4C260.2 555.2 275.8 539.6 287 520.3C298.2 501 303.8 479 303.8 477.1C303.8 475.2 298.2 453.2 287 433.9C275.8 414.6 260.2 399 240.9 387.8L282.6 315.6Z" fill="currentColor"/>
+			</svg>
+			<span class="login-brand-name">hikkari</span>
+			<span class="login-brand-tag">admin</span>
+		</div>
+
+		{#if step === 'password'}
 		<form class="login-card" onsubmit={submitPassword}>
 			<h1 class="login-title">вход в админку</h1>
 			<p class="login-sub">пароль, затем passkey</p>
@@ -268,6 +280,7 @@
 			<button class="login-btn" type="button" onclick={() => backToPassword('')}>назад</button>
 		</div>
 	{/if}
+	</div>
 </div>
 
 <style>
@@ -281,20 +294,67 @@
 		background: var(--bg);
 	}
 
+	.login-container {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 20px;
+		width: 100%;
+		max-width: 380px;
+	}
+
+	.login-container:has(.wide) {
+		max-width: 460px;
+	}
+
+	.login-brand {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+
+	.login-brand-icon {
+		width: 22px;
+		height: 22px;
+		color: var(--primary);
+		flex-shrink: 0;
+	}
+
+	.login-brand-name {
+		font-family: 'IBM Plex Mono', monospace;
+		font-size: 16px;
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		color: var(--text-primary);
+		text-transform: lowercase;
+	}
+
+	.login-brand-tag {
+		font-family: 'IBM Plex Mono', monospace;
+		font-size: 10px;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--primary);
+		background: var(--primary-glow);
+		padding: 2px 7px;
+		border-radius: 4px;
+	}
+
 	.login-card {
 		display: flex;
 		flex-direction: column;
 		gap: 16px;
 		width: 100%;
-		max-width: 380px;
 		padding: 36px 32px;
 		background: var(--surface);
 		border: 1px solid var(--border-subtle);
 		border-radius: 12px;
+		box-sizing: border-box;
 	}
 
 	.login-card.wide {
-		max-width: 460px;
+		width: 100%;
 	}
 
 	.login-title {

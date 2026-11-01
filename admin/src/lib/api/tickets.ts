@@ -51,7 +51,7 @@ export async function fetchAIContext(id: number): Promise<unknown> {
 	return get<unknown>(`/api/v1/admin/tickets/${id}/ai-context`);
 }
 
-/** Answers the reporter in their chat with «Nekko» (same as «Обращения»). */
+/** Answers the reporter in their chat with «Hikkari» (same as «Обращения»). */
 export async function replyToTicket(id: number, text: string): Promise<{ ok: boolean }> {
 	return post<{ ok: boolean }>(`/api/v1/admin/tickets/${id}/reply`, { text });
 }

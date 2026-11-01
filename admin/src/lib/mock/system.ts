@@ -163,10 +163,10 @@ function generateMockLogs(service: string) {
 		case 'redis':
 			logs.push(
 				{ ts: new Date(now - 60000).toISOString(), level: 'info', message: 'Redis 7.2.6, uptime: 432000s' },
-				{ ts: new Date(now - 120000).toISOString(), level: 'warn', message: 'Slow command (85ms): KEYS nekko:discover:*' },
+				{ ts: new Date(now - 120000).toISOString(), level: 'warn', message: 'Slow command (85ms): KEYS hikkari:discover:*' },
 				{ ts: new Date(now - 300000).toISOString(), level: 'info', message: 'Background save completed successfully' },
 				{ ts: new Date(now - 600000).toISOString(), level: 'info', message: 'RDB: 1024 changes in 60 seconds. Saving...' },
-				{ ts: new Date(now - 900000).toISOString(), level: 'warn', message: 'Slow command (120ms): SMEMBERS nekko:server:large-set' },
+				{ ts: new Date(now - 900000).toISOString(), level: 'warn', message: 'Slow command (120ms): SMEMBERS hikkari:server:large-set' },
 			);
 			break;
 		case 'clickhouse':
@@ -175,7 +175,7 @@ function generateMockLogs(service: string) {
 				{ ts: new Date(now - 90000).toISOString(), level: 'info', message: '[QueryFinish] 45ms, 284500 rows \u2014 SELECT event_type, count()...' },
 				{ ts: new Date(now - 180000).toISOString(), level: 'warn', message: '[QueryFinish] 1200ms, 12000000 rows \u2014 SELECT * FROM events WHERE...' },
 				{ ts: new Date(now - 360000).toISOString(), level: 'info', message: '[MergeCompleted] Merged 4 parts into 1 (12.4 MB \u2192 8.1 MB)' },
-				{ ts: new Date(now - 720000).toISOString(), level: 'error', message: '[QueryError] Table nekko_analytics.missing_table does not exist' },
+				{ ts: new Date(now - 720000).toISOString(), level: 'error', message: '[QueryError] Table hikkari_analytics.missing_table does not exist' },
 			);
 			break;
 		case 'postgresql':
@@ -257,7 +257,7 @@ function getServices(): ServiceHealth[] {
 			uptime: 99.99,
 			lastCheck: minutesAgo(0),
 			metrics: {
-				bucket: 'nekko-uploads',
+				bucket: 'hikkari-uploads',
 				usedStorage: '2.8 GB',
 				objects: '14200',
 			},
@@ -314,7 +314,7 @@ export function getBlueGreenStatus(): Promise<BlueGreenStatus> {
 				color: 'green',
 				nodeId: 'prod-ru',
 				releaseSha: 'ff4df9f',
-				imageTag: 'ghcr.io/m1d1x/nekko:2026-04-30-ff4df9f',
+				imageTag: 'ghcr.io/m1d1x/hikkari:2026-04-30-ff4df9f',
 				uptimeSeconds: 4_280,
 				lastSeen: new Date(now).toISOString(),
 			},
@@ -327,8 +327,8 @@ export function getBlueGreenStatus(): Promise<BlueGreenStatus> {
 				at: new Date(now - 4_280_000).toISOString(),
 				fromSha: 'fe06c54',
 				toSha: 'ff4df9f',
-				fromImage: 'ghcr.io/m1d1x/nekko:2026-04-29-fe06c54',
-				toImage: 'ghcr.io/m1d1x/nekko:2026-04-30-ff4df9f',
+				fromImage: 'ghcr.io/m1d1x/hikkari:2026-04-29-fe06c54',
+				toImage: 'ghcr.io/m1d1x/hikkari:2026-04-30-ff4df9f',
 			},
 			{
 				node: 'prod-ru',
@@ -337,8 +337,8 @@ export function getBlueGreenStatus(): Promise<BlueGreenStatus> {
 				at: new Date(now - 86_400_000 * 2).toISOString(),
 				fromSha: '1be7f77',
 				toSha: 'fe06c54',
-				fromImage: 'ghcr.io/m1d1x/nekko:2026-04-27-1be7f77',
-				toImage: 'ghcr.io/m1d1x/nekko:2026-04-29-fe06c54',
+				fromImage: 'ghcr.io/m1d1x/hikkari:2026-04-27-1be7f77',
+				toImage: 'ghcr.io/m1d1x/hikkari:2026-04-29-fe06c54',
 			},
 		],
 	});

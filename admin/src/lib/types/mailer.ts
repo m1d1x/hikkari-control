@@ -1,5 +1,5 @@
 // MailerTemplate describes one transactional template registered on the
-// upstream nekko-server. The admin UI uses `required` to render a dynamic
+// upstream server. The admin UI uses `required` to render a dynamic
 // set of variable inputs once the operator picks a template.
 export interface MailerTemplate {
 	id: string;

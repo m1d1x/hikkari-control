@@ -48,10 +48,37 @@
 		startKeepalive();
 	});
 
+	const ROUTE_TITLES: Record<string, string> = {
+		'/login': 'вход',
+		'/antiblock': 'антиблок · обзор',
+		'/protocols': 'протоколы',
+		'/autopilot': 'автопилот',
+		'/entry': 'машины',
+		'/incidents': 'инциденты',
+		'/censor': 'пробник',
+		'/domains': 'домены',
+		'/providers': 'провайдеры',
+		'/metrics': 'метрики продукта',
+		'/errors': 'ошибки продукта',
+		'/support': 'обращения',
+		'/testers': 'логи тестеров',
+		'/subscriptions': 'подписки',
+		'/donations': 'донаты',
+		'/presets': 'пресеты',
+		'/groups': 'группы',
+		'/security': 'безопасность',
+	};
+
+	let pageTitle = $derived(ROUTE_TITLES[currentPath] ?? (currentPath === '/' ? 'обзор' : ''));
+
 	onDestroy(() => {
 		stopKeepalive();
 	});
 </script>
+
+<svelte:head>
+	<title>{pageTitle ? `${pageTitle} — hikkari admin` : 'hikkari admin'}</title>
+</svelte:head>
 
 {#if bootState === 'login-route'}
 	{@render children()}

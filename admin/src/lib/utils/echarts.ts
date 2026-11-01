@@ -49,7 +49,7 @@ echarts.use([
 ]);
 
 // All colors must be hex/rgb — ECharts canvas doesn't support oklch
-echarts.registerTheme('nekko-admin', {
+echarts.registerTheme('hikkari-admin', {
 	backgroundColor: 'transparent',
 	textStyle: {
 		color: '#989898',

@@ -222,7 +222,7 @@ export function getUserProfile(userId: string): Promise<UserProfile> {
 			lastIp: `185.125.${randomInt(1, 254)}.${randomInt(1, 254)}`,
 			lastUserAgent:
 				index === 0
-					? 'NekkoDesktop/0.23.4 Windows NT 10.0'
+					? 'HikkariDesktop/1.0.9 Windows NT 10.0'
 					: 'Mozilla/5.0 AppleWebKit/537.36 Chrome/130.0 Safari/537.36',
 			fingerprintHash: generateUUID().replaceAll('-', '') + generateUUID().replaceAll('-', ''),
 			publicKey: generateUUID().replaceAll('-', '') + generateUUID().replaceAll('-', ''),

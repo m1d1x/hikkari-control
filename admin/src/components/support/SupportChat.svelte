@@ -99,7 +99,7 @@
 	<header class="chat-head">
 		<div>
 			<h3>{title}</h3>
-			<p class="chat-sub">чат с «Nekko» — то, что пользователь видит в своём списке чатов</p>
+			<p class="chat-sub">чат с «Hikkari» — то, что пользователь видит в своём списке чатов</p>
 		</div>
 		<button class="icon-btn" onclick={onRefresh} disabled={loading} title="обновить">
 			<svg
@@ -223,7 +223,7 @@
 						stroke-linecap="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /></svg
 					>
 					<p>сообщений ещё нет</p>
-					<span>отправьте ответ — переписка появится у пользователя в чате с «Nekko»</span>
+					<span>отправьте ответ — переписка появится у пользователя в чате с «Hikkari»</span>
 				</div>
 			{/if}
 			{#if typing}

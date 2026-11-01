@@ -14,7 +14,7 @@
 
 	function asText(): string {
 		const stamp = new Date().toISOString().slice(0, 10);
-		return `nekko admin — коды восстановления (${stamp})\nкаждый код работает один раз\n\n${codes.join('\n')}\n`;
+		return `hikkari admin — коды восстановления (${stamp})\nкаждый код работает один раз\n\n${codes.join('\n')}\n`;
 	}
 
 	async function copy() {
@@ -31,7 +31,7 @@
 		const blob = new Blob([asText()], { type: 'text/plain;charset=utf-8' });
 		const a = document.createElement('a');
 		a.href = URL.createObjectURL(blob);
-		a.download = 'nekko-admin-recovery-codes.txt';
+		a.download = 'hikkari-admin-recovery-codes.txt';
 		a.click();
 		URL.revokeObjectURL(a.href);
 	}

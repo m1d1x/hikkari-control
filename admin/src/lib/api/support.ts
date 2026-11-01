@@ -1,5 +1,5 @@
 // The support inbox — every conversation users have with the official
-// account «Nekko», whether or not a ticket stands behind it. Tickets remain in
+// account «Hikkari», whether or not a ticket stands behind it. Tickets remain in
 // tickets.ts; their milestones land in these same conversations.
 import { get, getText, patch, post } from './client';
 import type { AdminConvMessage, TicketStatus } from './tickets';
