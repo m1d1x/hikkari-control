@@ -251,3 +251,43 @@ func TestAdminRoutes(t *testing.T) {
 		t.Fatalf("expected 0 open reports, got %d", len(openResp.Reports))
 	}
 }
+
+func TestReportDeduplication(t *testing.T) {
+	store := NewMemStore()
+	mux := http.NewServeMux()
+	RegisterPublicRoutes(mux, store, nil)
+
+	payload1 := `{"install_id":"r-dup-user","platform":"macos","version":"1.0.10","message":"Error 1","logs":"logs v1"}`
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/support/report", strings.NewReader(payload1))
+	rec1 := httptest.NewRecorder()
+	mux.ServeHTTP(rec1, req1)
+
+	var resp1 struct {
+		ID int64 `json:"id"`
+	}
+	_ = json.Unmarshal(rec1.Body.Bytes(), &resp1)
+
+	// Send duplicate report from same install_id
+	payload2 := `{"install_id":"r-dup-user","platform":"macos","version":"1.0.10","message":"Error 2","logs":"logs v2"}`
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/support/report", strings.NewReader(payload2))
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+
+	var resp2 struct {
+		ID int64 `json:"id"`
+	}
+	_ = json.Unmarshal(rec2.Body.Bytes(), &resp2)
+
+	// IDs must be identical: same ticket reused!
+	if resp1.ID != resp2.ID {
+		t.Fatalf("expected duplicate to reuse ID %d, got %d", resp1.ID, resp2.ID)
+	}
+
+	reports, _ := store.ListReports(nil, "all")
+	if len(reports) != 1 {
+		t.Fatalf("expected exactly 1 ticket in store, got %d", len(reports))
+	}
+	if reports[0].Logs != "logs v2" {
+		t.Fatalf("expected logs to be updated to 'logs v2', got %q", reports[0].Logs)
+	}
+}

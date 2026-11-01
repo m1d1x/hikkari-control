@@ -55,6 +55,25 @@ func (s *MemStore) CreateReport(_ context.Context, req ReportRequest) (*Report, 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Deduplication: if an open ticket already exists for this install_id,
+	// update it with fresh logs instead of creating duplicate records.
+	for _, existing := range s.reports {
+		if existing.InstallID == req.InstallID && existing.Status == "open" {
+			now := time.Now()
+			existing.Logs = req.Logs
+			existing.Message = req.Message
+			existing.UpdatedAt = now
+			if len(existing.Messages) == 0 || existing.Messages[len(existing.Messages)-1].Text != req.Message {
+				existing.Messages = append(existing.Messages, Message{
+					Staff: false,
+					Text:  req.Message,
+					TS:    now.UnixMilli(),
+				})
+			}
+			return cloneReport(existing), nil
+		}
+	}
+
 	now := time.Now()
 	rep := &Report{
 		ID:        s.nextID,
@@ -179,6 +198,40 @@ func NewDBStore(pool db.Pool) *DBStore {
 
 func (s *DBStore) CreateReport(ctx context.Context, req ReportRequest) (*Report, error) {
 	now := time.Now()
+
+	// Deduplication: if an open ticket already exists for this install_id,
+	// update it with fresh logs instead of creating a duplicate ticket.
+	var existingID int64
+	var existingMsgsData []byte
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, messages FROM support_reports
+		WHERE install_id = $1 AND status = 'open'
+		ORDER BY id DESC LIMIT 1
+	`, req.InstallID).Scan(&existingID, &existingMsgsData)
+
+	if err == nil && existingID > 0 {
+		var msgs []Message
+		if len(existingMsgsData) > 0 {
+			_ = json.Unmarshal(existingMsgsData, &msgs)
+		}
+		if len(msgs) == 0 || msgs[len(msgs)-1].Text != req.Message {
+			msgs = append(msgs, Message{
+				Staff: false,
+				Text:  req.Message,
+				TS:    now.UnixMilli(),
+			})
+		}
+		msgsJSON, _ := json.Marshal(msgs)
+		_, updateErr := s.pool.Exec(ctx, `
+			UPDATE support_reports
+			SET logs = $1, message = $2, messages = $3, updated_at = $4
+			WHERE id = $5
+		`, req.Logs, req.Message, msgsJSON, now, existingID)
+		if updateErr == nil {
+			return s.GetReport(ctx, existingID)
+		}
+	}
+
 	initMsg := []Message{
 		{
 			Staff: false,
