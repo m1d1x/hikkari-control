@@ -173,10 +173,6 @@ const liveTerms = `s.revoked_at IS NULL
 	     (SELECT coalesce(sum(u.bytes_up + u.bytes_down), 0) FROM hub_key_usage u WHERE u.account_id = s.account_id)
 	     - s.baseline_up - s.baseline_down < s.traffic_bytes)`
 
-// LiveTerms is the same condition for a reader outside the package, over
-// hub_subscriptions aliased s.
-const LiveTerms = liveTerms
-
 // terms reads the terms of a live-or-ended, unrevoked subscription.
 func (s *Service) terms(ctx context.Context, account uuid.UUID) (Terms, error) {
 	var t Terms

@@ -1939,64 +1939,27 @@ export function fetchOverview(window: OverviewWindow = '7d'): Promise<EntryOverv
 
 // ── The protocols screen ───────────────────────────────────────────────────
 
-export type ProtocolHealth = 'ok' | 'warn' | 'bad' | 'unknown';
-
-/** One bucket of probes against one relay. A bucket nobody probed is absent. */
-export interface VerdictPoint {
-	bucket: string;
-	ok: number;
-	bad: number;
-	other: number;
-	worst: string;
-}
-
-export interface ProtocolRelay {
-	name: string;
-	port: number;
-	status: string;
-	health: ProtocolHealth;
-	verdict: string;
-	verdictAt?: string;
-	history: VerdictPoint[];
-	bytesUp: number;
-	bytesDown: number;
-	/** The last pulse's count; null when that pulse is too old to read as now. */
-	conns: number | null;
-	pulseAt?: string;
-	subscribers: number;
-}
-
-export interface ProtocolBox {
-	name: string;
-	location: string;
-	domain?: string;
-	createdAt: string;
-	monthlyCents: number | null;
-	health: ProtocolHealth;
-	subscribers: number;
-	relays: ProtocolRelay[];
-}
-
-export interface ProtocolStats {
+/** One protocol or one machine: one value per bucket, null where nobody measured. */
+export interface ProtocolSeries {
+	key: string;
 	proto: string;
-	boxesLive: number;
-	boxesTotal: number;
-	relaysAlive: number;
-	relaysTotal: number;
-	health: ProtocolHealth;
-	bytesUp: number;
-	bytesDown: number;
-	conns: number;
-	subscribers: number;
-	monthlyCents: number;
-	boxesUnpriced: number;
-	boxes: ProtocolBox[];
+	domain?: string;
+	retired?: boolean;
+	/** machines alive for a protocol, relays alive for a machine */
+	live: (number | null)[];
+	passPct: (number | null)[];
+	trafficBytes: (number | null)[];
+	conns: (number | null)[];
+	subscribers: (number | null)[];
+	costCents: (number | null)[];
 }
 
 export interface EntryProtocolStats {
 	window: string;
 	bucketSeconds: number;
-	protocols: ProtocolStats[];
+	buckets: string[];
+	protocols: ProtocolSeries[];
+	nodes: ProtocolSeries[];
 	missing: MissingFigure[];
 }
 

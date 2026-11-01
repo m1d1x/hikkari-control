@@ -1,16 +1,22 @@
 package admin
 
-// entry_protocol_stats.go answers the protocols screen: for each protocol and
-// each machine under it, is it alive, what did the vantage say and when, how
-// much does it carry, for how many subscribers, at what cost.
+// entry_protocol_stats.go answers the protocols screen: how each protocol and
+// each machine under it lived over the window. Every figure is a series on the
+// window's buckets, because the console draws data as history, never as a
+// number of the moment (the owner's rule).
 //
-// Unlike the overview (entry_overview.go), this screen is an inventory on
-// purpose: it is what the owner opens to see in ten seconds which protocol
-// lives and how much it carries. Machines handed back are not on it.
+// Life, subscribers and cost are rebuilt from Postgres, by reading each row's
+// interval at the end of every bucket. Pass rate, traffic and connections come
+// from the dataset. A bucket nobody measured is null, drawn as a gap: a relay
+// that did not pulse carried an unknown amount, not zero. Without the dataset
+// those three are named in `missing`.
 //
-// Liveness, subscribers and cost come from Postgres; verdicts and traffic from
-// the dataset. Without the dataset those figures are absent and named in
-// `missing`, the same rule as the overview: never a plausible default.
+// Two readings are approximate, and only these two:
+//   - A relay counts from its creation if it was ever admitted: signed_at moves
+//     on every re-signing, so the moment of admission is not kept. Admission
+//     takes minutes, and the narrowest bucket is an hour.
+//   - A subscription counts until its current expiry and revocation. A renewal
+//     rewrites the expiry, and a period's traffic running out leaves no date.
 
 import (
 	"context"
@@ -23,131 +29,73 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/analytics"
 	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 	"github.com/m1d1x/hikkari-control/internal/entry"
-	"github.com/m1d1x/hikkari-control/internal/subscription"
 )
 
-// connsFreshFor is how old a relay's last pulse may be for its connection
-// count to still read as "now". The edge pulses every half minute, and
-// EntryRelayDeltas calls a gap past two minutes a silence.
-const connsFreshFor = 2 * time.Minute
-
-// verdictSkew bounds a probe row's date: a vantage's clock is a little off,
-// and a row from the future would stay the "latest verdict" for as long as
-// the dataset keeps it (the detector's bound, detector.go).
+// verdictSkew bounds a probe row's date: a vantage's clock is a little off, and
+// a row from the future must not count (the detector's bound, detector.go).
 const verdictSkew = 2 * time.Minute
 
-// Health of a relay, a machine or a protocol, as the console colours it.
-const (
-	healthOK      = "ok"      // the vantage gets through
-	healthWarn    = "warn"    // some of it does, some does not
-	healthBad     = "bad"     // the vantage does not get through
-	healthUnknown = "unknown" // no verdict to go by
-)
-
 type entryProtocolStats struct {
-	Window        string          `json:"window"`
-	BucketSeconds int             `json:"bucketSeconds"`
-	Protocols     []protocolStats `json:"protocols"`
-	Missing       []missingFigure `json:"missing"`
+	Window        string `json:"window"`
+	BucketSeconds int    `json:"bucketSeconds"`
+	// Buckets is the one time axis every series below is drawn on.
+	Buckets   []string         `json:"buckets"`
+	Protocols []protocolSeries `json:"protocols"`
+	// Nodes is every machine that had an admitted relay in the window, the
+	// ones handed back since included: their history is still history.
+	Nodes   []protocolSeries `json:"nodes"`
+	Missing []missingFigure  `json:"missing"`
 }
 
-// protocolStats is one protocol's row with its machines under it. Figures are
-// sums over its machines, except Subscribers: one subscription on two of its
-// machines is one subscriber.
-type protocolStats struct {
-	Proto        string `json:"proto"`
-	BoxesLive    int    `json:"boxesLive"`
-	BoxesTotal   int    `json:"boxesTotal"`
-	RelaysAlive  int    `json:"relaysAlive"`
-	RelaysTotal  int    `json:"relaysTotal"`
-	Health       string `json:"health"`
-	BytesUp      uint64 `json:"bytesUp"`
-	BytesDown    uint64 `json:"bytesDown"`
-	Conns        uint64 `json:"conns"`
-	Subscribers  int    `json:"subscribers"`
-	MonthlyCents int    `json:"monthlyCents"`
-	// BoxesUnpriced is how many machines carry no price: MonthlyCents
-	// understates by their rent, and that is said rather than hidden.
-	BoxesUnpriced int             `json:"boxesUnpriced"`
-	Boxes         []protocolBoxes `json:"boxes"`
+// protocolSeries is one protocol or one machine, one value per bucket.
+type protocolSeries struct {
+	Key     string `json:"key"`
+	Proto   string `json:"proto"`
+	Domain  string `json:"domain,omitempty"`
+	Retired bool   `json:"retired,omitempty"`
+	// Live is machines alive for a protocol, relays alive for a machine.
+	Live []*float64 `json:"live"`
+	// PassPct is the share of the vantage's probes that got through; probes
+	// that could not judge are not in it.
+	PassPct      []*float64 `json:"passPct"`
+	TrafficBytes []*float64 `json:"trafficBytes"`
+	Conns        []*float64 `json:"conns"`
+	Subscribers  []*float64 `json:"subscribers"`
+	CostCents    []*float64 `json:"costCents"`
 }
 
-type protocolBoxes struct {
-	Name         string          `json:"name"`
-	Location     string          `json:"location"`
-	Domain       string          `json:"domain,omitempty"`
-	CreatedAt    time.Time       `json:"createdAt"`
-	MonthlyCents *int            `json:"monthlyCents"`
-	Health       string          `json:"health"`
-	Subscribers  int             `json:"subscribers"`
-	Relays       []protocolRelay `json:"relays"`
+// historyBox is one machine's life, as the bucket walk reads it.
+type historyBox struct {
+	name, proto, domain string
+	createdAt           time.Time
+	retiredAt           *time.Time
+	monthlyCents        *int
+	relays              []historyRelay
 }
 
-type protocolRelay struct {
-	Name      string     `json:"name"`
-	Port      int        `json:"port"`
-	Status    string     `json:"status"`
-	Health    string     `json:"health"`
-	Verdict   string     `json:"verdict"`
-	VerdictAt *time.Time `json:"verdictAt,omitempty"`
-	// History is one point per bucket of the window that holds a probe,
-	// oldest first; a bucket nobody probed is absent, not clean.
-	History   []verdictPoint `json:"history"`
-	BytesUp   uint64         `json:"bytesUp"`
-	BytesDown uint64         `json:"bytesDown"`
-	// Conns is the last pulse's count, nil when that pulse is too old to
-	// read as now.
-	Conns       *uint64    `json:"conns"`
-	PulseAt     *time.Time `json:"pulseAt,omitempty"`
-	Subscribers int        `json:"subscribers"`
+type historyRelay struct {
+	name      string
+	createdAt time.Time
+	diedAt    *time.Time
+	admitted  bool
 }
 
-// verdictPoint is one bucket of probes against one relay: how many got
-// through, how many did not, and the worst thing said.
-type verdictPoint struct {
-	Bucket time.Time `json:"bucket"`
-	OK     uint64    `json:"ok"`
-	Bad    uint64    `json:"bad"`
-	Other  uint64    `json:"other"`
-	Worst  string    `json:"worst"`
+// historyGrant is one account's hold on one relay: the grant's interval cut by
+// its subscription's.
+type historyGrant struct {
+	account, relay, box, proto string
+	from                       time.Time
+	until                      *time.Time
 }
 
-// verdictHealth is what one verdict says about getting through. `reality_wins`
-// is a pass: admission reads it the same way (provision.go).
-func verdictHealth(v string) string {
-	switch v {
-	case entry.VerdictClean, entry.VerdictRealityWins:
-		return healthOK
-	case entry.VerdictIPBanned, entry.VerdictFingerprint, entry.CauseDomainBlocked:
-		return healthBad
-	}
-	return healthUnknown
+// relaySeries is what the dataset says of each relay, bucket by bucket.
+type relaySeries struct {
+	probes  map[string]map[int64]probeCount
+	traffic map[string]map[int64]float64
+	conns   map[string]map[int64]float64
 }
 
-// foldHealth is the health of several things together. Unjudged ones say
-// nothing, so they do not lower the others; nothing but unjudged is unknown.
-func foldHealth(hs []string) string {
-	var ok, bad bool
-	for _, h := range hs {
-		switch h {
-		case healthOK:
-			ok = true
-		case healthBad:
-			bad = true
-		case healthWarn:
-			ok, bad = true, true
-		}
-	}
-	switch {
-	case ok && bad:
-		return healthWarn
-	case ok:
-		return healthOK
-	case bad:
-		return healthBad
-	}
-	return healthUnknown
-}
+type probeCount struct{ ok, bad uint64 }
 
 // EntryProtocolStats answers GET /api/v1/admin/entry/protocols.
 func (h *Handlers) EntryProtocolStats(w http.ResponseWriter, r *http.Request) {
@@ -158,372 +106,398 @@ func (h *Handlers) EntryProtocolStats(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	now := time.Now().UTC()
-	bucket := verdictBucket(window)
-	out := entryProtocolStats{
-		Window: label, BucketSeconds: int(bucket.Seconds()),
-		Protocols: []protocolStats{}, Missing: []missingFigure{},
-	}
+	since := now.Add(-window)
+	bucket := seriesBucket(window)
+	starts := bucketStarts(since, now, bucket)
 
-	boxes, protoOf, err := h.protocolBoxes(ctx)
+	boxes, err := h.historyBoxes(ctx, starts[0])
 	if err != nil {
 		log.Printf("admin entry protocols: boxes: %v", err)
 		http.Error(w, "query failed", http.StatusInternalServerError)
 		return
 	}
-	subs, err := h.protocolSubscribers(ctx)
+	grants, err := h.historyGrants(ctx, starts[0])
 	if err != nil {
-		log.Printf("admin entry protocols: subscribers: %v", err)
+		log.Printf("admin entry protocols: grants: %v", err)
 		http.Error(w, "query failed", http.StatusInternalServerError)
 		return
 	}
 
-	var data relayFigures
+	out := entryProtocolStats{
+		Window: label, BucketSeconds: int(bucket.Seconds()),
+		Buckets: make([]string, len(starts)), Missing: []missingFigure{},
+	}
+	for i, at := range starts {
+		out.Buckets[i] = at.Format(time.RFC3339)
+	}
+	data := relaySeries{}
 	if h.analytics == nil {
 		why := "analytics is not configured on this hub"
 		out.Missing = append(out.Missing,
-			missingFigure{Figure: "verdicts", Why: why}, missingFigure{Figure: "traffic", Why: why})
-	} else {
-		since := now.Add(-window)
-		if data, err = h.relayFigures(ctx, since, now, bucket); err != nil {
-			log.Printf("admin entry protocols: dataset: %v", err)
-			http.Error(w, "query failed", http.StatusInternalServerError)
-			return
-		}
+			missingFigure{Figure: "passPct", Why: why},
+			missingFigure{Figure: "trafficBytes", Why: why},
+			missingFigure{Figure: "conns", Why: why})
+	} else if data, err = h.relaySeries(ctx, starts[0], now, bucket); err != nil {
+		log.Printf("admin entry protocols: dataset: %v", err)
+		http.Error(w, "query failed", http.StatusInternalServerError)
+		return
 	}
-
-	out.Protocols = rollupProtocols(boxes, protoOf, subs, data, now)
+	out.Protocols, out.Nodes = protocolHistory(starts, bucket, now, boxes, grants, data)
+	if n := unpricedBoxes(boxes); n > 0 {
+		out.Missing = append(out.Missing, missingFigure{
+			Figure: "costCents", Why: fmt.Sprintf("машин без цены: %d, стоимость занижена на их аренду", n),
+		})
+	}
 	writeJSONResponse(w, out)
 }
 
-// verdictBucket keeps a relay's history strip to a few dozen points.
-func verdictBucket(window time.Duration) time.Duration {
-	switch {
-	case window <= 24*time.Hour:
-		return time.Hour
-	case window <= 7*24*time.Hour:
-		return 6 * time.Hour
+func unpricedBoxes(boxes []historyBox) int {
+	n := 0
+	for _, b := range boxes {
+		if b.monthlyCents == nil {
+			n++
+		}
 	}
-	return 24 * time.Hour
+	return n
 }
 
-// protocolBoxes reads the machines in service with their relays, and each
-// machine's protocol.
-func (h *Handlers) protocolBoxes(ctx context.Context) ([]protocolBoxes, map[string]string, error) {
+// historyBoxes reads every machine in service at some moment since `since`.
+func (h *Handlers) historyBoxes(ctx context.Context, since time.Time) ([]historyBox, error) {
 	rows, err := h.pool.Query(ctx, `
-		SELECT name, proto, location, created_at, monthly_cents, domain_ct
-		FROM entry_boxes WHERE retired_at IS NULL ORDER BY name`)
+		SELECT name, proto, domain_ct, created_at, retired_at, monthly_cents
+		FROM entry_boxes
+		WHERE retired_at IS NULL OR retired_at >= $1
+		ORDER BY name`, since)
 	if err != nil {
-		return nil, nil, fmt.Errorf("boxes: %w", err)
+		return nil, fmt.Errorf("boxes: %w", err)
 	}
 	defer rows.Close()
-	boxes := []protocolBoxes{}
-	protoOf := map[string]string{}
+	boxes := []historyBox{}
 	index := map[string]int{}
 	for rows.Next() {
-		var b protocolBoxes
-		var proto string
+		var b historyBox
 		var domainCT []byte
-		if err := rows.Scan(&b.Name, &proto, &b.Location, &b.CreatedAt, &b.MonthlyCents, &domainCT); err != nil {
-			return nil, nil, fmt.Errorf("scan box: %w", err)
+		if err := rows.Scan(&b.name, &b.proto, &domainCT, &b.createdAt, &b.retiredAt, &b.monthlyCents); err != nil {
+			return nil, fmt.Errorf("scan box: %w", err)
 		}
 		if domainCT != nil {
-			// Unreadable, the row stays: the domain is a label here.
+			// Unreadable, the row stays: the domain is only a label here.
 			if d, err := cryptobox.Decrypt(domainCT); err == nil {
-				b.Domain = string(d)
+				b.domain = string(d)
 			}
 		}
-		b.Relays = []protocolRelay{}
-		index[b.Name] = len(boxes)
-		protoOf[b.Name] = proto
+		index[b.name] = len(boxes)
 		boxes = append(boxes, b)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	relayRows, err := h.pool.Query(ctx, `
-		SELECT r.name, r.box, r.status, r.identity_ct FROM entry_relays r
-		JOIN entry_boxes b ON b.name = r.box
-		WHERE b.retired_at IS NULL ORDER BY r.name`)
+	relays, err := h.pool.Query(ctx, `
+		SELECT name, box, created_at, died_at, signed_at IS NOT NULL
+		FROM entry_relays
+		WHERE died_at IS NULL OR died_at >= $1
+		ORDER BY name`, since)
 	if err != nil {
-		return nil, nil, fmt.Errorf("relays: %w", err)
+		return nil, fmt.Errorf("relays: %w", err)
 	}
-	defer relayRows.Close()
-	for relayRows.Next() {
-		var r protocolRelay
+	defer relays.Close()
+	for relays.Next() {
+		var r historyRelay
 		var box string
-		var identityCT []byte
-		if err := relayRows.Scan(&r.Name, &box, &r.Status, &identityCT); err != nil {
-			return nil, nil, fmt.Errorf("scan relay: %w", err)
+		if err := relays.Scan(&r.name, &box, &r.createdAt, &r.diedAt, &r.admitted); err != nil {
+			return nil, fmt.Errorf("scan relay: %w", err)
 		}
-		var face fleetRelay
-		openRelayFace(&face, identityCT)
-		r.Port = face.Port
 		if i, ok := index[box]; ok {
-			boxes[i].Relays = append(boxes[i].Relays, r)
+			boxes[i].relays = append(boxes[i].relays, r)
 		}
 	}
-	return boxes, protoOf, relayRows.Err()
+	return boxes, relays.Err()
 }
 
-// relaySubscriber says one live subscription holds a grant on one relay.
-type relaySubscriber struct {
-	account, relay, box, proto string
-}
-
-// protocolSubscribers reads who holds what: live subscriptions with a standing
-// grant, live as the fleet's own sizing counts them (subscribers.go). A revoked
-// or lapsed subscription's grant is nobody's traffic.
-func (h *Handlers) protocolSubscribers(ctx context.Context) ([]relaySubscriber, error) {
+// historyGrants reads who held what since `since`. A grant counts while its
+// subscription does, so a test link revoked an hour ago is nobody's now.
+func (h *Handlers) historyGrants(ctx context.Context, since time.Time) ([]historyGrant, error) {
 	rows, err := h.pool.Query(ctx, `
-		SELECT DISTINCT g.account_id::text, r.name, r.box, b.proto
+		SELECT g.account_id::text, r.name, r.box, b.proto,
+		       greatest(g.granted_at, s.created_at),
+		       nullif(least(coalesce(g.revoked_at, 'infinity'), coalesce(s.revoked_at, 'infinity'),
+		                    coalesce(s.expires_at, 'infinity')), 'infinity')
 		FROM entry_grants g
 		JOIN entry_relays r ON r.id = g.relay_id
 		JOIN entry_boxes b ON b.name = r.box
 		JOIN hub_subscriptions s ON s.account_id = g.account_id
-		WHERE g.revoked_at IS NULL AND b.retired_at IS NULL
-		  AND `+subscription.LiveTerms)
+		WHERE least(coalesce(g.revoked_at, 'infinity'), coalesce(s.revoked_at, 'infinity'),
+		            coalesce(s.expires_at, 'infinity')) >= $1`, since)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []relaySubscriber{}
+	out := []historyGrant{}
 	for rows.Next() {
-		var s relaySubscriber
-		if err := rows.Scan(&s.account, &s.relay, &s.box, &s.proto); err != nil {
+		var g historyGrant
+		if err := rows.Scan(&g.account, &g.relay, &g.box, &g.proto, &g.from, &g.until); err != nil {
 			return nil, err
 		}
-		out = append(out, s)
+		out = append(out, g)
 	}
 	return out, rows.Err()
 }
 
-// relayFigures is what the dataset says of each relay over the window.
-type relayFigures struct {
-	verdict map[string]lastVerdict
-	history map[string][]verdictPoint
-	traffic map[string]relayTraffic
-	pulse   map[string]relayPulse
-}
-
-type lastVerdict struct {
-	verdict string
-	at      time.Time
-}
-
-type relayTraffic struct{ up, down uint64 }
-
-type relayPulse struct {
-	conns uint64
-	at    time.Time
-}
-
-func (h *Handlers) relayFigures(ctx context.Context, since, now time.Time, bucket time.Duration) (relayFigures, error) {
-	out := relayFigures{
-		verdict: map[string]lastVerdict{}, history: map[string][]verdictPoint{},
-		traffic: map[string]relayTraffic{}, pulse: map[string]relayPulse{},
+// relaySeries reads the dataset's three figures per relay and bucket.
+func (h *Handlers) relaySeries(ctx context.Context, since, now time.Time, bucket time.Duration) (relaySeries, error) {
+	out := relaySeries{
+		probes:  map[string]map[int64]probeCount{},
+		traffic: map[string]map[int64]float64{},
+		conns:   map[string]map[int64]float64{},
 	}
-	until := now.Add(verdictSkew)
+	seconds := int64(bucket.Seconds())
 
-	last, err := h.analytics.Query(ctx, `
-		SELECT relay_name, toString(argMax(verdict, ts)), max(ts)
-		FROM entry_probes WHERE ts >= ? AND ts <= ?
-		GROUP BY relay_name`, since, until)
-	if err != nil {
-		return out, fmt.Errorf("last verdicts: %w", err)
-	}
-	defer last.Close()
-	for last.Next() {
-		var relay string
-		var v lastVerdict
-		if err := last.Scan(&relay, &v.verdict, &v.at); err != nil {
-			return out, fmt.Errorf("scan last verdict: %w", err)
-		}
-		out.verdict[relay] = v
-	}
-	if err := last.Err(); err != nil {
-		return out, err
-	}
-
-	hist, err := h.analytics.Query(ctx, `
+	probes, err := h.analytics.Query(ctx, `
 		SELECT relay_name, toStartOfInterval(ts, toIntervalSecond(?)) AS bucket,
 		       toString(verdict), count()
 		FROM entry_probes WHERE ts >= ? AND ts <= ?
-		GROUP BY relay_name, bucket, verdict
-		ORDER BY relay_name, bucket`, int64(bucket.Seconds()), since, until)
+		GROUP BY relay_name, bucket, verdict`, seconds, since, now.Add(verdictSkew))
 	if err != nil {
-		return out, fmt.Errorf("verdict history: %w", err)
+		return out, fmt.Errorf("probes: %w", err)
 	}
-	defer hist.Close()
-	for hist.Next() {
+	defer probes.Close()
+	for probes.Next() {
 		var relay, verdict string
 		var at time.Time
 		var n uint64
-		if err := hist.Scan(&relay, &at, &verdict, &n); err != nil {
-			return out, fmt.Errorf("scan verdict history: %w", err)
+		if err := probes.Scan(&relay, &at, &verdict, &n); err != nil {
+			return out, fmt.Errorf("scan probes: %w", err)
 		}
-		out.history[relay] = addVerdict(out.history[relay], at, verdict, n)
+		if out.probes[relay] == nil {
+			out.probes[relay] = map[int64]probeCount{}
+		}
+		c := out.probes[relay][at.Unix()]
+		switch verdict {
+		case entry.VerdictClean, entry.VerdictRealityWins:
+			c.ok += n
+		case entry.VerdictIPBanned, entry.VerdictFingerprint, entry.CauseDomainBlocked:
+			c.bad += n
+		}
+		out.probes[relay][at.Unix()] = c
 	}
-	if err := hist.Err(); err != nil {
+	if err := probes.Err(); err != nil {
 		return out, err
 	}
 
 	traffic, err := h.analytics.Query(ctx, `
-		SELECT relay_name, sum(d_up), sum(d_down)
+		SELECT relay_name, toStartOfInterval(ts, toIntervalSecond(?)) AS bucket,
+		       sum(d_up) + sum(d_down)
 		FROM (`+analytics.EntryRelayDeltas+`)
-		GROUP BY relay_name`, since)
+		GROUP BY relay_name, bucket`, seconds, since)
 	if err != nil {
 		return out, fmt.Errorf("traffic: %w", err)
 	}
 	defer traffic.Close()
 	for traffic.Next() {
 		var relay string
-		var t relayTraffic
-		if err := traffic.Scan(&relay, &t.up, &t.down); err != nil {
+		var at time.Time
+		var bytes uint64
+		if err := traffic.Scan(&relay, &at, &bytes); err != nil {
 			return out, fmt.Errorf("scan traffic: %w", err)
 		}
-		out.traffic[relay] = t
+		if out.traffic[relay] == nil {
+			out.traffic[relay] = map[int64]float64{}
+		}
+		out.traffic[relay][at.Unix()] = float64(bytes)
 	}
 	if err := traffic.Err(); err != nil {
 		return out, err
 	}
 
-	pulses, err := h.analytics.Query(ctx, `
-		SELECT relay_name, argMax(conns, ts), max(ts)
+	conns, err := h.analytics.Query(ctx, `
+		SELECT relay_name, toStartOfInterval(ts, toIntervalSecond(?)) AS bucket, avg(conns)
 		FROM entry_relay_stats WHERE ts >= ?
-		GROUP BY relay_name`, since)
+		GROUP BY relay_name, bucket`, seconds, since)
 	if err != nil {
-		return out, fmt.Errorf("pulses: %w", err)
+		return out, fmt.Errorf("conns: %w", err)
 	}
-	defer pulses.Close()
-	for pulses.Next() {
+	defer conns.Close()
+	for conns.Next() {
 		var relay string
-		var p relayPulse
-		if err := pulses.Scan(&relay, &p.conns, &p.at); err != nil {
-			return out, fmt.Errorf("scan pulse: %w", err)
+		var at time.Time
+		var avg float64
+		if err := conns.Scan(&relay, &at, &avg); err != nil {
+			return out, fmt.Errorf("scan conns: %w", err)
 		}
-		out.pulse[relay] = p
+		if out.conns[relay] == nil {
+			out.conns[relay] = map[int64]float64{}
+		}
+		out.conns[relay][at.Unix()] = avg
 	}
-	return out, pulses.Err()
+	return out, conns.Err()
 }
 
-// addVerdict folds one (bucket, verdict, count) row into a relay's history.
-// Rows come ordered by bucket, so a bucket is the last point or a new one.
-func addVerdict(points []verdictPoint, at time.Time, verdict string, n uint64) []verdictPoint {
-	if len(points) == 0 || !points[len(points)-1].Bucket.Equal(at) {
-		points = append(points, verdictPoint{Bucket: at})
-	}
-	p := &points[len(points)-1]
-	switch verdictHealth(verdict) {
-	case healthOK:
-		p.OK += n
-	case healthBad:
-		p.Bad += n
-	default:
-		p.Other += n
-	}
-	if p.Worst == "" || verdictRank(verdict) > verdictRank(p.Worst) {
-		p.Worst = verdict
-	}
-	return points
+// aliveAt is whether the moment falls in [from, until).
+func aliveAt(t, from time.Time, until *time.Time) bool {
+	return !from.After(t) && (until == nil || until.After(t))
 }
 
-// verdictRank orders verdicts by how bad they are: a bucket with one ban in it
-// is a bucket with a ban, however many clean rounds surround it.
-func verdictRank(v string) int {
-	switch verdictHealth(v) {
-	case healthBad:
-		return 2
-	case healthUnknown:
-		return 1
-	}
-	return 0
-}
-
-// rollupProtocols joins the machines with what the dataset and the grants say,
-// and sums each protocol. A machine counts as live with one relay alive; a
-// protocol's health reads only relays alive, since a dead relay is already
-// replaced or owed and its old verdict says nothing about the protocol now.
-func rollupProtocols(boxes []protocolBoxes, protoOf map[string]string, subs []relaySubscriber, data relayFigures, now time.Time) []protocolStats {
-	onRelay, onBox, onProto := map[string]int{}, map[string]int{}, map[string]int{}
-	seenBox, seenProto := map[string]bool{}, map[string]bool{}
-	for _, s := range subs {
-		onRelay[s.relay]++
-		if k := s.account + "\x00" + s.box; !seenBox[k] {
-			seenBox[k] = true
-			onBox[s.box]++
-		}
-		if k := s.account + "\x00" + s.proto; !seenProto[k] {
-			seenProto[k] = true
-			onProto[s.proto]++
+// protocolHistory walks the buckets. Each life figure is read at the bucket's
+// end, the current bucket's at now. A protocol is at zero when nothing lives,
+// which is a fact about it; a machine that does not exist yet has no point, so
+// its line starts when it does.
+func protocolHistory(
+	starts []time.Time, bucket time.Duration, now time.Time,
+	boxes []historyBox, grants []historyGrant, data relaySeries,
+) (protocols, nodes []protocolSeries) {
+	n := len(starts)
+	newSeries := func(key, proto string) *protocolSeries {
+		return &protocolSeries{
+			Key: key, Proto: proto,
+			Live: make([]*float64, n), PassPct: make([]*float64, n), TrafficBytes: make([]*float64, n),
+			Conns: make([]*float64, n), Subscribers: make([]*float64, n), CostCents: make([]*float64, n),
 		}
 	}
+	byProto := map[string]*protocolSeries{}
+	protoProbes := map[string][]probeCount{}
+	seriesOf := func(proto string) *protocolSeries {
+		if byProto[proto] == nil {
+			byProto[proto] = newSeries(proto, proto)
+			protoProbes[proto] = make([]probeCount, n)
+			// A fresh protocol reads zero everywhere it has a meaning of zero.
+			for i := 0; i < n; i++ {
+				byProto[proto].Live[i] = num(0)
+				byProto[proto].Subscribers[i] = num(0)
+				byProto[proto].CostCents[i] = num(0)
+			}
+		}
+		return byProto[proto]
+	}
 
-	byProto := map[string]*protocolStats{}
 	for _, b := range boxes {
-		proto := protoOf[b.Name]
-		p := byProto[proto]
-		if p == nil {
-			p = &protocolStats{Proto: proto, Subscribers: onProto[proto], Boxes: []protocolBoxes{}}
-			byProto[proto] = p
-		}
-		p.BoxesTotal++
-		if b.MonthlyCents == nil {
-			p.BoxesUnpriced++
-		} else {
-			p.MonthlyCents += *b.MonthlyCents
-		}
-		b.Subscribers = onBox[b.Name]
-		alive := 0
-		health := make([]string, 0, len(b.Relays))
-		for i := range b.Relays {
-			r := &b.Relays[i]
-			r.Subscribers = onRelay[r.Name]
-			r.Verdict, r.Health = "", healthUnknown
-			if v, ok := data.verdict[r.Name]; ok {
-				at := v.at
-				r.Verdict, r.Health, r.VerdictAt = v.verdict, verdictHealth(v.verdict), &at
+		proto := seriesOf(b.proto)
+		node := newSeries(b.name, b.proto)
+		node.Domain, node.Retired = b.domain, b.retiredAt != nil
+		everAlive := false
+		for i, start := range starts {
+			at := start.Add(bucket)
+			if at.After(now) {
+				at = now
 			}
-			r.History = data.history[r.Name]
-			if r.History == nil {
-				r.History = []verdictPoint{}
+			if !aliveAt(at, b.createdAt, b.retiredAt) && !aliveAt(start, b.createdAt, b.retiredAt) {
+				// Only a bucket wholly outside its life is skipped: what a
+				// machine carried in the hour it died still counts.
+				continue
 			}
-			t := data.traffic[r.Name]
-			r.BytesUp, r.BytesDown = t.up, t.down
-			p.BytesUp += t.up
-			p.BytesDown += t.down
-			if pulse, ok := data.pulse[r.Name]; ok {
-				at := pulse.at
-				r.PulseAt = &at
-				if now.Sub(at) <= connsFreshFor {
-					conns := pulse.conns
-					r.Conns = &conns
-					p.Conns += conns
+			var probes probeCount
+			var bytes, conns float64
+			var hasBytes, hasConns bool
+			live := 0
+			for _, r := range b.relays {
+				if r.admitted && aliveAt(at, r.createdAt, r.diedAt) && aliveAt(at, b.createdAt, b.retiredAt) {
+					live++
+				}
+				key := start.Unix()
+				if c, ok := data.probes[r.name][key]; ok {
+					probes.ok += c.ok
+					probes.bad += c.bad
+				}
+				if v, ok := data.traffic[r.name][key]; ok {
+					bytes += v
+					hasBytes = true
+				}
+				if v, ok := data.conns[r.name][key]; ok {
+					conns += v
+					hasConns = true
 				}
 			}
-			p.RelaysTotal++
-			if r.Status == "alive" {
-				alive++
-				p.RelaysAlive++
-				health = append(health, r.Health)
+			node.Live[i] = num(float64(live))
+			if live > 0 {
+				everAlive = true
+				*proto.Live[i]++
+			}
+			if aliveAt(at, b.createdAt, b.retiredAt) && b.monthlyCents != nil {
+				node.CostCents[i] = num(float64(*b.monthlyCents))
+				*proto.CostCents[i] += float64(*b.monthlyCents)
+			}
+			if probes.ok+probes.bad > 0 {
+				node.PassPct[i] = passPct(probes)
+				c := protoProbes[b.proto][i]
+				c.ok += probes.ok
+				c.bad += probes.bad
+				protoProbes[b.proto][i] = c
+			}
+			if hasBytes {
+				node.TrafficBytes[i] = num(bytes)
+				proto.TrafficBytes[i] = addTo(proto.TrafficBytes[i], bytes)
+			}
+			if hasConns {
+				node.Conns[i] = num(conns)
+				proto.Conns[i] = addTo(proto.Conns[i], conns)
 			}
 		}
-		if alive > 0 {
-			p.BoxesLive++
+		if everAlive {
+			nodes = append(nodes, *node)
 		}
-		b.Health = foldHealth(health)
-		p.Boxes = append(p.Boxes, b)
+	}
+	// A protocol's pass rate is over its probes, not an average of its machines'.
+	for proto, counts := range protoProbes {
+		for i, c := range counts {
+			if c.ok+c.bad > 0 {
+				byProto[proto].PassPct[i] = passPct(c)
+			}
+		}
 	}
 
-	out := make([]protocolStats, 0, len(byProto))
-	for _, p := range byProto {
-		boxHealth := make([]string, 0, len(p.Boxes))
-		for _, b := range p.Boxes {
-			boxHealth = append(boxHealth, b.Health)
+	// Subscribers are distinct at each level: one subscription on two machines
+	// of a protocol is one subscriber of the protocol and one of each machine.
+	for i, start := range starts {
+		at := start.Add(bucket)
+		if at.After(now) {
+			at = now
 		}
-		p.Health = foldHealth(boxHealth)
-		out = append(out, *p)
+		onBox, onProto := map[string]map[string]bool{}, map[string]map[string]bool{}
+		for _, g := range grants {
+			if !aliveAt(at, g.from, g.until) {
+				continue
+			}
+			if onBox[g.box] == nil {
+				onBox[g.box] = map[string]bool{}
+			}
+			if onProto[g.proto] == nil {
+				onProto[g.proto] = map[string]bool{}
+			}
+			onBox[g.box][g.account] = true
+			onProto[g.proto][g.account] = true
+		}
+		for proto, accounts := range onProto {
+			if s := byProto[proto]; s != nil {
+				s.Subscribers[i] = num(float64(len(accounts)))
+			}
+		}
+		for j := range nodes {
+			if nodes[j].Live[i] != nil {
+				nodes[j].Subscribers[i] = num(float64(len(onBox[nodes[j].Key])))
+			}
+		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Proto < out[j].Proto })
-	return out
+
+	protocols = make([]protocolSeries, 0, len(byProto))
+	for _, s := range byProto {
+		protocols = append(protocols, *s)
+	}
+	sort.Slice(protocols, func(i, j int) bool { return protocols[i].Key < protocols[j].Key })
+	if nodes == nil {
+		nodes = []protocolSeries{}
+	}
+	return protocols, nodes
+}
+
+func num(v float64) *float64 { return &v }
+
+func addTo(sum *float64, v float64) *float64 {
+	if sum == nil {
+		return num(v)
+	}
+	return num(*sum + v)
+}
+
+func passPct(c probeCount) *float64 {
+	return num(round2(float64(c.ok) / float64(c.ok+c.bad) * 100))
 }

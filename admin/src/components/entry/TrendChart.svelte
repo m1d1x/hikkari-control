@@ -33,15 +33,17 @@
 		height?: number;
 		/** shown below the axes when there is nothing to draw */
 		empty?: string;
+		/** a fixed axis top, for a figure with a natural ceiling such as a percentage */
+		max?: number;
 	}
 
-	let { buckets, bucketSeconds, series, formatAxis, height = 160, empty = 'нет данных за это окно' }: Props = $props();
+	let { buckets, bucketSeconds, series, formatAxis, height = 160, empty = 'нет данных за это окно', max }: Props = $props();
 
 	let containerEl = $state<HTMLDivElement | null>(null);
 	let containerWidth = $state<number>(850);
 	let hoveredIdx = $state<number | null>(null);
 
-	const PAD_L = 14;
+	const PAD_L = 22;
 	const PAD_R = 64;
 	const PAD_T = 16;
 	const PAD_B = 26;
@@ -58,10 +60,11 @@
 
 	/** The axis top: the largest value with headroom, rounded to 1, 2 or 5 of a power of ten. */
 	const yMax = $derived.by(() => {
-		let max = 0;
-		for (const s of series) for (const v of s.values) if (v !== null && v !== undefined && v > max) max = v;
-		if (max <= 0) return 1;
-		const raw = max * 1.15;
+		if (max !== undefined) return max;
+		let top = 0;
+		for (const s of series) for (const v of s.values) if (v !== null && v !== undefined && v > top) top = v;
+		if (top <= 0) return 1;
+		const raw = top * 1.15;
 		const pow = 10 ** Math.floor(Math.log10(raw));
 		for (const m of [1, 2, 2.5, 5, 10]) if (raw <= m * pow) return m * pow;
 		return 10 * pow;

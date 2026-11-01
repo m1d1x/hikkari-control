@@ -12,151 +12,160 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/analytics"
 )
 
-func cents(n int) *int { return &n }
+func value(t *testing.T, s []*float64, i int) float64 {
+	t.Helper()
+	if s[i] == nil {
+		t.Fatalf("bucket %d is a gap, want a value", i)
+	}
+	return *s[i]
+}
 
-// One subscription on two machines of a protocol is one subscriber of that
-// protocol and one of each machine. Summing the machines would count it twice
-// and read a fleet twice as loaded as it is.
-func TestProtocolSubscribersAreDistinctPerLevel(t *testing.T) {
-	const reality = "vless-reality-vision"
-	boxes := []protocolBoxes{
-		{Name: "a1", MonthlyCents: cents(100), Relays: []protocolRelay{{Name: "a1-1", Status: "alive"}, {Name: "a1-2", Status: "alive"}}},
-		{Name: "b1", MonthlyCents: cents(200), Relays: []protocolRelay{{Name: "b1-1", Status: "alive"}}},
+// The walk over four hourly buckets, the last still running. b1 is born in the
+// second bucket, handed back in the third; a1 lives throughout.
+func historyFixture() (starts []time.Time, now time.Time, boxes []historyBox) {
+	t0 := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	starts = []time.Time{t0, t0.Add(time.Hour), t0.Add(2 * time.Hour), t0.Add(3 * time.Hour)}
+	now = t0.Add(3*time.Hour + 30*time.Minute)
+	cost, price := 100, 200
+	retired := t0.Add(2*time.Hour + 30*time.Minute)
+	boxes = []historyBox{
+		{name: "a1", proto: "vless-xhttp", createdAt: t0.Add(-time.Hour), monthlyCents: &cost,
+			relays: []historyRelay{{name: "a1-1", createdAt: t0.Add(-time.Hour), admitted: true}}},
+		{name: "b1", proto: "vless-xhttp", createdAt: t0.Add(time.Hour + 30*time.Minute), retiredAt: &retired, monthlyCents: &price,
+			relays: []historyRelay{{name: "b1-1", createdAt: t0.Add(time.Hour + 30*time.Minute), admitted: true}}},
 	}
-	protoOf := map[string]string{"a1": reality, "b1": reality}
-	subs := []relaySubscriber{
-		{"alice", "a1-1", "a1", reality},
-		{"alice", "a1-2", "a1", reality},
-		{"alice", "b1-1", "b1", reality},
-		{"bob", "b1-1", "b1", reality},
+	return starts, now, boxes
+}
+
+func TestProtocolHistoryReadsLifeAndCostAtEachBucketsEnd(t *testing.T) {
+	starts, now, boxes := historyFixture()
+	protocols, nodes := protocolHistory(starts, time.Hour, now, boxes, nil, relaySeries{})
+	if len(protocols) != 1 || len(nodes) != 2 {
+		t.Fatalf("protocols %d, nodes %d, want 1, 2", len(protocols), len(nodes))
 	}
-	got := rollupProtocols(boxes, protoOf, subs, relayFigures{}, time.Now())
-	if len(got) != 1 {
-		t.Fatalf("protocols = %d, want 1", len(got))
+	p := protocols[0]
+	for i, want := range []float64{1, 2, 1, 1} {
+		if got := value(t, p.Live, i); got != want {
+			t.Errorf("machines alive at bucket %d = %v, want %v", i, got, want)
+		}
 	}
-	p := got[0]
-	if p.Subscribers != 2 {
-		t.Errorf("protocol subscribers = %d, want 2", p.Subscribers)
+	for i, want := range []float64{100, 300, 100, 100} {
+		if got := value(t, p.CostCents, i); got != want {
+			t.Errorf("cost at bucket %d = %v, want %v", i, got, want)
+		}
 	}
-	if p.Boxes[0].Subscribers != 1 || p.Boxes[1].Subscribers != 2 {
-		t.Errorf("box subscribers = %d, %d, want 1, 2", p.Boxes[0].Subscribers, p.Boxes[1].Subscribers)
+	b := nodes[1]
+	if b.Key != "b1" || !b.Retired {
+		t.Fatalf("node = %+v", b)
 	}
-	if r := p.Boxes[1].Relays[0].Subscribers; r != 2 {
-		t.Errorf("relay subscribers = %d, want 2", r)
+	if b.Live[0] != nil {
+		t.Errorf("b1 has a point before it existed: %v", *b.Live[0])
 	}
-	if p.MonthlyCents != 300 || p.BoxesUnpriced != 0 {
-		t.Errorf("cost = %d (unpriced %d), want 300 (0)", p.MonthlyCents, p.BoxesUnpriced)
+	if value(t, b.Live, 1) != 1 || value(t, b.Live, 2) != 0 {
+		t.Errorf("b1 relays alive = %v, %v, want 1, 0", *b.Live[1], *b.Live[2])
+	}
+	if b.Live[3] != nil {
+		t.Errorf("b1 has a point after its life: %v", *b.Live[3])
 	}
 }
 
-// A dead relay is not the protocol's state now: its last verdict must not paint
-// a protocol whose live relays get through. A machine with no relay alive is
-// not live, and a stale pulse says nothing of the connections now.
-func TestProtocolHealthReadsLiveRelaysOnly(t *testing.T) {
-	const proto = "vless-xhttp"
-	now := time.Now()
-	boxes := []protocolBoxes{
-		{Name: "a1", Relays: []protocolRelay{{Name: "a1-1", Status: "alive"}, {Name: "a1-2", Status: "dead"}}},
-		{Name: "b1", Relays: []protocolRelay{{Name: "b1-1", Status: "pending"}}},
+// A machine never admitted cost money but is no line of its own.
+func TestProtocolHistoryLeavesOutMachinesNeverAdmitted(t *testing.T) {
+	starts, now, boxes := historyFixture()
+	boxes[1].relays[0].admitted = false
+	protocols, nodes := protocolHistory(starts, time.Hour, now, boxes, nil, relaySeries{})
+	if len(nodes) != 1 || nodes[0].Key != "a1" {
+		t.Fatalf("nodes = %+v", nodes)
 	}
-	protoOf := map[string]string{"a1": proto, "b1": proto}
-	three := uint64(3)
-	data := relayFigures{
-		verdict: map[string]lastVerdict{
-			"a1-1": {verdict: "clean", at: now},
-			"a1-2": {verdict: "ip_banned", at: now},
-			"b1-1": {verdict: "fingerprint", at: now},
+	if got := value(t, protocols[0].CostCents, 1); got != 300 {
+		t.Errorf("cost = %v, want 300: the rent was paid", got)
+	}
+	if got := value(t, protocols[0].Live, 1); got != 1 {
+		t.Errorf("live = %v, want 1", got)
+	}
+}
+
+// One subscription on two machines is one subscriber of the protocol and one of
+// each machine; a grant counts only inside its interval.
+func TestProtocolHistorySubscribersAreDistinctPerLevel(t *testing.T) {
+	starts, now, boxes := historyFixture()
+	early := starts[0].Add(-time.Hour)
+	ended := starts[2].Add(30 * time.Minute)
+	grants := []historyGrant{
+		{"alice", "a1-1", "a1", "vless-xhttp", early, nil},
+		{"alice", "b1-1", "b1", "vless-xhttp", early, nil},
+		{"bob", "a1-1", "a1", "vless-xhttp", early, &ended},
+	}
+	protocols, nodes := protocolHistory(starts, time.Hour, now, boxes, grants, relaySeries{})
+	for i, want := range []float64{2, 2, 1, 1} {
+		if got := value(t, protocols[0].Subscribers, i); got != want {
+			t.Errorf("protocol subscribers at %d = %v, want %v", i, got, want)
+		}
+	}
+	if got := value(t, nodes[0].Subscribers, 1); got != 2 {
+		t.Errorf("a1 subscribers = %v, want 2", got)
+	}
+	if got := value(t, nodes[1].Subscribers, 1); got != 1 {
+		t.Errorf("b1 subscribers = %v, want 1", got)
+	}
+}
+
+// A protocol's pass rate is over its probes, so a machine probed nine times
+// weighs nine. A bucket with no judging probe is a gap, not 0% and not 100%.
+func TestProtocolHistoryPassRateIsOverProbesAndGapsStayGaps(t *testing.T) {
+	starts, now, boxes := historyFixture()
+	key := starts[1].Unix()
+	data := relaySeries{
+		probes: map[string]map[int64]probeCount{
+			"a1-1": {key: {ok: 9}},
+			"b1-1": {key: {bad: 1}},
 		},
-		pulse: map[string]relayPulse{
-			"a1-1": {conns: three, at: now.Add(-time.Minute)},
-			"a1-2": {conns: 7, at: now.Add(-time.Hour)},
-		},
+		traffic: map[string]map[int64]float64{"a1-1": {key: 500}, "b1-1": {key: 25}},
+		conns:   map[string]map[int64]float64{"a1-1": {key: 3}},
 	}
-	p := rollupProtocols(boxes, protoOf, nil, data, now)[0]
-	if p.Health != healthOK {
-		t.Errorf("health = %q, want %q", p.Health, healthOK)
+	protocols, nodes := protocolHistory(starts, time.Hour, now, boxes, nil, data)
+	p := protocols[0]
+	if got := value(t, p.PassPct, 1); got != 90 {
+		t.Errorf("protocol pass = %v, want 90", got)
 	}
-	if p.BoxesLive != 1 || p.BoxesTotal != 2 || p.RelaysAlive != 1 || p.RelaysTotal != 3 {
-		t.Errorf("live = %d/%d boxes, %d/%d relays, want 1/2, 1/3", p.BoxesLive, p.BoxesTotal, p.RelaysAlive, p.RelaysTotal)
+	if p.PassPct[0] != nil || p.TrafficBytes[0] != nil || p.Conns[0] != nil {
+		t.Errorf("a bucket nobody measured has a value: %+v", p)
 	}
-	if p.BoxesUnpriced != 2 {
-		t.Errorf("unpriced = %d, want 2: a machine with no price is said, not zero", p.BoxesUnpriced)
+	if got := value(t, p.TrafficBytes, 1); got != 525 {
+		t.Errorf("protocol traffic = %v, want 525", got)
 	}
-	if p.Conns != 3 {
-		t.Errorf("conns = %d, want 3: the hour-old pulse does not read as now", p.Conns)
-	}
-	if c := p.Boxes[0].Relays[1].Conns; c != nil {
-		t.Errorf("stale pulse conns = %d, want none", *c)
-	}
-}
-
-func TestFoldHealth(t *testing.T) {
-	for _, c := range []struct {
-		in   []string
-		want string
-	}{
-		{nil, healthUnknown},
-		{[]string{healthUnknown}, healthUnknown},
-		{[]string{healthOK, healthUnknown}, healthOK},
-		{[]string{healthBad, healthUnknown}, healthBad},
-		{[]string{healthOK, healthBad}, healthWarn},
-		{[]string{healthOK, healthWarn}, healthWarn},
-	} {
-		if got := foldHealth(c.in); got != c.want {
-			t.Errorf("foldHealth(%v) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
-
-// One ban among clean rounds is what the bucket shows, in whatever order the
-// rows of the bucket come.
-func TestVerdictHistoryKeepsTheWorstOfABucket(t *testing.T) {
-	at := time.Now().Truncate(time.Hour)
-	for _, order := range [][]string{{"clean", "ip_banned", "unknown"}, {"ip_banned", "unknown", "clean"}, {"unknown", "clean", "ip_banned"}} {
-		var pts []verdictPoint
-		for _, v := range order {
-			pts = addVerdict(pts, at, v, 2)
-		}
-		if len(pts) != 1 || pts[0].Worst != "ip_banned" || pts[0].OK != 2 || pts[0].Bad != 2 || pts[0].Other != 2 {
-			t.Errorf("order %v: %+v", order, pts)
-		}
+	if got := value(t, nodes[1].PassPct, 1); got != 0 {
+		t.Errorf("b1 pass = %v, want 0", got)
 	}
 }
 
 // The whole read against both stores: what a relay carried and what the
-// vantage said reach its machine and its protocol, and a machine handed back
-// is not on the screen.
+// vantage said arrive on the right bucket, for the protocol and the machine.
 func TestEntryProtocolStatsReadsBothStores(t *testing.T) {
 	store := liveClickHouse(t)
 	pool := livePostgres(t)
 	ctx := context.Background()
 
-	tag := fmt.Sprintf("ps%d", time.Now().UnixNano()%100_000)
-	live := seedFleetBox(t, pool, tag+"1", "vless-reality-vision")
-	gone := seedFleetBox(t, pool, tag+"2", "vless-reality-vision")
-	relay := live + "-1"
-	seedFleetRelay(t, pool, relay, live, "alive")
-	seedFleetRelay(t, pool, gone+"-1", gone, "dead")
-	if _, err := pool.Exec(ctx, `UPDATE entry_boxes SET retired_at = now(), retired_reason = 'rotated' WHERE name = $1`, gone); err != nil {
-		t.Fatal(err)
-	}
+	box := seedFleetBox(t, pool, fmt.Sprintf("ps%d", time.Now().UnixNano()%100_000), "vless-reality-vision")
+	relay := box + "-1"
+	seedFleetRelay(t, pool, relay, box, "alive")
 
 	now := time.Now().UTC().Truncate(time.Second)
 	if err := store.InsertEntryRelayStats(ctx, []analytics.EntryRelayStatRecord{
-		{Timestamp: now.Add(-time.Minute), RelayName: relay, Proto: "vless-reality-vision", UptimeS: 100, BytesUp: 10, BytesDown: 20, Conns: 1},
+		{Timestamp: now.Add(-time.Minute), RelayName: relay, Proto: "vless-reality-vision", UptimeS: 100, BytesUp: 10, BytesDown: 20, Conns: 2},
 		{Timestamp: now.Add(-30 * time.Second), RelayName: relay, Proto: "vless-reality-vision", UptimeS: 130, BytesUp: 110, BytesDown: 220, Conns: 4},
 	}); err != nil {
 		t.Fatalf("insert stats: %v", err)
 	}
 	if err := store.InsertEntryProbes(ctx, []analytics.EntryProbeRecord{
-		{Timestamp: now.Add(-2 * time.Minute), SourceRegion: "ru-spb", RelayName: relay, Verdict: "fingerprint"},
-		{Timestamp: now.Add(-time.Minute), SourceRegion: "ru-spb", RelayName: relay, Verdict: "clean"},
+		{Timestamp: now.Add(-40 * time.Second), SourceRegion: "ru-spb", RelayName: relay, Verdict: "fingerprint"},
+		{Timestamp: now.Add(-30 * time.Second), SourceRegion: "ru-spb", RelayName: relay, Verdict: "clean"},
+		{Timestamp: now.Add(-20 * time.Second), SourceRegion: "ru-spb", RelayName: relay, Verdict: "unknown"},
 	}); err != nil {
 		t.Fatalf("insert probes: %v", err)
 	}
 
-	var p protocolStats
-	var b protocolBoxes
+	var node protocolSeries
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		rec := httptest.NewRecorder()
@@ -168,42 +177,39 @@ func TestEntryProtocolStatsReadsBothStores(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		for _, pr := range got.Protocols {
-			for _, box := range pr.Boxes {
-				if box.Name == gone {
-					t.Fatalf("machine %s handed back is on the screen", gone)
-				}
-				if box.Name == live {
-					p, b = pr, box
-				}
+		for _, n := range got.Nodes {
+			if n.Key == box {
+				node = n
 			}
 		}
-		if len(b.Relays) == 1 && b.Relays[0].BytesDown == 200 && b.Relays[0].Verdict == "clean" {
-			break
+		if len(node.Live) == len(got.Buckets) && len(node.Live) > 0 {
+			var bytes, pass, conns *float64
+			for i := range node.Live {
+				if node.TrafficBytes[i] != nil {
+					bytes, conns = node.TrafficBytes[i], node.Conns[i]
+				}
+				if node.PassPct[i] != nil {
+					pass = node.PassPct[i]
+				}
+			}
+			if bytes != nil && *bytes == 300 && pass != nil {
+				if *pass != 50 {
+					t.Errorf("pass = %v, want 50: `unknown` does not judge", *pass)
+				}
+				if conns == nil || *conns != 3 {
+					t.Errorf("conns = %v, want the bucket's mean, 3", conns)
+				}
+				return
+			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("dataset never read back: %+v", b)
+			t.Fatalf("dataset never read back: %+v", node)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	r := b.Relays[0]
-	if r.BytesUp != 100 || r.Conns == nil || *r.Conns != 4 || r.Health != healthOK {
-		t.Errorf("relay = %+v", r)
-	}
-	var bad, ok uint64
-	for _, pt := range r.History {
-		bad += pt.Bad
-		ok += pt.OK
-	}
-	if bad != 1 || ok != 1 {
-		t.Errorf("history counts bad=%d ok=%d, want 1, 1: %+v", bad, ok, r.History)
-	}
-	if p.BytesDown < 200 || p.Health == healthUnknown {
-		t.Errorf("protocol = %+v", p)
-	}
 }
 
-// Without the dataset the screen still answers, and says what it lacks.
+// Without the dataset the screen still answers, and names what it lacks.
 func TestEntryProtocolStatsNamesWhatItCannotRead(t *testing.T) {
 	pool := livePostgres(t)
 	rec := httptest.NewRecorder()
@@ -215,7 +221,7 @@ func TestEntryProtocolStatsNamesWhatItCannotRead(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Missing) != 2 {
-		t.Fatalf("missing = %+v, want verdicts and traffic", got.Missing)
+	if len(got.Missing) < 3 {
+		t.Fatalf("missing = %+v, want pass rate, traffic and connections", got.Missing)
 	}
 }
