@@ -115,3 +115,37 @@ export async function replySupportConversation(convId: string, text: string): Pr
 export async function markSupportConversationRead(convId: string): Promise<{ ok: boolean }> {
 	return post<{ ok: boolean }>(`/api/v1/admin/support/conversations/${encodeURIComponent(convId)}/mark-read`);
 }
+
+/** An install streaming its log in tester mode (hikkari-client engine/core/testerlog). */
+export interface TesterInstall {
+	install_id: string;
+	platform: string;
+	version: string;
+	chunks: number;
+	lines: number;
+	/** lines the client threw away while the hub was unreachable */
+	dropped: number;
+	first_seen: string;
+	last_seen: string;
+}
+
+export interface TesterChunk {
+	id: number;
+	platform: string;
+	version: string;
+	lines: number;
+	dropped: number;
+	body: string;
+	received_at: string;
+}
+
+export async function fetchTesterInstalls(): Promise<{ installs: TesterInstall[] }> {
+	return get<{ installs: TesterInstall[] }>('/api/v1/admin/support/tester-logs');
+}
+
+/** The install's newest chunks, oldest first; `since` (unix seconds) reads only what came after. */
+export async function fetchTesterChunks(install: string, since?: number): Promise<{ chunks: TesterChunk[] }> {
+	return get<{ chunks: TesterChunk[] }>(`/api/v1/admin/support/tester-logs/${encodeURIComponent(install)}`, {
+		since,
+	});
+}

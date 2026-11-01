@@ -5,7 +5,7 @@
 	import { page } from '$app/state';
 	import '$lib/styles/product.css';
 
-	const REAL = ['/metrics', '/errors', '/groups', '/presets', '/subscriptions', '/support'];
+	const REAL = ['/metrics', '/errors', '/groups', '/presets', '/subscriptions', '/support', '/testers'];
 	const mock = $derived(!REAL.includes(page.url.pathname));
 
 	let { children } = $props();

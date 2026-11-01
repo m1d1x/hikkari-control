@@ -200,6 +200,11 @@ func run() error {
 	supportStore := support.NewStore(pool)
 	supportLimiter := support.NewLimiter(5, 10*time.Minute)
 	support.RegisterPublicRoutes(mux, supportStore, supportLimiter)
+	// Tester log stream: a tester ships a chunk a minute, so 30 per 10 minutes
+	// leaves room for the catch-up burst after an outage.
+	testerStore := support.NewTesterStore(pool)
+	testerLimiter := support.NewLimiter(30, 10*time.Minute)
+	support.RegisterTesterRoutes(mux, testerStore, testerLimiter)
 	go func() {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
@@ -210,6 +215,9 @@ func run() error {
 			case <-ticker.C:
 				if n, err := supportStore.PurgeOldReports(ctx, 30*24*time.Hour); err == nil && n > 0 {
 					log.Printf("support: purged %d reports older than 30 days", n)
+				}
+				if n, err := testerStore.PurgeChunks(ctx, support.TesterLogRetention); err == nil && n > 0 {
+					log.Printf("support: purged %d tester log chunks older than 7 days", n)
 				}
 			}
 		}
@@ -299,6 +307,8 @@ func run() error {
 		})
 	support.RegisterAdminRoutes(adminMux, supportStore, adminSecurity)
 	support.RegisterPublicRoutes(adminMux, supportStore, supportLimiter)
+	support.RegisterTesterAdminRoutes(adminMux, testerStore, adminSecurity)
+	support.RegisterTesterRoutes(adminMux, testerStore, testerLimiter)
 
 	port := os.Getenv("PORT")
 	if port == "" {

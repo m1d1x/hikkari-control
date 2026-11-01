@@ -19,7 +19,8 @@
     request_body {
         max_size 1MB
     }
-    handle /api/v1/support/report {
+    @clientSupport path /api/v1/support/report /api/v1/support/tester-logs
+    handle @clientSupport {
         reverse_proxy hub:8090 {
             header_up -X-Forwarded-For
             header_up -X-Real-IP

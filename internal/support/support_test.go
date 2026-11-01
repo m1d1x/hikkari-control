@@ -343,3 +343,51 @@ func TestPurgeOldReports(t *testing.T) {
 		t.Fatalf("expected message text to be preserved, got %q", remaining[0].Message)
 	}
 }
+
+func TestTesterLogIntakeAndRead(t *testing.T) {
+	store := NewMemTesterStore()
+	mux := http.NewServeMux()
+	RegisterTesterRoutes(mux, store, NewLimiter(2, time.Minute))
+	RegisterTesterAdminRoutes(mux, store, func(h http.HandlerFunc) http.HandlerFunc { return h })
+
+	send := func(req TesterChunkRequest) int {
+		body, _ := json.Marshal(req)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/support/tester-logs", bytes.NewReader(body)))
+		return rec.Code
+	}
+
+	if code := send(TesterChunkRequest{InstallID: "t-1", Platform: "windows", Version: "1.0.12", Lines: []string{"a", "b"}}); code != http.StatusCreated {
+		t.Fatalf("first chunk: got %d", code)
+	}
+	if code := send(TesterChunkRequest{InstallID: "t-1", Platform: "windows", Version: "1.0.12", Lines: []string{"c"}, Dropped: 4}); code != http.StatusCreated {
+		t.Fatalf("second chunk: got %d", code)
+	}
+	if code := send(TesterChunkRequest{InstallID: "t-1", Lines: []string{"d"}}); code != http.StatusTooManyRequests {
+		t.Fatalf("third chunk must hit the limiter, got %d", code)
+	}
+	if code := send(TesterChunkRequest{InstallID: "t-2"}); code != http.StatusBadRequest {
+		t.Fatalf("empty chunk: got %d", code)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/support/tester-logs", nil))
+	var list struct{ Installs []TesterInstall }
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || len(list.Installs) != 1 {
+		t.Fatalf("list: %v %s", err, rec.Body.String())
+	}
+	if in := list.Installs[0]; in.Chunks != 2 || in.Lines != 3 || in.Dropped != 4 || in.Platform != "windows" {
+		t.Fatalf("install summary: %+v", in)
+	}
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/support/tester-logs/t-1?limit=1", nil))
+	var read struct{ Chunks []TesterChunk }
+	if err := json.Unmarshal(rec.Body.Bytes(), &read); err != nil || len(read.Chunks) != 1 || read.Chunks[0].Body != "c" {
+		t.Fatalf("read newest chunk: %v %s", err, rec.Body.String())
+	}
+
+	if n, _ := store.PurgeChunks(context.Background(), -time.Second); n != 2 {
+		t.Fatalf("purge removed %d, want 2", n)
+	}
+}
