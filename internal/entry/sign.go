@@ -195,7 +195,11 @@ type HysteriaParams struct {
 	Auth       string `json:"auth"`
 	ServerName string `json:"server_name"`
 	CertSHA256 string `json:"cert_sha256"`
-	Masks      []Mask `json:"masks"`
+	// PubKeySHA256 is the hex SHA-256 of the leaf's SubjectPublicKeyInfo:
+	// the pin sing-box takes (tls.certificate_public_key_sha256), which has
+	// no whole-certificate pin. Optional — records signed before it lack it.
+	PubKeySHA256 string `json:"pubkey_sha256,omitempty"`
+	Masks        []Mask `json:"masks"`
 }
 
 // XhttpParams is the XHTTP half of a stream relay (record.rs Xhttp). Host is
@@ -283,6 +287,8 @@ func (r RelayRecord) check() error {
 			return fmt.Errorf("%w: relay %s has no auth or server name", ErrMalformed, r.Name)
 		case !hexPinRe.MatchString(h.CertSHA256):
 			return fmt.Errorf("%w: relay %s certificate pin", ErrMalformed, r.Name)
+		case h.PubKeySHA256 != "" && !hexPinRe.MatchString(h.PubKeySHA256):
+			return fmt.Errorf("%w: relay %s public key pin", ErrMalformed, r.Name)
 		}
 		for _, m := range h.Masks {
 			switch {

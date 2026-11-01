@@ -87,6 +87,42 @@ func TestAHysteriaRelayHasNoLinkYet(t *testing.T) {
 	}
 }
 
+func hysteriaRecord(spki string) entry.RelayRecord {
+	return entry.RelayRecord{Name: "eu-1", Address: "203.0.113.10", Port: 443, Proto: entry.ProtoHysteria2,
+		HysteriaParams: &entry.HysteriaParams{
+			Region: "eu", Auth: "0123456789abcdef0123", ServerName: "mvtrgrvss.io",
+			CertSHA256: strings.Repeat("ab", 32), PubKeySHA256: spki,
+			Masks: []entry.Mask{{Type: "salamander", Password: "fedcba9876543210"}},
+		}}
+}
+
+// A client without Xray gets Hysteria2 as plain salamander, pinned by the
+// leaf's public key — never Xray's finalmask or certificate pin, which
+// sing-box refuses, and never a link with no pin at all.
+func TestAHysteriaRelayForSingBoxIsSalamanderPinnedByItsKey(t *testing.T) {
+	spki := strings.Repeat("cd", 32)
+	link, err := SingBoxHysteriaLink(hysteriaRecord(spki))
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(link)
+	q := u.Query()
+	if u.Scheme != "hysteria2" || u.User.Username() != "0123456789abcdef0123" || u.Host != "203.0.113.10:443" {
+		t.Fatalf("link %s", link)
+	}
+	for k, want := range map[string]string{
+		"sni": "mvtrgrvss.io", "alpn": "h3", "obfs": "salamander", "obfs-password": "fedcba9876543210",
+		"hikkari-spki": spki, "pinSHA256": "", "finalmask": "", "insecure": "",
+	} {
+		if q.Get(k) != want {
+			t.Errorf("%s = %q, want %q", k, q.Get(k), want)
+		}
+	}
+	if _, err := SingBoxHysteriaLink(hysteriaRecord("")); err == nil {
+		t.Fatal("a record without the public key pin was rendered unpinned")
+	}
+}
+
 // fakeBatch serves whatever records it was given, signed, to any account.
 type fakeBatch struct {
 	envelopes [][]byte

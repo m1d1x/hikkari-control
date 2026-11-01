@@ -470,11 +470,12 @@ func (id Identity) record(name, address, region string, issuedAt, expiresAt int6
 			Port:    id.Port,
 			Proto:   ProtoHysteria2,
 			HysteriaParams: &HysteriaParams{
-				Region:     region,
-				Auth:       h.Auth,
-				ServerName: h.ServerName,
-				CertSHA256: h.CertSHA256,
-				Masks:      h.Masks,
+				Region:       region,
+				Auth:         h.Auth,
+				ServerName:   h.ServerName,
+				CertSHA256:   h.CertSHA256,
+				PubKeySHA256: publicKeyPin(h.CertPEM),
+				Masks:        h.Masks,
 			},
 			IssuedAt:  issuedAt,
 			ExpiresAt: expiresAt,
@@ -510,4 +511,20 @@ func (id Identity) record(name, address, region string, issuedAt, expiresAt int6
 		IssuedAt:  issuedAt,
 		ExpiresAt: expiresAt,
 	}
+}
+
+// publicKeyPin is the hex SHA-256 of a PEM leaf's SubjectPublicKeyInfo, or
+// "" when the PEM does not parse: the record then goes out without the
+// sing-box pin, and the subscription leaves the relay to Xray clients.
+func publicKeyPin(certPEM string) string {
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return ""
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	return hex.EncodeToString(sum[:])
 }

@@ -81,3 +81,38 @@ func vless(uuid, host string, q url.Values, label string) string {
 	u := url.URL{Scheme: "vless", User: url.User(uuid), Host: host, RawQuery: q.Encode(), Fragment: label}
 	return u.String()
 }
+
+// SingBoxHysteriaLink renders a Hysteria2 relay for clients without Xray's
+// finalmask — sing-box first among them, which carries every protocol of the
+// subscription in one engine so the client can switch between them live
+// (owner, 01.11). The salamander mask is the whole of what such a client
+// wears; the relay's noise mask only adds junk the server sends, which
+// salamander drops on the way in. The leaf is self-signed, so the link pins
+// its public key (hikkari-spki, hex SHA-256 of the SubjectPublicKeyInfo) for
+// the Hikkari client to hand sing-box as tls.certificate_public_key_sha256; a
+// record signed before it carried that pin gets no link rather than an
+// unpinned one.
+func SingBoxHysteriaLink(r entry.RelayRecord) (string, error) {
+	p := r.HysteriaParams
+	if r.Proto != entry.ProtoHysteria2 || p == nil || p.Auth == "" || p.ServerName == "" || p.PubKeySHA256 == "" {
+		return "", errNoLink
+	}
+	salamander := ""
+	for _, m := range p.Masks {
+		if m.Type == "salamander" {
+			salamander = m.Password
+		}
+	}
+	if salamander == "" {
+		return "", errNoLink
+	}
+	q := url.Values{}
+	q.Set("sni", p.ServerName)
+	q.Set("alpn", "h3")
+	q.Set("obfs", "salamander")
+	q.Set("obfs-password", salamander)
+	q.Set("hikkari-spki", p.PubKeySHA256)
+	host := net.JoinHostPort(r.Address, strconv.Itoa(r.Port))
+	u := url.URL{Scheme: "hysteria2", User: url.User(p.Auth), Host: host, RawQuery: q.Encode(), Fragment: "Hikkari " + r.Name}
+	return u.String(), nil
+}

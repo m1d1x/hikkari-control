@@ -187,8 +187,10 @@ func (s *Service) Links(ctx context.Context, token string) ([]string, error) {
 	return s.LinksFor(ctx, token, "")
 }
 
-// LinksFor opts into the full Hysteria2 contract only for an explicit Xray
-// subscription. A sing-box client must not import a link while dropping pins.
+// LinksFor opts into the full Hysteria2 contract (finalmask, certificate pin)
+// only for an explicit Xray subscription; every other client gets the
+// salamander link pinned by public key (SingBoxHysteriaLink), never one with
+// its pin dropped.
 func (s *Service) LinksFor(ctx context.Context, token, engine string) ([]string, error) {
 	account, err := s.account(ctx, token)
 	if err != nil {
@@ -225,10 +227,11 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string) (
 			applog.Error(ctx, "subscription", "relay record not opened", applog.F("err", err.Error()))
 			continue
 		}
+		render := Link
 		if rec.Proto == entry.ProtoHysteria2 && engine != "xray" {
-			continue
+			render = SingBoxHysteriaLink
 		}
-		link, err := Link(withKey(rec, key))
+		link, err := render(withKey(rec, key))
 		if err == nil && nodes[rec.Name] != "" {
 			u, _ := url.Parse(link)
 			q := u.Query()

@@ -362,6 +362,10 @@ func TestNewVoiceIdentityIsDialable(t *testing.T) {
 	if sum := sha256.Sum256(block.Bytes); hex.EncodeToString(sum[:]) != h.CertSHA256 {
 		t.Fatal("pin is not the certificate's")
 	}
+	spki := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	if got := id.record("ams2-1", "203.0.113.8", "ru", 1, 2).HysteriaParams.PubKeySHA256; got != hex.EncodeToString(spki[:]) {
+		t.Fatalf("public key pin %q is not the leaf's", got)
+	}
 	if err := cert.VerifyHostname(h.ServerName); err != nil {
 		t.Fatalf("certificate does not name %s: %v", h.ServerName, err)
 	}
