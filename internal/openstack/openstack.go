@@ -302,6 +302,20 @@ func (c *Client) authenticate(ctx context.Context) error {
 }
 
 func (c *Client) call(ctx context.Context, method, targetURL string, body, out any) error {
+	return c.callAt(ctx, "", method, targetURL, body, out)
+}
+
+// serversMicroversion is the compute API version the server calls speak:
+// 2.52 is the first that takes `tags` in a create (earlier ones refuse the
+// whole request: "Additional properties are not allowed ('tags' was
+// unexpected)"), and from 2.26 a server's tags come back with it, which the
+// orphan check reads. Only the /servers calls ask for it: from 2.36 the
+// compute /images proxy UbuntuImage falls back to is gone.
+const serversMicroversion = "2.52"
+
+// callAt is call pinned to a compute microversion; empty is the endpoint's
+// default.
+func (c *Client) callAt(ctx context.Context, microversion, method, targetURL string, body, out any) error {
 	if err := c.authenticate(ctx); err != nil {
 		return err
 	}
@@ -320,6 +334,10 @@ func (c *Client) call(ctx context.Context, method, targetURL string, body, out a
 	}
 	req.Header.Set("X-Auth-Token", c.token)
 	req.Header.Set("Accept", "application/json")
+	if microversion != "" {
+		req.Header.Set("OpenStack-API-Version", "compute "+microversion)
+		req.Header.Set("X-OpenStack-Nova-API-Version", microversion)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -664,7 +682,7 @@ func (c *Client) Create(ctx context.Context, p CreateParams) (Instance, error) {
 	var out struct {
 		Server wireServer `json:"server"`
 	}
-	if err := c.call(ctx, http.MethodPost, c.computeURL+"/servers", body, &out); err != nil {
+	if err := c.callAt(ctx, serversMicroversion, http.MethodPost, c.computeURL+"/servers", body, &out); err != nil {
 		return Instance{}, err
 	}
 	inst := out.Server.toInstance(p.Region)
@@ -728,7 +746,7 @@ func (c *Client) Instance(ctx context.Context, id string) (Instance, error) {
 	var out struct {
 		Server wireServer `json:"server"`
 	}
-	if err := c.call(ctx, http.MethodGet, c.computeURL+"/servers/"+url.PathEscape(id), nil, &out); err != nil {
+	if err := c.callAt(ctx, serversMicroversion, http.MethodGet, c.computeURL+"/servers/"+url.PathEscape(id), nil, &out); err != nil {
 		return Instance{}, err
 	}
 	return out.Server.toInstance(c.cfg.Region), nil
@@ -742,7 +760,7 @@ func (c *Client) Instances(ctx context.Context) ([]Instance, error) {
 	var out struct {
 		Servers []wireServer `json:"servers"`
 	}
-	if err := c.call(ctx, http.MethodGet, c.computeURL+"/servers/detail", nil, &out); err != nil {
+	if err := c.callAt(ctx, serversMicroversion, http.MethodGet, c.computeURL+"/servers/detail", nil, &out); err != nil {
 		return nil, err
 	}
 	list := make([]Instance, 0, len(out.Servers))

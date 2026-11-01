@@ -160,6 +160,12 @@ func (m *mockOpenStack) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Nova: servers create
 	case r.URL.Path == "/compute/servers" && r.Method == http.MethodPost:
 		s := body["server"].(map[string]any)
+		// Nova before 2.52 refuses a create that carries tags (HostVDS, 01.11).
+		if _, tagged := s["tags"]; tagged && r.Header.Get("OpenStack-API-Version") != "compute 2.52" {
+			write(http.StatusBadRequest, map[string]any{"badRequest": map[string]any{
+				"code": 400, "message": "Additional properties are not allowed ('tags' was unexpected)"}})
+			return
+		}
 		srvMap := map[string]any{
 			"id":     "srv-12345",
 			"name":   s["name"],
