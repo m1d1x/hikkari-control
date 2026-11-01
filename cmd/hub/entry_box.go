@@ -159,9 +159,9 @@ func runEntryBox(args []string) {
 		}
 		os.Exit(0)
 	}
-	order := len(args) >= 1 && len(args) <= 3 && args[0] == "order"
+	order := len(args) >= 1 && len(args) <= 4 && args[0] == "order"
 	if !order && len(args) != 1 && len(args) != 4 && len(args) != 5 {
-		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain>]] < password | entry-box order [region] [plan]"))
+		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain>]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|voice=<region>]"))
 	}
 	if err := cryptobox.Configure(os.Getenv); err != nil {
 		fail(fmt.Errorf("content key: %w", err))
@@ -198,12 +198,26 @@ func runEntryBox(args []string) {
 	var id uuid.UUID
 	switch {
 	case order:
+		// "-" keeps the hoster's default, so a protocol can be named alone:
+		// `entry-box order - - xhttp` — what the operator runs when the
+		// autopilot has spent its strikes on a pool (repair.go, FailStrikes).
 		spec := entry.OrderSpec{}
-		if len(args) > 1 {
+		if len(args) > 1 && args[1] != "-" {
 			spec.Region = args[1]
 		}
-		if len(args) > 2 {
+		if len(args) > 2 && args[2] != "-" {
 			spec.Plan = args[2]
+		}
+		if len(args) > 3 {
+			switch p := args[3]; {
+			case p == "reality":
+			case p == "xhttp":
+				spec.Proto = entry.ProtoVlessXhttp
+			case strings.HasPrefix(p, "voice="):
+				spec.Proto, spec.VoiceRegion = entry.ProtoHysteria2, strings.TrimPrefix(p, "voice=")
+			default:
+				fail(fmt.Errorf("protocol %q: reality, xhttp or voice=<region>", p))
+			}
 		}
 		var name string
 		name, id, err = prov.OrderBox(ctx, spec, "")
