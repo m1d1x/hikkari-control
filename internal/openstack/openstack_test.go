@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +25,8 @@ type mockOpenStack struct {
 	fail     map[string]int
 	failMsg  map[string]string
 	authReqs int
+	groups   []map[string]any
+	rules    []map[string]any
 }
 
 func newMockOpenStack(t *testing.T) (*mockOpenStack, *Client) {
@@ -39,9 +42,9 @@ func newMockOpenStack(t *testing.T) (*mockOpenStack, *Client) {
 	m.baseURL = srv.URL
 
 	cfg := Config{
-		AuthURL:                 srv.URL + "/v3",
-		Region:                  "RegionOne",
-		ApplicationCredentialID: "app-id-123",
+		AuthURL:                     srv.URL + "/v3",
+		Region:                      "RegionOne",
+		ApplicationCredentialID:     "app-id-123",
 		ApplicationCredentialSecret: "app-sec-456",
 	}
 	client := New(cfg)
@@ -172,6 +175,7 @@ func (m *mockOpenStack) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"status": "BUILD",
 			"flavor": map[string]any{"id": s["flavorRef"]},
 			"tags":   s["tags"],
+			"groups": s["security_groups"],
 			"addresses": map[string]any{
 				"public": []map[string]any{
 					{"addr": m.ip, "version": 4, "OS-EXT-IPS:type": "floating"},
@@ -230,6 +234,24 @@ func (m *mockOpenStack) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+
+	// Neutron: security groups
+	case r.URL.Path == "/network/v2.0/security-groups" && r.Method == http.MethodGet:
+		var hits []map[string]any
+		for _, g := range m.groups {
+			if g["name"] == r.URL.Query().Get("name") {
+				hits = append(hits, g)
+			}
+		}
+		write(http.StatusOK, map[string]any{"security_groups": hits})
+	case r.URL.Path == "/network/v2.0/security-groups" && r.Method == http.MethodPost:
+		g := body["security_group"].(map[string]any)
+		g["id"] = fmt.Sprintf("sg-%d", len(m.groups)+1)
+		m.groups = append(m.groups, g)
+		write(http.StatusCreated, map[string]any{"security_group": g})
+	case r.URL.Path == "/network/v2.0/security-group-rules" && r.Method == http.MethodPost:
+		m.rules = append(m.rules, body["security_group_rule"].(map[string]any))
+		write(http.StatusCreated, body)
 
 	// Neutron: networks
 	case r.URL.Path == "/network/v2.0/networks" && r.Method == http.MethodGet:
@@ -506,12 +528,12 @@ func TestOpenStack_ErrorClassification(t *testing.T) {
 	m, client := newMockOpenStack(t)
 
 	tests := []struct {
-		name       string
-		path       string
-		status     int
-		bodyMsg    string
-		wantErr    error
-		call       func() error
+		name    string
+		path    string
+		status  int
+		bodyMsg string
+		wantErr error
+		call    func() error
 	}{
 		{
 			name:    "bad credentials 401",
@@ -622,5 +644,36 @@ func TestOpenStack_ProviderErrorsNeverCarryAnEgressAddress(t *testing.T) {
 	errStr := err.Error()
 	if strings.Contains(errStr, "10.99.88.77") || strings.Contains(errStr, "198.51.100.42") {
 		t.Fatalf("security violation: error leaked backend/egress IP: %s", errStr)
+	}
+}
+
+func TestOpenStack_AnOrderedServerLetsTheHubIn(t *testing.T) {
+	ctx := context.Background()
+	m, client := newMockOpenStack(t)
+	m.ip = "198.51.100.42"
+
+	for _, label := range []string{"eun1", "eun2"} {
+		if _, err := client.Create(ctx, CreateParams{Plan: "flavor-1", Label: label}); err != nil {
+			t.Fatalf("Create %s: %v", label, err)
+		}
+	}
+	if len(m.groups) != 1 || m.groups[0]["name"] != relaySecurityGroup {
+		t.Fatalf("want one %s group, made %v", relaySecurityGroup, m.groups)
+	}
+	ingress := map[string]bool{}
+	for _, r := range m.rules {
+		if r["direction"] != "ingress" || r["security_group_id"] != m.groups[0]["id"] || r["protocol"] != nil {
+			t.Fatalf("unexpected rule %v", r)
+		}
+		ingress[r["ethertype"].(string)] = true
+	}
+	if len(m.rules) != 2 || !ingress["IPv4"] || !ingress["IPv6"] {
+		t.Fatalf("want all ingress over IPv4 and IPv6, got %v", m.rules)
+	}
+	for _, srv := range m.servers {
+		groups, _ := srv["groups"].([]any)
+		if len(groups) != 1 || groups[0].(map[string]any)["name"] != relaySecurityGroup {
+			t.Fatalf("server %v is not in %s: %v", srv["name"], relaySecurityGroup, srv["groups"])
+		}
 	}
 }

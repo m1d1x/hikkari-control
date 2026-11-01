@@ -677,6 +677,13 @@ func (c *Client) Create(ctx context.Context, p CreateParams) (Instance, error) {
 	if len(p.Tags) > 0 {
 		serverBody["tags"] = p.Tags
 	}
+	if c.networkURL != "" {
+		sg, err := c.ensureRelaySecurityGroup(ctx)
+		if err != nil {
+			return Instance{}, err
+		}
+		serverBody["security_groups"] = []map[string]string{{"name": sg}}
+	}
 	body := map[string]any{"server": serverBody}
 
 	var out struct {
@@ -812,6 +819,53 @@ func (c *Client) Networks(ctx context.Context) ([]Network, error) {
 		return nil, err
 	}
 	return out.Networks, nil
+}
+
+// relaySecurityGroup is the group every ordered server is put in. A server
+// left in the project's `default` group takes ingress only from members of
+// that group (HostVDS, 01.11): the hub's first ssh times out and the order is
+// lost. The group lets everything in; the box's own ufw, set up by the hub's
+// harden step, is what decides which ports are open.
+const relaySecurityGroup = "nekko-relay"
+
+// ensureRelaySecurityGroup finds relaySecurityGroup, creating it with its two
+// ingress rules (IPv4 and IPv6, any protocol) when the project has none.
+// Neutron gives a new group its egress rules itself.
+func (c *Client) ensureRelaySecurityGroup(ctx context.Context) (string, error) {
+	var found struct {
+		SecurityGroups []struct {
+			ID string `json:"id"`
+		} `json:"security_groups"`
+	}
+	if err := c.call(ctx, http.MethodGet, c.networkURL+"/v2.0/security-groups?name="+url.QueryEscape(relaySecurityGroup), nil, &found); err != nil {
+		return "", fmt.Errorf("openstack: security group lookup: %w", err)
+	}
+	if len(found.SecurityGroups) > 0 {
+		return relaySecurityGroup, nil
+	}
+	var made struct {
+		SecurityGroup struct {
+			ID string `json:"id"`
+		} `json:"security_group"`
+	}
+	group := map[string]any{"security_group": map[string]string{
+		"name":        relaySecurityGroup,
+		"description": "nekko relays: all ingress, the box's ufw filters",
+	}}
+	if err := c.call(ctx, http.MethodPost, c.networkURL+"/v2.0/security-groups", group, &made); err != nil {
+		return "", fmt.Errorf("openstack: create security group: %w", err)
+	}
+	for _, ether := range []string{"IPv4", "IPv6"} {
+		rule := map[string]any{"security_group_rule": map[string]string{
+			"security_group_id": made.SecurityGroup.ID,
+			"direction":         "ingress",
+			"ethertype":         ether,
+		}}
+		if err := c.call(ctx, http.MethodPost, c.networkURL+"/v2.0/security-group-rules", rule, nil); err != nil {
+			return "", fmt.Errorf("openstack: security group rule %s: %w", ether, err)
+		}
+	}
+	return relaySecurityGroup, nil
 }
 
 // FloatingIP is an external allocated IP from Neutron.
