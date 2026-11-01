@@ -341,6 +341,9 @@ func probeEdge(ctx context.Context, e edge, socksPort int, tunnelURL, k1SNI stri
 	rawTCP := probeRawTCP(addr, timeout)
 	k1 := probeTLS(addr, k1SNI, timeout)
 	realityOK, dialled, rttMs, httpCode := probeReality(ctx, socksPort, tunnelURL, timeout)
+	if accusesRelay(classify(realityOK, dialled, k1, k2)) {
+		realityOK, dialled, rttMs, httpCode = retryTunnel(ctx, socksPort, tunnelURL, timeout)
+	}
 
 	res := probeResult{
 		TS:           now,
@@ -353,6 +356,7 @@ func probeEdge(ctx context.Context, e edge, socksPort int, tunnelURL, k1SNI stri
 	if !realityOK && dialled {
 		res.Detail = detailUpstreamSilent
 	}
+	res = weighPath(res, addr)
 	res.RawTCP = b2u8(rawTCP)
 	res.RealityOK = b2u8(realityOK)
 	res.K1BareTLS = b2u8(k1)
@@ -370,6 +374,9 @@ func probeXhttpEdge(ctx context.Context, e edge, socksPort int, tunnelURL string
 	named, certOK := probeTLSVerified(addr, e.Host, timeout)
 	bare := probeTLS(addr, "", timeout)
 	tunnelOK, dialled, rttMs, httpCode := probeReality(ctx, socksPort, tunnelURL, timeout)
+	if accusesRelay(classifyXhttp(tunnelOK, dialled, named, bare, certOK, k2)) {
+		tunnelOK, dialled, rttMs, httpCode = retryTunnel(ctx, socksPort, tunnelURL, timeout)
+	}
 	res := probeResult{
 		TS:           now,
 		RelayName:    e.Name,
@@ -384,6 +391,7 @@ func probeXhttpEdge(ctx context.Context, e edge, socksPort int, tunnelURL string
 	if named && !certOK {
 		res.Detail = "xhttp: certificate does not verify"
 	}
+	res = weighPath(res, addr)
 	res.RawTCP = b2u8(rawTCP)
 	res.RealityOK = b2u8(tunnelOK)
 	res.K1BareTLS = b2u8(named)
@@ -407,6 +415,76 @@ func probeTLSVerified(addr, sni string, timeout time.Duration) (handshake, verif
 		return true, false
 	}
 	return false, false
+}
+
+// The path from a vantage can lose some TCP flows and not others: seen from
+// ru-spb on 01.11, a flow to a box either always got through or never did,
+// decided by its source port, with its SYN never reaching the box and ping and
+// other countries untouched. One check is one flow, so a dead flow reads as a
+// fingerprint or a ban, and that verdict hands a healthy machine back. Before
+// a verdict accuses the relay, the tunnel gets fresh flows, and the path is
+// measured by many: flows that die while others pass are the path's fault, and
+// say nothing about the relay.
+const (
+	tunnelRetries = 2
+	pathFlows     = 12
+	pathFlowWait  = 3 * time.Second
+)
+
+// accusesRelay is whether a verdict counts against the relay itself.
+func accusesRelay(verdict string) bool {
+	switch verdict {
+	case verdictFingerprint, verdictIPBanned, verdictDomainBlocked:
+		return true
+	}
+	return false
+}
+
+// retryTunnel tries the tunnel on fresh flows, and stops at the first answer.
+func retryTunnel(ctx context.Context, socksPort int, tunnelURL string, timeout time.Duration) (ok, dialled bool, rttMs float32, httpCode uint16) {
+	for i := 0; i < tunnelRetries && !ok; i++ {
+		ok, dialled, rttMs, httpCode = probeReality(ctx, socksPort, tunnelURL, timeout)
+	}
+	return ok, dialled, rttMs, httpCode
+}
+
+// weighPath takes the accusation off a verdict reached over a lossy path.
+func weighPath(res probeResult, addr string) probeResult {
+	if !accusesRelay(res.Verdict) {
+		return res
+	}
+	return settlePath(res, probeFlows(addr, pathFlows, pathFlowWait), pathFlows)
+}
+
+// settlePath reads the flow count. All through: the path is sound and the
+// verdict stands. None through: the address is cut off, which is what a ban
+// looks like. Some through: no evidence, which is not the same as clean.
+func settlePath(res probeResult, through, flows int) probeResult {
+	if through == 0 || through == flows {
+		return res
+	}
+	note := fmt.Sprintf("path: %d/%d tcp flows through, was %s", through, flows, res.Verdict)
+	if res.Detail != "" {
+		note = res.Detail + "; " + note
+	}
+	res.Verdict, res.Detail = verdictUnknown, note
+	return res
+}
+
+// probeFlows opens flows to addr at once, each from its own source port, and
+// counts those that connect.
+func probeFlows(addr string, flows int, timeout time.Duration) int {
+	results := make(chan bool, flows)
+	for i := 0; i < flows; i++ {
+		go func() { results <- probeRawTCP(addr, timeout) }()
+	}
+	through := 0
+	for i := 0; i < flows; i++ {
+		if <-results {
+			through++
+		}
+	}
+	return through
 }
 
 // probeRawTCP reports whether a plain TCP connection to the relay opens.

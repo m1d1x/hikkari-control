@@ -2,7 +2,9 @@ package main
 
 import (
 	"net"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestClassifyMatrix(t *testing.T) {
@@ -104,5 +106,76 @@ func TestATakenSocksPortRefusesTheEngine(t *testing.T) {
 	defer ln.Close()
 	if err := portsFree(map[string]int{"r-1": ln.Addr().(*net.TCPAddr).Port}); err == nil {
 		t.Fatal("a taken port was reported free")
+	}
+}
+
+// A verdict reached over a path that loses some flows is no evidence against
+// the relay: eun13 was called fingerprint and ip_banned minutes apart on a path
+// where half the flows died before reaching it, while the rest went through.
+func TestSettlePathTakesTheAccusationOffALossyPath(t *testing.T) {
+	for _, c := range []struct {
+		verdict       string
+		through       int
+		want          string
+		wantPathNoted bool
+	}{
+		{verdictFingerprint, 6, verdictUnknown, true},
+		{verdictIPBanned, 1, verdictUnknown, true},
+		{verdictDomainBlocked, 11, verdictUnknown, true},
+		{verdictFingerprint, 12, verdictFingerprint, false},
+		{verdictIPBanned, 0, verdictIPBanned, false},
+	} {
+		got := settlePath(probeResult{Verdict: c.verdict, Detail: "xudp 0/100"}, c.through, pathFlows)
+		if got.Verdict != c.want {
+			t.Errorf("%s with %d/%d flows = %s, want %s", c.verdict, c.through, pathFlows, got.Verdict, c.want)
+		}
+		if noted := strings.Contains(got.Detail, "tcp flows through"); noted != c.wantPathNoted {
+			t.Errorf("%s with %d/%d flows: detail %q", c.verdict, c.through, pathFlows, got.Detail)
+		}
+		if !strings.Contains(got.Detail, "xudp 0/100") {
+			t.Errorf("the earlier detail was lost: %q", got.Detail)
+		}
+	}
+}
+
+// A live address passes all its flows and a dead one none, so settlePath's two
+// standing cases are what a sound path and a cut-off address measure as.
+func TestProbeFlowsCountsWhatConnects(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	if got := probeFlows(ln.Addr().String(), pathFlows, time.Second); got != pathFlows {
+		t.Errorf("live address: %d/%d flows", got, pathFlows)
+	}
+	closed, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := closed.Addr().String()
+	closed.Close()
+	if got := probeFlows(addr, pathFlows, time.Second); got != 0 {
+		t.Errorf("closed port: %d/%d flows", got, pathFlows)
+	}
+}
+
+func TestOnlyAccusingVerdictsAreRetried(t *testing.T) {
+	for v, want := range map[string]bool{
+		verdictFingerprint: true, verdictIPBanned: true, verdictDomainBlocked: true,
+		verdictClean: false, verdictRealityWins: false, verdictUnknown: false, verdictNetworkDown: false,
+	} {
+		if got := accusesRelay(v); got != want {
+			t.Errorf("accusesRelay(%s) = %v", v, got)
+		}
 	}
 }
