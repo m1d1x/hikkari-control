@@ -65,9 +65,9 @@ type TesterChunk struct {
 type TesterStore interface {
 	AppendChunk(ctx context.Context, req TesterChunkRequest) error
 	ListInstalls(ctx context.Context) ([]TesterInstall, error)
-	// ReadChunks returns the install's chunks received after since, oldest
-	// first, at most limit of the newest ones.
-	ReadChunks(ctx context.Context, installID string, since time.Time, limit int) ([]TesterChunk, error)
+	// ReadChunks returns the install's chunks received in (since, until],
+	// oldest first, at most limit of the newest ones. A zero until means now.
+	ReadChunks(ctx context.Context, installID string, since, until time.Time, limit int) ([]TesterChunk, error)
 	PurgeChunks(ctx context.Context, olderThan time.Duration) (int64, error)
 }
 
@@ -88,6 +88,7 @@ func RegisterTesterRoutes(mux *http.ServeMux, store TesterStore, limiter *Limite
 func RegisterTesterAdminRoutes(mux *http.ServeMux, store TesterStore, gate func(http.HandlerFunc) http.HandlerFunc) {
 	mux.HandleFunc("GET /api/v1/admin/support/tester-logs", gate(TesterListHandler(store)))
 	mux.HandleFunc("GET /api/v1/admin/support/tester-logs/{install}", gate(TesterReadHandler(store)))
+	mux.HandleFunc("GET /api/v1/admin/support/tester-logs/{install}/export", gate(TesterExportHandler(store)))
 }
 
 // TesterIntakeHandler accepts one chunk from a tester install.
@@ -172,7 +173,7 @@ func TesterReadHandler(store TesterStore) http.HandlerFunc {
 			}
 			limit = min(n, maxTesterLogRead)
 		}
-		chunks, err := store.ReadChunks(r.Context(), install, since, limit)
+		chunks, err := store.ReadChunks(r.Context(), install, since, time.Time{}, limit)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to read tester logs")
 			return
@@ -240,12 +241,15 @@ func (s *MemTesterStore) ListInstalls(_ context.Context) ([]TesterInstall, error
 	return out, nil
 }
 
-func (s *MemTesterStore) ReadChunks(_ context.Context, installID string, since time.Time, limit int) ([]TesterChunk, error) {
+func (s *MemTesterStore) ReadChunks(_ context.Context, installID string, since, until time.Time, limit int) ([]TesterChunk, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if until.IsZero() {
+		until = time.Now()
+	}
 	var out []TesterChunk
 	for _, c := range s.chunks {
-		if c.install == installID && c.chunk.ReceivedAt.After(since) {
+		if c.install == installID && c.chunk.ReceivedAt.After(since) && !c.chunk.ReceivedAt.After(until) {
 			out = append(out, c.chunk)
 		}
 	}
@@ -316,15 +320,18 @@ func (s *DBTesterStore) ListInstalls(ctx context.Context) ([]TesterInstall, erro
 	return out, rows.Err()
 }
 
-func (s *DBTesterStore) ReadChunks(ctx context.Context, installID string, since time.Time, limit int) ([]TesterChunk, error) {
+func (s *DBTesterStore) ReadChunks(ctx context.Context, installID string, since, until time.Time, limit int) ([]TesterChunk, error) {
+	if until.IsZero() {
+		until = time.Now()
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, platform, version, lines, dropped, body, received_at FROM (
 			SELECT * FROM tester_log_chunks
-			WHERE install_id = $1 AND received_at > $2
+			WHERE install_id = $1 AND received_at > $2 AND received_at <= $3
 			ORDER BY received_at DESC
-			LIMIT $3
+			LIMIT $4
 		) newest ORDER BY received_at ASC
-	`, installID, since, limit)
+	`, installID, since, until, limit)
 	if err != nil {
 		return nil, fmt.Errorf("read tester chunks: %w", err)
 	}

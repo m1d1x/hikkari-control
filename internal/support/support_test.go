@@ -391,3 +391,53 @@ func TestTesterLogIntakeAndRead(t *testing.T) {
 		t.Fatalf("purge removed %d, want 2", n)
 	}
 }
+
+func TestTesterLogExportIsNDJSONForLLM(t *testing.T) {
+	store := NewMemTesterStore()
+	ctx := context.Background()
+	_ = store.AppendChunk(ctx, TesterChunkRequest{InstallID: "t-9", Platform: "windows", Version: "1.0.13", Lines: []string{
+		"2026/11/01 21:10:00.123456 [diag:stun/tun] no response from stun.l.google.com",
+		"2026/11/01 21:10:01.000000 [singbox] +0300 2026-11-01 21:10:01 ERROR [123 0ms] outbound/vless: i/o timeout",
+		"plain line",
+	}})
+	_ = store.AppendChunk(ctx, TesterChunkRequest{InstallID: "t-9", Platform: "windows", Version: "1.0.13", Dropped: 7, Lines: []string{"2026/11/01 21:11:00.000000 [diag:proxy-delay] 412ms"}})
+
+	mux := http.NewServeMux()
+	RegisterTesterAdminRoutes(mux, store, func(h http.HandlerFunc) http.HandlerFunc { return h })
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/support/tester-logs/t-9/export", nil))
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/x-ndjson") {
+		t.Fatalf("status %d, type %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+
+	var rows []map[string]any
+	for _, l := range strings.Split(strings.TrimSpace(rec.Body.String()), "\n") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(l), &m); err != nil {
+			t.Fatalf("line is not JSON: %q", l)
+		}
+		rows = append(rows, m)
+	}
+	types := []string{}
+	for _, r := range rows {
+		types = append(types, r["type"].(string))
+	}
+	if strings.Join(types, ",") != "meta,summary,log,log,log,gap,log" {
+		t.Fatalf("record order: %v", types)
+	}
+	if rows[0]["guide"] == nil || rows[0]["install_id"] != "t-9" {
+		t.Fatalf("meta: %v", rows[0])
+	}
+	if rows[2]["src"] != "diag:stun/tun" || rows[2]["ts"] != "2026-11-01T21:10:00.123" {
+		t.Fatalf("parsed stun line: %v", rows[2])
+	}
+	if rows[3]["level"] != "error" || rows[3]["src"] != "singbox" {
+		t.Fatalf("parsed singbox line: %v", rows[3])
+	}
+	if rows[4]["msg"] != "plain line" || rows[5]["lost_lines"].(float64) != 7 {
+		t.Fatalf("plain/gap: %v %v", rows[4], rows[5])
+	}
+	if by := rows[1]["by_source"].(map[string]any); by["diag:stun"].(float64) != 1 || by["diag:proxy-delay"].(float64) != 1 {
+		t.Fatalf("summary: %v", rows[1])
+	}
+}

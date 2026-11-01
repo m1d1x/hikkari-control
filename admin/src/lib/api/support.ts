@@ -1,7 +1,7 @@
 // The support inbox — every conversation users have with the official
 // account «Nekko», whether or not a ticket stands behind it. Tickets remain in
 // tickets.ts; their milestones land in these same conversations.
-import { get, patch, post } from './client';
+import { get, getText, patch, post } from './client';
 import type { AdminConvMessage, TicketStatus } from './tickets';
 
 export type ProductTicketStatus = 'open' | 'answered' | 'closed';
@@ -148,4 +148,11 @@ export async function fetchTesterChunks(install: string, since?: number): Promis
 	return get<{ chunks: TesterChunk[] }>(`/api/v1/admin/support/tester-logs/${encodeURIComponent(install)}`, {
 		since,
 	});
+}
+
+/** The install's log for a window as NDJSON made for an LLM: a `meta` line
+ *  (who, window, counts, a guide to the log sources), a `summary`, then one
+ *  `log` per line and a `gap` where the client lost lines. */
+export async function exportTesterLog(install: string, from: number, to: number): Promise<string> {
+	return getText(`/api/v1/admin/support/tester-logs/${encodeURIComponent(install)}/export`, { from, to });
 }

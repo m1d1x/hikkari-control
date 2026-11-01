@@ -108,7 +108,13 @@ function isMutating(method: string): boolean {
 	return m === 'POST' || m === 'PUT' || m === 'PATCH' || m === 'DELETE';
 }
 
-async function request<T>(method: string, path: string, body?: unknown, steppedUp = false): Promise<T> {
+async function request<T>(
+	method: string,
+	path: string,
+	body?: unknown,
+	steppedUp = false,
+	as: 'json' | 'text' = 'json',
+): Promise<T> {
 	const headers: Record<string, string> = {};
 	if (body) headers['Content-Type'] = 'application/json';
 	if (isMutating(method)) {
@@ -137,7 +143,7 @@ async function request<T>(method: string, path: string, body?: unknown, steppedU
 		// A destructive action wants a fresh touch: take it and retry once.
 		if (res.status === 403 && code === 'step_up_required' && !steppedUp) {
 			await stepUp();
-			return request<T>(method, path, body, true);
+			return request<T>(method, path, body, true, as);
 		}
 		// A role refusal is an answer about this action, not about the session:
 		// it must not throw the operator out to the login screen.
@@ -147,17 +153,26 @@ async function request<T>(method: string, path: string, body?: unknown, steppedU
 		throw new ApiError(res.status, code);
 	}
 
-	return res.json();
+	return as === 'text' ? ((await res.text()) as T) : res.json();
 }
 
-export function get<T>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
+function withParams(path: string, params?: Record<string, string | number | undefined>): string {
 	const url = new URL(path, window.location.origin);
 	if (params) {
 		Object.entries(params).forEach(([k, v]) => {
 			if (v !== undefined) url.searchParams.set(k, String(v));
 		});
 	}
-	return request<T>('GET', url.pathname + url.search);
+	return url.pathname + url.search;
+}
+
+export function get<T>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
+	return request<T>('GET', withParams(path, params));
+}
+
+/** A GET whose body is not JSON (an NDJSON export, a log file). */
+export function getText(path: string, params?: Record<string, string | number | undefined>): Promise<string> {
+	return request<string>('GET', withParams(path, params), undefined, false, 'text');
 }
 
 export function post<T>(path: string, body?: unknown): Promise<T> {

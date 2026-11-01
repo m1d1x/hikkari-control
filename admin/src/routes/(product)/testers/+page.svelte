@@ -1,7 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { ago, num } from '$lib/product/format';
-	import { fetchTesterChunks, fetchTesterInstalls, type TesterChunk, type TesterInstall } from '$lib/api/support';
+	import {
+		exportTesterLog,
+		fetchTesterChunks,
+		fetchTesterInstalls,
+		type TesterChunk,
+		type TesterInstall,
+	} from '$lib/api/support';
 
 	// Live logs of installs in tester mode. The client ships its sanitized
 	// engine log a chunk a minute; the hub keeps 7 days. "Следить" polls for
@@ -17,6 +23,48 @@
 	let loading = $state(false);
 	let copied = $state(false);
 	let pre = $state<HTMLPreElement | null>(null);
+
+	// Export for an LLM: the hub builds NDJSON for the chosen window (meta
+	// with a guide to the log sources, summary, one record per line).
+	const PERIODS = [
+		{ label: '15 мин', secs: 15 * 60 },
+		{ label: '1 ч', secs: 3600 },
+		{ label: '6 ч', secs: 6 * 3600 },
+		{ label: '24 ч', secs: 24 * 3600 },
+		{ label: '7 дн', secs: 7 * 86400 },
+	];
+	let period = $state(3600);
+	let exporting = $state<'copy' | 'file' | null>(null);
+	let exported = $state('');
+
+	async function exportForLLM(mode: 'copy' | 'file') {
+		if (!current) return;
+		exporting = mode;
+		exported = '';
+		error = '';
+		try {
+			const to = Math.floor(Date.now() / 1000);
+			const ndjson = await exportTesterLog(current, to - period, to);
+			const kb = Math.round(ndjson.length / 1024);
+			if (mode === 'copy') {
+				await navigator.clipboard.writeText(ndjson);
+				exported = `скопировано ${kb} КБ NDJSON`;
+			} else {
+				const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+				const url = URL.createObjectURL(new Blob([ndjson], { type: 'application/x-ndjson;charset=utf-8' }));
+				const a = document.createElement('a');
+				a.href = url;
+				a.download = `tester-${current}-${stamp}.ndjson`;
+				a.click();
+				setTimeout(() => URL.revokeObjectURL(url), 1000);
+				exported = `скачано ${kb} КБ`;
+			}
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			exporting = null;
+		}
+	}
 
 	const selected = $derived(installs.find((i) => i.install_id === current) ?? null);
 	const lines = $derived(
@@ -127,6 +175,19 @@
 				<button class="chip" onclick={copy}>{copied ? 'скопировано' : 'копировать'}</button>
 				<button class="chip" onclick={download}>скачать</button>
 			</div>
+			<div class="llm">
+				<span class="dim">для LLM за</span>
+				{#each PERIODS as p (p.secs)}
+					<button class="chip" class:on={period === p.secs} onclick={() => (period = p.secs)}>{p.label}</button>
+				{/each}
+				<button class="chip" disabled={!!exporting} onclick={() => exportForLLM('copy')}>
+					{exporting === 'copy' ? 'собираю…' : 'копировать NDJSON'}
+				</button>
+				<button class="chip" disabled={!!exporting} onclick={() => exportForLLM('file')}>
+					{exporting === 'file' ? 'собираю…' : 'скачать .ndjson'}
+				</button>
+				{#if exported}<span class="dim">{exported}</span>{/if}
+			</div>
 			<div class="dim meta">
 				{num(shown.length)} из {num(lines.length)} строк · с {new Date(selected.first_seen).toLocaleString('ru')}
 				{#if loading}· загружаю…{/if}
@@ -178,6 +239,13 @@
 	}
 	.top .field {
 		flex: 1;
+	}
+	.llm {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		align-items: center;
+		margin-top: 10px;
 	}
 	.meta {
 		margin: 8px 0;
