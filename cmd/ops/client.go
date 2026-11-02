@@ -303,6 +303,33 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 		return c.logs(args)
 	case "diag":
 		return c.diag(args)
+	case "probe":
+		return c.probe(args)
+	case "census-add":
+		return c.censusAdd(args)
+	case "census-add-addr":
+		data, err := c.request(http.MethodPost, "/api/v1/ops/census/addresses", nil,
+			map[string]any{"name": args["name"], "addresses": strings.Split(args["addrs"], ",")})
+		if err != nil {
+			return "", err
+		}
+		return prettyJSON(data), nil
+	case "census-exit-link":
+		data, err := c.request(http.MethodPost, "/api/v1/ops/census/exit-link", url.Values{"name": {args["name"]}}, nil)
+		if err != nil {
+			return "", err
+		}
+		return prettyJSON(data), nil
+	case "census-proto":
+		return c.censusProto(args)
+	case "census-probe":
+		return c.censusProbe(args)
+	case "census-report":
+		data, err := c.request(http.MethodGet, "/api/v1/ops/census/report", nil, nil)
+		if err != nil {
+			return "", err
+		}
+		return prettyJSON(data), nil
 	case "rename":
 		path, err := installPath(args["who"], "/alias")
 		if err != nil {
@@ -456,16 +483,27 @@ type diagAnswer struct {
 // stayed silent, or never took it, gets its own message, so a timeout is not a
 // riddle.
 func (c *client) diag(args map[string]string) (string, error) {
-	who := args["who"]
-	path, err := installPath(who, "/commands")
-	if err != nil {
-		return "", err
-	}
 	kind := args["kind"]
 	if kind == "" {
 		kind = "run_doctor"
 	}
-	data, err := c.request(http.MethodPost, path, nil, map[string]string{"kind": kind})
+	// The doctor's lines carry the nonce. A snapshot writes [diag:*] lines into
+	// the stream as usual, so it is read as the window since the request.
+	source := "doctor"
+	if kind == "snapshot" {
+		source = ""
+	}
+	return c.askAndRead(args["who"], map[string]any{"kind": kind}, source)
+}
+
+// askAndRead queues a command, waits for it, and reads the lines of source
+// that answer it; an empty source reads everything since the request.
+func (c *client) askAndRead(who string, body map[string]any, source string) (string, error) {
+	path, err := installPath(who, "/commands")
+	if err != nil {
+		return "", err
+	}
+	data, err := c.request(http.MethodPost, path, nil, body)
 	if err != nil {
 		return "", err
 	}
@@ -473,6 +511,11 @@ func (c *client) diag(args map[string]string) (string, error) {
 	if err := json.Unmarshal(data, &asked); err != nil {
 		return "", fmt.Errorf("hub answer: %w", err)
 	}
+	return c.waitAndRead(who, path, asked, source)
+}
+
+// waitAndRead polls a queued command, then reads its lines.
+func (c *client) waitAndRead(who, path string, asked diagAnswer, source string) (string, error) {
 	deadline := time.Now().Add(diagWait)
 	state := asked.State
 	for state != "done" {
@@ -490,17 +533,43 @@ func (c *client) diag(args map[string]string) (string, error) {
 		}
 		state = now.State
 	}
+	return c.readAnswer(who, asked, source)
+}
+
+func (c *client) readAnswer(who string, asked diagAnswer, source string) (string, error) {
 	exportPath, err := installPath(who, "/export")
 	if err != nil {
 		return "", err
 	}
-	// The doctor's lines carry the nonce. A snapshot writes [diag:*] lines into
-	// the stream as usual, so it is read as the window since the request.
-	src := "doctor nonce=" + asked.Nonce
-	if kind == "snapshot" {
-		src = ""
+	src := ""
+	if source != "" {
+		src = source + " nonce=" + asked.Nonce
 	}
 	return c.export(exportPath, asked.CreatedAt.Add(-time.Minute), time.Now().Add(time.Minute), src, defaultTail)
+}
+
+// probe asks a tester to open TCP connections to the named addresses from its
+// physical card, past the tunnel, and prints the counts.
+func (c *client) probe(args map[string]string) (string, error) {
+	targets, err := parseProbeTargets(args["targets"])
+	if err != nil {
+		return "", err
+	}
+	return c.askAndRead(args["who"], map[string]any{"kind": "probe_targets", "targets": targets}, "probe")
+}
+
+// parseProbeTargets reads label=ip:port,label=ip:port. The hub checks the
+// values; this only splits them.
+func parseProbeTargets(s string) ([]map[string]string, error) {
+	var out []map[string]string
+	for _, part := range strings.Split(s, ",") {
+		label, addr, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			return nil, fmt.Errorf("targets: %q is not label=ip:port", part)
+		}
+		out = append(out, map[string]string{"label": label, "addr": addr})
+	}
+	return out, nil
 }
 
 func diagTimeout(a diagAnswer, state string) error {

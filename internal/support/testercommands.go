@@ -5,10 +5,12 @@ package support
 // log is quiet), so there is no new connection and the delay stays under a
 // minute. The result comes back as ordinary log lines, source
 // «doctor nonce=…», with the nonce acknowledged in the chunk that carries the
-// last of them. A command carries no data and runs no code: kind is a word
-// from a list both sides hold.
+// last of them. A command runs no code: kind is a word from a list both sides
+// hold. Only probe_targets carries data, addresses to open a TCP connection to,
+// and both sides check them (probetargets.go).
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -31,6 +33,7 @@ const (
 
 	TesterCommandRunDoctor = "run_doctor"
 	TesterCommandSnapshot  = "snapshot"
+	TesterCommandProbe     = "probe_targets"
 
 	TesterCommandPending   = "pending"
 	TesterCommandDelivered = "delivered"
@@ -45,12 +48,14 @@ var ErrCommandNotFound = errors.New("command not found")
 var testerCommandKinds = map[string]bool{
 	TesterCommandRunDoctor: true,
 	TesterCommandSnapshot:  true,
+	TesterCommandProbe:     true,
 }
 
 // TesterCommand is what a client receives in the answer to its chunk.
 type TesterCommand struct {
-	Kind  string `json:"kind"`
-	Nonce string `json:"nonce"`
+	Kind   string          `json:"kind"`
+	Nonce  string          `json:"nonce"`
+	Params json.RawMessage `json:"params,omitempty"`
 }
 
 // TesterCommandState is a command as the operator sees it.
@@ -62,6 +67,7 @@ type TesterCommandState struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
 	AckedAt     *time.Time `json:"acked_at,omitempty"`
+	params      json.RawMessage
 }
 
 // settle derives the state from the row's timestamps.
@@ -111,7 +117,8 @@ func TesterCommandRequestHandler(store TesterStore) http.HandlerFunc {
 			return
 		}
 		var req struct {
-			Kind string `json:"kind"`
+			Kind    string        `json:"kind"`
+			Targets []ProbeTarget `json:"targets"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxReportBody)).Decode(&req); err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid request body")
@@ -119,6 +126,11 @@ func TesterCommandRequestHandler(store TesterStore) http.HandlerFunc {
 		}
 		if !testerCommandKinds[req.Kind] {
 			writeErr(w, http.StatusBadRequest, "unknown command kind")
+			return
+		}
+		params, err := commandParams(req.Kind, req.Targets)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		in, err := findInstall(r.Context(), store, installID)
@@ -131,7 +143,7 @@ func TesterCommandRequestHandler(store TesterStore) http.HandlerFunc {
 				alias, time.Since(in.LastSeen).Round(time.Second)))
 			return
 		}
-		cmd, err := store.EnqueueCommand(r.Context(), installID, req.Kind)
+		cmd, err := store.EnqueueCommand(r.Context(), installID, req.Kind, params)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to queue command")
 			return
@@ -168,13 +180,13 @@ func TesterCommandStatusHandler(store TesterStore) http.HandlerFunc {
 // In-Memory Store
 // ============================================================================
 
-func (s *MemTesterStore) EnqueueCommand(_ context.Context, installID, kind string) (TesterCommandState, error) {
+func (s *MemTesterStore) EnqueueCommand(_ context.Context, installID, kind string, params json.RawMessage) (TesterCommandState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
 	for _, c := range s.commands {
 		c.settle(now)
-		if c.InstallID == installID && c.Kind == kind && (c.State == TesterCommandPending || c.State == TesterCommandDelivered) {
+		if c.InstallID == installID && c.Kind == kind && bytes.Equal(c.params, params) && (c.State == TesterCommandPending || c.State == TesterCommandDelivered) {
 			return *c, nil
 		}
 	}
@@ -182,7 +194,7 @@ func (s *MemTesterStore) EnqueueCommand(_ context.Context, installID, kind strin
 	if err != nil {
 		return TesterCommandState{}, err
 	}
-	c := &TesterCommandState{Nonce: nonce, InstallID: installID, Kind: kind, CreatedAt: now}
+	c := &TesterCommandState{Nonce: nonce, InstallID: installID, Kind: kind, CreatedAt: now, params: params}
 	c.settle(now)
 	s.commands = append(s.commands, c)
 	return *c, nil
@@ -198,7 +210,7 @@ func (s *MemTesterStore) TakeCommands(_ context.Context, installID string) ([]Te
 		if c.InstallID == installID && c.State == TesterCommandPending {
 			delivered := now
 			c.DeliveredAt = &delivered
-			out = append(out, TesterCommand{Kind: c.Kind, Nonce: c.Nonce})
+			out = append(out, TesterCommand{Kind: c.Kind, Nonce: c.Nonce, Params: c.params})
 		}
 	}
 	return out, nil
@@ -236,14 +248,15 @@ func (s *MemTesterStore) ReadCommand(_ context.Context, installID, nonce string)
 // PostgreSQL-backed Store
 // ============================================================================
 
-func (s *DBTesterStore) EnqueueCommand(ctx context.Context, installID, kind string) (TesterCommandState, error) {
+func (s *DBTesterStore) EnqueueCommand(ctx context.Context, installID, kind string, params json.RawMessage) (TesterCommandState, error) {
 	// A second caller asking the same thing waits on the same run.
 	c, err := scanCommand(s.pool.QueryRow(ctx, `
 		SELECT nonce, install_id, kind, created_at, delivered_at, acked_at
 		FROM support_tester_commands
 		WHERE install_id = $1 AND kind = $2 AND acked_at IS NULL AND created_at > $3
+		  AND params IS NOT DISTINCT FROM $4::jsonb
 		ORDER BY created_at DESC LIMIT 1
-	`, installID, kind, time.Now().Add(-TesterCommandTTL)))
+	`, installID, kind, time.Now().Add(-TesterCommandTTL), nullableJSON(params)))
 	if err == nil {
 		c.settle(time.Now())
 		return c, nil
@@ -256,9 +269,9 @@ func (s *DBTesterStore) EnqueueCommand(ctx context.Context, installID, kind stri
 		return TesterCommandState{}, err
 	}
 	c, err = scanCommand(s.pool.QueryRow(ctx, `
-		INSERT INTO support_tester_commands (nonce, install_id, kind) VALUES ($1, $2, $3)
+		INSERT INTO support_tester_commands (nonce, install_id, kind, params) VALUES ($1, $2, $3, $4::jsonb)
 		RETURNING nonce, install_id, kind, created_at, delivered_at, acked_at
-	`, nonce, installID, kind))
+	`, nonce, installID, kind, nullableJSON(params)))
 	if err != nil {
 		return TesterCommandState{}, fmt.Errorf("queue command: %w", err)
 	}
@@ -270,7 +283,7 @@ func (s *DBTesterStore) TakeCommands(ctx context.Context, installID string) ([]T
 	rows, err := s.pool.Query(ctx, `
 		UPDATE support_tester_commands SET delivered_at = now()
 		WHERE install_id = $1 AND delivered_at IS NULL AND created_at > $2
-		RETURNING kind, nonce
+		RETURNING kind, nonce, params
 	`, installID, time.Now().Add(-TesterCommandTTL))
 	if err != nil {
 		return nil, fmt.Errorf("take commands: %w", err)
@@ -279,7 +292,7 @@ func (s *DBTesterStore) TakeCommands(ctx context.Context, installID string) ([]T
 	var out []TesterCommand
 	for rows.Next() {
 		var c TesterCommand
-		if err := rows.Scan(&c.Kind, &c.Nonce); err != nil {
+		if err := rows.Scan(&c.Kind, &c.Nonce, &c.Params); err != nil {
 			return nil, fmt.Errorf("scan command: %w", err)
 		}
 		out = append(out, c)

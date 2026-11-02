@@ -108,6 +108,40 @@ func TestDiagRoundTrip(t *testing.T) {
 	}
 }
 
+func TestProbeSendsTargetsAndReadsItsLines(t *testing.T) {
+	c, store := hubFixture(t)
+	ctx := context.Background()
+	if err := store.AppendChunk(ctx, support.TesterChunkRequest{InstallID: "t-abc", Platform: "windows", Version: "1.0.25", Heartbeat: true}); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for i := 0; i < 200; i++ {
+			time.Sleep(20 * time.Millisecond)
+			cmds, _ := store.TakeCommands(ctx, "t-abc")
+			if len(cmds) == 0 {
+				continue
+			}
+			if !strings.Contains(string(cmds[0].Params), "89.124.99.31:443") {
+				t.Errorf("params: %s", cmds[0].Params)
+			}
+			now := time.Now().Format("2006/01/02 15:04:05.000000")
+			_ = store.AppendChunk(ctx, support.TesterChunkRequest{InstallID: "t-abc", Platform: "windows", Version: "1.0.25", Lines: []string{
+				now + " [probe nonce=" + cmds[0].Nonce + "] ams7-443 net=AS216071 flows[Ethernet]=0/12 med=-",
+				now + " [singbox] an unrelated line",
+			}})
+			_ = store.AckCommands(ctx, "t-abc", []string{cmds[0].Nonce})
+			return
+		}
+	}()
+	out, err := c.call("probe", map[string]string{"who": "tester-001", "targets": "ams7-443=89.124.99.31:443"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "flows[Ethernet]=0/12") || strings.Contains(out, "unrelated") {
+		t.Fatalf("probe output: %s", out)
+	}
+}
+
 func TestDiagRefusesAnInstallOffTheLine(t *testing.T) {
 	c, store := hubFixture(t)
 	req := support.TesterChunkRequest{InstallID: "t-off", Platform: "macos", Version: "1.0.24", Heartbeat: true}

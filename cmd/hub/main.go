@@ -20,6 +20,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/analytics"
 	"github.com/m1d1x/hikkari-control/internal/auth"
 	"github.com/m1d1x/hikkari-control/internal/billing"
+	"github.com/m1d1x/hikkari-control/internal/census"
 	"github.com/m1d1x/hikkari-control/internal/config"
 	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 	"github.com/m1d1x/hikkari-control/internal/db"
@@ -317,6 +318,9 @@ func run() error {
 	support.RegisterTesterAdminRoutes(adminMux, testerStore, adminSecurity)
 	support.RegisterTesterOpsRoutes(adminMux, testerStore, opsGate)
 	support.RegisterReportOpsRoutes(adminMux, supportStore, opsGate)
+	censusStore := census.NewStore(pool, testerStore)
+	census.RegisterOpsRoutes(adminMux, censusStore, opsGate)
+	census.RegisterPublicRoutes(mux, censusStore)
 	support.RegisterTesterRoutes(adminMux, testerStore, testerLimiter)
 
 	port := os.Getenv("PORT")

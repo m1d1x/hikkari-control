@@ -83,7 +83,7 @@ type TesterStore interface {
 	ResolveInstall(ctx context.Context, ref string) (installID, alias string, err error)
 	RenameAlias(ctx context.Context, installID, alias, note string) (string, error)
 	// EnqueueCommand queues a command, or returns the same kind still open.
-	EnqueueCommand(ctx context.Context, installID, kind string) (TesterCommandState, error)
+	EnqueueCommand(ctx context.Context, installID, kind string, params json.RawMessage) (TesterCommandState, error)
 	// TakeCommands hands over what waits for the install and marks it delivered.
 	TakeCommands(ctx context.Context, installID string) ([]TesterCommand, error)
 	AckCommands(ctx context.Context, installID string, nonces []string) error
@@ -178,6 +178,7 @@ func TesterIntakeHandler(store TesterStore, limiter *Limiter) http.HandlerFunc {
 			}
 		}
 		commands, err := store.TakeCommands(r.Context(), req.InstallID)
+		commands = unsealCommands(commands)
 		if err != nil {
 			log.Printf("support: take tester commands: %v", err)
 		}

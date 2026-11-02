@@ -2,6 +2,7 @@ package support
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -108,11 +109,11 @@ func TestDBAliasesAndCommands(t *testing.T) {
 	}
 
 	// A command: queued once, delivered once, done on the ack, only by its owner.
-	c1, err := s.EnqueueCommand(ctx, "t-aaa", TesterCommandRunDoctor)
+	c1, err := s.EnqueueCommand(ctx, "t-aaa", TesterCommandRunDoctor, nil)
 	if err != nil || c1.State != TesterCommandPending {
 		t.Fatalf("enqueue: %+v %v", c1, err)
 	}
-	c2, err := s.EnqueueCommand(ctx, "t-aaa", TesterCommandRunDoctor)
+	c2, err := s.EnqueueCommand(ctx, "t-aaa", TesterCommandRunDoctor, nil)
 	if err != nil || c2.Nonce != c1.Nonce {
 		t.Fatalf("second ask must join the open run: %+v %v", c2, err)
 	}
@@ -140,7 +141,7 @@ func TestDBAliasesAndCommands(t *testing.T) {
 	}
 
 	// A command nobody took in time stops being delivered and reads as expired.
-	old, err := s.EnqueueCommand(ctx, "t-ccc", TesterCommandSnapshot)
+	old, err := s.EnqueueCommand(ctx, "t-ccc", TesterCommandSnapshot, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,5 +153,26 @@ func TestDBAliasesAndCommands(t *testing.T) {
 	}
 	if c, _ := s.ReadCommand(ctx, "t-ccc", old.Nonce); c.State != TesterCommandExpired {
 		t.Fatalf("expired: %+v", c)
+	}
+}
+
+func TestDBProbeCommandKeepsItsTargets(t *testing.T) {
+	s, _ := dbTesterStore(t)
+	ctx := context.Background()
+	params := json.RawMessage(`{"targets":[{"label":"a","addr":"1.2.3.4:443"}]}`)
+	c1, err := s.EnqueueCommand(ctx, "t-ppp", TesterCommandProbe, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := s.EnqueueCommand(ctx, "t-ppp", TesterCommandProbe, json.RawMessage(`{"targets":[{"label":"b","addr":"1.2.3.5:443"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c1.Nonce == other.Nonce {
+		t.Fatal("different targets shared one command")
+	}
+	cmds, err := s.TakeCommands(ctx, "t-ppp")
+	if err != nil || len(cmds) != 2 || !strings.Contains(string(cmds[0].Params)+string(cmds[1].Params), "1.2.3.4:443") {
+		t.Fatalf("taken: %+v, %v", cmds, err)
 	}
 }

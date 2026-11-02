@@ -22,6 +22,17 @@ const usage = `usage: ops <command>
   logs <who> [--last 1h] [--from T] [--to T] [--src PREFIX] [--tail N]
   diag <who> [--kind run_doctor|snapshot]
                                     ask the client for a diagnostic, wait, print it
+  probe <who> --targets label=ip:port,label=ip:port
+                                    TCP flows from the tester's card, past the tunnel
+  census add <url> --name X         save a paid subscription, list its entries
+  census probe [--who 002,005]      TCP count from St Petersburg and testers
+  census add-addr --name X --addrs ip:port,ip:port
+                                    a service with no import: network and TCP only
+  census exit-link --name X         a link to open through the VPN: its exit lands in report
+  census proto --who 002,005        try the profiles through a core on the tester
+  census watch --who 002,005 [--every 1h]
+                                    probe and proto on a schedule, until stopped
+  census report                     their entries and our relays, network by network
   rename <who> <alias> [--note TEXT]
   errors [--window 24h|7d|30d]      client error groups
   tickets [--status open]           support reports
@@ -37,8 +48,20 @@ func main() {
 		os.Exit(2)
 	}
 	cmd, rest := os.Args[1], os.Args[2:]
+	// «census add» in the shell is the tool census-add.
+	if cmd == "census" && len(rest) > 0 {
+		cmd, rest = "census-"+rest[0], rest[1:]
+	}
 	ops := newClient()
 	defer ops.close()
+	if cmd == "census-watch" {
+		if err := ops.censusWatch(rest); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			ops.close()
+			os.Exit(1)
+		}
+		return
+	}
 	if cmd == "mcp" {
 		if err := serveMCP(ops, os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
