@@ -24,7 +24,8 @@ func awgRecord() entry.RelayRecord {
 		Name: "eun20-1", Address: "203.0.113.9", Port: 31000, Proto: entry.ProtoAmneziaWG,
 		AwgParams: &entry.AwgParams{
 			ServerPublicKey: "SERVERPUB=", ClientPrivateKey: "SHARED=", ClientAddress: entry.AwgProbeAddress,
-			Jc: 4, Jmin: 40, Jmax: 70, S1: 33, S2: 57, H1: "11", H2: "12", H3: "13", H4: "14",
+			Jc: 4, Jmin: 40, Jmax: 70, S1: 33, S2: 57, S3: 21, S4: 16,
+			H1: "11-12", H2: "13-14", H3: "15-16", H4: "17-18", I1: "<r 8>",
 		},
 	}
 }
@@ -67,7 +68,7 @@ func TestAwgLinkIsAmneziasFormatOnOneLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	conf := got.Containers[0].Awg.LastConfig
-	for _, want := range []string{"PrivateKey = SHARED=", "Address = 10.66.0.1/32", "Jc = 4", "H4 = 14", "PublicKey = SERVERPUB=", "Endpoint = 203.0.113.9:31000"} {
+	for _, want := range []string{"PrivateKey = SHARED=", "Address = 10.66.0.1/32", "Jc = 4", "S3 = 21", "S4 = 16", "H4 = 17-18", "I1 = <r 8>", "PublicKey = SERVERPUB=", "Endpoint = 203.0.113.9:31000"} {
 		if !strings.Contains(conf, want) {
 			t.Errorf(".conf lacks %q:\n%s", want, conf)
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -29,9 +30,23 @@ func TestNewAwgIdentityObeysTheProtocol(t *testing.T) {
 		if a.Jc < 1 || a.Jmin < 1 || a.Jmax <= a.Jmin {
 			t.Fatalf("junk %d %d %d", a.Jc, a.Jmin, a.Jmax)
 		}
-		hs := map[string]bool{a.H1: true, a.H2: true, a.H3: true, a.H4: true, "1": true, "2": true, "3": true, "4": true}
-		if len(hs) != 8 {
-			t.Fatalf("headers not distinct from each other and from WireGuard's: %v", hs)
+		// The header ranges must not overlap each other or WireGuard's 1..4:
+		// a receiver tells the message type by which range the value is in.
+		var last int64 = 4
+		for _, h := range []string{a.H1, a.H2, a.H3, a.H4} {
+			lo, hi, ok := strings.Cut(h, "-")
+			if !ok {
+				t.Fatalf("%q is not a range", h)
+			}
+			l, err1 := strconv.ParseInt(lo, 10, 64)
+			r, err2 := strconv.ParseInt(hi, 10, 64)
+			if err1 != nil || err2 != nil || l <= last || r <= l || r > 1<<31-1 {
+				t.Fatalf("ranges %s %s %s %s", a.H1, a.H2, a.H3, a.H4)
+			}
+			last = r
+		}
+		if a.S3 < 1 || a.S4 < 1 || a.S4 > 32 || a.I1 != awgQuicDecoy {
+			t.Fatalf("s3 %d s4 %d i1 %q", a.S3, a.S4, a.I1)
 		}
 		if raw, err := base64.StdEncoding.DecodeString(a.ServerPublicKey); err != nil || len(raw) != 32 {
 			t.Fatalf("server key %q", a.ServerPublicKey)
@@ -84,7 +99,7 @@ func TestAwgEdgeEnvNamesEveryField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"EDGE_PROTO", "EDGE_PORT", "EDGE_AWG_PRIVATE_KEY", "EDGE_AWG_PROBE_KEY", "EDGE_AWG_PROBE_ADDRESS", "EDGE_AWG_JC", "EDGE_AWG_JMIN", "EDGE_AWG_JMAX", "EDGE_AWG_S1", "EDGE_AWG_S2", "EDGE_AWG_H1", "EDGE_AWG_H2", "EDGE_AWG_H3", "EDGE_AWG_H4"} {
+	for _, k := range []string{"EDGE_PROTO", "EDGE_PORT", "EDGE_AWG_PRIVATE_KEY", "EDGE_AWG_PROBE_KEY", "EDGE_AWG_PROBE_ADDRESS", "EDGE_AWG_JC", "EDGE_AWG_JMIN", "EDGE_AWG_JMAX", "EDGE_AWG_S1", "EDGE_AWG_S2", "EDGE_AWG_S3", "EDGE_AWG_S4", "EDGE_AWG_H1", "EDGE_AWG_H2", "EDGE_AWG_H3", "EDGE_AWG_H4"} {
 		if env[k] == "" {
 			t.Errorf("%s is empty", k)
 		}
@@ -132,5 +147,14 @@ func TestAwgRelayGetsAHighPortOfItsOwn(t *testing.T) {
 	}
 	if h.svc.protoSlots(ProtoAmneziaWG) != AwgSlots || h.svc.protoSlots(ProtoHysteria2) != VoiceSlotsPerRegion {
 		t.Fatal("slots per protocol")
+	}
+}
+
+// The decoy is 1200 bytes, as a browser's QUIC Initial: what its tags add up to,
+// and what its length field says of what follows the 18-byte header.
+func TestAwgQuicDecoyAddsUpToAQuicInitial(t *testing.T) {
+	const header = 1 + 4 + 1 + 8 + 1 + 1 + 2
+	if !strings.Contains(awgQuicDecoy, "<r 1182>") || header+1182 != 1200 || 0x449e&0x3fff != 1182 {
+		t.Fatalf("%s", awgQuicDecoy)
 	}
 }

@@ -201,10 +201,13 @@ type AwgParams struct {
 	Jmax             int    `json:"jmax"`
 	S1               int    `json:"s1"`
 	S2               int    `json:"s2"`
+	S3               int    `json:"s3"`
+	S4               int    `json:"s4"`
 	H1               string `json:"h1"`
 	H2               string `json:"h2"`
 	H3               string `json:"h3"`
 	H4               string `json:"h4"`
+	I1               string `json:"i1,omitempty"`
 }
 
 // RealityParams is the Reality half of a stream relay (record.rs Reality).

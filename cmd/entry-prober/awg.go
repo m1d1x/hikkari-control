@@ -37,10 +37,13 @@ type awgEdge struct {
 	Jmax             int    `json:"jmax"`
 	S1               int    `json:"s1"`
 	S2               int    `json:"s2"`
+	S3               int    `json:"s3"`
+	S4               int    `json:"s4"`
 	H1               string `json:"h1"`
 	H2               string `json:"h2"`
 	H3               string `json:"h3"`
 	H4               string `json:"h4"`
+	I1               string `json:"i1,omitempty"`
 }
 
 const (
@@ -88,8 +91,11 @@ func awgConfig(e edge) (string, error) {
 		return "", fmt.Errorf("server key: %w", err)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "private_key=%s\njc=%d\njmin=%d\njmax=%d\ns1=%d\ns2=%d\nh1=%s\nh2=%s\nh3=%s\nh4=%s\n",
-		priv, a.Jc, a.Jmin, a.Jmax, a.S1, a.S2, a.H1, a.H2, a.H3, a.H4)
+	fmt.Fprintf(&b, "private_key=%s\njc=%d\njmin=%d\njmax=%d\ns1=%d\ns2=%d\ns3=%d\ns4=%d\nh1=%s\nh2=%s\nh3=%s\nh4=%s\n",
+		priv, a.Jc, a.Jmin, a.Jmax, a.S1, a.S2, a.S3, a.S4, a.H1, a.H2, a.H3, a.H4)
+	if a.I1 != "" {
+		fmt.Fprintf(&b, "i1=%s\n", a.I1)
+	}
 	fmt.Fprintf(&b, "public_key=%s\nendpoint=%s\nallowed_ip=0.0.0.0/0\n",
 		pub, net.JoinHostPort(e.Address, strconv.Itoa(e.Port)))
 	return b.String(), nil

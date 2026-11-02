@@ -66,10 +66,13 @@ type AwgIdentity struct {
 	Jmax             int    `json:"jmax"`
 	S1               int    `json:"s1"`
 	S2               int    `json:"s2"`
+	S3               int    `json:"s3"`
+	S4               int    `json:"s4"`
 	H1               string `json:"h1"`
 	H2               string `json:"h2"`
 	H3               string `json:"h3"`
 	H4               string `json:"h4"`
+	I1               string `json:"i1"`
 }
 
 // AwgProbeAddress is the vantage's address inside every AmneziaWG relay; the
@@ -99,11 +102,28 @@ func NewAwgKeyPair() (private, public string, err error) {
 	return base64.StdEncoding.EncodeToString(raw), base64.StdEncoding.EncodeToString(pub), nil
 }
 
-// newAwgIdentity mints an AmneziaWG relay. The junk packets stay small and few:
-// they go out ahead of every handshake, and a phone pays for them. S1 and S2
-// must not make the two handshake messages the same size (S1+148 != S2+92), or
-// the message type could be read off the length. H1..H4 must be distinct, and
-// not WireGuard's own 1..4.
+// awgQuicDecoy is the I1 packet a dialler sends ahead of every handshake: the
+// shape of a QUIC Initial as a browser sends it, 1200 bytes, version 1, an 8-byte
+// connection id. The first thing on the wire is then not WireGuard's and not
+// noise either, but what most UDP on the internet looks like. It holds no real
+// ClientHello, so a censor that decrypts Initials can tell it from a browser's.
+const awgQuicDecoy = "<b 0xc30000000108><r 8><b 0x0000449e><r 1182>"
+
+// awgHeaderSlots splits the header space into four, one per message type, so the
+// ranges can't overlap. A range rather than a value: the type field varies per
+// packet, which is AWG 2.0's point. Below 5 is WireGuard's own.
+const (
+	awgHeaderBase  = 5
+	awgHeaderSlot  = (1<<31 - 1 - awgHeaderBase) / 4
+	awgHeaderWidth = 1 << 24
+)
+
+// newAwgIdentity mints an AmneziaWG relay, with AWG 2.0's full obfuscation drawn
+// for it. The junk stays small and few: it goes out ahead of every handshake, and
+// a phone pays for it. S1 and S2 must not make the two handshake messages the
+// same size (S1+148 != S2+92), or the message type could be read off the length.
+// S4 is added to every data packet, so it stays small and within what the 1280
+// MTU leaves room for.
 func newAwgIdentity(port int) (Identity, error) {
 	serverPriv, serverPub, err := NewAwgKeyPair()
 	if err != nil {
@@ -116,12 +136,17 @@ func newAwgIdentity(port int) (Identity, error) {
 	a := &AwgIdentity{
 		ServerPrivateKey: serverPriv, ServerPublicKey: serverPub,
 		ProbePrivateKey: probePriv, ProbePublicKey: probePub,
+		I1: awgQuicDecoy,
 	}
-	if a.Jc, err = randomInt(3, 6); err != nil {
-		return Identity{}, err
-	}
-	if a.Jmin, err = randomInt(40, 60); err != nil {
-		return Identity{}, err
+	for _, f := range []struct {
+		to     *int
+		lo, hi int
+	}{
+		{&a.Jc, 3, 6}, {&a.Jmin, 40, 60}, {&a.S3, 8, 64}, {&a.S4, 4, 32},
+	} {
+		if *f.to, err = randomInt(f.lo, f.hi); err != nil {
+			return Identity{}, err
+		}
 	}
 	if a.Jmax, err = randomInt(a.Jmin+20, 200); err != nil {
 		return Identity{}, err
@@ -137,19 +162,12 @@ func newAwgIdentity(port int) (Identity, error) {
 			break
 		}
 	}
-	seen := map[int]bool{}
-	for _, h := range []*string{&a.H1, &a.H2, &a.H3, &a.H4} {
-		for {
-			n, err := randomInt(5, 2147483647)
-			if err != nil {
-				return Identity{}, err
-			}
-			if !seen[n] {
-				seen[n] = true
-				*h = strconv.Itoa(n)
-				break
-			}
+	for i, h := range []*string{&a.H1, &a.H2, &a.H3, &a.H4} {
+		lo, err := randomInt(awgHeaderBase+i*awgHeaderSlot, awgHeaderBase+(i+1)*awgHeaderSlot-awgHeaderWidth-1)
+		if err != nil {
+			return Identity{}, err
 		}
+		*h = strconv.Itoa(lo) + "-" + strconv.Itoa(lo+awgHeaderWidth)
 	}
 	return Identity{Port: port, Awg: a}, nil
 }
@@ -528,6 +546,8 @@ func (id Identity) EdgeEnv() (map[string]string, error) {
 			"EDGE_AWG_JMAX":          strconv.Itoa(a.Jmax),
 			"EDGE_AWG_S1":            strconv.Itoa(a.S1),
 			"EDGE_AWG_S2":            strconv.Itoa(a.S2),
+			"EDGE_AWG_S3":            strconv.Itoa(a.S3),
+			"EDGE_AWG_S4":            strconv.Itoa(a.S4),
 			"EDGE_AWG_H1":            a.H1,
 			"EDGE_AWG_H2":            a.H2,
 			"EDGE_AWG_H3":            a.H3,
@@ -630,8 +650,8 @@ func (id Identity) record(name, address, region string, issuedAt, expiresAt int6
 				ServerPublicKey:  a.ServerPublicKey,
 				ClientPrivateKey: a.ProbePrivateKey,
 				ClientAddress:    AwgProbeAddress,
-				Jc:               a.Jc, Jmin: a.Jmin, Jmax: a.Jmax, S1: a.S1, S2: a.S2,
-				H1: a.H1, H2: a.H2, H3: a.H3, H4: a.H4,
+				Jc:               a.Jc, Jmin: a.Jmin, Jmax: a.Jmax, S1: a.S1, S2: a.S2, S3: a.S3, S4: a.S4,
+				H1: a.H1, H2: a.H2, H3: a.H3, H4: a.H4, I1: a.I1,
 			},
 			IssuedAt:  issuedAt,
 			ExpiresAt: expiresAt,

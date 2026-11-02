@@ -38,7 +38,11 @@ func awgKeyPair(t *testing.T) (priv, pub string) {
 	return base64.StdEncoding.EncodeToString(raw), base64.StdEncoding.EncodeToString(p)
 }
 
-var testObf = AwgObfuscation{Jc: 4, Jmin: 40, Jmax: 70, S1: 33, S2: 57, H1: "1234567", H2: "2345678", H3: "3456789", H4: "4567890"}
+var testObf = AwgObfuscation{Jc: 4, Jmin: 40, Jmax: 70, S1: 33, S2: 57, S3: 21, S4: 16,
+	H1: "1000000-1999999", H2: "2000000-2999999", H3: "3000000-3999999", H4: "4000000-4999999"}
+
+// testDecoy is the dialler's I1, as the hub draws it: the edge must not mind.
+const testDecoy = "<b 0xc30000000108><r 8><b 0x0000449e><r 1182>"
 
 func freeUDPPort(t *testing.T) int {
 	t.Helper()
@@ -61,8 +65,8 @@ func awgClient(t *testing.T, serverPub string, port int, addr string, obf AwgObf
 	t.Cleanup(dev.Close)
 	privHex, _ := awgKeyHex(priv)
 	pubHex, _ := awgKeyHex(serverPub)
-	cfg := fmt.Sprintf("private_key=%s\njc=%d\njmin=%d\njmax=%d\ns1=%d\ns2=%d\nh1=%s\nh2=%s\nh3=%s\nh4=%s\npublic_key=%s\nendpoint=127.0.0.1:%d\nallowed_ip=0.0.0.0/0\npersistent_keepalive_interval=1\n",
-		privHex, obf.Jc, obf.Jmin, obf.Jmax, obf.S1, obf.S2, obf.H1, obf.H2, obf.H3, obf.H4, pubHex, port)
+	cfg := fmt.Sprintf("private_key=%s\njc=%d\njmin=%d\njmax=%d\ns1=%d\ns2=%d\ns3=%d\ns4=%d\nh1=%s\nh2=%s\nh3=%s\nh4=%s\ni1=%s\npublic_key=%s\nendpoint=127.0.0.1:%d\nallowed_ip=0.0.0.0/0\npersistent_keepalive_interval=1\n",
+		privHex, obf.Jc, obf.Jmin, obf.Jmax, obf.S1, obf.S2, obf.S3, obf.S4, obf.H1, obf.H2, obf.H3, obf.H4, testDecoy, pubHex, port)
 	if err := dev.IpcSet(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +171,7 @@ func TestAwgRefusesPlainWireGuardHandshakes(t *testing.T) {
 		t.Fatal(err)
 	}
 	wrong := testObf
-	wrong.H1 = "7654321"
+	wrong.H1 = "7000000-7999999"
 	client := awgClient(t, serverPub, port, "10.66.0.2", wrong, priv)
 	if _, err := awgHTTP(client, "http://"+awgFarSite+":8080/", 3*time.Second); err == nil {
 		t.Fatal("expected no connection")
@@ -269,7 +273,7 @@ func TestAwgConfigFromEnvNamesWhatIsWrong(t *testing.T) {
 	priv, pub := awgKeyPair(t)
 	env := map[string]string{
 		"EDGE_AWG_PRIVATE_KEY": priv, "EDGE_PORT": "51820", "EDGE_AWG_PROBE_KEY": pub, "EDGE_AWG_PROBE_ADDRESS": "10.66.0.1",
-		"EDGE_AWG_JC": "4", "EDGE_AWG_JMIN": "40", "EDGE_AWG_JMAX": "70", "EDGE_AWG_S1": "33", "EDGE_AWG_S2": "57",
+		"EDGE_AWG_JC": "4", "EDGE_AWG_JMIN": "40", "EDGE_AWG_JMAX": "70", "EDGE_AWG_S1": "33", "EDGE_AWG_S2": "57", "EDGE_AWG_S3": "21", "EDGE_AWG_S4": "16",
 		"EDGE_AWG_H1": "1", "EDGE_AWG_H2": "2", "EDGE_AWG_H3": "3", "EDGE_AWG_H4": "4",
 	}
 	get := func(k string) string { return env[k] }
@@ -283,5 +287,24 @@ func TestAwgConfigFromEnvNamesWhatIsWrong(t *testing.T) {
 			t.Errorf("%s=%q: %v", key, bad, err)
 		}
 		env[key] = was
+	}
+}
+
+// The AWG 2.0 paddings must match on both ends, or nothing passes. This is what
+// makes them worth having, and what proves the edge applies them at all.
+func TestAwgPaddingsMustMatch(t *testing.T) {
+	s, serverPub, port := startTestAwg(t, dialTo("127.0.0.1:1"))
+	priv, pub := awgKeyPair(t)
+	if err := s.Set(context.Background(), []string{pub + " 10.66.0.2"}); err != nil {
+		t.Fatal(err)
+	}
+	wrong := testObf
+	wrong.S1 = testObf.S1 + 1
+	client := awgClient(t, serverPub, port, "10.66.0.2", wrong, priv)
+	if _, err := awgHTTP(client, "http://"+awgFarSite+":8080/", 3*time.Second); err == nil {
+		t.Fatal("expected no connection")
+	}
+	if stats, _ := s.stats(); !stats[pub].lastHandshake.IsZero() {
+		t.Fatal("a handshake with the wrong padding completed")
 	}
 }

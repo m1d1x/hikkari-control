@@ -29,13 +29,13 @@ func TestAwgConfigCarriesTheObfuscation(t *testing.T) {
 	key := strings.Repeat("A", 43) + "="
 	e := edge{Name: "x1-1", Address: "203.0.113.9", Port: 31000, Proto: protoAwg, Awg: &awgEdge{
 		ServerPublicKey: key, ClientPrivateKey: key, ClientAddress: "10.66.0.1",
-		Jc: 4, Jmin: 40, Jmax: 70, S1: 33, S2: 57, H1: "11", H2: "12", H3: "13", H4: "14",
+		Jc: 4, Jmin: 40, Jmax: 70, S1: 33, S2: 57, S3: 21, S4: 16, H1: "11", H2: "12", H3: "13-19", H4: "24", I1: "<r 8>",
 	}}
 	got, err := awgConfig(e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"jc=4\n", "jmax=70\n", "s2=57\n", "h3=13\n", "endpoint=203.0.113.9:31000\n"} {
+	for _, want := range []string{"jc=4\n", "jmax=70\n", "s2=57\n", "h3=13-19\n", "s3=21\n", "s4=16\n", "i1=<r 8>\n", "endpoint=203.0.113.9:31000\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("config lacks %q:\n%s", want, got)
 		}

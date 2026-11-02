@@ -84,11 +84,13 @@ type AwgConfig struct {
 	Obf          AwgObfuscation
 }
 
-// AwgObfuscation is what both ends must agree on. H1..H4 stay strings: the
-// format also allows ranges.
+// AwgObfuscation is what both ends must agree on: AmneziaWG 2.0's paddings of
+// every message and header ranges. H1..H4 are "x-y" or a single value. Junk and
+// the I1 decoy are the dialling side's alone, so they are not the edge's to agree
+// on, except as what a device sends when it starts a handshake itself.
 type AwgObfuscation struct {
-	Jc, Jmin, Jmax, S1, S2 int
-	H1, H2, H3, H4         string
+	Jc, Jmin, Jmax, S1, S2, S3, S4 int
+	H1, H2, H3, H4                 string
 }
 
 // AwgConfigFromEnv reads EDGE_PORT and EDGE_AWG_*.
@@ -119,6 +121,7 @@ func AwgConfigFromEnv(getenv func(string) string) (AwgConfig, error) {
 	}{
 		{"EDGE_AWG_JC", &c.Obf.Jc, 1}, {"EDGE_AWG_JMIN", &c.Obf.Jmin, 1}, {"EDGE_AWG_JMAX", &c.Obf.Jmax, 1},
 		{"EDGE_AWG_S1", &c.Obf.S1, 0}, {"EDGE_AWG_S2", &c.Obf.S2, 0},
+		{"EDGE_AWG_S3", &c.Obf.S3, 0}, {"EDGE_AWG_S4", &c.Obf.S4, 0},
 	} {
 		v, err := strconv.Atoi(getenv(f.name))
 		if err != nil || v < f.min {
@@ -229,8 +232,8 @@ func startAwg(ctx context.Context, cfg AwgConfig, dial awgDialer) (*awgServer, e
 	}
 	var uapi strings.Builder
 	fmt.Fprintf(&uapi, "private_key=%s\nlisten_port=%d\n", priv, cfg.Port)
-	fmt.Fprintf(&uapi, "jc=%d\njmin=%d\njmax=%d\ns1=%d\ns2=%d\nh1=%s\nh2=%s\nh3=%s\nh4=%s\n",
-		cfg.Obf.Jc, cfg.Obf.Jmin, cfg.Obf.Jmax, cfg.Obf.S1, cfg.Obf.S2, cfg.Obf.H1, cfg.Obf.H2, cfg.Obf.H3, cfg.Obf.H4)
+	fmt.Fprintf(&uapi, "jc=%d\njmin=%d\njmax=%d\ns1=%d\ns2=%d\ns3=%d\ns4=%d\nh1=%s\nh2=%s\nh3=%s\nh4=%s\n",
+		cfg.Obf.Jc, cfg.Obf.Jmin, cfg.Obf.Jmax, cfg.Obf.S1, cfg.Obf.S2, cfg.Obf.S3, cfg.Obf.S4, cfg.Obf.H1, cfg.Obf.H2, cfg.Obf.H3, cfg.Obf.H4)
 	if cfg.ProbeKey != "" {
 		p, err := parseAwgPeer(cfg.ProbeKey + " " + cfg.ProbeAddress)
 		if err != nil {
