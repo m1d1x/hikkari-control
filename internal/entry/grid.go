@@ -173,7 +173,7 @@ func (p *Provisioner) Inspect(ctx context.Context, box string, relays []PoolRela
 	// listens on UDP, where nothing answers a stranger and silence proves
 	// nothing, so it is left unjudged rather than called unreachable.
 	for _, r := range alive {
-		if acc.voice() {
+		if acc.overUDP() {
 			continue
 		}
 		sni, err := p.coverOf(ctx, r.Name, acc)

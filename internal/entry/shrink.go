@@ -390,7 +390,7 @@ func (p *Provisioner) boxConnections(ctx context.Context, box string) (int, erro
 	if err != nil {
 		return 0, err
 	}
-	if acc.voice() {
+	if acc.overUDP() {
 		return 0, nil
 	}
 	if acc.hostKey == "" {

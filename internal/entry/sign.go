@@ -29,6 +29,7 @@ const (
 	ProtoVlessRealityVision = "vless-reality-vision"
 	ProtoHysteria2          = "hysteria2"
 	ProtoVlessXhttp         = "vless-xhttp"
+	ProtoAmneziaWG          = "amneziawg"
 )
 
 // XHTTP modes (record.rs XhttpMode). StreamUp is the default: the edge
@@ -103,6 +104,7 @@ type RelayRecord struct {
 	RealityParams  *RealityParams
 	HysteriaParams *HysteriaParams
 	XhttpParams    *XhttpParams
+	AwgParams      *AwgParams
 	IssuedAt       int64
 	ExpiresAt      int64
 }
@@ -116,6 +118,8 @@ func (r RelayRecord) params() any {
 		return r.HysteriaParams
 	case ProtoVlessXhttp:
 		return r.XhttpParams
+	case ProtoAmneziaWG:
+		return r.AwgParams
 	}
 	return nil
 }
@@ -163,6 +167,9 @@ func (r *RelayRecord) UnmarshalJSON(b []byte) error {
 	case ProtoVlessXhttp:
 		r.XhttpParams = &XhttpParams{}
 		return json.Unmarshal(b, r.XhttpParams)
+	case ProtoAmneziaWG:
+		r.AwgParams = &AwgParams{}
+		return json.Unmarshal(b, r.AwgParams)
 	}
 	return fmt.Errorf("%w: relay %s proto %q", ErrMalformed, c.Name, c.Proto)
 }
@@ -170,7 +177,7 @@ func (r *RelayRecord) UnmarshalJSON(b []byte) error {
 // halves: exactly the half Proto names is set.
 func (r RelayRecord) halves() error {
 	set := 0
-	for _, h := range []bool{r.RealityParams != nil, r.HysteriaParams != nil, r.XhttpParams != nil} {
+	for _, h := range []bool{r.RealityParams != nil, r.HysteriaParams != nil, r.XhttpParams != nil, r.AwgParams != nil} {
 		if h {
 			set++
 		}
@@ -179,6 +186,25 @@ func (r RelayRecord) halves() error {
 		return fmt.Errorf("%w: relay %s: %s needs exactly its own parameters", ErrMalformed, r.Name, r.Proto)
 	}
 	return nil
+}
+
+// AwgParams is the AmneziaWG half of a relay. ClientPrivateKey and
+// ClientAddress are the relay's shared credential, as UUID is on a stream
+// relay: the vantage dials with them, and a subscriber's link carries their own
+// in place of them.
+type AwgParams struct {
+	ServerPublicKey  string `json:"server_public_key"`
+	ClientPrivateKey string `json:"client_private_key"`
+	ClientAddress    string `json:"client_address"`
+	Jc               int    `json:"jc"`
+	Jmin             int    `json:"jmin"`
+	Jmax             int    `json:"jmax"`
+	S1               int    `json:"s1"`
+	S2               int    `json:"s2"`
+	H1               string `json:"h1"`
+	H2               string `json:"h2"`
+	H3               string `json:"h3"`
+	H4               string `json:"h4"`
 }
 
 // RealityParams is the Reality half of a stream relay (record.rs Reality).
@@ -277,6 +303,14 @@ func (r RelayRecord) check() error {
 			return fmt.Errorf("%w: relay %s has no uuid", ErrMalformed, r.Name)
 		case x.Mode != XhttpPacketUp && x.Mode != XhttpStreamUp && x.Mode != XhttpStreamOne:
 			return fmt.Errorf("%w: relay %s: xhttp mode %q", ErrMalformed, r.Name, x.Mode)
+		}
+	case ProtoAmneziaWG:
+		a := r.AwgParams
+		switch {
+		case a.ServerPublicKey == "" || a.ClientPrivateKey == "" || a.ClientAddress == "":
+			return fmt.Errorf("%w: relay %s has no awg keys", ErrMalformed, r.Name)
+		case a.Jc < 1 || a.Jmin < 1 || a.Jmax < a.Jmin || a.H1 == "" || a.H2 == "" || a.H3 == "" || a.H4 == "":
+			return fmt.Errorf("%w: relay %s: awg obfuscation", ErrMalformed, r.Name)
 		}
 	case ProtoHysteria2:
 		h := r.HysteriaParams

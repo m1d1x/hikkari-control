@@ -35,11 +35,15 @@ type edge struct {
 	Host string `json:"host,omitempty"`
 	Path string `json:"path,omitempty"`
 	Mode string `json:"mode,omitempty"`
+
+	// AmneziaWG relay: dialled in this process, not through the engine.
+	Awg *awgEdge `json:"awg,omitempty"`
 }
 
 const (
 	protoHysteria = "hysteria2"
 	protoXhttp    = "vless-xhttp"
+	protoAwg      = "amneziawg"
 )
 
 // voice reports whether this is a voice relay (Hysteria2).
@@ -47,6 +51,9 @@ func (e edge) voice() bool { return e.Proto == protoHysteria }
 
 // xhttp reports whether this is an XHTTP stream relay.
 func (e edge) xhttp() bool { return e.Proto == protoXhttp }
+
+// awg reports whether this is an AmneziaWG relay, which Xray cannot dial.
+func (e edge) awg() bool { return e.Proto == protoAwg }
 
 // probeCover is the cover SNI used for this edge's Reality outbound and its K1
 // bare-TLS control. The methodology races every cover; the prober's first
@@ -74,6 +81,10 @@ func validateEdges(edges []edge) error {
 		case e.voice():
 			if e.Auth == "" || e.ServerName == "" || e.CertSHA256 == "" || e.EchoPort == 0 || len(e.FinalMask) == 0 {
 				return fmt.Errorf("voice relay %d (%q) is missing a required field", i, e.Name)
+			}
+		case e.awg():
+			if e.Awg == nil || e.Awg.ServerPublicKey == "" || e.Awg.ClientPrivateKey == "" || e.Awg.ClientAddress == "" {
+				return fmt.Errorf("awg relay %d (%q) is missing a required field", i, e.Name)
 			}
 		case e.xhttp():
 			if e.UUID == "" || e.Host == "" || e.Path == "" || e.Mode == "" {
@@ -237,6 +248,9 @@ func buildXrayConfig(edges []edge, socksBase int, fingerprint string) ([]byte, m
 	for i, e := range edges {
 		port := socksBase + i
 		ports[e.Name] = port
+		if e.awg() {
+			continue
+		}
 		inTag := "in-" + e.Name
 		outTag := "out-" + e.Name
 		inTags := []string{inTag}

@@ -1059,7 +1059,7 @@ fi
 // transport is what the box's relays listen on: a Reality relay on TCP, a
 // voice relay (QUIC) on UDP.
 func (j *jobRun) transport() string {
-	if j.acc.voice() {
+	if j.acc.overUDP() {
 		return "udp"
 	}
 	return "tcp"
@@ -1451,7 +1451,7 @@ func (j *jobRun) waitEmpty(r Remote, relays []provRelay, limit time.Duration) (i
 	if len(relays) == 0 {
 		return 0, nil
 	}
-	if j.acc.voice() {
+	if j.acc.overUDP() {
 		// QUIC rides one unconnected UDP socket: the box has no per-client
 		// connection to count. A call cut by the restart notices within the
 		// carrier's QUIC idle timeout and redials through its batch.

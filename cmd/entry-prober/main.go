@@ -332,6 +332,9 @@ func probeEdge(ctx context.Context, e edge, socksPort int, tunnelURL, k1SNI stri
 	if e.xhttp() {
 		return probeXhttpEdge(ctx, e, socksPort, tunnelURL, k2, now, timeout)
 	}
+	if e.awg() {
+		return probeAwgEdge(ctx, e, tunnelURL, k2, now, timeout)
+	}
 	addr := net.JoinHostPort(e.Address, strconv.Itoa(e.Port))
 	cover := e.probeCover()
 	if k1SNI == "" {

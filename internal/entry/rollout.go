@@ -162,7 +162,7 @@ const (
 		       bool_or(r.status IN ('testing', 'draining')),
 		       (SELECT count(*) FROM entry_grants g JOIN entry_relays gr ON gr.id = g.relay_id
 		        WHERE gr.box = b.name AND g.revoked_at IS NULL),
-		       b.proto = 'hysteria2'
+		       b.proto IN ('hysteria2', 'amneziawg')
 		FROM entry_boxes b JOIN entry_relays r ON r.box = b.name AND r.status NOT IN ('dead', 'suspect')
 		GROUP BY b.name ORDER BY b.created_at DESC, b.name`
 )

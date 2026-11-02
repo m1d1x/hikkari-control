@@ -161,7 +161,7 @@ func runEntryBox(args []string) {
 	}
 	order := len(args) >= 1 && len(args) <= 4 && args[0] == "order"
 	if !order && len(args) != 1 && len(args) != 4 && len(args) != 5 {
-		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain>]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|voice=<region>]"))
+		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain>]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|awg|voice=<region>]"))
 	}
 	if err := cryptobox.Configure(os.Getenv); err != nil {
 		fail(fmt.Errorf("content key: %w", err))
@@ -213,10 +213,12 @@ func runEntryBox(args []string) {
 			case p == "reality":
 			case p == "xhttp":
 				spec.Proto = entry.ProtoVlessXhttp
+			case p == "awg":
+				spec.Proto = entry.ProtoAmneziaWG
 			case strings.HasPrefix(p, "voice="):
 				spec.Proto, spec.VoiceRegion = entry.ProtoHysteria2, strings.TrimPrefix(p, "voice=")
 			default:
-				fail(fmt.Errorf("protocol %q: reality, xhttp or voice=<region>", p))
+				fail(fmt.Errorf("protocol %q: reality, xhttp, awg or voice=<region>", p))
 			}
 		}
 		var name string

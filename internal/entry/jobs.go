@@ -213,6 +213,9 @@ type ProbeRelay struct {
 	Host string `json:"host,omitempty"`
 	Path string `json:"path,omitempty"`
 	Mode string `json:"mode,omitempty"`
+
+	// An AmneziaWG relay: what the vantage dials with.
+	Awg *AwgParams `json:"awg,omitempty"`
 }
 
 // rowsQuerier is what ProbeRelays reads through: the pool, or the claim's
@@ -253,6 +256,8 @@ func probeRelaysIn(ctx context.Context, q rowsQuerier, names []string) ([]ProbeR
 			pr.FinalMask = xrayFinalmask(h.Masks)
 		} else if x := id.Xhttp; x != nil {
 			pr.UUID, pr.Host, pr.Path, pr.Mode = id.UUID, x.Domain, x.Path, x.Mode
+		} else if id.Awg != nil {
+			pr.Awg = id.record(name, addr, "", 0, 0).AwgParams
 		} else {
 			pr.UUID, pr.PublicKey, pr.ShortID, pr.Covers = id.UUID, id.PublicKey, id.ShortID, id.Covers
 		}

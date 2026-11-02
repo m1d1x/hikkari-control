@@ -49,6 +49,109 @@ type Identity struct {
 	// Xhttp is set on an XHTTP stream relay and only there; UUID is its VLESS
 	// user, the Reality fields stay empty.
 	Xhttp *XhttpIdentity `json:"xhttp,omitempty"`
+	// Awg is set on an AmneziaWG relay and only there.
+	Awg *AwgIdentity `json:"awg,omitempty"`
+}
+
+// AwgIdentity is the AmneziaWG half of a relay: the device's key, the
+// vantage's own peer, and the obfuscation both ends must agree on, drawn per
+// relay so that no two relays share what a censor would look for.
+type AwgIdentity struct {
+	ServerPrivateKey string `json:"server_private_key"`
+	ServerPublicKey  string `json:"server_public_key"`
+	ProbePrivateKey  string `json:"probe_private_key"`
+	ProbePublicKey   string `json:"probe_public_key"`
+	Jc               int    `json:"jc"`
+	Jmin             int    `json:"jmin"`
+	Jmax             int    `json:"jmax"`
+	S1               int    `json:"s1"`
+	S2               int    `json:"s2"`
+	H1               string `json:"h1"`
+	H2               string `json:"h2"`
+	H3               string `json:"h3"`
+	H4               string `json:"h4"`
+}
+
+// AwgProbeAddress is the vantage's address inside every AmneziaWG relay; the
+// subscribers' are drawn from the same network past it
+// (internal/subscription/awg.go).
+const AwgProbeAddress = "10.66.0.1"
+
+// The UDP port of an AmneziaWG relay is drawn from a high range: unlike TLS and
+// QUIC it has no reason to sit on 443, where UDP that is not QUIC stands out.
+const (
+	awgPortMin = 20000
+	awgPortMax = 60000
+)
+
+// NewAwgKeyPair is a WireGuard key pair, base64 as both ends' configs take it.
+func NewAwgKeyPair() (private, public string, err error) {
+	raw := make([]byte, curve25519.ScalarSize)
+	if _, err := rand.Read(raw); err != nil {
+		return "", "", err
+	}
+	raw[0] &= 248
+	raw[31] = raw[31]&127 | 64
+	pub, err := curve25519.X25519(raw, curve25519.Basepoint)
+	if err != nil {
+		return "", "", err
+	}
+	return base64.StdEncoding.EncodeToString(raw), base64.StdEncoding.EncodeToString(pub), nil
+}
+
+// newAwgIdentity mints an AmneziaWG relay. The junk packets stay small and few:
+// they go out ahead of every handshake, and a phone pays for them. S1 and S2
+// must not make the two handshake messages the same size (S1+148 != S2+92), or
+// the message type could be read off the length. H1..H4 must be distinct, and
+// not WireGuard's own 1..4.
+func newAwgIdentity(port int) (Identity, error) {
+	serverPriv, serverPub, err := NewAwgKeyPair()
+	if err != nil {
+		return Identity{}, err
+	}
+	probePriv, probePub, err := NewAwgKeyPair()
+	if err != nil {
+		return Identity{}, err
+	}
+	a := &AwgIdentity{
+		ServerPrivateKey: serverPriv, ServerPublicKey: serverPub,
+		ProbePrivateKey: probePriv, ProbePublicKey: probePub,
+	}
+	if a.Jc, err = randomInt(3, 6); err != nil {
+		return Identity{}, err
+	}
+	if a.Jmin, err = randomInt(40, 60); err != nil {
+		return Identity{}, err
+	}
+	if a.Jmax, err = randomInt(a.Jmin+20, 200); err != nil {
+		return Identity{}, err
+	}
+	for {
+		if a.S1, err = randomInt(15, 120); err != nil {
+			return Identity{}, err
+		}
+		if a.S2, err = randomInt(15, 120); err != nil {
+			return Identity{}, err
+		}
+		if a.S1+148 != a.S2+92 {
+			break
+		}
+	}
+	seen := map[int]bool{}
+	for _, h := range []*string{&a.H1, &a.H2, &a.H3, &a.H4} {
+		for {
+			n, err := randomInt(5, 2147483647)
+			if err != nil {
+				return Identity{}, err
+			}
+			if !seen[n] {
+				seen[n] = true
+				*h = strconv.Itoa(n)
+				break
+			}
+		}
+	}
+	return Identity{Port: port, Awg: a}, nil
 }
 
 // XhttpIdentity is the XHTTP half of a stream relay (П4в): the box's domain,
@@ -84,6 +187,8 @@ func (id Identity) proto() string {
 		return ProtoHysteria2
 	case id.Xhttp != nil:
 		return ProtoVlessXhttp
+	case id.Awg != nil:
+		return ProtoAmneziaWG
 	}
 	return ProtoVlessRealityVision
 }
@@ -99,8 +204,8 @@ func (id Identity) echoPort() int {
 	if id.Hysteria != nil {
 		return id.LocalPortBase
 	}
-	if id.Xhttp != nil {
-		return 0 // streams only: no call datagrams, no echo
+	if id.Xhttp != nil || id.Awg != nil {
+		return 0 // no admission echo: streams only, or a tunnel of its own
 	}
 	return id.LocalPortBase + relayLoopbackBlock - 1
 }
@@ -411,6 +516,23 @@ func (id Identity) EdgeEnv() (map[string]string, error) {
 			"EDGE_LOCAL_PORT_BASE": strconv.Itoa(id.LocalPortBase),
 		}, nil
 	}
+	if a := id.Awg; a != nil {
+		return map[string]string{
+			"EDGE_PROTO":           ProtoAmneziaWG,
+			"EDGE_PORT":            strconv.Itoa(id.Port),
+			"EDGE_AWG_PRIVATE_KEY": a.ServerPrivateKey,
+			"EDGE_AWG_PROBE_PEER":  a.ProbePublicKey + " " + AwgProbeAddress,
+			"EDGE_AWG_JC":          strconv.Itoa(a.Jc),
+			"EDGE_AWG_JMIN":        strconv.Itoa(a.Jmin),
+			"EDGE_AWG_JMAX":        strconv.Itoa(a.Jmax),
+			"EDGE_AWG_S1":          strconv.Itoa(a.S1),
+			"EDGE_AWG_S2":          strconv.Itoa(a.S2),
+			"EDGE_AWG_H1":          a.H1,
+			"EDGE_AWG_H2":          a.H2,
+			"EDGE_AWG_H3":          a.H3,
+			"EDGE_AWG_H4":          a.H4,
+		}, nil
+	}
 	covers := ""
 	for i, c := range id.Covers {
 		if i > 0 {
@@ -492,6 +614,23 @@ func (id Identity) record(name, address, region string, issuedAt, expiresAt int6
 				Path: x.Path,
 				UUID: id.UUID,
 				Mode: x.Mode,
+			},
+			IssuedAt:  issuedAt,
+			ExpiresAt: expiresAt,
+		}
+	}
+	if a := id.Awg; a != nil {
+		return RelayRecord{
+			Name:    name,
+			Address: address,
+			Port:    id.Port,
+			Proto:   ProtoAmneziaWG,
+			AwgParams: &AwgParams{
+				ServerPublicKey:  a.ServerPublicKey,
+				ClientPrivateKey: a.ProbePrivateKey,
+				ClientAddress:    AwgProbeAddress,
+				Jc:               a.Jc, Jmin: a.Jmin, Jmax: a.Jmax, S1: a.S1, S2: a.S2,
+				H1: a.H1, H2: a.H2, H3: a.H3, H4: a.H4,
 			},
 			IssuedAt:  issuedAt,
 			ExpiresAt: expiresAt,

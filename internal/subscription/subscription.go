@@ -231,8 +231,18 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string) (
 		if rec.Proto == entry.ProtoHysteria2 && engine != "xray" {
 			render = SingBoxHysteriaLink
 		}
+		if rec.Proto == entry.ProtoAmneziaWG {
+			// Xray has no such tunnel to dial with.
+			if engine == "xray" {
+				continue
+			}
+			if err := s.ensureAwgKey(ctx, account, &key); err != nil {
+				return nil, err
+			}
+			render = AwgLink
+		}
 		link, err := render(withKey(rec, key))
-		if err == nil && nodes[rec.Name] != "" {
+		if err == nil && nodes[rec.Name] != "" && rec.Proto != entry.ProtoAmneziaWG {
 			u, _ := url.Parse(link)
 			q := u.Query()
 			q.Set("hikkari-node", "n:"+nodes[rec.Name])

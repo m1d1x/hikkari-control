@@ -353,7 +353,7 @@ func (s *Service) CreateBox(ctx context.Context, b BoxSpec) error {
 	b.Region = strings.TrimSpace(b.Region)
 	b.Domain = strings.ToLower(strings.TrimSpace(b.Domain))
 	switch {
-	case b.Proto != ProtoVlessRealityVision && b.Proto != ProtoHysteria2 && b.Proto != ProtoVlessXhttp:
+	case b.Proto != ProtoVlessRealityVision && b.Proto != ProtoHysteria2 && b.Proto != ProtoVlessXhttp && b.Proto != ProtoAmneziaWG:
 		return fmt.Errorf("%w: box protocol %q", ErrRejected, b.Proto)
 	case b.Proto != ProtoVlessXhttp && b.Domain != "":
 		return fmt.Errorf("%w: only an XHTTP box has a domain", ErrRejected)
@@ -442,6 +442,10 @@ type boxAccess struct {
 
 // voice reports whether the box is a voice entry (Hysteria2).
 func (a boxAccess) voice() bool { return a.proto == ProtoHysteria2 }
+
+// overUDP is whether the box's relays listen on UDP, where nothing answers a
+// stranger and the box has no per-client connection to count.
+func (a boxAccess) overUDP() bool { return a.voice() || a.proto == ProtoAmneziaWG }
 
 func (s *Service) boxAccess(ctx context.Context, box string) (boxAccess, error) {
 	var ct, domainCT []byte
@@ -595,6 +599,13 @@ func (s *Service) AddRelay(ctx context.Context, box, kind string) (string, error
 			break
 		}
 	}
+	if proto == ProtoAmneziaWG {
+		for port = 0; port == 0 || used[port]; {
+			if port, err = randomInt(awgPortMin, awgPortMax); err != nil {
+				return "", err
+			}
+		}
+	}
 	if port == 0 {
 		return "", fmt.Errorf("%w: box %s has a relay on every port", ErrRejected, box)
 	}
@@ -610,6 +621,8 @@ func (s *Service) AddRelay(ctx context.Context, box, kind string) (string, error
 			return "", fmt.Errorf("entry: box %s domain: %w", box, err)
 		}
 		id, err = newXhttpIdentity(port, base, string(domain))
+	case ProtoAmneziaWG:
+		id, err = newAwgIdentity(port)
 	default:
 		if id, err = newIdentity(port, base); err == nil {
 			// A cover under its second chance, or struck by it, is not
@@ -1273,13 +1286,23 @@ func (s *Service) serve(ctx context.Context, account uuid.UUID, meta GrantMeta) 
 // like any other slot. The stream lane keeps the service's batch size.
 const VoiceSlotsPerRegion = 1
 
-// slots is how many relays an account holds in a lane.
-func (s *Service) slots(l lane) int {
-	if l.proto == ProtoHysteria2 {
+// AwgSlots is how many AmneziaWG entries an account holds: it stands beside
+// the stream lane as another way in, not as more of the same.
+const AwgSlots = 1
+
+// protoSlots is how many relays of a protocol an account holds in a lane.
+func (s *Service) protoSlots(proto string) int {
+	switch proto {
+	case ProtoHysteria2:
 		return VoiceSlotsPerRegion
+	case ProtoAmneziaWG:
+		return AwgSlots
 	}
 	return s.batchSize
 }
+
+// slots is how many relays an account holds in a lane.
+func (s *Service) slots(l lane) int { return s.protoSlots(l.proto) }
 
 // pick fills each lane's empty slots from its candidates, ranked per account
 // (see rank): the stream lane first, then the voice lanes in region order —

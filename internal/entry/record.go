@@ -215,6 +215,9 @@ func OpenRecord(raw []byte, keys []Key, now time.Time) (RelayRecord, error) {
 	case ProtoVlessXhttp:
 		rec.XhttpParams = &XhttpParams{}
 		err = json.Unmarshal(payload, rec.XhttpParams)
+	case ProtoAmneziaWG:
+		rec.AwgParams = &AwgParams{}
+		err = json.Unmarshal(payload, rec.AwgParams)
 	default:
 		return RelayRecord{}, fmt.Errorf("%w: relay %s has unknown proto %q", ErrMalformed, r.Name, r.Proto)
 	}

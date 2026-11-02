@@ -61,10 +61,7 @@ func (s *Service) applySubscriberFloor(ctx context.Context, f *FleetForecast, pr
 	if err != nil {
 		return fmt.Errorf("entry: live subscriptions: %w", err)
 	}
-	slots := s.batchSize
-	if proto == ProtoHysteria2 {
-		slots = VoiceSlotsPerRegion
-	}
+	slots := s.protoSlots(proto)
 	floor := subscriberFloor(live, slots)
 	if floor == 0 {
 		return nil

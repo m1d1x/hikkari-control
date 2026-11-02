@@ -31,7 +31,9 @@ func (f *fleetSignals) FleetSignals(_ context.Context, nodes []entry.FleetNode, 
 func nodeTargets(nodes []entry.FleetNode) []dd.Target {
 	out := make([]dd.Target, 0, len(nodes))
 	for _, n := range nodes {
-		if n.Proto==entry.ProtoHysteria2 {continue} // UDP cannot be judged by a TCP connect.
+		if n.Proto == entry.ProtoHysteria2 || n.Proto == entry.ProtoAmneziaWG {
+			continue
+		} // UDP cannot be judged by a TCP connect.
 		out = append(out, dd.Target{ID: dd.NodeID(n.Slug), Name: n.Slug, Host: n.Host, Port: n.Port})
 	}
 	return out

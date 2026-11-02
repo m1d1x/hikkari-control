@@ -27,6 +27,10 @@ import (
 type accessKey struct {
 	vlessID string
 	hy2Auth string
+	// awgPrivate and awgAddress are empty until the account's first AmneziaWG
+	// link (awg.go).
+	awgPrivate string
+	awgAddress string
 }
 
 func newAccessKey() (accessKey, error) {
@@ -50,7 +54,8 @@ func insertAccessKey(ctx context.Context, tx pgx.Tx, account uuid.UUID) error {
 func (s *Service) accessKey(ctx context.Context, account uuid.UUID) (accessKey, error) {
 	var k accessKey
 	err := s.pool.QueryRow(ctx,
-		`SELECT vless_id::text, hy2_auth FROM hub_access_keys WHERE account_id = $1`, account).Scan(&k.vlessID, &k.hy2Auth)
+		`SELECT vless_id::text, hy2_auth, coalesce(awg_private, ''), coalesce(host(awg_address), '')
+		 FROM hub_access_keys WHERE account_id = $1`, account).Scan(&k.vlessID, &k.hy2Auth, &k.awgPrivate, &k.awgAddress)
 	if err != nil {
 		return accessKey{}, fmt.Errorf("subscription: access key: %w", err)
 	}
@@ -75,17 +80,26 @@ func withKey(rec entry.RelayRecord, k accessKey) entry.RelayRecord {
 		c.Auth = k.hy2Auth
 		rec.HysteriaParams = &c
 	}
+	if p := rec.AwgParams; p != nil {
+		c := *p
+		c.ClientPrivateKey, c.ClientAddress = k.awgPrivate, k.awgAddress
+		rec.AwgParams = &c
+	}
 	return rec
 }
 
 // Relay keys: the keys of accounts with a live subscription (plans.go) and a
 // live grant on the relay, in the relay protocol's own credential.
 const relayKeys = `
-	SELECT CASE WHEN $2 = 'hysteria2' THEN k.hy2_auth ELSE k.vless_id::text END
+	SELECT CASE $2
+		WHEN 'hysteria2' THEN k.hy2_auth
+		WHEN 'amneziawg' THEN k.awg_public || ' ' || host(k.awg_address)
+		ELSE k.vless_id::text END AS key
 	FROM entry_grants g
 	JOIN entry_relays r ON r.id = g.relay_id
 	JOIN hub_access_keys k ON k.account_id = g.account_id
 	WHERE r.name = $1 AND g.revoked_at IS NULL
+	  AND ($2 <> 'amneziawg' OR k.awg_public IS NOT NULL)
 	  AND EXISTS (SELECT 1 FROM hub_subscriptions s WHERE s.account_id = g.account_id AND ` + liveTerms + `)
 	ORDER BY 1`
 
@@ -112,7 +126,7 @@ var bootRe = regexp.MustCompile(`^[0-9a-f]{16,64}$`)
 const upsertUsage = `
 	INSERT INTO hub_key_usage (account_id, relay, boot, bytes_up, bytes_down)
 	SELECT k.account_id, $2, $3, $4, $5 FROM hub_access_keys k
-	WHERE k.vless_id::text = $1 OR k.hy2_auth = $1
+	WHERE k.vless_id::text = $1 OR k.hy2_auth = $1 OR k.awg_public = $1
 	ON CONFLICT (account_id, relay, boot) DO UPDATE
 	SET bytes_up = GREATEST(hub_key_usage.bytes_up, EXCLUDED.bytes_up),
 	    bytes_down = GREATEST(hub_key_usage.bytes_down, EXCLUDED.bytes_down),
