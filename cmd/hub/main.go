@@ -62,6 +62,8 @@ func main() {
 			runEntryFront(os.Args[2:])
 		case "entry-bench":
 			runEntryBench(os.Args[2:])
+		case "ops-token":
+			runOpsToken(os.Args[2:])
 		case "entry-vantage-token":
 			runEntryVantageToken(os.Args[2:])
 		case "mail-test":
@@ -279,8 +281,12 @@ func run() error {
 	adminMux.HandleFunc("POST /api/v1/admin/security/password", adminSecurityStepUp(authHandlers.AdminPasswordChange))
 	go runAdminCeremonyPurger(ctx, pool)
 
+	// The agent's plane (internal/admin/ops.go): logs and diagnostics by token.
+	opsGate := admin.RequireOps(pool)
 	if store != nil {
-		admin.RegisterRoutes(adminMux, admin.NewHandlers(pool, store), adminKeys, pool)
+		adminHandlers := admin.NewHandlers(pool, store)
+		admin.RegisterRoutes(adminMux, adminHandlers, adminKeys, pool)
+		admin.RegisterOpsRoutes(adminMux, adminHandlers, opsGate)
 	}
 	// Routing presets (hikkari-client engine/core/presets): editing reaches
 	// no device; what changes what devices are served is the owner's.
@@ -309,6 +315,8 @@ func run() error {
 	support.RegisterAdminRoutes(adminMux, supportStore, adminSecurity)
 	support.RegisterPublicRoutes(adminMux, supportStore, supportLimiter)
 	support.RegisterTesterAdminRoutes(adminMux, testerStore, adminSecurity)
+	support.RegisterTesterOpsRoutes(adminMux, testerStore, opsGate)
+	support.RegisterReportOpsRoutes(adminMux, supportStore, opsGate)
 	support.RegisterTesterRoutes(adminMux, testerStore, testerLimiter)
 
 	port := os.Getenv("PORT")

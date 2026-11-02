@@ -38,6 +38,9 @@ var testerLogGuide = map[string]any{
 		"diag:ifaces":      "сетевые интерфейсы до и после старта",
 		"testerlog":        "служебные отметки потока логов: момент включения режима тестера",
 		"support":          "отправка обращений в поддержку",
+		"doctor":           "отчёт сетевого доктора: проверка у тестера или запрос оператора. Поле nonce в источнике связывает строки с запросом request_diag; строки идут как key=json: прокси, DNS, hosts, DPI-утилиты, чужие WFP-фильтры, прямой путь, Secure DNS браузеров",
+		"netdoctor":        "сетевой доктор в движке: выбор интерфейса и резолвера, прямой путь при выключенном туннеле, шаги ремонта",
+		"snapshot":         "снимок по запросу оператора: система, интерфейсы, живые соединения, STUN и задержка до сервера",
 	},
 	"how_to_diagnose": []string{
 		"Сравни diag:proxy-delay и singbox-ошибки по времени с жалобой: рост задержки и таймауты на одном сервере при чистых diag:conn — проблема сервера или канала до него.",
@@ -94,14 +97,16 @@ func sourceGroup(src string) string {
 }
 
 // TesterExportHandler streams an install's log for a window as NDJSON.
-// Query: from, to (unix seconds; default: the last 24 hours).
+// Query: from, to (unix seconds; default: the last 24 hours); src keeps only
+// the log lines whose source starts with it («diag:conn», «doctor nonce=ab12»).
 func TesterExportHandler(store TesterStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		install := strings.TrimSpace(r.PathValue("install"))
-		if install == "" {
-			writeErr(w, http.StatusBadRequest, "install is required")
+		install, alias, err := store.ResolveInstall(r.Context(), r.PathValue("install"))
+		if err != nil {
+			writeResolveErr(w, err)
 			return
 		}
+		srcPrefix := r.URL.Query().Get("src")
 		to := time.Now()
 		from := to.Add(-24 * time.Hour)
 		for key, dst := range map[string]*time.Time{"from": &from, "to": &to} {
@@ -148,6 +153,9 @@ func TesterExportHandler(store TesterStore) http.HandlerFunc {
 			}
 			for _, line := range strings.Split(c.Body, "\n") {
 				rec := parseTesterLine(line)
+				if srcPrefix != "" && !strings.HasPrefix(rec.Src, srcPrefix) {
+					continue
+				}
 				bySource[sourceGroup(rec.Src)]++
 				if rec.Level != "" {
 					levels[rec.Level]++
@@ -165,6 +173,7 @@ func TesterExportHandler(store TesterStore) http.HandlerFunc {
 		meta := map[string]any{
 			"type":       "meta",
 			"kind":       "hikkari-tester-log",
+			"alias":      alias,
 			"install_id": install,
 			"platform":   platform,
 			"version":    version,
@@ -178,7 +187,7 @@ func TesterExportHandler(store TesterStore) http.HandlerFunc {
 		}
 		summary := map[string]any{"type": "summary", "by_source": bySource, "by_level": levels}
 
-		name := fmt.Sprintf("tester-%s-%s.ndjson", install, to.UTC().Format("2006-01-02-15-04"))
+		name := fmt.Sprintf("%s-%s.ndjson", alias, to.UTC().Format("2006-01-02-15-04"))
 		w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
 		enc := json.NewEncoder(w)

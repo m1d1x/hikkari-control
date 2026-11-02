@@ -25,6 +25,12 @@ func RegisterAdminRoutes(mux *http.ServeMux, store Store, gate func(http.Handler
 	mux.HandleFunc("POST /api/v1/admin/support/reports/{id}/status", gate(StatusHandler(store)))
 }
 
+// RegisterReportOpsRoutes mounts ticket reads for the agent's token.
+func RegisterReportOpsRoutes(mux *http.ServeMux, store Store, gate func(action string, h http.HandlerFunc) http.HandlerFunc) {
+	mux.HandleFunc("GET /api/v1/ops/tickets", gate("", ListHandler(store)))
+	mux.HandleFunc("GET /api/v1/ops/tickets/{id}", gate("ops.ticket.read", GetHandler(store)))
+}
+
 // ReportHandler handles diagnostic report submissions from clients.
 func ReportHandler(store Store, limiter *Limiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

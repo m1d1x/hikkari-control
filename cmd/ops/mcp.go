@@ -1,0 +1,163 @@
+package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"io"
+)
+
+// A minimal MCP server over stdio: newline-delimited JSON-RPC, tools only. It
+// has one client (the local agent) and these few methods are the whole of the
+// protocol it needs, so no SDK.
+
+type toolArg struct {
+	name, desc string
+	required   bool
+}
+
+type tool struct {
+	mcpName, command, desc string
+	args                   []toolArg
+	// positional names the arguments the shell form takes without --name.
+	positional []string
+}
+
+var whoArg = toolArg{"who", "Тестер: tester-003, 003, install_id или уникальный префикс", true}
+
+var tools = []tool{
+	{mcpName: "testers", command: "testers", desc: "Тестеры, что шлют логи: алиас, install_id, версия, ОС, last_seen, online."},
+	{mcpName: "logs", command: "logs", positional: []string{"who"},
+		desc: "Логи тестера в NDJSON: meta с гидом по источникам, summary, затем записи log и gap. По умолчанию последний час и последние 1000 записей.",
+		args: []toolArg{whoArg,
+			{"last", "Окно назад от to: 30m, 2h, 3d", false},
+			{"from", "Начало: unix-секунды или RFC 3339", false},
+			{"to", "Конец: unix-секунды или RFC 3339", false},
+			{"src", "Только источники с этим префиксом: diag:conn, singbox, doctor", false},
+			{"tail", "Сколько последних записей оставить", false}}},
+	{mcpName: "request_diag", command: "diag", positional: []string{"who"},
+		desc: "Запросить диагностику у тестера на связи и дождаться результата (до 150 с). Только чтение на машине тестера. Тестер не на связи — сразу ошибка.",
+		args: []toolArg{whoArg, {"kind", "run_doctor (по умолчанию): отчёт сетевого доктора; snapshot: система, интерфейсы, соединения, STUN", false}}},
+	{mcpName: "rename", command: "rename", positional: []string{"who", "alias"}, desc: "Переименовать тестера.",
+		args: []toolArg{whoArg, {"alias", "Новое имя: строчные буквы, цифры, дефисы", true}, {"note", "Заметка оператора", false}}},
+	{mcpName: "errors", command: "errors", desc: "Группы ошибок клиентов из телеметрии.",
+		args: []toolArg{{"window", "24h, 7d или 30d", false}}},
+	{mcpName: "tickets", command: "tickets", desc: "Обращения в поддержку (H-XXXX).",
+		args: []toolArg{{"status", "Фильтр по статусу", false}}},
+	{mcpName: "ticket", command: "ticket", positional: []string{"id"}, desc: "Одно обращение с логами.",
+		args: []toolArg{{"id", "Идентификатор обращения", true}}},
+	{mcpName: "ci_status", command: "ci", desc: "Последние прогоны GitHub Actions.",
+		args: []toolArg{{"repo", "client (по умолчанию) или control", false}, {"ref", "Ветка", false}, {"limit", "Сколько прогонов", false}}},
+	{mcpName: "release_status", command: "release", desc: "Какие версии отдают каналы обновлений stable и beta, как их видит клиент."},
+}
+
+func toolsByCommand() map[string]tool {
+	out := make(map[string]tool, len(tools))
+	for _, t := range tools {
+		out[t.command] = t
+	}
+	return out
+}
+
+func toolSchemas() []map[string]any {
+	out := make([]map[string]any, 0, len(tools))
+	for _, t := range tools {
+		props := map[string]any{}
+		required := []string{}
+		for _, a := range t.args {
+			props[a.name] = map[string]any{"type": "string", "description": a.desc}
+			if a.required {
+				required = append(required, a.name)
+			}
+		}
+		out = append(out, map[string]any{
+			"name":        t.mcpName,
+			"description": t.desc,
+			"inputSchema": map[string]any{"type": "object", "properties": props, "required": required},
+		})
+	}
+	return out
+}
+
+type rpcRequest struct {
+	ID     json.RawMessage `json:"id"`
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
+}
+
+func serveMCP(c *client, in io.Reader, out io.Writer) error {
+	sc := bufio.NewScanner(in)
+	sc.Buffer(make([]byte, 0, 1<<16), 1<<24)
+	enc := json.NewEncoder(out)
+	enc.SetEscapeHTML(false)
+	for sc.Scan() {
+		var req rpcRequest
+		if err := json.Unmarshal(sc.Bytes(), &req); err != nil {
+			continue
+		}
+		if len(req.ID) == 0 {
+			continue // a notification: nothing to answer
+		}
+		result, rpcErr := handleRPC(c, req)
+		resp := map[string]any{"jsonrpc": "2.0", "id": req.ID}
+		if rpcErr != nil {
+			resp["error"] = rpcErr
+		} else {
+			resp["result"] = result
+		}
+		if err := enc.Encode(resp); err != nil {
+			return err
+		}
+	}
+	return sc.Err()
+}
+
+func handleRPC(c *client, req rpcRequest) (any, map[string]any) {
+	switch req.Method {
+	case "initialize":
+		var p struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		_ = json.Unmarshal(req.Params, &p)
+		if p.ProtocolVersion == "" {
+			p.ProtocolVersion = "2025-06-18"
+		}
+		return map[string]any{
+			"protocolVersion": p.ProtocolVersion,
+			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"serverInfo":      map[string]any{"name": "hikkari-ops", "version": "1"},
+			"instructions":    "Логи и диагностика тестеров Hikkari, ошибки, обращения, CI и каналы обновлений. Петля разбора описана в hikkari-client/AGENTS.md.",
+		}, nil
+	case "ping":
+		return map[string]any{}, nil
+	case "tools/list":
+		return map[string]any{"tools": toolSchemas()}, nil
+	case "tools/call":
+		var p struct {
+			Name      string            `json:"name"`
+			Arguments map[string]string `json:"arguments"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, map[string]any{"code": -32602, "message": err.Error()}
+		}
+		for _, t := range tools {
+			if t.mcpName != p.Name {
+				continue
+			}
+			text, err := c.call(t.command, p.Arguments)
+			if err != nil {
+				return toolResult(err.Error(), true), nil
+			}
+			return toolResult(text, false), nil
+		}
+		return nil, map[string]any{"code": -32602, "message": fmt.Sprintf("unknown tool %q", p.Name)}
+	}
+	return nil, map[string]any{"code": -32601, "message": "method not found: " + req.Method}
+}
+
+func toolResult(text string, isError bool) map[string]any {
+	return map[string]any{
+		"content": []map[string]any{{"type": "text", "text": text}},
+		"isError": isError,
+	}
+}

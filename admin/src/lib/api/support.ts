@@ -1,7 +1,7 @@
 // The support inbox — every conversation users have with the official
 // account «Hikkari», whether or not a ticket stands behind it. Tickets remain in
 // tickets.ts; their milestones land in these same conversations.
-import { get, getText, patch, post } from './client';
+import { get, getText, patch, post, put } from './client';
 import type { AdminConvMessage, TicketStatus } from './tickets';
 
 export type ProductTicketStatus = 'open' | 'answered' | 'closed';
@@ -118,7 +118,12 @@ export async function markSupportConversationRead(convId: string): Promise<{ ok:
 
 /** An install streaming its log in tester mode (hikkari-client engine/core/testerlog). */
 export interface TesterInstall {
+	/** tester-001, or the operator's own name; shown first everywhere */
+	alias: string;
 	install_id: string;
+	note: string;
+	/** a signal within the last three minutes: a diagnostic request would reach it */
+	online: boolean;
 	platform: string;
 	version: string;
 	chunks: number;
@@ -155,6 +160,11 @@ export async function fetchTesterChunks(install: string, since?: number): Promis
  *  `log` per line and a `gap` where the client lost lines. */
 export async function exportTesterLog(install: string, from: number, to: number): Promise<string> {
 	return getText(`/api/v1/admin/support/tester-logs/${encodeURIComponent(install)}/export`, { from, to });
+}
+
+/** Rename an install. The hub takes the alias, its number or the install id in the path. */
+export async function renameTester(install: string, alias: string, note: string): Promise<void> {
+	await put(`/api/v1/admin/support/tester-logs/${encodeURIComponent(install)}/alias`, { alias, note });
 }
 
 /** One relay as a tester's latest round saw it (internal/support/testerrelays.go). */

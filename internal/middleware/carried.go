@@ -250,6 +250,7 @@ var csrfSkipPaths = map[string]bool{
 // Used for routes that namespace under a fixed root (probes etc).
 var csrfSkipPrefixes = []string{
 	"/api/v1/internal/", // internal probes — bearer-token authed
+	"/api/v1/ops/",      // the agent's plane — bearer-token authed, no cookie to forge
 	// Provider webhook callbacks. Third-party services (Unisender Go,
 	// future Stripe etc.) can't carry our CSRF cookie/header — each
 	// handler under this prefix MUST verify its own per-provider auth

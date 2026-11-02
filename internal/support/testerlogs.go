@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -36,11 +37,19 @@ type TesterChunkRequest struct {
 	// Dropped counts lines the client discarded because its buffer was full
 	// (hub unreachable for a long time); shown so a gap is not misread.
 	Dropped int `json:"dropped"`
+	// Heartbeat marks a call with nothing to ship: the client is on the line and
+	// asks for commands. It updates the last signal and stores no chunk.
+	Heartbeat bool `json:"heartbeat,omitempty"`
+	// Acks names the commands whose result ends in this batch.
+	Acks []string `json:"acks,omitempty"`
 }
 
 // TesterInstall summarizes one install's stream for the admin list.
 type TesterInstall struct {
+	// Alias comes first everywhere: tester-001, or the operator's own name.
+	Alias     string    `json:"alias"`
 	InstallID string    `json:"install_id"`
+	Note      string    `json:"note"`
 	Platform  string    `json:"platform"`
 	Version   string    `json:"version"`
 	Chunks    int       `json:"chunks"`
@@ -48,6 +57,8 @@ type TesterInstall struct {
 	Dropped   int       `json:"dropped"`
 	FirstSeen time.Time `json:"first_seen"`
 	LastSeen  time.Time `json:"last_seen"`
+	// Online: a signal within TesterOnlineWindow, so a command would reach it.
+	Online bool `json:"online"`
 }
 
 // TesterChunk is one stored batch.
@@ -63,8 +74,20 @@ type TesterChunk struct {
 
 // TesterStore keeps tester log chunks.
 type TesterStore interface {
+	// AppendChunk records the install's signal, naming it on first sight, and
+	// stores the batch if it carries one.
 	AppendChunk(ctx context.Context, req TesterChunkRequest) error
+	// ListInstalls returns installs heard from within retention, latest first.
 	ListInstalls(ctx context.Context) ([]TesterInstall, error)
+	// ResolveInstall finds the install a reference names (aliases.go).
+	ResolveInstall(ctx context.Context, ref string) (installID, alias string, err error)
+	RenameAlias(ctx context.Context, installID, alias, note string) (string, error)
+	// EnqueueCommand queues a command, or returns the same kind still open.
+	EnqueueCommand(ctx context.Context, installID, kind string) (TesterCommandState, error)
+	// TakeCommands hands over what waits for the install and marks it delivered.
+	TakeCommands(ctx context.Context, installID string) ([]TesterCommand, error)
+	AckCommands(ctx context.Context, installID string, nonces []string) error
+	ReadCommand(ctx context.Context, installID, nonce string) (TesterCommandState, error)
 	// ReadChunks returns the install's chunks received in (since, until],
 	// oldest first, at most limit of the newest ones. A zero until means now.
 	ReadChunks(ctx context.Context, installID string, since, until time.Time, limit int) ([]TesterChunk, error)
@@ -94,6 +117,21 @@ func RegisterTesterAdminRoutes(mux *http.ServeMux, store TesterStore, gate func(
 	mux.HandleFunc("GET /api/v1/admin/support/tester-logs", gate(TesterListHandler(store)))
 	mux.HandleFunc("GET /api/v1/admin/support/tester-logs/{install}", gate(TesterReadHandler(store)))
 	mux.HandleFunc("GET /api/v1/admin/support/tester-logs/{install}/export", gate(TesterExportHandler(store)))
+	mux.HandleFunc("PUT /api/v1/admin/support/tester-logs/{install}/alias", gate(AliasRenameHandler(store)))
+	mux.HandleFunc("POST /api/v1/admin/support/tester-logs/{install}/commands", gate(TesterCommandRequestHandler(store)))
+	mux.HandleFunc("GET /api/v1/admin/support/tester-logs/{install}/commands/{nonce}", gate(TesterCommandStatusHandler(store)))
+}
+
+// RegisterTesterOpsRoutes mounts what the agent's token may do: read logs, ask
+// for a diagnostic, rename. A separate path, so the token has no way into any
+// other admin route — those read only the panel's cookie. gate takes the audit
+// action; an empty one is a read not worth a row (a list, a poll).
+func RegisterTesterOpsRoutes(mux *http.ServeMux, store TesterStore, gate func(action string, h http.HandlerFunc) http.HandlerFunc) {
+	mux.HandleFunc("GET /api/v1/ops/testers", gate("", TesterListHandler(store)))
+	mux.HandleFunc("GET /api/v1/ops/testers/{install}/export", gate("ops.tester_logs.read", TesterExportHandler(store)))
+	mux.HandleFunc("PUT /api/v1/ops/testers/{install}/alias", gate("ops.tester.rename", AliasRenameHandler(store)))
+	mux.HandleFunc("POST /api/v1/ops/testers/{install}/commands", gate("ops.tester.request_diag", TesterCommandRequestHandler(store)))
+	mux.HandleFunc("GET /api/v1/ops/testers/{install}/commands/{nonce}", gate("", TesterCommandStatusHandler(store)))
 }
 
 // TesterIntakeHandler accepts one chunk from a tester install.
@@ -111,7 +149,7 @@ func TesterIntakeHandler(store TesterStore, limiter *Limiter) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "install_id is required")
 			return
 		}
-		if len(req.Lines) == 0 && req.Dropped == 0 {
+		if len(req.Lines) == 0 && req.Dropped == 0 && !req.Heartbeat && len(req.Acks) == 0 {
 			writeErr(w, http.StatusBadRequest, "lines are required")
 			return
 		}
@@ -132,7 +170,22 @@ func TesterIntakeHandler(store TesterStore, limiter *Limiter) http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "failed to save chunk")
 			return
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"ok": true})
+		// The batch is saved: a failure below costs a command, which its caller
+		// sees as a timeout, not the lines, which the client would send again.
+		if len(req.Acks) > 0 {
+			if err := store.AckCommands(r.Context(), req.InstallID, req.Acks); err != nil {
+				log.Printf("support: ack tester commands: %v", err)
+			}
+		}
+		commands, err := store.TakeCommands(r.Context(), req.InstallID)
+		if err != nil {
+			log.Printf("support: take tester commands: %v", err)
+		}
+		resp := map[string]any{"ok": true}
+		if len(commands) > 0 {
+			resp["commands"] = commands
+		}
+		writeJSON(w, http.StatusCreated, resp)
 	}
 }
 
@@ -155,9 +208,9 @@ func TesterListHandler(store TesterStore) http.HandlerFunc {
 // optional), limit (chunks, optional).
 func TesterReadHandler(store TesterStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		install := strings.TrimSpace(r.PathValue("install"))
-		if install == "" {
-			writeErr(w, http.StatusBadRequest, "install is required")
+		install, _, err := store.ResolveInstall(r.Context(), r.PathValue("install"))
+		if err != nil {
+			writeResolveErr(w, err)
 			return
 		}
 		var since time.Time
@@ -199,17 +252,33 @@ type memTesterChunk struct {
 	chunk   TesterChunk
 }
 
-type MemTesterStore struct {
-	mu     sync.RWMutex
-	chunks []memTesterChunk
-	nextID int64
+type memInstall struct {
+	alias, note, platform, version string
+	firstSeen, lastSeen            time.Time
 }
 
-func NewMemTesterStore() *MemTesterStore { return &MemTesterStore{nextID: 1} }
+type MemTesterStore struct {
+	mu       sync.RWMutex
+	chunks   []memTesterChunk
+	nextID   int64
+	installs map[string]*memInstall
+	aliasSeq int
+	commands []*TesterCommandState
+	// now is the clock; tests move it.
+	now func() time.Time
+}
+
+func NewMemTesterStore() *MemTesterStore {
+	return &MemTesterStore{nextID: 1, installs: map[string]*memInstall{}, now: time.Now}
+}
 
 func (s *MemTesterStore) AppendChunk(_ context.Context, req TesterChunkRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.touchInstall(req)
+	if len(req.Lines) == 0 && req.Dropped == 0 {
+		return nil
+	}
 	s.chunks = append(s.chunks, memTesterChunk{install: req.InstallID, chunk: TesterChunk{
 		ID:         s.nextID,
 		Platform:   req.Platform,
@@ -226,21 +295,25 @@ func (s *MemTesterStore) AppendChunk(_ context.Context, req TesterChunkRequest) 
 func (s *MemTesterStore) ListInstalls(_ context.Context) ([]TesterInstall, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	byID := map[string]*TesterInstall{}
-	for _, c := range s.chunks {
-		in := byID[c.install]
-		if in == nil {
-			in = &TesterInstall{InstallID: c.install, FirstSeen: c.chunk.ReceivedAt}
-			byID[c.install] = in
+	now := s.now()
+	out := make([]TesterInstall, 0, len(s.installs))
+	for id, m := range s.installs {
+		if now.Sub(m.lastSeen) > TesterLogRetention {
+			continue
 		}
-		in.Platform, in.Version, in.LastSeen = c.chunk.Platform, c.chunk.Version, c.chunk.ReceivedAt
-		in.Chunks++
-		in.Lines += c.chunk.Lines
-		in.Dropped += c.chunk.Dropped
-	}
-	out := make([]TesterInstall, 0, len(byID))
-	for _, in := range byID {
-		out = append(out, *in)
+		in := TesterInstall{
+			Alias: m.alias, InstallID: id, Note: m.note, Platform: m.platform, Version: m.version,
+			FirstSeen: m.firstSeen, LastSeen: m.lastSeen, Online: now.Sub(m.lastSeen) <= TesterOnlineWindow,
+		}
+		for _, c := range s.chunks {
+			if c.install != id {
+				continue
+			}
+			in.Chunks++
+			in.Lines += c.chunk.Lines
+			in.Dropped += c.chunk.Dropped
+		}
+		out = append(out, in)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].LastSeen.After(out[j].LastSeen) })
 	return out, nil
@@ -313,6 +386,12 @@ type DBTesterStore struct {
 }
 
 func (s *DBTesterStore) AppendChunk(ctx context.Context, req TesterChunkRequest) error {
+	if err := touchInstallDB(ctx, s.pool, req); err != nil {
+		return err
+	}
+	if len(req.Lines) == 0 && req.Dropped == 0 {
+		return nil
+	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO support_tester_log_chunks (install_id, platform, version, lines, dropped, body)
 		VALUES ($1, $2, $3, $4, $5, $6)
@@ -325,24 +404,31 @@ func (s *DBTesterStore) AppendChunk(ctx context.Context, req TesterChunkRequest)
 
 func (s *DBTesterStore) ListInstalls(ctx context.Context) ([]TesterInstall, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT install_id,
-		       (array_agg(platform ORDER BY received_at DESC))[1],
-		       (array_agg(version ORDER BY received_at DESC))[1],
-		       count(*), sum(lines), sum(dropped), min(received_at), max(received_at)
-		FROM support_tester_log_chunks
-		GROUP BY install_id
-		ORDER BY max(received_at) DESC
-	`)
+		SELECT a.alias, a.install_id, a.note, a.platform, a.version,
+		       COALESCE(c.chunks, 0), COALESCE(c.lines, 0), COALESCE(c.dropped, 0),
+		       COALESCE(c.first_seen, a.created_at), a.last_seen_at
+		FROM support_install_aliases a
+		LEFT JOIN (
+			SELECT install_id, count(*) AS chunks, sum(lines) AS lines, sum(dropped) AS dropped,
+			       min(received_at) AS first_seen
+			FROM support_tester_log_chunks
+			GROUP BY install_id
+		) c USING (install_id)
+		WHERE a.last_seen_at > $1
+		ORDER BY a.last_seen_at DESC
+	`, time.Now().Add(-TesterLogRetention))
 	if err != nil {
 		return nil, fmt.Errorf("list tester installs: %w", err)
 	}
 	defer rows.Close()
+	now := time.Now()
 	var out []TesterInstall
 	for rows.Next() {
 		var in TesterInstall
-		if err := rows.Scan(&in.InstallID, &in.Platform, &in.Version, &in.Chunks, &in.Lines, &in.Dropped, &in.FirstSeen, &in.LastSeen); err != nil {
+		if err := rows.Scan(&in.Alias, &in.InstallID, &in.Note, &in.Platform, &in.Version, &in.Chunks, &in.Lines, &in.Dropped, &in.FirstSeen, &in.LastSeen); err != nil {
 			return nil, fmt.Errorf("scan tester install: %w", err)
 		}
+		in.Online = now.Sub(in.LastSeen) <= TesterOnlineWindow
 		out = append(out, in)
 	}
 	return out, rows.Err()
@@ -407,5 +493,17 @@ func (s *DBTesterStore) PurgeChunks(ctx context.Context, olderThan time.Duration
 	if err != nil {
 		return 0, fmt.Errorf("purge tester chunks: %w", err)
 	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM support_tester_commands WHERE created_at < $1`, time.Now().Add(-olderThan)); err != nil {
+		return 0, fmt.Errorf("purge tester commands: %w", err)
+	}
 	return tag.RowsAffected(), nil
+}
+
+// AgeInstallForTest moves an install's last signal into the past.
+func (s *MemTesterStore) AgeInstallForTest(installID string, by time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if in := s.installs[installID]; in != nil {
+		in.lastSeen = in.lastSeen.Add(-by)
+	}
 }

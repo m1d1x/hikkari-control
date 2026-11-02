@@ -5,6 +5,7 @@
 		exportTesterLog,
 		fetchTesterChunks,
 		fetchTesterInstalls,
+		renameTester,
 		type TesterChunk,
 		type TesterInstall,
 	} from '$lib/api/support';
@@ -77,6 +78,18 @@
 		const q = query.trim().toLowerCase();
 		return q ? lines.filter((l) => l.toLowerCase().includes(q)) : lines;
 	});
+
+	async function rename() {
+		if (!selected) return;
+		const alias = prompt(`новое имя для ${selected.alias}`, selected.alias)?.trim();
+		if (!alias) return;
+		try {
+			await renameTester(selected.install_id, alias, selected.note);
+			installs = (await fetchTesterInstalls()).installs;
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		}
+	}
 
 	async function loadInstalls() {
 		try {
@@ -158,7 +171,8 @@
 		{/if}
 		{#each installs as i (i.install_id)}
 			<button class="inst" class:on={i.install_id === current} onclick={() => select(i.install_id)}>
-				<div class="id">{i.install_id}</div>
+				<div class="id">{i.alias}{#if i.online} · на связи{/if}</div>
+				<div class="dim">{i.install_id}{#if i.note} · {i.note}{/if}</div>
 				<div class="dim">
 					{i.platform} · {i.version} · {num(i.lines)} строк · {ago(new Date(i.last_seen).getTime())} назад
 					{#if i.dropped > 0}· <span class="warn">потеряно {num(i.dropped)}</span>{/if}
@@ -174,6 +188,7 @@
 				<label class="dim"><input type="checkbox" bind:checked={follow} /> следить</label>
 				<button class="chip" onclick={copy}>{copied ? 'скопировано' : 'копировать'}</button>
 				<button class="chip" onclick={download}>скачать</button>
+				<button class="chip" onclick={rename}>переименовать</button>
 			</div>
 			<div class="llm">
 				<span class="dim">для LLM за</span>
