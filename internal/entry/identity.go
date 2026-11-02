@@ -518,19 +518,20 @@ func (id Identity) EdgeEnv() (map[string]string, error) {
 	}
 	if a := id.Awg; a != nil {
 		return map[string]string{
-			"EDGE_PROTO":           ProtoAmneziaWG,
-			"EDGE_PORT":            strconv.Itoa(id.Port),
-			"EDGE_AWG_PRIVATE_KEY": a.ServerPrivateKey,
-			"EDGE_AWG_PROBE_PEER":  a.ProbePublicKey + " " + AwgProbeAddress,
-			"EDGE_AWG_JC":          strconv.Itoa(a.Jc),
-			"EDGE_AWG_JMIN":        strconv.Itoa(a.Jmin),
-			"EDGE_AWG_JMAX":        strconv.Itoa(a.Jmax),
-			"EDGE_AWG_S1":          strconv.Itoa(a.S1),
-			"EDGE_AWG_S2":          strconv.Itoa(a.S2),
-			"EDGE_AWG_H1":          a.H1,
-			"EDGE_AWG_H2":          a.H2,
-			"EDGE_AWG_H3":          a.H3,
-			"EDGE_AWG_H4":          a.H4,
+			"EDGE_PROTO":             ProtoAmneziaWG,
+			"EDGE_PORT":              strconv.Itoa(id.Port),
+			"EDGE_AWG_PRIVATE_KEY":   a.ServerPrivateKey,
+			"EDGE_AWG_PROBE_KEY":     a.ProbePublicKey,
+			"EDGE_AWG_PROBE_ADDRESS": AwgProbeAddress,
+			"EDGE_AWG_JC":            strconv.Itoa(a.Jc),
+			"EDGE_AWG_JMIN":          strconv.Itoa(a.Jmin),
+			"EDGE_AWG_JMAX":          strconv.Itoa(a.Jmax),
+			"EDGE_AWG_S1":            strconv.Itoa(a.S1),
+			"EDGE_AWG_S2":            strconv.Itoa(a.S2),
+			"EDGE_AWG_H1":            a.H1,
+			"EDGE_AWG_H2":            a.H2,
+			"EDGE_AWG_H3":            a.H3,
+			"EDGE_AWG_H4":            a.H4,
 		}, nil
 	}
 	covers := ""

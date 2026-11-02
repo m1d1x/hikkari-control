@@ -77,10 +77,11 @@ const (
 type AwgConfig struct {
 	PrivateKey string // base64
 	Port       int
-	// ProbePeer is "<public key> <address>": the vantage's own peer, what
-	// EDGE_CLIENTS is to the other protocols.
-	ProbePeer string
-	Obf       AwgObfuscation
+	// ProbeKey and ProbeAddress are the vantage's own peer, what EDGE_CLIENTS
+	// is to the other protocols.
+	ProbeKey     string
+	ProbeAddress string
+	Obf          AwgObfuscation
 }
 
 // AwgObfuscation is what both ends must agree on. H1..H4 stay strings: the
@@ -102,10 +103,13 @@ func AwgConfigFromEnv(getenv func(string) string) (AwgConfig, error) {
 		return c, fmt.Errorf("EDGE_PORT: %q is not a port", getenv("EDGE_PORT"))
 	}
 	c.Port = port
-	c.ProbePeer = getenv("EDGE_AWG_PROBE_PEER")
-	if c.ProbePeer != "" {
-		if _, err := parseAwgPeer(c.ProbePeer); err != nil {
-			return c, fmt.Errorf("EDGE_AWG_PROBE_PEER: %w", err)
+	c.ProbeKey, c.ProbeAddress = getenv("EDGE_AWG_PROBE_KEY"), getenv("EDGE_AWG_PROBE_ADDRESS")
+	if c.ProbeKey != "" || c.ProbeAddress != "" {
+		if _, err := awgKeyHex(c.ProbeKey); err != nil {
+			return c, fmt.Errorf("EDGE_AWG_PROBE_KEY: %w", err)
+		}
+		if _, err := netip.ParseAddr(c.ProbeAddress); err != nil {
+			return c, fmt.Errorf("EDGE_AWG_PROBE_ADDRESS: %w", err)
 		}
 	}
 	for _, f := range []struct {
@@ -227,8 +231,8 @@ func startAwg(ctx context.Context, cfg AwgConfig, dial awgDialer) (*awgServer, e
 	fmt.Fprintf(&uapi, "private_key=%s\nlisten_port=%d\n", priv, cfg.Port)
 	fmt.Fprintf(&uapi, "jc=%d\njmin=%d\njmax=%d\ns1=%d\ns2=%d\nh1=%s\nh2=%s\nh3=%s\nh4=%s\n",
 		cfg.Obf.Jc, cfg.Obf.Jmin, cfg.Obf.Jmax, cfg.Obf.S1, cfg.Obf.S2, cfg.Obf.H1, cfg.Obf.H2, cfg.Obf.H3, cfg.Obf.H4)
-	if cfg.ProbePeer != "" {
-		p, err := parseAwgPeer(cfg.ProbePeer)
+	if cfg.ProbeKey != "" {
+		p, err := parseAwgPeer(cfg.ProbeKey + " " + cfg.ProbeAddress)
 		if err != nil {
 			dev.Close()
 			return nil, err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -83,9 +84,16 @@ func TestAwgEdgeEnvNamesEveryField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"EDGE_PROTO", "EDGE_PORT", "EDGE_AWG_PRIVATE_KEY", "EDGE_AWG_PROBE_PEER", "EDGE_AWG_JC", "EDGE_AWG_JMIN", "EDGE_AWG_JMAX", "EDGE_AWG_S1", "EDGE_AWG_S2", "EDGE_AWG_H1", "EDGE_AWG_H2", "EDGE_AWG_H3", "EDGE_AWG_H4"} {
+	for _, k := range []string{"EDGE_PROTO", "EDGE_PORT", "EDGE_AWG_PRIVATE_KEY", "EDGE_AWG_PROBE_KEY", "EDGE_AWG_PROBE_ADDRESS", "EDGE_AWG_JC", "EDGE_AWG_JMIN", "EDGE_AWG_JMAX", "EDGE_AWG_S1", "EDGE_AWG_S2", "EDGE_AWG_H1", "EDGE_AWG_H2", "EDGE_AWG_H3", "EDGE_AWG_H4"} {
 		if env[k] == "" {
 			t.Errorf("%s is empty", k)
+		}
+	}
+	// The swap script expands the env through a shell: a space in a value
+	// makes its second half a command (eun15, exit 127).
+	for k, v := range env {
+		if strings.ContainsAny(v, " \t\n\"'$`\\") {
+			t.Errorf("%s=%q does not survive the swap script", k, v)
 		}
 	}
 	if env["EDGE_PROTO"] != ProtoAmneziaWG || env["EDGE_PORT"] != "31000" {

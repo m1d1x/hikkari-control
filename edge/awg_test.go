@@ -268,7 +268,7 @@ func TestParseAwgStats(t *testing.T) {
 func TestAwgConfigFromEnvNamesWhatIsWrong(t *testing.T) {
 	priv, pub := awgKeyPair(t)
 	env := map[string]string{
-		"EDGE_AWG_PRIVATE_KEY": priv, "EDGE_PORT": "51820", "EDGE_AWG_PROBE_PEER": pub + " 10.66.0.1",
+		"EDGE_AWG_PRIVATE_KEY": priv, "EDGE_PORT": "51820", "EDGE_AWG_PROBE_KEY": pub, "EDGE_AWG_PROBE_ADDRESS": "10.66.0.1",
 		"EDGE_AWG_JC": "4", "EDGE_AWG_JMIN": "40", "EDGE_AWG_JMAX": "70", "EDGE_AWG_S1": "33", "EDGE_AWG_S2": "57",
 		"EDGE_AWG_H1": "1", "EDGE_AWG_H2": "2", "EDGE_AWG_H3": "3", "EDGE_AWG_H4": "4",
 	}
@@ -276,7 +276,7 @@ func TestAwgConfigFromEnvNamesWhatIsWrong(t *testing.T) {
 	if _, err := AwgConfigFromEnv(get); err != nil {
 		t.Fatal(err)
 	}
-	for key, bad := range map[string]string{"EDGE_AWG_PRIVATE_KEY": "abc", "EDGE_PORT": "0", "EDGE_AWG_JC": "0", "EDGE_AWG_JMAX": "10", "EDGE_AWG_H3": "", "EDGE_AWG_PROBE_PEER": "nope"} {
+	for key, bad := range map[string]string{"EDGE_AWG_PRIVATE_KEY": "abc", "EDGE_PORT": "0", "EDGE_AWG_JC": "0", "EDGE_AWG_JMAX": "10", "EDGE_AWG_H3": "", "EDGE_AWG_PROBE_KEY": "nope", "EDGE_AWG_PROBE_ADDRESS": "nope"} {
 		was := env[key]
 		env[key] = bad
 		if _, err := AwgConfigFromEnv(get); err == nil || !strings.Contains(err.Error(), key) {
