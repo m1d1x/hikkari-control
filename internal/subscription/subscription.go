@@ -208,11 +208,11 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string) (
 	if err != nil {
 		return nil, err
 	}
-	nodes := map[string]string{}
+	nodes := map[string]entry.NodeName{}
 	if registry, ok := s.batch.(interface {
-		NodeSlugs(context.Context) (map[string]string, error)
+		NodeNames(context.Context) (map[string]entry.NodeName, error)
 	}); ok {
-		nodes, err = registry.NodeSlugs(ctx)
+		nodes, err = registry.NodeNames(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -242,13 +242,8 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string) (
 			render = AwgLink
 		}
 		link, err := render(withKey(rec, key))
-		if err == nil && nodes[rec.Name] != "" && rec.Proto != entry.ProtoAmneziaWG {
-			u, _ := url.Parse(link)
-			q := u.Query()
-			q.Set("hikkari-node", "n:"+nodes[rec.Name])
-			u.RawQuery = q.Encode()
-			u.Fragment = "Hikkari " + nodes[rec.Name]
-			link = u.String()
+		if err == nil && rec.Proto != entry.ProtoAmneziaWG {
+			link = namedLink(link, nodes[rec.Name])
 		}
 		if err != nil {
 			continue
@@ -256,6 +251,23 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string) (
 		links = append(links, link)
 	}
 	return links, nil
+}
+
+// namedLink puts a relay's logical node on its link: the name a subscriber
+// reads and the id the downdetector keys on, both surviving the relay's
+// replacement. A relay with no node yet keeps the link it was rendered with.
+func namedLink(link string, node entry.NodeName) string {
+	u, err := url.Parse(link)
+	if err != nil || node.Slug == "" {
+		return link
+	}
+	q := u.Query()
+	q.Set("hikkari-node", "n:"+node.Slug)
+	u.RawQuery = q.Encode()
+	if node.Label != "" {
+		u.Fragment = node.Label
+	}
+	return u.String()
 }
 
 // Handler serves GET /sub/{token}: base64 of the links, one per line — the
@@ -293,7 +305,7 @@ func (s *Service) Handler() http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Profile-Title", "base64:"+base64.StdEncoding.EncodeToString([]byte("Hikkari")))
+		w.Header().Set("Profile-Title", "base64:"+base64.StdEncoding.EncodeToString([]byte("hikkari")))
 		w.Header().Set("Profile-Update-Interval", "1")
 		// The links stay served after the period ends or the traffic runs
 		// out: the relays no longer let the key through (keys.go), and the

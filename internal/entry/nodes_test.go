@@ -28,11 +28,11 @@ func TestNodeSlugSurvivesReplacementWithinItsPool(t *testing.T) {
 	box, _ := h.box()
 	old := h.relay(box, KindPersonal)
 	h.admit(old)
-	before, err := h.svc.NodeSlugs(ctx)
+	before, err := h.svc.NodeNames(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if before[old] == "" {
+	if before[old].Slug == "" {
 		t.Fatal("admission has no logical node")
 	}
 	if _, _, err := h.svc.Retire(ctx, box, DeathOther); err != nil {
@@ -41,19 +41,22 @@ func TestNodeSlugSurvivesReplacementWithinItsPool(t *testing.T) {
 	freshBox, _ := h.box()
 	fresh := h.relay(freshBox, KindPersonal)
 	h.admit(fresh)
-	after, err := h.svc.NodeSlugs(ctx)
+	after, err := h.svc.NodeNames(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if after[fresh] != before[old] {
-		t.Fatalf("replacement changed slug: %v -> %v", before, after)
+		t.Fatalf("replacement changed its node: %v -> %v", before, after)
+	}
+	if before[old].Label == "" || after[fresh].Label != before[old].Label {
+		t.Fatalf("replacement changed the name subscribers read: %v -> %v", before, after)
 	}
 	nodes, err := h.svc.FleetNodes(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, n := range nodes {
-		if n.Slug == after[fresh] && (n.Relay != fresh || n.Box != freshBox || n.Host == "") {
+		if n.Slug == after[fresh].Slug && (n.Relay != fresh || n.Box != freshBox || n.Host == "") {
 			t.Fatalf("stale registry binding: %+v", n)
 		}
 	}
@@ -110,5 +113,22 @@ func TestStaleNodeSignalsCannotTriggerRepair(t *testing.T) {
 	var count int
 	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM entry_incidents WHERE box=$1 AND cause='fingerprint'`, box).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("stale signal acted: %d %v", count, err)
+	}
+}
+
+func TestNodeLabelReadsCityAndNumber(t *testing.T) {
+	for _, tc := range []struct{ region, location, want string }{
+		{"eu-north2", "eu-north2, Cloud", "рига"},
+		{"ams3", "Amsterdam, NL", "амстердам"},
+		{"xx1", "Reykjavik, IS", "reykjavik"},
+		{"xx1", "", "xx1"},
+		{"", "", "узел"},
+	} {
+		if got := nodeCity(tc.region, tc.location); got != tc.want {
+			t.Errorf("nodeCity(%q, %q) = %q, want %q", tc.region, tc.location, got, tc.want)
+		}
+	}
+	if got := nodeLabel("рига", map[string]bool{"рига-001": true, "рига-003": true}); got != "рига-002" {
+		t.Fatalf("nodeLabel = %q", got)
 	}
 }
