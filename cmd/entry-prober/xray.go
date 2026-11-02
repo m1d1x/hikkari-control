@@ -246,11 +246,11 @@ func buildXrayConfig(edges []edge, socksBase int, fingerprint string) ([]byte, m
 	ports := make(map[string]int, len(edges))
 	xudp := map[string]int{}
 	for i, e := range edges {
-		port := socksBase + i
-		ports[e.Name] = port
 		if e.awg() {
 			continue
 		}
+		port := socksBase + i
+		ports[e.Name] = port
 		inTag := "in-" + e.Name
 		outTag := "out-" + e.Name
 		inTags := []string{inTag}

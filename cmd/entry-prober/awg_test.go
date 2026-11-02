@@ -59,4 +59,19 @@ func TestAwgStaysOutOfTheEngine(t *testing.T) {
 	if err := validateEdges(edges); err == nil {
 		t.Fatal("an awg relay without keys was accepted")
 	}
+
+	// No door on the engine either: startEngine waits for every door, and a
+	// wait for one that never opens would blind the round for the whole fleet
+	// (eun15 read probe_failed that way).
+	edges[0].Awg = &awgEdge{ServerPublicKey: key, ClientPrivateKey: key, ClientAddress: "10.66.0.1"}
+	raw, ports, _, err := buildXrayConfig(edges, 11810, "chrome")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ports["x1-1"]; ok {
+		t.Fatalf("an awg relay has an engine port: %v", ports)
+	}
+	if strings.Contains(string(raw), "x1-1") {
+		t.Fatalf("an awg relay reached the engine's config: %s", raw)
+	}
 }
