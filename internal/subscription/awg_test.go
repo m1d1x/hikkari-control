@@ -8,8 +8,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -166,5 +169,63 @@ func TestAwgKeyIsMadeOnceAndReachesTheRelay(t *testing.T) {
 	}
 	if up != 5 || down != 7 {
 		t.Fatalf("usage %d/%d", up, down)
+	}
+}
+
+// Only a client that says it can dial AmneziaWG gets the link, carrying its own
+// key. A released client's sing-box refuses the whole config over one such
+// endpoint (eun15, 02.11), so without the header there must be no trace of it,
+// and no key is made for an account that never asked.
+func TestAwgLinkGoesOnlyToAClientThatAsksForIt(t *testing.T) {
+	pool := livePool(t)
+	signer := entry.NewSigner("entry-1", bytes.Repeat([]byte{9}, 32))
+	rec := awgRecord()
+	rec.IssuedAt, rec.ExpiresAt = time.Now().Unix(), time.Now().Add(time.Hour).Unix()
+	batch := &fakeBatch{envelopes: [][]byte{signed(t, signer, realityRecord()), signed(t, signer, rec)}}
+	s := New(pool, batch, []entry.Key{signer.Key()})
+	ctx := context.Background()
+	name := "t-" + uuid.NewString()[:8]
+	token, err := s.Add(ctx, name, unlimited(t, s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(features string) []string {
+		req := httptest.NewRequest(http.MethodGet, "/sub/"+token, nil)
+		req.SetPathValue("token", token)
+		if features != "" {
+			req.Header.Set(featuresHeader, features)
+		}
+		rec := httptest.NewRecorder()
+		s.Handler()(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body)
+		}
+		raw, err := base64.StdEncoding.DecodeString(rec.Body.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Fields(string(raw))
+	}
+
+	for _, features := range []string{"", "something-else"} {
+		links := get(features)
+		if len(links) != 1 || !strings.HasPrefix(links[0], "vless://") {
+			t.Fatalf("features %q: %v", features, links)
+		}
+	}
+	var made *string
+	if err := pool.QueryRow(ctx, `SELECT k.awg_public FROM hub_access_keys k JOIN hub_accounts a ON a.id = k.account_id WHERE a.name = $1`, name).Scan(&made); err != nil {
+		t.Fatal(err)
+	}
+	if made != nil {
+		t.Fatal("a key was made for an account whose client never asked")
+	}
+
+	links := get("other, " + featureAmneziaWG)
+	if len(links) != 2 || !strings.HasPrefix(links[1], "vpn://") {
+		t.Fatalf("a client that asked: %v", links)
+	}
+	if err := pool.QueryRow(ctx, `SELECT k.awg_public FROM hub_access_keys k JOIN hub_accounts a ON a.id = k.account_id WHERE a.name = $1`, name).Scan(&made); err != nil || made == nil {
+		t.Fatalf("no key after the first link: %v", err)
 	}
 }

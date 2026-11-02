@@ -196,10 +196,28 @@ func (s *Service) LinksFor(ctx context.Context, token, engine string) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	return s.links(ctx, account, engine)
+	return s.links(ctx, account, engine, false)
 }
 
-func (s *Service) links(ctx context.Context, account uuid.UUID, engine string) ([]string, error) {
+// featuresHeader is how a client says what it can dial beyond what every client
+// can. AmneziaWG needs it: the clients released before it write a config their
+// sing-box refuses as a whole, so one such link would take every other server
+// down with it. A client that does not say gets the rest.
+const featuresHeader = "Hikkari-Features"
+
+const featureAmneziaWG = "amneziawg"
+
+// wantsAwg reads featuresHeader, a comma-separated list.
+func wantsAwg(h http.Header) bool {
+	for _, f := range strings.Split(h.Get(featuresHeader), ",") {
+		if strings.TrimSpace(f) == featureAmneziaWG {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, awg bool) ([]string, error) {
 	key, err := s.accessKey(ctx, account)
 	if err != nil {
 		return nil, err
@@ -232,8 +250,7 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string) (
 			render = SingBoxHysteriaLink
 		}
 		if rec.Proto == entry.ProtoAmneziaWG {
-			// Xray has no such tunnel to dial with.
-			if engine == "xray" {
+			if !awg {
 				continue
 			}
 			if err := s.ensureAwgKey(ctx, account, &key); err != nil {
@@ -296,7 +313,7 @@ func (s *Service) Handler() http.HandlerFunc {
 			terms, err = s.terms(r.Context(), account)
 		}
 		if err == nil {
-			links, err = s.links(r.Context(), account, engine)
+			links, err = s.links(r.Context(), account, engine, wantsAwg(r.Header))
 		}
 		if err != nil {
 			applog.Error(r.Context(), "subscription", "batch failed", applog.F("err", err.Error()))
