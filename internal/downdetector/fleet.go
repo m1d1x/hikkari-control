@@ -29,7 +29,15 @@ func (s *Store) FleetVerdict(id string, ext External, now, since time.Time, k in
 	result := string(VerdictUnknown)
 	for a := range audiences {
 		same, country, abroad := s.GroupsSince(id, a.asn, a.country, now, since)
-		switch Decide(ext, same, country, abroad, k) {
+		verdict := Decide(ext, same, country, abroad, k)
+		// Our own outside probe reaching the node is the abroad half of a
+		// country block when no client abroad reported it: a fleet of a few
+		// testers in one country has no such clients, and its blocked node
+		// would otherwise read unknown for as long as it stands.
+		if verdict == VerdictUnknown && ext == ExternalUp && abroad.empty() && same.dead(k) && (country.dead(k) || country.empty()) {
+			verdict = VerdictCountryBlock
+		}
+		switch verdict {
 		case VerdictServerDown:
 			return string(VerdictServerDown)
 		case VerdictCountryBlock:

@@ -18,6 +18,11 @@ type Config struct {
 	// K is the minimum number of distinct installs for a group to count in a
 	// verdict and for an aggregate row to be stored.
 	K int `yaml:"k"`
+	// FleetK is K for the hub's own decisions about its relays: whether a
+	// node of ours is blocked and must be replaced. Nothing it decides is
+	// published, so it may sit below K on a fleet with few clients, where a
+	// group of K installs on one network never forms. Zero means K.
+	FleetK int `yaml:"fleet_k"`
 	// TokenRatePerMin limits requests per invite token.
 	TokenRatePerMin int `yaml:"token_rate_per_min"`
 	// OverviewMaxHours caps GET /v1/overview?hours=.
@@ -69,6 +74,9 @@ func (c Config) validate() error {
 	if c.K < 1 {
 		return errors.New("config: k must be >= 1")
 	}
+	if c.FleetK < 0 {
+		return errors.New("config: fleet_k must be >= 0")
+	}
 	if c.TokenRatePerMin < 1 {
 		return errors.New("config: token_rate_per_min must be >= 1")
 	}
@@ -87,6 +95,14 @@ func (c Config) validate() error {
 		seen[id] = n.Name
 	}
 	return nil
+}
+
+// FleetMinInstalls is the k the hub's fleet verdicts use.
+func (c Config) FleetMinInstalls() int {
+	if c.FleetK > 0 {
+		return c.FleetK
+	}
+	return c.K
 }
 
 // Targets is the registry as the prober sees it.

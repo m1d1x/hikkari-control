@@ -63,3 +63,25 @@ func TestMovingANodeResetsProbesAndRejectsInflightOldResults(t *testing.T) {
 		t.Fatal("stale probe looks live")
 	}
 }
+
+// A tester fleet has no clients abroad. Our outside probe reaching the node
+// while every client in the country fails is the block the abroad group
+// would otherwise have shown; with the probe unknown (a UDP node) the same
+// failures read as the node being down.
+func TestFleetVerdictWithoutClientsAbroad(t *testing.T) {
+	now := time.Unix(1800000000, 0).UTC()
+	start := alignedStart(now) - WindowSec
+	s := NewStore()
+	if err := s.Add(Report{Install: "a", Country: "RU", ASN: 1, Window: [2]int64{start, start + WindowSec}, Servers: []ServerStat{{ID: "s:node", Proto: "vless", Src: SrcTunnel, OK: 0, Fail: 10}}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.FleetVerdict("s:node", ExternalUp, now, time.Time{}, 1); got != "country_block" {
+		t.Fatalf("probe up, country failing: %s", got)
+	}
+	if got := s.FleetVerdict("s:node", ExternalUnknown, now, time.Time{}, 1); got != "server_down" {
+		t.Fatalf("probe unknown, country failing: %s", got)
+	}
+	if got := s.FleetVerdict("s:node", ExternalUp, now, time.Time{}, 3); got != "unknown" {
+		t.Fatalf("one install under k=3 acted: %s", got)
+	}
+}

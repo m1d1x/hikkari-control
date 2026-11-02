@@ -24,7 +24,13 @@ func (f *fleetSignals) FleetSignals(_ context.Context, nodes []entry.FleetNode, 
 	out := map[string]entry.NodeSignal{}
 	for _, n := range nodes {
 		id := dd.NodeID(n.Slug)
-		out[n.Relay] = entry.NodeSignal{ID: id, At: now, Verdict: f.store.FleetVerdict(id, f.prober.External(id), now, n.BoundAt, f.k)}
+		// Clients report a node under the hash of its link, the outside
+		// probe under its slug: the verdict reads the one and the other.
+		reported := dd.FleetClientID(n.Host, n.Port, n.Proto)
+		if reported == "" {
+			reported = id
+		}
+		out[n.Relay] = entry.NodeSignal{ID: id, At: now, Verdict: f.store.FleetVerdict(reported, f.prober.External(id), now, n.BoundAt, f.k)}
 	}
 	return out, nil
 }
@@ -57,7 +63,7 @@ func wireDowndetector(ctx context.Context, svc *entry.Service, mux *http.ServeMu
 	}
 	store := dd.NewStore()
 	prober := dd.NewProber(nil)
-	source := &fleetSignals{store: store, prober: prober, k: cfg.K}
+	source := &fleetSignals{store: store, prober: prober, k: cfg.FleetMinInstalls()}
 	svc.SetNodeSignals(source)
 	server := &dd.Server{Store: store, Prober: prober, DB: database, Auth: dd.NewAuth(secrets, cfg.TokenRatePerMin), K: cfg.K, OverviewMaxHours: cfg.OverviewMaxHours}
 	mux.Handle("/v1/", server.Handler())
