@@ -156,6 +156,57 @@ func (s *Store) GroupsSince(id string, asn uint32, country string, now, since ti
 	return out(groups[0]), out(groups[1]), out(groups[2])
 }
 
+// Intake counts what reached the store over the last StatusWindows buckets,
+// the current one included: distinct installs and distinct servers they
+// reported. Totals only, for the operator to see that reports arrive at all;
+// nothing in it names an install or a server.
+func (s *Store) Intake(now time.Time) (installs, servers int) {
+	seenInstall, seenServer := map[string]bool{}, map[string]bool{}
+	cur := alignedStart(now)
+	s.mu.Lock()
+	for start, b := range s.buckets {
+		if start > cur || start < cur-StatusWindows*WindowSec {
+			continue
+		}
+		for inst := range b.byInstall {
+			seenInstall[inst] = true
+		}
+		for k := range b.cells {
+			seenServer[k.Server] = true
+		}
+	}
+	s.mu.Unlock()
+	return len(seenInstall), len(seenServer)
+}
+
+// TunnelTotal is server id's tunnel probes over the windows a verdict reads,
+// every network together: whether clients report the node at all, and how
+// it fares for them.
+func (s *Store) TunnelTotal(id string, now, since time.Time) Group {
+	installs := map[string]bool{}
+	var g Group
+	cur := alignedStart(now)
+	s.mu.Lock()
+	for start, b := range s.buckets {
+		if start >= cur || start < cur-StatusWindows*WindowSec || (!since.IsZero() && start < since.Unix()) {
+			continue
+		}
+		for k, c := range b.cells {
+			if k.Server != id || k.Src != SrcTunnel {
+				continue
+			}
+			for inst, v := range c {
+				installs[inst] = true
+				g.OK += v.OK
+				g.Fail += v.Fail
+			}
+		}
+	}
+	s.mu.Unlock()
+	g.Installs = len(installs)
+	return g
+}
+
 // HourCells is one hour of buckets handed to the rollup.
 type HourCells map[cellKey]map[string]contrib
 

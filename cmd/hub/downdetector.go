@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	dd "github.com/m1d1x/hikkari-control/internal/downdetector"
@@ -24,16 +25,37 @@ func (f *fleetSignals) FleetSignals(_ context.Context, nodes []entry.FleetNode, 
 	out := map[string]entry.NodeSignal{}
 	for _, n := range nodes {
 		id := dd.NodeID(n.Slug)
-		// Clients report a node under the hash of its link, the outside
-		// probe under its slug: the verdict reads the one and the other.
-		reported := dd.FleetClientID(n.Host, n.Port, n.Proto)
-		if reported == "" {
-			reported = id
-		}
+		reported := reportedID(n)
 		out[n.Relay] = entry.NodeSignal{ID: id, At: now, Verdict: f.store.FleetVerdict(reported, f.prober.External(id), now, n.BoundAt, f.k)}
 	}
 	return out, nil
 }
+
+// reportedID is the id clients report a node under: the hash of its link,
+// where the outside probe uses its slug. A node with no client id falls back
+// to the slug, which only the probe fills.
+func reportedID(n entry.FleetNode) string {
+	if id := dd.FleetClientID(n.Host, n.Port, n.Proto); id != "" {
+		return id
+	}
+	return dd.NodeID(n.Slug)
+}
+
+// intakeLine is what clients reported lately, in totals, and how each node of
+// ours fares in it: the operator's proof that reports reach the hub and land
+// on the nodes, which nothing else shows, since reports are never stored per
+// install. Node slugs are ours; nothing in the line names a client.
+func intakeLine(store *dd.Store, nodes []entry.FleetNode, now time.Time) string {
+	installs, servers := store.Intake(now)
+	var b strings.Builder
+	fmt.Fprintf(&b, "installs=%d servers=%d", installs, servers)
+	for _, n := range nodes {
+		g := store.TunnelTotal(reportedID(n), now, n.BoundAt)
+		fmt.Fprintf(&b, " %s=%d/%d/%d", n.Slug, g.Installs, g.OK, g.Fail)
+	}
+	return b.String()
+}
+
 func nodeTargets(nodes []entry.FleetNode) []dd.Target {
 	out := make([]dd.Target, 0, len(nodes))
 	for _, n := range nodes {
@@ -79,11 +101,18 @@ func wireDowndetector(ctx context.Context, svc *entry.Service, mux *http.ServeMu
 				}
 			}
 		}
+		lastIntake := ""
 		for {
 			nodes, err := svc.FleetNodes(ctx)
 			if err == nil {
 				prober.ReplaceTargets(append(cfg.Targets(), nodeTargets(nodes)...))
 				prober.Round(ctx)
+				// Logged when it changes, not every round: a quiet fleet
+				// writes one line, a live one a line per new window.
+				if line := intakeLine(store, nodes, time.Now()); line != lastIntake {
+					log.Printf("downdetector: intake %s (node=installs/ok/fail)", line)
+					lastIntake = line
+				}
 			} else if ctx.Err() == nil {
 				log.Print("downdetector: fleet registry unavailable")
 			}
