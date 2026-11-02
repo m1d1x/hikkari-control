@@ -229,6 +229,11 @@ func (c *client) request(method, path string, query url.Values, body any) ([]byt
 			cancel()
 			return nil, err
 		}
+		// The box's Caddy serves the operator plane for the host «localhost»,
+		// the panel's own origin; any other host gets an empty 200 from it.
+		if !c.direct {
+			req.Host = "localhost"
+		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := c.http.Do(req)
@@ -260,6 +265,11 @@ func (c *client) request(method, path string, query url.Values, body any) ([]byt
 				msg += " — токен отозван или выпущен на другом хабе"
 			}
 			return nil, &apiError{status: resp.StatusCode, msg: fmt.Sprintf("hub %d: %s", resp.StatusCode, msg)}
+		}
+		// Every ops route answers with a body: an empty one came from something
+		// in front of the hub, and must not read as «no data».
+		if len(data) == 0 {
+			return nil, fmt.Errorf("hub: empty answer %d from %s: the request did not reach the hub", resp.StatusCode, path)
 		}
 		return data, nil
 	}
