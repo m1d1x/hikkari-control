@@ -2,6 +2,9 @@
 db_path: /data/downdetector.db
 secrets_path: /run/secrets/downdetector.yaml
 k: 3
+# Quorum for the hub's own verdicts on its relays, never published: a handful
+# of testers does not form a group of three on one network.
+fleet_k: 1
 token_rate_per_min: 120
 overview_max_hours: 720
 nodes: []
