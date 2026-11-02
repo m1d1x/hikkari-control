@@ -14,6 +14,13 @@ package main
 //	cmd/server entry-box order [region] [plan]
 //	                                    # order a Reality machine from the saved
 //	                                    # hoster and stand it up (П9.2)
+//	cmd/server entry-box retire <box> [reason]
+//	                                    # hand a machine back and delete it at
+//	                                    # the hoster that is saved now
+//	cmd/server entry-box provider <kind> off
+//	cmd/server entry-box provider <kind> <region> <plan> [api-url]
+//	                                    # switch a hoster off, or save its
+//	                                    # account with the token from stdin
 //	cmd/server entry-box hub-key        # the hub's ssh public key, for a
 //	                                    # provider's panel (no password then)
 //	cmd/server entry-box record <relay> # an alive relay's signed record, as a
@@ -160,7 +167,9 @@ func runEntryBox(args []string) {
 		os.Exit(0)
 	}
 	order := len(args) >= 1 && len(args) <= 4 && args[0] == "order"
-	if !order && len(args) != 1 && len(args) != 4 && len(args) != 5 {
+	retire := len(args) >= 2 && len(args) <= 3 && args[0] == "retire"
+	provider := len(args) >= 3 && len(args) <= 5 && args[0] == "provider"
+	if !order && !retire && !provider && len(args) != 1 && len(args) != 4 && len(args) != 5 {
 		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain>]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|awg|voice=<region>]"))
 	}
 	if err := cryptobox.Configure(os.Getenv); err != nil {
@@ -194,6 +203,23 @@ func runEntryBox(args []string) {
 	// The one-shot CLI never runs a repair pass of its own; it wires the
 	// domains so a provisioning job can claim or buy a name (Ф6).
 	_ = wireEntryDomains(ctx, svc, prov)
+
+	if retire {
+		reason := entry.DeathRotated
+		if len(args) == 3 {
+			reason = args[2]
+		}
+		if err := retireBox(ctx, svc, args[1], reason); err != nil {
+			fail(err)
+		}
+		os.Exit(0)
+	}
+	if provider {
+		if err := saveHoster(ctx, svc, args[1:], password); err != nil {
+			fail(err)
+		}
+		os.Exit(0)
+	}
 
 	var id uuid.UUID
 	switch {
@@ -273,4 +299,50 @@ func runEntryBox(args []string) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+}
+
+// retireBox is the console's handback from this shell. The delete goes to the
+// hoster saved now, so a machine must leave before its hoster is switched off.
+func retireBox(ctx context.Context, svc *entry.Service, box, reason string) error {
+	relays, holders, err := svc.Retire(ctx, box, reason)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("retired %s: relays %v, holders told %d\n", box, relays, holders)
+	if err := svc.DeleteBoxInstance(ctx, box); err != nil {
+		return fmt.Errorf("delete at the hoster: %w", err)
+	}
+	fmt.Printf("deleted %s at the hoster\n", box)
+	return nil
+}
+
+// saveHoster switches a hoster off, or saves its account and default order.
+func saveHoster(ctx context.Context, svc *entry.Service, args []string, token string) error {
+	kind := args[0]
+	if len(args) == 2 && args[1] == "off" {
+		view, err := svc.SaveProvider(ctx, kind, entry.ProviderUpdate{Enabled: false}, "")
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s enabled=%v\n", kind, view.Enabled)
+		return nil
+	}
+	if len(args) < 3 {
+		return fmt.Errorf("usage: cmd/server entry-box provider <kind> off | <kind> <region> <plan> [api-url]")
+	}
+	if token == "" {
+		return fmt.Errorf("the token is read from stdin, one line")
+	}
+	creds := map[string]string{"api_token": token}
+	if len(args) == 4 {
+		creds["api_url"] = args[3]
+	}
+	view, err := svc.SaveProvider(ctx, kind, entry.ProviderUpdate{
+		Enabled: true, Credentials: creds, DefaultRegion: args[1], DefaultPlan: args[2],
+	}, "")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s enabled=%v region=%s plan=%s\n", kind, view.Enabled, view.DefaultRegion, view.DefaultPlan)
+	return nil
 }

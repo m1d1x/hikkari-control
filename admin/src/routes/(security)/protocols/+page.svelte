@@ -2,53 +2,60 @@
 	import { onDestroy, onMount } from 'svelte';
 	import PageShell from '$components/layout/PageShell.svelte';
 	import TrendChart, { type TrendSeries } from '$components/entry/TrendChart.svelte';
-	import { formatBytes } from '$lib/utils/format';
+	import { PROTO_LABEL } from '$lib/api/entry';
+	import { ago } from '$lib/product/format';
 	import {
-		fetchProtocolStats,
-		describeEntryError,
-		formatCents,
-		PROTO_LABEL,
-		type EntryProtocolStats,
-		type OverviewWindow,
-		type ProtocolSeries,
-	} from '$lib/api/entry';
+		fetchTesterRelays,
+		type TesterRelayScreen,
+		type TesterRelays,
+		type TesterRelayWindow,
+	} from '$lib/api/support';
 
-	// How each protocol and machine lived over the window. Everything here is a
-	// line with history, on one time axis: the console draws data as history,
-	// never as a number of the moment. A bucket nobody measured is a gap.
+	// What the people behind the censor got from each relay: nekko's protocols
+	// block, then history, then each tester. All of it is measured by testers'
+	// clients; the fleet's own view of the same protocols is /protocols/servers.
 
-	const WINDOWS: OverviewWindow[] = ['24h', '7d', '30d'];
+	const WINDOWS: TesterRelayWindow[] = ['24h', '7d'];
 	const REFRESH_MS = 60_000;
-	const ALL = 'all';
-
-	// Eight hues in a fixed order, validated against this dark surface. A
-	// machine keeps its colour across every chart, by its place among its
-	// protocol's machines. A protocol keeps its by its name below: the first
-	// three stay apart for every pair, which the console's badge colours do not
-	// for a colour-blind reader.
-	const NODE_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
-	const PROTO_COLOR: Record<string, string> = {
-		'vless-reality-vision': NODE_COLORS[0],
-		'vless-xhttp': NODE_COLORS[1],
-		hysteria2: NODE_COLORS[2],
+	const UP_LABEL: Record<string, string> = {
+		none: '0 релеев',
+		one: '1 релей',
+		some: 'больше одного',
+		all: 'все',
+	};
+	const UP_COLORS: Record<string, string> = { none: '#e66767', one: '#c98500', some: '#3987e5', all: '#199e70' };
+	const FAIL_LABEL: Record<string, string> = {
+		tcp_blocked: 'TCP не открывается',
+		tcp_thinned: 'часть TCP-потоков теряется',
+		protocol: 'TCP есть, протокол не проходит',
+		timeout: 'нет ответа',
+		error: 'ошибка проверки',
+	};
+	const FAIL_COLORS: Record<string, string> = {
+		tcp_blocked: '#e66767',
+		tcp_thinned: '#c98500',
+		protocol: '#d55181',
+		timeout: '#3987e5',
+		error: '#9085e9',
 	};
 
-	let data = $state<EntryProtocolStats | null>(null);
+	let data = $state<TesterRelayScreen | null>(null);
 	let loadError = $state<string | null>(null);
-	let window = $state<OverviewWindow>('24h');
-	let group = $state<string>(ALL);
+	let window = $state<TesterRelayWindow>('24h');
+	let onlyBroken = $state(true);
+	let opened = $state<string | null>(null);
 	let timer: ReturnType<typeof setInterval> | undefined;
 
 	async function load() {
 		try {
-			data = await fetchProtocolStats(window);
+			data = await fetchTesterRelays(window);
 			loadError = null;
 		} catch (e) {
-			loadError = describeEntryError(e);
+			loadError = e instanceof Error ? e.message : 'не удалось загрузить';
 		}
 	}
 
-	function pick(w: OverviewWindow) {
+	function pick(w: TesterRelayWindow) {
 		if (w === window) return;
 		window = w;
 		void load();
@@ -60,74 +67,73 @@
 	});
 	onDestroy(() => clearInterval(timer));
 
-	const inGroup = $derived((data?.nodes ?? []).filter((n) => n.proto === group));
-	const shown = $derived(group === ALL ? (data?.protocols ?? []) : inGroup.slice(0, NODE_COLORS.length));
-	const hidden = $derived(group === ALL ? 0 : Math.max(0, inGroup.length - NODE_COLORS.length));
-	const bucketWord = $derived(
-		data?.bucketSeconds === 3600 ? 'час' : data?.bucketSeconds === 21600 ? '6 часов' : 'сутки',
+	function protoColor(proto: string): string {
+		if (proto.includes('xhttp')) return 'var(--c-xhttp)';
+		if (proto.includes('reality')) return 'var(--c-reality)';
+		if (proto.includes('hyst')) return 'var(--c-hyst)';
+		return 'var(--c-other)';
+	}
+	const label = (proto: string) => PROTO_LABEL[proto] ?? proto;
+	const upCount = (c: TesterRelays) => c.relays.filter((r) => r.up).length;
+	const seen = (iso: string) => ago(new Date(iso).getTime());
+	const clients = $derived(
+		(data?.installs ?? []).filter((c) => !onlyBroken || upCount(c) < c.relays.length),
 	);
 
-	function colorOf(s: ProtocolSeries, i: number): string {
-		return group === ALL ? (PROTO_COLOR[s.proto] ?? NODE_COLORS[3]) : NODE_COLORS[i];
-	}
-
-	function labelOf(s: ProtocolSeries): string {
-		if (group === ALL) return PROTO_LABEL[s.proto] ?? s.proto;
-		const parts = [s.key];
-		if (s.domain) parts.push(s.domain);
-		if (s.retired) parts.push('сдана');
-		return parts.join(' · ');
-	}
-
+	const percent = (v: number) => `${Math.round(v)}%`;
+	const ms = (v: number) => `${Math.round(v)} мс`;
 	const count = (v: number) => Math.round(v).toLocaleString('ru');
-	const decimal = (v: number) => v.toLocaleString('ru', { maximumFractionDigits: 1 });
-	const percent = (v: number) => `${v.toLocaleString('ru', { maximumFractionDigits: 1 })}%`;
-	const money = (v: number) => formatCents(Math.round(v));
 
-	type Metric = 'live' | 'passPct' | 'trafficBytes' | 'conns' | 'subscribers' | 'costCents';
-
-	function lines(metric: Metric, format: (v: number) => string): TrendSeries[] {
-		return shown.map((s, i) => ({
-			key: s.key,
-			label: labelOf(s),
-			color: colorOf(s, i),
-			values: s[metric],
-			format,
-		}));
-	}
-
-	/** An axis top for a whole-number figure: its four gridlines land on whole numbers. */
-	function wholeTop(metric: Metric): number {
-		const top = Math.max(0, ...shown.flatMap((s) => s[metric].map((v) => v ?? 0)));
-		return Math.max(4, Math.ceil(top / 4) * 4);
-	}
-
-	const charts = $derived([
-		{
-			title: group === ALL ? 'Живые машины' : 'Живые релеи',
-			metric: 'live' as Metric,
-			format: count,
-			max: wholeTop('live'),
-		},
-		{
-			title: 'Проходимость из точки обзора',
-			metric: 'passPct' as Metric,
+	const okLines = $derived<TrendSeries[]>(
+		(data?.protocols ?? []).map((p) => ({
+			key: p.proto,
+			label: label(p.proto),
+			color: protoColor(p.proto),
+			values: p.okSeries,
 			format: percent,
-			max: 100,
-			empty: 'пробник не судил за окно',
-		},
-		{ title: `Трафик за ${bucketWord}`, metric: 'trafficBytes' as Metric, format: formatBytes },
-		{ title: `Подключения, среднее за ${bucketWord}`, metric: 'conns' as Metric, format: decimal },
-		{ title: 'Подписчики', metric: 'subscribers' as Metric, format: count, max: wholeTop('subscribers') },
-		{ title: 'Стоимость, в месяц', metric: 'costCents' as Metric, format: money },
+		})),
+	);
+	const pingLines = $derived<TrendSeries[]>(
+		(data?.protocols ?? []).map((p) => ({
+			key: p.proto,
+			label: label(p.proto),
+			color: protoColor(p.proto),
+			values: p.pingSeries,
+			format: ms,
+		})),
+	);
+	const upLines = $derived<TrendSeries[]>(
+		(data?.clientsByUp ?? []).map((s) => ({
+			key: s.key,
+			label: UP_LABEL[s.key] ?? s.key,
+			color: UP_COLORS[s.key],
+			values: s.values,
+			format: percent,
+		})),
+	);
+	const failLines = $derived<TrendSeries[]>(
+		(data?.failures ?? []).map((s) => ({
+			key: s.key,
+			label: FAIL_LABEL[s.key] ?? s.key,
+			color: FAIL_COLORS[s.key],
+			values: s.values,
+			format: count,
+		})),
+	);
+	const charts = $derived([
+		{ title: 'Проверки релеев у тестеров: прошло', lines: okLines, format: percent, max: 100 },
+		{ title: 'Пинг у тестеров, p50', lines: pingLines, format: ms, max: undefined },
+		{ title: 'Сколько релеев отвечает: доля тестеров', lines: upLines, format: percent, max: 100 },
+		{ title: 'Почему релеи падают: число проверок', lines: failLines, format: count, max: undefined },
 	]);
 </script>
 
 <PageShell>
-	<div class="protocols-page">
+	<div class="page">
 		<div class="head">
 			<h1>протоколы</h1>
 			<div class="chips">
+				<a class="chip" href="/protocols/servers">со стороны серверов</a>
 				{#each WINDOWS as w (w)}
 					<button class="chip" class:on={window === w} onclick={() => pick(w)}>{w}</button>
 				{/each}
@@ -141,61 +147,165 @@
 		{#if !data && !loadError}
 			<p class="hint">Загрузка…</p>
 		{:else if data}
-			<div class="filters">
-				<div class="chips">
-					<button class="chip" class:on={group === ALL} onclick={() => (group = ALL)}>все протоколы</button>
-					{#each data.protocols as p (p.key)}
-						<button class="chip" class:on={group === p.proto} onclick={() => (group = p.proto)}>
-							{PROTO_LABEL[p.proto] ?? p.proto}
-						</button>
-					{/each}
-				</div>
-				<div class="legend">
-					{#each shown as s, i (s.key)}
-						<span class="legend-item"><i style="background: {colorOf(s, i)}"></i>{labelOf(s)}</span>
-					{/each}
-				</div>
-			</div>
+			<section class="card">
+				<h2>протоколы</h2>
+				{#if data.protocols.length === 0}
+					<p class="hint">ни одной проверки релея за окно</p>
+				{:else}
+					<div class="ratio-section">
+						<div class="ratio-bar">
+							{#each data.protocols as p (p.proto)}
+								<div class="ratio-seg" style="width: {p.sharePct}%; background: {protoColor(p.proto)}"></div>
+							{/each}
+						</div>
+						<div class="ratio-legend">
+							{#each data.protocols as p (p.proto)}
+								<div class="legend-chip" title="{p.checks.toLocaleString('ru')} проверок">
+									<span class="dot" style="background: {protoColor(p.proto)}"></span>
+									<span class="chip-name">{label(p.proto)}</span>
+									<b style="color: {protoColor(p.proto)}">{Math.round(p.sharePct)}%</b>
+								</div>
+							{/each}
+						</div>
+					</div>
+					<div class="protos-grid">
+						{#each data.protocols as p (p.proto)}
+							<div class="proto-card" title="{p.checks.toLocaleString('ru')} проверок за окно">
+								<div class="card-top">
+									<div class="proto-badge">
+										<span class="dot" style="background: {protoColor(p.proto)}"></span>
+										<span class="proto-title">{label(p.proto)}</span>
+									</div>
+									<div class="proto-share" style="color: {protoColor(p.proto)}">
+										{Math.round(p.sharePct)}<span class="share-unit">%</span>
+									</div>
+								</div>
+								<div class="track">
+									<div class="fill" style="width: {p.sharePct}%; background: {protoColor(p.proto)}"></div>
+								</div>
+								<div class="metrics">
+									<div>
+										<div class="val">{p.p50Ms ?? '—'}{#if p.p50Ms !== null}<small>мс</small>{/if}</div>
+										<div class="lbl">пинг p50</div>
+									</div>
+									<div>
+										<div class="val">{p.p95Ms ?? '—'}{#if p.p95Ms !== null}<small>мс</small>{/if}</div>
+										<div class="lbl">пинг p95</div>
+									</div>
+									<div><div class="val">{Math.round(p.okPct)}<small>%</small></div><div class="lbl">проверки</div></div>
+									<div><div class="val muted">—</div><div class="lbl">потери</div></div>
+								</div>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</section>
 
 			<div class="grid">
-				{#each charts as c (c.metric)}
+				{#each charts as c (c.title)}
 					<section class="card">
 						<h2>{c.title}</h2>
+						<div class="legend">
+							{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
+						</div>
 						<TrendChart
 							buckets={data.buckets}
 							bucketSeconds={data.bucketSeconds}
-							series={lines(c.metric, c.format)}
+							series={c.lines}
 							formatAxis={c.format}
 							max={c.max}
-							empty={c.empty}
 							height={190}
 						/>
 					</section>
 				{/each}
 			</div>
 
-			{#if hidden > 0}
-				<p class="hint">Не показано машин: {hidden}. На графике не больше {NODE_COLORS.length} линий.</p>
-			{/if}
-			{#each data.missing as m (m.figure)}
-				<p class="hint">Нет данных ({m.figure}): {m.why}</p>
-			{/each}
+			<section class="card">
+				<div class="head">
+					<h2>Тестеры</h2>
+					<div class="chips">
+						<button class="chip" class:on={onlyBroken} onclick={() => (onlyBroken = true)}>с проблемами</button>
+						<button class="chip" class:on={!onlyBroken} onclick={() => (onlyBroken = false)}>все</button>
+					</div>
+				</div>
+				{#if clients.length === 0}
+					<p class="hint">{onlyBroken ? 'нет тестеров с упавшими релеями' : 'тестеры не присылали проверок за окно'}</p>
+				{/if}
+				{#each clients as c (c.install_id)}
+					<button
+						class="client"
+						class:open={opened === c.install_id}
+						onclick={() => (opened = opened === c.install_id ? null : c.install_id)}
+					>
+						<span class="cid" title={c.install_id}>{c.install_id}</span>
+						<span class="cells" aria-label="отвечает {upCount(c)} из {c.relays.length}">
+							{#each c.relays as r (r.tag)}
+								<i class:up={r.up} title={r.tag}></i>
+							{/each}
+						</span>
+						<b class:zero={upCount(c) === 0} class:low={upCount(c) === 1}>{upCount(c)} из {c.relays.length}</b>
+						<span class="meta">{c.network ?? 'сеть неизвестна'}</span>
+						<span class="meta">{c.platform} · {c.version}</span>
+						<span class="meta ago">{seen(c.at)}</span>
+					</button>
+					{#if opened === c.install_id}
+						<div class="table-wrap">
+							<table>
+								<thead>
+									<tr>
+										<th>релей</th><th>протокол</th><th>статус</th><th>причина</th><th class="num">TCP-потоки</th>
+										<th class="num">пинг</th><th>последний успех</th>
+									</tr>
+								</thead>
+								<tbody>
+									{#each c.relays as r (r.tag)}
+										<tr>
+											<td class="mono">{r.tag}</td>
+											<td><span class="dot" style="background: {protoColor(r.proto)}"></span> {label(r.proto)}</td>
+											<td class={r.up ? 'ok' : 'bad'}>{r.up ? 'отвечает' : 'упал'}</td>
+											<td>{r.reason ? (FAIL_LABEL[r.reason] ?? r.reason) : '—'}</td>
+											<td class="num mono">{r.flowsOpen !== undefined ? `${r.flowsOpen}/${r.flowsTotal}` : '—'}</td>
+											<td class="num mono">{r.pingMs ? `${r.pingMs} мс` : '—'}</td>
+											<td>{r.lastOk ? seen(r.lastOk) : 'нет за окно'}</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+					{/if}
+				{/each}
+			</section>
 		{/if}
 	</div>
 </PageShell>
 
 <style>
-	.protocols-page {
-		color: var(--text, oklch(0.93 0 0));
+	.page {
+		--inset: oklch(0.17 0 0);
+		--c-reality: oklch(0.75 0.14 350);
+		--c-hyst: oklch(0.72 0.12 200);
+		--c-xhttp: oklch(0.78 0.12 85);
+		--c-other: oklch(0.72 0.16 290);
+		--ok: oklch(0.72 0.15 155);
+		--warn: oklch(0.78 0.12 85);
+		--bad: oklch(0.65 0.2 25);
+		--border: oklch(0.24 0 0);
+		--border-subtle: oklch(0.19 0 0);
+		--text: oklch(0.93 0 0);
+		--text-2: oklch(0.62 0 0);
+		--text-3: oklch(0.42 0 0);
+		--mono: 'IBM Plex Mono', monospace;
+		color: var(--text);
 		font-size: 13px;
 		line-height: 1.5;
 	}
 
 	.head {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		justify-content: space-between;
-		gap: 12px;
+		gap: 8px 12px;
 		margin-bottom: 12px;
 	}
 
@@ -205,86 +315,353 @@
 		font-weight: 600;
 	}
 
-	.filters {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 8px 16px;
-		margin-bottom: 12px;
+	h2 {
+		margin: 0 0 12px;
+		font-size: 14px;
+		font-weight: 600;
+	}
+
+	.head h2 {
+		margin: 0;
+	}
+
+	.err {
+		margin: 0 0 12px;
+		color: var(--bad);
+	}
+
+	.hint {
+		margin: 0;
+		color: var(--text-2);
 	}
 
 	.chips {
 		display: flex;
 		flex-wrap: wrap;
+		align-items: center;
 		gap: 4px;
 	}
 
 	.chip {
 		min-height: 32px;
 		padding: 4px 10px;
-		border: 1px solid oklch(0.24 0 0);
+		border: 1px solid var(--border);
 		border-radius: 6px;
 		background: none;
-		color: oklch(0.62 0 0);
+		color: var(--text-2);
 		font: inherit;
 		font-size: 12px;
 		cursor: pointer;
+		text-decoration: none;
+		display: inline-flex;
+		align-items: center;
 	}
 
 	.chip.on {
 		background: oklch(0.26 0 0);
-		color: oklch(0.93 0 0);
+		color: var(--text);
+	}
+
+	.card {
+		min-width: 0;
+		margin-bottom: 12px;
+		padding: 16px;
+		background: oklch(0.2 0 0);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+	}
+
+	.grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+		gap: 12px;
+	}
+
+	.grid .card {
+		margin-bottom: 0;
+	}
+
+	.grid {
+		margin-bottom: 12px;
+	}
+
+	.ratio-section {
+		margin-bottom: 14px;
+		padding: 12px 14px;
+		background: var(--inset);
+		border: 1px solid var(--border-subtle);
+		border-radius: 8px;
+	}
+
+	.ratio-bar {
+		display: flex;
+		gap: 2px;
+		height: 9px;
+		overflow: hidden;
+		border-radius: 5px;
+	}
+
+	.ratio-seg {
+		min-width: 4px;
+	}
+
+	.ratio-legend {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px 20px;
+		margin-top: 10px;
+		font-size: 11px;
+	}
+
+	.legend-chip,
+	.proto-badge {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.dot {
+		display: inline-block;
+		flex-shrink: 0;
+		width: 8px;
+		height: 8px;
+		border-radius: 2px;
+	}
+
+	.chip-name {
+		font-family: var(--mono);
+		color: var(--text-2);
+	}
+
+	.legend-chip b {
+		font-family: var(--mono);
+		font-size: 12px;
+	}
+
+	.protos-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+		gap: 14px;
+	}
+
+	.proto-card {
+		padding: 14px 16px;
+		background: var(--inset);
+		border: 1px solid var(--border-subtle);
+		border-radius: 8px;
+	}
+
+	.card-top {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.proto-title {
+		font-family: var(--mono);
+		font-weight: 600;
+	}
+
+	.proto-share {
+		font-family: var(--mono);
+		font-size: 24px;
+		font-weight: 700;
+		line-height: 1;
+	}
+
+	.share-unit {
+		margin-left: 1px;
+		font-size: 14px;
+		font-weight: 400;
+	}
+
+	.track {
+		height: 3px;
+		margin: 10px 0 14px;
+		overflow: hidden;
+		border-radius: 2px;
+		background: var(--border);
+	}
+
+	.fill {
+		height: 100%;
+	}
+
+	.metrics {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 8px;
+	}
+
+	.val {
+		font-family: var(--mono);
+		font-size: 15px;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.val small {
+		margin-left: 2px;
+		color: var(--text-2);
+		font-size: 10px;
+		font-weight: 400;
+	}
+
+	.val.muted {
+		color: var(--text-3);
+	}
+
+	.lbl {
+		margin-top: 3px;
+		overflow: hidden;
+		color: var(--text-2);
+		font-size: 10px;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.legend {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 4px 14px;
-		color: oklch(0.72 0 0);
+		margin: -6px 0 6px;
+		color: var(--text-2);
 		font-size: 12px;
 	}
 
-	.legend-item {
+	.legend span {
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
 	}
 
-	.legend-item i {
+	.legend i {
 		width: 12px;
 		height: 3px;
 		border-radius: 2px;
 	}
 
-	.grid {
+	.client {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
+		grid-template-columns: minmax(0, 150px) 130px 56px minmax(0, 1.2fr) minmax(0, 1fr) 96px;
+		align-items: center;
 		gap: 12px;
-		margin-bottom: 12px;
+		width: 100%;
+		min-height: 40px;
+		padding: 6px 8px;
+		border: none;
+		border-top: 1px solid var(--border-subtle);
+		background: none;
+		color: var(--text);
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
 	}
 
-	.card {
-		min-width: 0;
-		padding: 12px 14px 8px;
-		background: oklch(0.2 0 0);
-		border: 1px solid oklch(0.24 0 0);
-		border-radius: 8px;
+	.client:hover,
+	.client.open {
+		background: oklch(0.23 0 0);
 	}
 
-	h2 {
-		margin: 0 0 6px;
-		font-size: 13px;
-		font-weight: 600;
+	.cid,
+	.mono {
+		font-family: var(--mono);
+		font-size: 12px;
 	}
 
-	.err {
-		margin: 0 0 12px;
-		color: oklch(0.65 0.2 25);
+	.cid {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
-	.hint {
-		margin: 0 0 8px;
-		color: oklch(0.62 0 0);
+	.cells {
+		display: flex;
+		gap: 3px;
+	}
+
+	.cells i {
+		width: 14px;
+		height: 14px;
+		border-radius: 3px;
+		background: oklch(0.65 0.2 25 / 0.3);
+	}
+
+	.cells i.up {
+		background: var(--ok);
+	}
+
+	.client b {
+		font-family: var(--mono);
+		font-size: 12px;
+		white-space: nowrap;
+	}
+
+	.client b.low {
+		color: var(--warn);
+	}
+
+	.client b.zero {
+		color: var(--bad);
+	}
+
+	.meta {
+		overflow: hidden;
+		color: var(--text-2);
+		font-size: 12px;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.ago {
+		text-align: right;
+	}
+
+	.table-wrap {
+		overflow-x: auto;
+		padding: 4px 8px 12px;
+		background: var(--inset);
+	}
+
+	table {
+		width: 100%;
+		min-width: 720px;
+		border-collapse: collapse;
+		font-size: 12px;
+	}
+
+	th {
+		padding: 6px 8px;
+		color: var(--text-2);
+		font-weight: 500;
+		text-align: left;
+	}
+
+	td {
+		padding: 6px 8px;
+		border-top: 1px solid var(--border-subtle);
+	}
+
+	.num {
+		text-align: right;
+	}
+
+	.ok {
+		color: var(--ok);
+	}
+
+	.bad {
+		color: var(--bad);
+	}
+
+	@media (max-width: 800px) {
+		.client {
+			grid-template-columns: minmax(0, 1fr) 110px 56px;
+		}
+
+		.client .meta {
+			display: none;
+		}
 	}
 </style>

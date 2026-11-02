@@ -225,3 +225,40 @@ func TestEntryProtocolStatsNamesWhatItCannotRead(t *testing.T) {
 		t.Fatalf("missing = %+v, want pass rate, traffic and connections", got.Missing)
 	}
 }
+
+func TestProtocolHistoryTCPFlowsShowWhatThePassRateHides(t *testing.T) {
+	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	start := now.Add(-time.Hour)
+	starts := []time.Time{start}
+	created := start.Add(-time.Hour)
+	relay := func(name string) []historyRelay {
+		return []historyRelay{{name: name, createdAt: created, admitted: true}}
+	}
+	boxes := []historyBox{
+		{name: "x1", proto: "vless-xhttp", createdAt: created, relays: relay("x1-1")},
+		{name: "h1", proto: "hysteria2", createdAt: created, relays: relay("h1-1")},
+	}
+	at := start.Unix()
+	data := relaySeries{
+		probes: map[string]map[int64]probeCount{"x1-1": {at: {ok: 40}}, "h1-1": {at: {ok: 40}}},
+		flows:  map[string]map[int64]probeCount{"x1-1": {at: {ok: 30, bad: 10}}, "h1-1": {at: {bad: 40}}},
+	}
+	protocols, nodes := protocolHistory(starts, time.Hour, now, boxes, nil, data)
+	byKey := map[string]protocolSeries{}
+	for _, s := range append(protocols, nodes...) {
+		byKey[s.Key] = s
+	}
+	if got := value(t, byKey["x1"].PassPct, 0); got != 100 {
+		t.Fatalf("pass rate = %v, want the tunnel's 100", got)
+	}
+	for _, key := range []string{"x1", "vless-xhttp"} {
+		if got := value(t, byKey[key].TCPFlowPct, 0); got != 75 {
+			t.Fatalf("%s flows = %v, want 75", key, got)
+		}
+	}
+	for _, key := range []string{"h1", "hysteria2"} {
+		if byKey[key].TCPFlowPct[0] != nil {
+			t.Fatalf("%s has no TCP door, got a flow figure", key)
+		}
+	}
+}

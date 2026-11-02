@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -44,6 +45,9 @@ func TestNewAwgIdentityObeysTheProtocol(t *testing.T) {
 				t.Fatalf("ranges %s %s %s %s", a.H1, a.H2, a.H3, a.H4)
 			}
 			last = r
+		}
+		if !slices.Contains(awgDecoyDomains, a.DecoyDomain) {
+			t.Fatalf("decoy domain %q", a.DecoyDomain)
 		}
 		if a.S3 < 1 || a.S4 < 1 || a.S4 > 32 || a.I1 != awgQuicDecoy {
 			t.Fatalf("s3 %d s4 %d i1 %q", a.S3, a.S4, a.I1)

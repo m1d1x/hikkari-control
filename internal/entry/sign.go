@@ -208,6 +208,7 @@ type AwgParams struct {
 	H3               string `json:"h3"`
 	H4               string `json:"h4"`
 	I1               string `json:"i1,omitempty"`
+	DecoyDomain      string `json:"decoy_domain,omitempty"`
 }
 
 // RealityParams is the Reality half of a stream relay (record.rs Reality).

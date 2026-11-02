@@ -73,6 +73,9 @@ type AwgIdentity struct {
 	H3               string `json:"h3"`
 	H4               string `json:"h4"`
 	I1               string `json:"i1"`
+	// DecoyDomain is the name in the real QUIC ClientHello a client that can
+	// generate one sends in place of I1.
+	DecoyDomain string `json:"decoy_domain"`
 }
 
 // AwgProbeAddress is the vantage's address inside every AmneziaWG relay; the
@@ -109,6 +112,14 @@ func NewAwgKeyPair() (private, public string, err error) {
 // ClientHello, so a censor that decrypts Initials can tell it from a browser's.
 const awgQuicDecoy = "<b 0xc30000000108><r 8><b 0x0000449e><r 1182>"
 
+// awgDecoyDomains are the names a decoy may claim: big, foreign, and answering
+// over HTTP/3, so a QUIC Initial for them from anywhere is unremarkable. Russian
+// names are out, since the packet goes to a foreign address, and so are names a
+// censor already throttles.
+var awgDecoyDomains = []string{
+	"www.google.com", "www.gstatic.com", "fonts.gstatic.com", "fonts.googleapis.com", "www.cloudflare.com",
+}
+
 // awgHeaderSlots splits the header space into four, one per message type, so the
 // ranges can't overlap. A range rather than a value: the type field varies per
 // packet, which is AWG 2.0's point. Below 5 is WireGuard's own.
@@ -138,6 +149,11 @@ func newAwgIdentity(port int) (Identity, error) {
 		ProbePrivateKey: probePriv, ProbePublicKey: probePub,
 		I1: awgQuicDecoy,
 	}
+	n, err := randomInt(0, len(awgDecoyDomains)-1)
+	if err != nil {
+		return Identity{}, err
+	}
+	a.DecoyDomain = awgDecoyDomains[n]
 	for _, f := range []struct {
 		to     *int
 		lo, hi int
@@ -651,7 +667,7 @@ func (id Identity) record(name, address, region string, issuedAt, expiresAt int6
 				ClientPrivateKey: a.ProbePrivateKey,
 				ClientAddress:    AwgProbeAddress,
 				Jc:               a.Jc, Jmin: a.Jmin, Jmax: a.Jmax, S1: a.S1, S2: a.S2, S3: a.S3, S4: a.S4,
-				H1: a.H1, H2: a.H2, H3: a.H3, H4: a.H4, I1: a.I1,
+				H1: a.H1, H2: a.H2, H3: a.H3, H4: a.H4, I1: a.I1, DecoyDomain: a.DecoyDomain,
 			},
 			IssuedAt:  issuedAt,
 			ExpiresAt: expiresAt,

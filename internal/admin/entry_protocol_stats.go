@@ -57,7 +57,12 @@ type protocolSeries struct {
 	Live []*float64 `json:"live"`
 	// PassPct is the share of the vantage's probes that got through; probes
 	// that could not judge are not in it.
-	PassPct      []*float64 `json:"passPct"`
+	PassPct []*float64 `json:"passPct"`
+	// TCPFlowPct is the share of the vantage's plain TCP connects that opened,
+	// one flow per probe, before any retry. PassPct cannot show a path that
+	// loses flows: the tunnel check retries on fresh ones and still reads clean.
+	// UDP protocols have no TCP door and no point here.
+	TCPFlowPct   []*float64 `json:"tcpFlowPct"`
 	TrafficBytes []*float64 `json:"trafficBytes"`
 	Conns        []*float64 `json:"conns"`
 	Subscribers  []*float64 `json:"subscribers"`
@@ -91,6 +96,7 @@ type historyGrant struct {
 // relaySeries is what the dataset says of each relay, bucket by bucket.
 type relaySeries struct {
 	probes  map[string]map[int64]probeCount
+	flows   map[string]map[int64]probeCount
 	traffic map[string]map[int64]float64
 	conns   map[string]map[int64]float64
 }
@@ -248,6 +254,7 @@ func (h *Handlers) historyGrants(ctx context.Context, since time.Time) ([]histor
 func (h *Handlers) relaySeries(ctx context.Context, since, now time.Time, bucket time.Duration) (relaySeries, error) {
 	out := relaySeries{
 		probes:  map[string]map[int64]probeCount{},
+		flows:   map[string]map[int64]probeCount{},
 		traffic: map[string]map[int64]float64{},
 		conns:   map[string]map[int64]float64{},
 	}
@@ -282,6 +289,31 @@ func (h *Handlers) relaySeries(ctx context.Context, since, now time.Time, bucket
 		out.probes[relay][at.Unix()] = c
 	}
 	if err := probes.Err(); err != nil {
+		return out, err
+	}
+
+	flows, err := h.analytics.Query(ctx, `
+		SELECT relay_name, toStartOfInterval(ts, toIntervalSecond(?)) AS bucket,
+		       toUInt64(sum(raw_tcp)), count()
+		FROM entry_probes WHERE ts >= ? AND ts <= ?
+		GROUP BY relay_name, bucket`, seconds, since, now.Add(verdictSkew))
+	if err != nil {
+		return out, fmt.Errorf("flows: %w", err)
+	}
+	defer flows.Close()
+	for flows.Next() {
+		var relay string
+		var at time.Time
+		var opened, total uint64
+		if err := flows.Scan(&relay, &at, &opened, &total); err != nil {
+			return out, fmt.Errorf("scan flows: %w", err)
+		}
+		if out.flows[relay] == nil {
+			out.flows[relay] = map[int64]probeCount{}
+		}
+		out.flows[relay][at.Unix()] = probeCount{ok: opened, bad: total - opened}
+	}
+	if err := flows.Err(); err != nil {
 		return out, err
 	}
 
@@ -350,16 +382,18 @@ func protocolHistory(
 	newSeries := func(key, proto string) *protocolSeries {
 		return &protocolSeries{
 			Key: key, Proto: proto,
-			Live: make([]*float64, n), PassPct: make([]*float64, n), TrafficBytes: make([]*float64, n),
+			Live: make([]*float64, n), PassPct: make([]*float64, n), TCPFlowPct: make([]*float64, n), TrafficBytes: make([]*float64, n),
 			Conns: make([]*float64, n), Subscribers: make([]*float64, n), CostCents: make([]*float64, n),
 		}
 	}
 	byProto := map[string]*protocolSeries{}
 	protoProbes := map[string][]probeCount{}
+	protoFlows := map[string][]probeCount{}
 	seriesOf := func(proto string) *protocolSeries {
 		if byProto[proto] == nil {
 			byProto[proto] = newSeries(proto, proto)
 			protoProbes[proto] = make([]probeCount, n)
+			protoFlows[proto] = make([]probeCount, n)
 			// A fresh protocol reads zero everywhere it has a meaning of zero.
 			for i := 0; i < n; i++ {
 				byProto[proto].Live[i] = num(0)
@@ -385,7 +419,7 @@ func protocolHistory(
 				// machine carried in the hour it died still counts.
 				continue
 			}
-			var probes probeCount
+			var probes, flows probeCount
 			var bytes, conns float64
 			var hasBytes, hasConns bool
 			live := 0
@@ -397,6 +431,10 @@ func protocolHistory(
 				if c, ok := data.probes[r.name][key]; ok {
 					probes.ok += c.ok
 					probes.bad += c.bad
+				}
+				if c, ok := data.flows[r.name][key]; ok {
+					flows.ok += c.ok
+					flows.bad += c.bad
 				}
 				if v, ok := data.traffic[r.name][key]; ok {
 					bytes += v
@@ -423,6 +461,13 @@ func protocolHistory(
 				c.bad += probes.bad
 				protoProbes[b.proto][i] = c
 			}
+			if flows.ok+flows.bad > 0 && hasTCPDoor(b.proto) {
+				node.TCPFlowPct[i] = passPct(flows)
+				c := protoFlows[b.proto][i]
+				c.ok += flows.ok
+				c.bad += flows.bad
+				protoFlows[b.proto][i] = c
+			}
 			if hasBytes {
 				node.TrafficBytes[i] = num(bytes)
 				proto.TrafficBytes[i] = addTo(proto.TrafficBytes[i], bytes)
@@ -441,6 +486,14 @@ func protocolHistory(
 		for i, c := range counts {
 			if c.ok+c.bad > 0 {
 				byProto[proto].PassPct[i] = passPct(c)
+			}
+		}
+	}
+
+	for proto, counts := range protoFlows {
+		for i, c := range counts {
+			if c.ok+c.bad > 0 {
+				byProto[proto].TCPFlowPct[i] = passPct(c)
 			}
 		}
 	}
@@ -487,6 +540,11 @@ func protocolHistory(
 		nodes = []protocolSeries{}
 	}
 	return protocols, nodes
+}
+
+// hasTCPDoor is whether a plain TCP connect says anything about the protocol.
+func hasTCPDoor(proto string) bool {
+	return proto != entry.ProtoHysteria2 && proto != entry.ProtoAmneziaWG
 }
 
 func num(v float64) *float64 { return &v }

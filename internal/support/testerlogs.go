@@ -68,6 +68,10 @@ type TesterStore interface {
 	// ReadChunks returns the install's chunks received in (since, until],
 	// oldest first, at most limit of the newest ones. A zero until means now.
 	ReadChunks(ctx context.Context, installID string, since, until time.Time, limit int) ([]TesterChunk, error)
+	// ReadReachLines returns the install's chunks received in (since, until],
+	// oldest first, each holding only its [diag:reach] lines. Chunks without one
+	// are left out, so reading days of them does not move days of log.
+	ReadReachLines(ctx context.Context, installID string, since, until time.Time) ([]TesterChunk, error)
 	PurgeChunks(ctx context.Context, olderThan time.Duration) (int64, error)
 }
 
@@ -86,6 +90,7 @@ func RegisterTesterRoutes(mux *http.ServeMux, store TesterStore, limiter *Limite
 
 // RegisterTesterAdminRoutes mounts operator-facing tester log reads.
 func RegisterTesterAdminRoutes(mux *http.ServeMux, store TesterStore, gate func(http.HandlerFunc) http.HandlerFunc) {
+	mux.HandleFunc("GET /api/v1/admin/support/tester-relays", gate(TesterRelaysHandler(store)))
 	mux.HandleFunc("GET /api/v1/admin/support/tester-logs", gate(TesterListHandler(store)))
 	mux.HandleFunc("GET /api/v1/admin/support/tester-logs/{install}", gate(TesterReadHandler(store)))
 	mux.HandleFunc("GET /api/v1/admin/support/tester-logs/{install}/export", gate(TesterExportHandler(store)))
@@ -259,6 +264,29 @@ func (s *MemTesterStore) ReadChunks(_ context.Context, installID string, since, 
 	return out, nil
 }
 
+func (s *MemTesterStore) ReadReachLines(_ context.Context, installID string, since, until time.Time) ([]TesterChunk, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []TesterChunk
+	for _, c := range s.chunks {
+		if c.install != installID || !c.chunk.ReceivedAt.After(since) || c.chunk.ReceivedAt.After(until) {
+			continue
+		}
+		var kept []string
+		for _, line := range strings.Split(c.chunk.Body, "\n") {
+			if strings.Contains(line, "[diag:reach] ") {
+				kept = append(kept, line)
+			}
+		}
+		if len(kept) > 0 {
+			chunk := c.chunk
+			chunk.Body = strings.Join(kept, "\n")
+			out = append(out, chunk)
+		}
+	}
+	return out, nil
+}
+
 func (s *MemTesterStore) PurgeChunks(_ context.Context, olderThan time.Duration) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -341,6 +369,33 @@ func (s *DBTesterStore) ReadChunks(ctx context.Context, installID string, since,
 		var c TesterChunk
 		if err := rows.Scan(&c.ID, &c.Platform, &c.Version, &c.Lines, &c.Dropped, &c.Body, &c.ReceivedAt); err != nil {
 			return nil, fmt.Errorf("scan tester chunk: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *DBTesterStore) ReadReachLines(ctx context.Context, installID string, since, until time.Time) ([]TesterChunk, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, platform, version, lines, dropped, received_at,
+		       array_to_string(ARRAY(
+		           SELECT line FROM unnest(string_to_array(body, E'\n')) AS line
+		           WHERE line LIKE '%[diag:reach] %'
+		       ), E'\n')
+		FROM support_tester_log_chunks
+		WHERE install_id = $1 AND received_at > $2 AND received_at <= $3
+		  AND body LIKE '%[diag:reach] %'
+		ORDER BY received_at ASC
+	`, installID, since, until)
+	if err != nil {
+		return nil, fmt.Errorf("read tester reach lines: %w", err)
+	}
+	defer rows.Close()
+	var out []TesterChunk
+	for rows.Next() {
+		var c TesterChunk
+		if err := rows.Scan(&c.ID, &c.Platform, &c.Version, &c.Lines, &c.Dropped, &c.ReceivedAt, &c.Body); err != nil {
+			return nil, fmt.Errorf("scan tester reach lines: %w", err)
 		}
 		out = append(out, c)
 	}

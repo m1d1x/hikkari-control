@@ -134,14 +134,16 @@ func (c *Client) call(ctx context.Context, method, path string, body, out any) e
 		if baseEnv.StatusCode != 0 {
 			code = baseEnv.StatusCode
 		}
-		return classify(code, baseEnv.StatusMsg)
+		return classify(code, baseEnv.message())
 	}
 	if baseEnv.Status == "error" {
+		// The API answers a refusal with status_code 200, so only a code that
+		// says failure is taken from the body.
 		code := http.StatusBadRequest
-		if baseEnv.StatusCode != 0 {
+		if baseEnv.StatusCode >= 400 {
 			code = baseEnv.StatusCode
 		}
-		return classify(code, baseEnv.StatusMsg)
+		return classify(code, baseEnv.message())
 	}
 
 	if out == nil || len(baseEnv.Data) == 0 {
@@ -160,6 +162,20 @@ type vdsinaBaseEnv struct {
 	StatusCode  int             `json:"status_code"`
 	Description *string         `json:"description"`
 	Data        json.RawMessage `json:"data"`
+}
+
+// message is what the API said went wrong: a refusal often has an empty
+// status_msg and the reason in description, and a validation error names the
+// field in data ({"server-plan":["You cannot order more services..."]}).
+func (e vdsinaBaseEnv) message() string {
+	msg := e.StatusMsg
+	if e.Description != nil {
+		msg += " " + *e.Description
+	}
+	if len(e.Data) > 0 && e.Status == "error" && string(e.Data) != "null" {
+		msg += " " + string(e.Data)
+	}
+	return strings.TrimSpace(msg)
 }
 
 func (c *Client) doRequest(ctx context.Context, baseURL, method, path string, bodyBuf []byte) ([]byte, int, vdsinaBaseEnv, error) {
@@ -209,7 +225,7 @@ func classify(status int, msg string) error {
 		return ErrRateLimited
 	case refused && (strings.Contains(m, "out of stock") || strings.Contains(m, "no available") ||
 		strings.Contains(m, "not available") || strings.Contains(m, "capacity") ||
-		strings.Contains(m, "limit")):
+		strings.Contains(m, "limit") || strings.Contains(m, "cannot order more")):
 		return ErrOutOfCapacity
 	case refused && (strings.Contains(m, "insufficient") || strings.Contains(m, "balance") ||
 		strings.Contains(m, "money") || strings.Contains(m, "funds") || strings.Contains(m, "payment")):
@@ -350,16 +366,16 @@ type Plan struct {
 }
 
 type wirePlan struct {
-	ID      int     `json:"id"`
-	Name    string  `json:"name"`
-	Cost    float64 `json:"cost"`
-	Period  string  `json:"period"`
-	CPU     int     `json:"cpu"`
-	RAM     float64 `json:"ram"`
-	Disk    int     `json:"disk"`
-	Enable  any     `json:"enable"`
-	Active  any     `json:"active"`
-	Data    struct {
+	ID     int     `json:"id"`
+	Name   string  `json:"name"`
+	Cost   float64 `json:"cost"`
+	Period string  `json:"period"`
+	CPU    int     `json:"cpu"`
+	RAM    float64 `json:"ram"`
+	Disk   int     `json:"disk"`
+	Enable any     `json:"enable"`
+	Active any     `json:"active"`
+	Data   struct {
 		Datacenter []int `json:"datacenter"`
 		CPU        struct {
 			Value int `json:"value"`
@@ -551,6 +567,14 @@ func (c *Client) EnsureSSHKey(ctx context.Context, name, publicKey string) (stri
 		return "", err
 	}
 	for _, k := range keys {
+		// The list names the keys; only a key's own page has its data.
+		if k.Data == "" {
+			var full SSHKey
+			if err := c.call(ctx, http.MethodGet, "/ssh-key/"+strconv.Itoa(k.ID), nil, &full); err != nil {
+				return "", err
+			}
+			k = full
+		}
 		if normalizeKey(k.Data) == want {
 			return strconv.Itoa(k.ID), nil
 		}
@@ -585,40 +609,37 @@ type Instance struct {
 }
 
 type wireServer struct {
-	ID             int    `json:"id"`
-	Name           string `json:"name"`
-	Status         string `json:"status"`
-	StatusText     string `json:"status_text"`
-	IP             string `json:"ip"`
-	Datacenter     any    `json:"datacenter"`
-	DatacenterName string `json:"datacenter_name"`
-	ServerPlan     any    `json:"server_plan"`
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	StatusText string `json:"status_text"`
+	// IP is {"id", "ip", "type"} once the machine has one, null before that.
+	IP         *wireServerIP `json:"ip"`
+	Datacenter wireRef       `json:"datacenter"`
+	ServerPlan wireRef       `json:"server-plan"`
+}
+
+type wireServerIP struct {
+	IP string `json:"ip"`
+}
+
+// wireRef is the id of a nested {"id", "name", ...} object.
+type wireRef struct {
+	ID int `json:"id"`
 }
 
 func (w wireServer) toInstance() Instance {
-	dc := ""
-	switch v := w.Datacenter.(type) {
-	case float64:
-		dc = strconv.Itoa(int(v))
-	case string:
-		dc = v
+	inst := Instance{ID: strconv.Itoa(w.ID), Label: w.Name, Status: w.Status}
+	if w.Datacenter.ID != 0 {
+		inst.Region = strconv.Itoa(w.Datacenter.ID)
 	}
-	plan := ""
-	switch v := w.ServerPlan.(type) {
-	case float64:
-		plan = strconv.Itoa(int(v))
-	case string:
-		plan = v
+	if w.ServerPlan.ID != 0 {
+		inst.Plan = strconv.Itoa(w.ServerPlan.ID)
 	}
-	return Instance{
-		ID:      strconv.Itoa(w.ID),
-		Label:   w.Name,
-		Region:  dc,
-		Plan:    plan,
-		Status:  w.Status,
-		Address: publicIP(w.IP),
-		Tags:    nil,
+	if w.IP != nil {
+		inst.Address = publicIP(w.IP.IP)
 	}
+	return inst
 }
 
 func publicIP(ip string) string {
@@ -671,7 +692,7 @@ func (c *Client) Create(ctx context.Context, p CreateParams) (Instance, error) {
 	}
 	if p.SSHKeyID != "" {
 		if id, err := strconv.Atoi(p.SSHKeyID); err == nil {
-			body["ssh_key"] = id
+			body["ssh-key"] = id
 		}
 	}
 	var out wireServer

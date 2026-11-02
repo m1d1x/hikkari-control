@@ -27,6 +27,12 @@
 	});
 
 	onMount(async () => {
+		// `vite dev --mode mock`: mockups open without a hub to sign in to.
+		if (import.meta.env.DEV && import.meta.env.MODE === 'mock') {
+			bootState = 'ready';
+			return;
+		}
+
 		// /login is its own auth ceremony: skip the refresh probe so the
 		// form works even before any admin cookies exist.
 		if (currentPath === '/login') {
@@ -52,6 +58,7 @@
 		'/login': 'вход',
 		'/antiblock': 'антиблок · обзор',
 		'/protocols': 'протоколы',
+		'/protocols/servers': 'протоколы · серверы',
 		'/autopilot': 'автопилот',
 		'/entry': 'машины',
 		'/incidents': 'инциденты',

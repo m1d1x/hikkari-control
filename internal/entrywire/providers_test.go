@@ -402,19 +402,16 @@ func TestVDSinaHosterAdaptsAllMethods(t *testing.T) {
 			})
 		case r.URL.Path == "/server" && r.Method == http.MethodPost:
 			write(map[string]any{
-				"id": 303, "name": "ams1", "status": "new", "ip": "0.0.0.0",
-				"datacenter": 4, "server_plan": 1,
+				"id": 303, "name": "ams1", "status": "new", "ip": map[string]any{"ip": "0.0.0.0"}, "datacenter": map[string]any{"id": 4}, "server-plan": map[string]any{"id": 1},
 			})
 		case r.URL.Path == "/server/303" && r.Method == http.MethodGet:
 			write(map[string]any{
-				"id": 303, "name": "ams1", "status": "active", "ip": "185.123.45.67",
-				"datacenter": 4, "server_plan": 1,
+				"id": 303, "name": "ams1", "status": "active", "ip": map[string]any{"ip": "185.123.45.67"}, "datacenter": map[string]any{"id": 4}, "server-plan": map[string]any{"id": 1},
 			})
 		case r.URL.Path == "/server" && r.Method == http.MethodGet:
 			write([]map[string]any{
 				{
-					"id": 303, "name": "ams1", "status": "active", "ip": "185.123.45.67",
-					"datacenter": 4, "server_plan": 1,
+					"id": 303, "name": "ams1", "status": "active", "ip": map[string]any{"ip": "185.123.45.67"}, "datacenter": map[string]any{"id": 4}, "server-plan": map[string]any{"id": 1},
 				},
 			})
 		case r.URL.Path == "/server.reboot/303":

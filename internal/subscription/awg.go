@@ -88,7 +88,7 @@ func AwgLink(r entry.RelayRecord) (string, error) {
 	if r.Proto != entry.ProtoAmneziaWG || p == nil {
 		return "", errNoLink
 	}
-	conf := strings.Join([]string{
+	lines := []string{
 		"[Interface]",
 		"PrivateKey = " + p.ClientPrivateKey,
 		"Address = " + p.ClientAddress + "/32",
@@ -105,14 +105,24 @@ func AwgLink(r entry.RelayRecord) (string, error) {
 		"H3 = " + p.H3,
 		"H4 = " + p.H4,
 		"I1 = " + p.I1,
+	}
+	if p.DecoyDomain != "" {
+		// Ip, Id and Ib ask for the core's live generator, which builds a real
+		// browser ClientHello for every handshake. A client that knows them drops
+		// I1 for them, since the core refuses the two together; a released client
+		// doesn't read them and stays on I1.
+		lines = append(lines, "Ip = quic", "Id = "+p.DecoyDomain, "Ib = chrome")
+	}
+	lines = append(lines,
 		"",
 		"[Peer]",
-		"PublicKey = " + p.ServerPublicKey,
+		"PublicKey = "+p.ServerPublicKey,
 		"AllowedIPs = 0.0.0.0/0",
-		"Endpoint = " + net.JoinHostPort(r.Address, strconv.Itoa(r.Port)),
+		"Endpoint = "+net.JoinHostPort(r.Address, strconv.Itoa(r.Port)),
 		"PersistentKeepalive = 25",
 		"",
-	}, "\n")
+	)
+	conf := strings.Join(lines, "\n")
 	doc, err := json.Marshal(map[string]any{
 		"description":      "Hikkari " + r.Name,
 		"hostName":         r.Address,

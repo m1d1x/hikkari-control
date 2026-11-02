@@ -156,3 +156,57 @@ export async function fetchTesterChunks(install: string, since?: number): Promis
 export async function exportTesterLog(install: string, from: number, to: number): Promise<string> {
 	return getText(`/api/v1/admin/support/tester-logs/${encodeURIComponent(install)}/export`, { from, to });
 }
+
+/** One relay as a tester's latest round saw it (internal/support/testerrelays.go). */
+export interface TesterRelay {
+	tag: string;
+	proto: string;
+	up: boolean;
+	pingMs?: number;
+	reason?: string;
+	flowsOpen?: number;
+	flowsTotal?: number;
+	lastOk?: string;
+}
+
+export interface TesterRelays {
+	install_id: string;
+	platform: string;
+	version: string;
+	network?: string;
+	at: string;
+	relays: TesterRelay[];
+}
+
+export interface TesterProtocol {
+	proto: string;
+	checks: number;
+	sharePct: number;
+	okPct: number;
+	p50Ms: number | null;
+	p95Ms: number | null;
+	okSeries: (number | null)[];
+	pingSeries: (number | null)[];
+}
+
+export interface TesterSeries {
+	key: string;
+	values: (number | null)[];
+}
+
+export type TesterRelayWindow = '24h' | '7d';
+
+export interface TesterRelayScreen {
+	window: TesterRelayWindow;
+	bucketSeconds: number;
+	buckets: string[];
+	protocols: TesterProtocol[];
+	clientsByUp: TesterSeries[];
+	failures: TesterSeries[];
+	installs: TesterRelays[];
+}
+
+/** The protocols screen: what testers' clients got from each relay. */
+export async function fetchTesterRelays(window: TesterRelayWindow): Promise<TesterRelayScreen> {
+	return get<TesterRelayScreen>('/api/v1/admin/support/tester-relays', { window });
+}

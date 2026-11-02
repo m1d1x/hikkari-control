@@ -1948,6 +1948,8 @@ export interface ProtocolSeries {
 	/** machines alive for a protocol, relays alive for a machine */
 	live: (number | null)[];
 	passPct: (number | null)[];
+	/** plain TCP connects that opened, before any retry; null for UDP protocols */
+	tcpFlowPct: (number | null)[];
 	trafficBytes: (number | null)[];
 	conns: (number | null)[];
 	subscribers: (number | null)[];
