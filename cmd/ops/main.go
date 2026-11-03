@@ -24,6 +24,9 @@ const usage = `usage: ops <command>
                                     ask the client for a diagnostic, wait, print it
   probe <who> --targets label=ip:port,label=ip:port
                                     TCP flows from the tester's card, past the tunnel
+  load <who>                        a [diag:load] round over the tester's profiles now
+  matrix --sub URL --profile LABEL --knob fp=chrome,firefox [--vantage spb,lv] [--rounds 3]
+                                    one knob of a profile, measured from Russia and outside
   census add <url> --name X         save a paid subscription, list its entries
   census probe [--who 002,005]      TCP count from St Petersburg and testers
   census add-addr --name X --addrs ip:port,ip:port

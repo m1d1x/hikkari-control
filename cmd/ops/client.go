@@ -310,6 +310,8 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 		return c.probe(args)
 	case "load":
 		return c.load(args)
+	case "matrix":
+		return c.matrix(args)
 	case "census-add":
 		return c.censusAdd(args)
 	case "census-add-addr":
