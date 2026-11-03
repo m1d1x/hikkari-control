@@ -34,6 +34,9 @@ const (
 	TesterCommandRunDoctor = "run_doctor"
 	TesterCommandSnapshot  = "snapshot"
 	TesterCommandProbe     = "probe_targets"
+	// TesterCommandLoad runs every profile of the install under load now. Its
+	// answer only says the round started: the lines follow as [diag:load].
+	TesterCommandLoad = "load_profiles"
 
 	TesterCommandPending   = "pending"
 	TesterCommandDelivered = "delivered"
@@ -49,6 +52,7 @@ var testerCommandKinds = map[string]bool{
 	TesterCommandRunDoctor: true,
 	TesterCommandSnapshot:  true,
 	TesterCommandProbe:     true,
+	TesterCommandLoad:      true,
 }
 
 // TesterCommand is what a client receives in the answer to its chunk.

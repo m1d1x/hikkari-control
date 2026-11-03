@@ -142,6 +142,61 @@ func TestProbeSendsTargetsAndReadsItsLines(t *testing.T) {
 	}
 }
 
+func TestLoadWaitsForTheRoundToClose(t *testing.T) {
+	defer func(p time.Duration) { loadPoll = p }(loadPoll)
+	loadPoll = 20 * time.Millisecond
+	c, store := hubFixture(t)
+	ctx := context.Background()
+	base := support.TesterChunkRequest{InstallID: "t-abc", Platform: "windows", Version: "1.0.33"}
+	hb := base
+	hb.Heartbeat = true
+	if err := store.AppendChunk(ctx, hb); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for i := 0; i < 200; i++ {
+			time.Sleep(20 * time.Millisecond)
+			cmds, _ := store.TakeCommands(ctx, "t-abc")
+			if len(cmds) == 0 {
+				continue
+			}
+			if cmds[0].Kind != "load_profiles" {
+				t.Errorf("kind %q", cmds[0].Kind)
+			}
+			now := time.Now().Format("2006/01/02 15:04:05.000000")
+			res := base
+			res.Lines = []string{now + " [diag:load nonce=" + cmds[0].Nonce + "] started profiles=1"}
+			_ = store.AppendChunk(ctx, res)
+			_ = store.AckCommands(ctx, "t-abc", []string{cmds[0].Nonce})
+			time.Sleep(100 * time.Millisecond)
+			now = time.Now().Format("2006/01/02 15:04:05.000000")
+			res.Lines = []string{
+				now + " [diag:load] p-ams proto=vless-reality load_error=\"core did not start\"",
+				now + " [singbox] an unrelated line",
+				now + " [diag:load] on request: done",
+			}
+			_ = store.AppendChunk(ctx, res)
+			return
+		}
+	}()
+	out, err := c.call("load", map[string]string{"who": "tester-001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "p-ams proto=vless-reality") || !strings.Contains(out, "on request: done") || strings.Contains(out, "unrelated") {
+		t.Fatalf("load output: %s", out)
+	}
+}
+
+func TestLoadStopsAtARefusal(t *testing.T) {
+	if !loadRefused.MatchString(`"msg":"error=\"a round is running\""`) {
+		t.Fatal("a refusal was not seen")
+	}
+	if loadRefused.MatchString(`p-a proto=vless load_error=\"x\"`) {
+		t.Fatal("a profile's load_error read as a refusal")
+	}
+}
+
 func TestDiagRefusesAnInstallOffTheLine(t *testing.T) {
 	c, store := hubFixture(t)
 	req := support.TesterChunkRequest{InstallID: "t-off", Platform: "macos", Version: "1.0.24", Heartbeat: true}

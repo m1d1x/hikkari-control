@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,8 +31,10 @@ const (
 
 	// diagWait bounds request_diag: the command waits for the next call of the
 	// client (up to a minute), the run, and the flush right after it.
-	diagWait     = 150 * time.Second
-	diagPoll     = 3 * time.Second
+	diagWait = 150 * time.Second
+	diagPoll = 3 * time.Second
+	// loadWait bounds probe_load: a round takes about a minute a profile.
+	loadWait     = 15 * time.Minute
 	defaultTail  = 1000
 	defaultLast  = time.Hour
 	tunnelWait   = 15 * time.Second
@@ -305,6 +308,8 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 		return c.diag(args)
 	case "probe":
 		return c.probe(args)
+	case "load":
+		return c.load(args)
 	case "census-add":
 		return c.censusAdd(args)
 	case "census-add-addr":
@@ -516,24 +521,90 @@ func (c *client) askAndRead(who string, body map[string]any, source string) (str
 
 // waitAndRead polls a queued command, then reads its lines.
 func (c *client) waitAndRead(who, path string, asked diagAnswer, source string) (string, error) {
+	if err := c.waitDone(path, asked); err != nil {
+		return "", err
+	}
+	return c.readAnswer(who, asked, source)
+}
+
+// waitDone polls a queued command until its client has answered it.
+func (c *client) waitDone(path string, asked diagAnswer) error {
 	deadline := time.Now().Add(diagWait)
 	state := asked.State
 	for state != "done" {
 		if state == "expired" || time.Now().After(deadline) {
-			return "", diagTimeout(asked, state)
+			return diagTimeout(asked, state)
 		}
 		time.Sleep(diagPoll)
 		data, err := c.request(http.MethodGet, path+"/"+url.PathEscape(asked.Nonce), nil, nil)
 		if err != nil {
-			return "", err
+			return err
 		}
 		var now diagAnswer
 		if err := json.Unmarshal(data, &now); err != nil {
-			return "", fmt.Errorf("hub answer: %w", err)
+			return fmt.Errorf("hub answer: %w", err)
 		}
 		state = now.State
 	}
-	return c.readAnswer(who, asked, source)
+	return nil
+}
+
+// loadPoll is how often probe_load reads the round's lines; a test shortens it.
+var loadPoll = 10 * time.Second
+
+// loadRefused is the client's «error=…» in answer to load_profiles; a profile's
+// own load_error= is part of the round, not a refusal.
+var loadRefused = regexp.MustCompile(`(^|[^\w])error=`)
+
+// load asks a tester for a load round over every profile now and waits for it
+// to close. The command is answered as soon as the round starts, so the wait
+// goes on in the [diag:load] lines, until «on request: done» or a refusal.
+func (c *client) load(args map[string]string) (string, error) {
+	who := args["who"]
+	path, err := installPath(who, "/commands")
+	if err != nil {
+		return "", err
+	}
+	data, err := c.request(http.MethodPost, path, nil, map[string]any{"kind": "load_profiles"})
+	if err != nil {
+		return "", err
+	}
+	var asked diagAnswer
+	if err := json.Unmarshal(data, &asked); err != nil {
+		return "", fmt.Errorf("hub answer: %w", err)
+	}
+	if err := c.waitDone(path, asked); err != nil {
+		return "", err
+	}
+	exportPath, err := installPath(who, "/export")
+	if err != nil {
+		return "", err
+	}
+	deadline := time.Now().Add(loadWait)
+	for {
+		out, err := c.export(exportPath, asked.CreatedAt.Add(-time.Minute), time.Now().Add(time.Minute), "diag:load", defaultTail)
+		if err != nil {
+			return "", err
+		}
+		if strings.Contains(out, "on request: done") || loadRefused.MatchString(answerLines(out, asked.Nonce)) {
+			return out, nil
+		}
+		if time.Now().After(deadline) {
+			return out, fmt.Errorf("%s начал раунд, но не закрыл его за %s: строки выше, остальное в logs --src diag:load", asked.Alias, loadWait)
+		}
+		time.Sleep(loadPoll)
+	}
+}
+
+// answerLines keeps the records of the command's own answer.
+func answerLines(export, nonce string) string {
+	var out []string
+	for _, line := range strings.Split(export, "\n") {
+		if strings.Contains(line, "nonce="+nonce) {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 func (c *client) readAnswer(who string, asked diagAnswer, source string) (string, error) {
