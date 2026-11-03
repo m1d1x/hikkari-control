@@ -188,6 +188,16 @@ func TestLoadWaitsForTheRoundToClose(t *testing.T) {
 	}
 }
 
+func TestLoadRoundIsClosedOnlyByALogRecord(t *testing.T) {
+	guide := `{"type":"meta","guide":{"sources":{"diag:load":"Раунд по запросу закрывает строка «on request: done»"}}}`
+	if roundClosed(guide) {
+		t.Fatal("the guide's description closed the round")
+	}
+	if !roundClosed(guide + "\n" + `{"type":"log","src":"diag:load","msg":"on request: done"}`) {
+		t.Fatal("the closing record was missed")
+	}
+}
+
 func TestLoadStopsAtARefusal(t *testing.T) {
 	if !loadRefused.MatchString(`"msg":"error=\"a round is running\""`) {
 		t.Fatal("a refusal was not seen")

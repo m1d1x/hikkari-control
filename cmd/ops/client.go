@@ -586,7 +586,7 @@ func (c *client) load(args map[string]string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if strings.Contains(out, "on request: done") || loadRefused.MatchString(answerLines(out, asked.Nonce)) {
+		if roundClosed(out) || loadRefused.MatchString(answerLines(out, asked.Nonce)) {
 			return out, nil
 		}
 		if time.Now().After(deadline) {
@@ -594,6 +594,21 @@ func (c *client) load(args map[string]string) (string, error) {
 		}
 		time.Sleep(loadPoll)
 	}
+}
+
+// roundClosed says whether a record of the export closes the round. Only log
+// records count: the export's meta.guide names the closing line too.
+func roundClosed(export string) bool {
+	for _, line := range strings.Split(export, "\n") {
+		var rec struct {
+			Type string `json:"type"`
+			Msg  string `json:"msg"`
+		}
+		if json.Unmarshal([]byte(line), &rec) == nil && rec.Type == "log" && rec.Msg == "on request: done" {
+			return true
+		}
+	}
+	return false
 }
 
 // answerLines keeps the records of the command's own answer.
