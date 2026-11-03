@@ -395,6 +395,13 @@ func (s *Service) DetectFleet(ctx context.Context) (opened, closed int, err erro
 			applog.Error(ctx, "entry", "fleet pool not kept", applog.F("pool", f.Pool), applog.F("err", err.Error()))
 		}
 		if f.Need <= 0 {
+			// The pool is full: the strikes of its next shortage start here
+			// (poolRails).
+			if _, err := s.pool.Exec(ctx, `
+				UPDATE entry_fleet_pools SET filled_at = $3 WHERE proto = $1 AND voice_region = $2
+			`, proto, region, s.now()); err != nil {
+				applog.Error(ctx, "entry", "fleet pool fill not kept", applog.F("pool", f.Pool), applog.F("err", err.Error()))
+			}
 			continue
 		}
 		// One more machine has to fit under the money cap, or the shortage

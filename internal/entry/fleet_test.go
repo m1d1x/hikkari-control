@@ -750,6 +750,88 @@ func TestADoneScaleUpOnAStandingShortageIsAStrike(t *testing.T) {
 	}
 }
 
+// failedShortage books a shortage that ended without a machine of its own and
+// FailStrikes failed attempts on it, the last this long ago.
+func (h *fleetHarness) failedShortage(pol DetectionPolicy, ago time.Duration) {
+	h.t.Helper()
+	var id uuid.UUID
+	at := time.Now().Add(-ago - time.Duration(pol.FailStrikes)*time.Minute)
+	if err := h.pool.QueryRow(context.Background(), `
+		INSERT INTO entry_incidents (pool, cause, advice, evidence, opened_at, status, closed_at)
+		VALUES ($1, $2, 'тест', '{}', $3, 'resolved', now())
+		RETURNING id`, h.key, CauseShortOfFleet, at).Scan(&id); err != nil {
+		h.t.Fatalf("failed shortage: %v", err)
+	}
+	for i := 0; i < pol.FailStrikes; i++ {
+		h.bookPoolRepair(id, repairFailed, ago+time.Duration(i)*time.Minute)
+	}
+}
+
+// Failures from before the pool was last full are not strikes of the next
+// shortage. Found on the hub 02.11: XHTTP failed three times on 01.11, was
+// filled that evening, and the shortage its rotation opened the next morning
+// went to a person at once — no order placed, the pool empty for a day.
+func TestFailuresBeforeThePoolWasFullAreNotStrikes(t *testing.T) {
+	h := newFleetHarness(t)
+	ctx := context.Background()
+	h.mode(ModeAuto)
+	pol, err := h.svc.DetectionPolicy(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.failedShortage(pol, pol.RepairCooldown+time.Hour)
+
+	box := h.inPool()
+	h.target(1)
+	if inc, ok := h.shortage(); ok {
+		t.Fatalf("a full pool read short: %+v", inc)
+	}
+	h.retire(box)
+	inc, ok := h.shortage()
+	if !ok {
+		t.Fatal("no shortage opened after the pool's machine left")
+	}
+
+	h.vantage("clean")
+	started, handed := NewMechanic(h.svc, h.prov).consider(ctx, inc)
+	if handed {
+		got, _ := h.svc.Incident(ctx, inc.ID)
+		t.Fatalf("failures of a shortage that ended handed the next one to a person: %q", got.Handoff)
+	}
+	if !started {
+		t.Fatal("scale_up did not start")
+	}
+	h.settle(inc.ID)
+}
+
+// And failures with no fill after them stay strikes, whichever incident they
+// were booked on: a shortage that flips to short_of_budget and back is the
+// same shortage, and must not buy a fresh three attempts.
+func TestFailuresOfAPoolNeverFilledStayStrikes(t *testing.T) {
+	h := newFleetHarness(t)
+	ctx := context.Background()
+	h.mode(ModeAuto)
+	pol, err := h.svc.DetectionPolicy(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.failedShortage(pol, pol.RepairCooldown+time.Hour)
+	h.target(1)
+	inc, ok := h.shortage()
+	if !ok {
+		t.Fatal("no shortage opened")
+	}
+
+	orders := h.host.orderCount()
+	started, handed := NewMechanic(h.svc, h.prov).consider(ctx, inc)
+	if started || !handed {
+		t.Fatalf("after %d failures and no fill: started=%v handed=%v", pol.FailStrikes, started, handed)
+	}
+	if n := h.host.orderCount(); n != orders {
+		t.Errorf("orders %d → %d", orders, n)
+	}
+}
+
 // leaving says the machine is being emptied for a handback.
 func (h *fleetHarness) leaving(box string) bool {
 	h.t.Helper()

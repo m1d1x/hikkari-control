@@ -583,7 +583,7 @@ func (m *Mechanic) poolRails(ctx context.Context, inc Incident, playbook string,
 	if playbook == PlaybookBuyDomain && m.svc.currentBuyer().reg == nil {
 		return "", true, nil
 	}
-	proto, _ := splitPool(inc.Pool)
+	proto, region := splitPool(inc.Pool)
 	if playbook == PlaybookScaleUp && proto == ProtoVlessXhttp {
 		if err := m.svc.xhttpDomainReady(ctx); errors.Is(err, ErrNoRegistrar) {
 			return "", true, nil
@@ -601,9 +601,21 @@ func (m *Mechanic) poolRails(ctx context.Context, inc Incident, playbook string,
 	// three bans that day, handed the fourth shortage to a person as "tried
 	// and it did not work". What bounds a run of purchases is the money gate,
 	// not the strikes.
+	//
+	// Nor is a failure from before the pool was last full: that shortage
+	// ended. Found on the hub 02.11: XHTTP failed three times on 01.11, was
+	// filled that evening, and when its machines were rotated out the next
+	// morning the new shortage went to a person at once, on strikes it never
+	// had — the pool sat empty with no order placed. A pool not kept in
+	// entry_fleet_pools (the domain pool) has no fill and keeps the day.
 	err = m.svc.pool.QueryRow(ctx, `
+		WITH since AS (
+			SELECT greatest($3::timestamptz, coalesce(
+				(SELECT filled_at FROM entry_fleet_pools WHERE proto = $6 AND voice_region = $7),
+				$3::timestamptz)) AS at
+		)
 		SELECT count(*) FILTER (WHERE r.pool = $1 AND r.cause = $2 AND r.status = 'running'),
-		       count(*) FILTER (WHERE r.pool = $1 AND r.cause = $2 AND r.started_at >= $3
+		       count(*) FILTER (WHERE r.pool = $1 AND r.cause = $2 AND r.started_at >= (SELECT at FROM since)
 		                          AND (r.status = 'failed'
 		                               OR (r.status = 'done' AND i.status IN ('open', 'acting')))),
 		       max(r.started_at) FILTER (WHERE r.pool = $1 AND r.cause = $2 AND r.status <> 'running'
@@ -612,7 +624,7 @@ func (m *Mechanic) poolRails(ctx context.Context, inc Incident, playbook string,
 		FROM entry_repairs r
 		LEFT JOIN entry_incidents i ON i.id = r.incident_id
 		WHERE (r.pool = $1 AND r.cause = $2) OR r.playbook = $5
-	`, inc.Pool, inc.Cause, now.Add(-strikeWindow), inc.ID, playbook).Scan(&running, &tries, &last, &acquiring)
+	`, inc.Pool, inc.Cause, now.Add(-strikeWindow), inc.ID, playbook, proto, region).Scan(&running, &tries, &last, &acquiring)
 	if err != nil {
 		return "", false, fmt.Errorf("entry: pool repair history: %w", err)
 	}
