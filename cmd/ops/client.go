@@ -586,7 +586,7 @@ func (c *client) load(args map[string]string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if roundClosed(out) || loadRefused.MatchString(answerLines(out, asked.Nonce)) {
+		if roundClosed(out, asked.Nonce) || loadRefused.MatchString(answerLines(out, asked.Nonce)) {
 			return out, nil
 		}
 		if time.Now().After(deadline) {
@@ -596,15 +596,26 @@ func (c *client) load(args map[string]string) (string, error) {
 	}
 }
 
-// roundClosed says whether a record of the export closes the round. Only log
-// records count: the export's meta.guide names the closing line too.
-func roundClosed(export string) bool {
+// roundClosed says whether a record after the command's own answer closes the
+// round. Only log records count, since the export's meta.guide names the
+// closing line too, and only after the answer, since the window opens a
+// minute before the request and may hold the close of an earlier round.
+func roundClosed(export, nonce string) bool {
+	answered := false
 	for _, line := range strings.Split(export, "\n") {
 		var rec struct {
 			Type string `json:"type"`
+			Src  string `json:"src"`
 			Msg  string `json:"msg"`
 		}
-		if json.Unmarshal([]byte(line), &rec) == nil && rec.Type == "log" && rec.Msg == "on request: done" {
+		if json.Unmarshal([]byte(line), &rec) != nil || rec.Type != "log" {
+			continue
+		}
+		if strings.Contains(rec.Src, "nonce="+nonce) {
+			answered = true
+			continue
+		}
+		if answered && rec.Msg == "on request: done" {
 			return true
 		}
 	}

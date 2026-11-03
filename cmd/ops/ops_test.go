@@ -188,12 +188,15 @@ func TestLoadWaitsForTheRoundToClose(t *testing.T) {
 	}
 }
 
-func TestLoadRoundIsClosedOnlyByALogRecord(t *testing.T) {
+func TestLoadRoundIsClosedOnlyByItsOwnLogRecord(t *testing.T) {
 	guide := `{"type":"meta","guide":{"sources":{"diag:load":"Раунд по запросу закрывает строка «on request: done»"}}}`
-	if roundClosed(guide) {
-		t.Fatal("the guide's description closed the round")
+	earlier := `{"type":"log","src":"diag:load","msg":"on request: done"}`
+	started := `{"type":"log","src":"diag:load nonce=n1","msg":"started profiles=2"}`
+	closing := `{"type":"log","src":"diag:load","msg":"on request: done"}`
+	if roundClosed(guide+"\n"+earlier+"\n"+started, "n1") {
+		t.Fatal("the guide or an earlier round closed this one")
 	}
-	if !roundClosed(guide + "\n" + `{"type":"log","src":"diag:load","msg":"on request: done"}`) {
+	if !roundClosed(guide+"\n"+earlier+"\n"+started+"\n"+closing, "n1") {
 		t.Fatal("the closing record was missed")
 	}
 }
