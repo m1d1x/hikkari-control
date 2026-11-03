@@ -271,8 +271,8 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 }
 
 // namedLink puts a relay's logical node on its link: the name a subscriber
-// reads and the id the downdetector keys on, both surviving the relay's
-// replacement. A relay with no node yet keeps the link it was rendered with.
+// reads, the id the downdetector keys on and the node's fingerprint, all
+// surviving the relay's replacement. A relay with no node yet keeps the link it was rendered with.
 func namedLink(link string, node entry.NodeName) string {
 	u, err := url.Parse(link)
 	if err != nil || node.Slug == "" {
@@ -280,6 +280,11 @@ func namedLink(link string, node entry.NodeName) string {
 	}
 	q := u.Query()
 	q.Set("hikkari-node", "n:"+node.Slug)
+	// Only a link that names a fingerprint takes the node's own: one without
+	// (Hysteria2) has no TLS fingerprint to choose.
+	if node.Fingerprint != "" && q.Get("fp") != "" {
+		q.Set("fp", node.Fingerprint)
+	}
 	u.RawQuery = q.Encode()
 	if node.Label != "" {
 		u.Fragment = node.Label

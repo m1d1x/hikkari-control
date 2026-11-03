@@ -244,6 +244,35 @@ func TestARecordUnderAnUnknownKeyIsLeftOut(t *testing.T) {
 	}
 }
 
+func TestALinkTakesItsNodesFingerprint(t *testing.T) {
+	link, err := Link(realityRecord())
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(namedLink(link, entry.NodeName{Slug: "abc", Fingerprint: "firefox"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := u.Query().Get("fp"); got != "firefox" {
+		t.Fatalf("fp %q in %s", got, u)
+	}
+	u, err = url.Parse(namedLink(link, entry.NodeName{Slug: "abc"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := u.Query().Get("fp"); got != "chrome" {
+		t.Fatalf("a node with no fingerprint changed fp to %q", got)
+	}
+	plain := "hysteria2://auth@1.2.3.4:443?sni=x#n"
+	u, err = url.Parse(namedLink(plain, entry.NodeName{Slug: "abc", Fingerprint: "firefox"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Query().Has("fp") {
+		t.Fatalf("a link with no fingerprint got one: %s", u)
+	}
+}
+
 func TestALinkCarriesItsNodesNameAndID(t *testing.T) {
 	link, err := Link(realityRecord())
 	if err != nil {
