@@ -149,13 +149,18 @@ func Decide(p Policy, current string, candidates []string, ev Evidence, lastSwit
 
 // Controller runs the rule over every live node.
 type Controller struct {
-	pool db.Pool
-	now  func() time.Time
+	pool  db.Pool
+	slots Slots
+	now   func() time.Time
 }
 
-// NewController is the controller on pool.
-func NewController(pool db.Pool) *Controller {
-	return &Controller{pool: pool, now: time.Now}
+// NewController is the controller on pool. It reads only rows of the active
+// observation points (slots): the stand on schedule measures every candidate
+// the same way, while a hand run of ops matrix (vantages spb, lv) may carry a
+// base of other knobs or come from outside Russia under a name the policy
+// does not know.
+func NewController(pool db.Pool, slots Slots) *Controller {
+	return &Controller{pool: pool, slots: slots, now: time.Now}
 }
 
 // Run decides every tick until ctx ends.
@@ -209,10 +214,14 @@ func (c *Controller) Tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	slots, err := c.slots.ActiveSlots(ctx)
+	if err != nil {
+		return err
+	}
 	now := c.now()
 	for _, n := range nodes {
 		for knob, cands := range knobs {
-			if err := c.decideNode(ctx, p, n, knob, cands, now); err != nil {
+			if err := c.decideNode(ctx, p, slots, n, knob, cands, now); err != nil {
 				return err
 			}
 		}
@@ -292,12 +301,12 @@ func nodeValue(knob, v string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(v, "/", ","), "http1.1", "http/1.1")
 }
 
-func (c *Controller) decideNode(ctx context.Context, p Policy, n node, knob string, cands []string, now time.Time) error {
+func (c *Controller) decideNode(ctx context.Context, p Policy, slots []string, n node, knob string, cands []string, now time.Time) error {
 	current := currentValue(knob, n.values[knob])
 	if current == "" {
 		return nil
 	}
-	ev, err := c.evidence(ctx, p, n.label, knob, now)
+	ev, err := c.evidence(ctx, p, slots, n.label, knob, now)
 	if err != nil {
 		return err
 	}
@@ -351,7 +360,7 @@ func (c *Controller) apply(ctx context.Context, n node, knob, to string, line re
 
 // evidence sums the stand's rows of the node's profile over the window.
 // A round whose core did not start counts as 50 asked and none answered.
-func (c *Controller) evidence(ctx context.Context, p Policy, profile, knob string, now time.Time) (Evidence, error) {
+func (c *Controller) evidence(ctx context.Context, p Policy, slots []string, profile, knob string, now time.Time) (Evidence, error) {
 	ev := Evidence{Window: p.Window.String(), Russia: map[string]Share{}, Control: map[string]Share{}}
 	rows, err := c.pool.Query(ctx, `
 		SELECT knob, value, vantage = ANY($4) AS control, count(*),
@@ -359,8 +368,8 @@ func (c *Controller) evidence(ctx context.Context, p Policy, profile, knob strin
 		       sum(CASE WHEN load_error THEN $5::int ELSE burst_total END)
 		FROM relay_runs
 		WHERE source = 'stand' AND profile = $1 AND (knob = $2 OR knob = 'baseline')
-		  AND measured_at > $3
-		GROUP BY 1, 2, 3`, profile, knob, now.Add(-p.Window), p.Control, Burst)
+		  AND measured_at > $3 AND vantage = ANY($6)
+		GROUP BY 1, 2, 3`, profile, knob, now.Add(-p.Window), p.Control, Burst, slots)
 	if err != nil {
 		return ev, fmt.Errorf("controller evidence: %w", err)
 	}

@@ -339,7 +339,7 @@ func run() error {
 	go standRuns.Run(ctx, time.Minute)
 	// The knob controller: moves a node off a value Russia cuts onto a
 	// candidate the stand passes, and journals why (internal/stand controller.go).
-	knobs := stand.NewController(pool)
+	knobs := stand.NewController(pool, svc)
 	stand.RegisterKnobOpsRoutes(adminMux, knobs, relayRuns, opsGate)
 	go knobs.Run(ctx, 5*time.Minute)
 	support.RegisterTesterRoutes(adminMux, testerStore, testerLimiter)

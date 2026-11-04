@@ -144,8 +144,10 @@ func TestDBControllerSwitchesACutNodeAndSaysWhy(t *testing.T) {
 	// Best in Russia, but the server refuses it: not taken.
 	seedRuns(t, store, "ru-spb", "amsterdam-1-002", "fp", "safari", six(50)...)
 	seedRuns(t, store, "lv-main", "amsterdam-1-002", "fp", "safari", six(0)...)
+	// A hand run outside the active slots does not count, however red.
+	seedRuns(t, store, "spb", "amsterdam-1-002", "fp", "firefox", six(0)...)
 
-	c := NewController(pool)
+	c := NewController(pool, fakeSlots{"lv-main", "ru-spb"})
 	if err := c.Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +182,7 @@ func TestDBControllerSaysAllRedOnceAndLeavesTheNode(t *testing.T) {
 	for _, v := range fpCandidates {
 		seedRuns(t, store, "ru-spb", "amsterdam-1-002", "fp", v, six(20)...)
 	}
-	c := NewController(pool)
+	c := NewController(pool, fakeSlots{"lv-main", "ru-spb"})
 	for range 3 {
 		if err := c.Tick(ctx); err != nil {
 			t.Fatal(err)
@@ -208,7 +210,7 @@ func TestDBControllerOffTouchesNothing(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE stand_settings SET controller = 'off'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewController(pool).Tick(ctx); err != nil {
+	if err := NewController(pool, fakeSlots{"lv-main", "ru-spb"}).Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var fp *string
