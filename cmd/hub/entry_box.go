@@ -52,6 +52,7 @@ import (
 
 	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 	"github.com/m1d1x/hikkari-control/internal/entry"
+	"github.com/m1d1x/hikkari-control/internal/entrywire"
 )
 
 func runEntryBox(args []string) {
@@ -128,6 +129,38 @@ func runEntryBox(args []string) {
 		}
 		os.Exit(0)
 	}
+	if len(args) == 2 && args[0] == "catalog" {
+		// entry-box catalog <hoster> — what that account offers and what the hub
+		// counts a plan at, before an order names one. Reads only.
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		svc.SetProviderConnector(entrywire.Providers())
+		cat, err := svc.PreviewProviderCatalog(ctx, args[1], nil)
+		if err != nil {
+			fail(err)
+		}
+		for _, r := range cat.Regions {
+			fmt.Printf("region %s\n", r.ID)
+		}
+		for _, p := range cat.Plans {
+			fmt.Printf("plan %s  %d vCPU  %d MB  %d GB  counted at $%0.2f  regions %v\n", p.ID, p.VCPUs, p.RAMMB, p.DiskGB, float64(p.MonthlyCents)/100, p.Regions)
+		}
+		os.Exit(0)
+	}
+	// hoster=<kind> as the last word of an order: from that enabled hoster, for
+	// this one order; the running hub keeps its own (entry.Service.UseHoster).
+	namedHoster := ""
+	if n := len(args); n > 1 && args[0] == "order" && strings.HasPrefix(args[n-1], "hoster=") {
+		namedHoster, args = strings.TrimPrefix(args[n-1], "hoster="), args[:n-1]
+	}
 	region, domain, xhttp := "", "", false
 	if n := len(args); n > 4 {
 		last := args[n-1]
@@ -170,7 +203,7 @@ func runEntryBox(args []string) {
 	retire := len(args) >= 2 && len(args) <= 3 && args[0] == "retire"
 	provider := len(args) >= 3 && len(args) <= 5 && args[0] == "provider"
 	if !order && !retire && !provider && len(args) != 1 && len(args) != 4 && len(args) != 5 {
-		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain>]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|awg|voice=<region>]"))
+		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain>]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|awg|voice=<region>] [hoster=<kind>] | entry-box catalog <hoster>"))
 	}
 	if err := cryptobox.Configure(os.Getenv); err != nil {
 		fail(fmt.Errorf("content key: %w", err))
@@ -203,6 +236,11 @@ func runEntryBox(args []string) {
 	// The one-shot CLI never runs a repair pass of its own; it wires the
 	// domains so a provisioning job can claim or buy a name (Ф6).
 	_ = wireEntryDomains(ctx, svc, prov)
+	if namedHoster != "" {
+		if err := svc.UseHoster(ctx, namedHoster); err != nil {
+			fail(err)
+		}
+	}
 
 	if retire {
 		reason := entry.DeathRotated

@@ -210,6 +210,30 @@ func (s *Service) loadHosterLocked(rows map[string]providerRow) {
 	s.SetHoster("", nil, HostingPolicy{})
 }
 
+// UseHoster makes kind the hoster of this process alone: what the operator's
+// one-shot CLI runs for an order from an enabled hoster other than the one the
+// hub prefers. The running hub is not touched: its autopilot keeps ordering
+// from, and handing back to, the hoster it loaded.
+//
+// A machine ordered this way is not handed back by the hub while another hoster
+// is its active one (hosting.go reads machines by the active hoster's kind): the
+// operator retires it through the same CLI.
+func (s *Service) UseHoster(ctx context.Context, kind string) error {
+	row, exists, err := s.repo.provider(ctx, kind)
+	if err != nil {
+		return err
+	}
+	if !exists || !row.Enabled {
+		return fmt.Errorf("%w: %s", ErrNoHoster, kind)
+	}
+	bp, err := s.hostingClientFor(ctx, kind, nil)
+	if err != nil {
+		return err
+	}
+	s.SetHoster(kind, bp, row.hostingPolicy())
+	return nil
+}
+
 // usableCreds opens the saved credentials of an enabled kind; ok is false when
 // the kind has no account, is switched off, or its row cannot be opened with
 // this hub's server key.

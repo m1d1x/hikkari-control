@@ -115,3 +115,24 @@ func TestMissingRegistrarWaitsBeforeSpendingAndStrikes(t *testing.T) {
 		}
 	}
 }
+
+func TestUseHosterAppliesToThisProcessAndOnlyAnEnabledOne(t *testing.T) {
+	h := newHostHarness(t)
+	ctx := context.Background()
+	h.svc.SetHoster("", nil, HostingPolicy{})
+	if err := h.svc.UseHoster(ctx, fakeHostKind); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.svc.hosterKind(); got != fakeHostKind {
+		t.Fatalf("hoster %q", got)
+	}
+	if err := h.svc.UseHoster(ctx, "nosuch"); !errors.Is(err, ErrNoHoster) {
+		t.Fatalf("an unknown hoster: %v", err)
+	}
+	if _, err := h.svc.SaveProvider(ctx, fakeHostKind, ProviderUpdate{Enabled: false}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.UseHoster(ctx, fakeHostKind); !errors.Is(err, ErrNoHoster) {
+		t.Fatalf("a hoster switched off: %v", err)
+	}
+}
