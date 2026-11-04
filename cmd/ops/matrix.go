@@ -17,6 +17,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -44,6 +45,9 @@ const (
 	matrixBytes    = 1 << 20
 	matrixBurst    = 50
 	matrixMaxBurst = 200
+	// matrixUploadPart is one part of the core's upload: small enough to pass
+	// a link that cuts long flows.
+	matrixUploadPart = 4 << 20
 	// matrixLoadBurst is the load knob: the burst's size, not the config's.
 	matrixLoadBurst = "burst"
 	matrixAfter     = 3
@@ -222,8 +226,10 @@ func (c *client) matrix(args map[string]string) (string, error) {
 	if len(rows) > 0 {
 		// Every run is history: the rows go to the hub's dataset, so the next
 		// question about this knob starts from them, not from scrollback.
+		// A dataset the hub refused does not undo the run: its rows are below
+		// and can be sent again; the failure is said, not raised.
 		if n, err := c.recordMatrix(rows); err != nil {
-			errs = append(errs, "dataset: "+err.Error())
+			out += "\nдатасет на hub: не записан: " + err.Error()
 		} else {
 			out += fmt.Sprintf("\nдатасет на hub: %d новых строк из %d", n, len(rows))
 		}
@@ -256,6 +262,37 @@ func (c *client) recordMatrix(rows []matrixRow) (int, error) {
 		return 0, errors.New("unreadable answer")
 	}
 	return ans.Added, nil
+}
+
+// runsRecord sends the rows of a saved matrix output (--file) to the dataset:
+// for a run whose rows the hub refused at the time.
+func (c *client) runsRecord(args map[string]string) (string, error) {
+	data, err := os.ReadFile(args["file"])
+	if err != nil {
+		return "", err
+	}
+	var rows []matrixRow
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var r matrixRow
+		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			return "", fmt.Errorf("row %q: %w", line, err)
+		}
+		if r.BurstTotal == 0 && !r.LoadError {
+			r.BurstTotal = matrixBurst // rows printed before burst_total was written
+		}
+		rows = append(rows, r)
+	}
+	if len(rows) == 0 {
+		return "", errors.New("no rows in the file")
+	}
+	n, err := c.recordMatrix(rows)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("датасет на hub: %d новых строк из %d", n, len(rows)), nil
 }
 
 // matrixDatasetRows are the run's rows as the dataset keeps them.
@@ -596,13 +633,74 @@ func matrixUpload(host, core string) error {
 	if strings.TrimSpace(string(have)) == sum {
 		return nil
 	}
-	if out, err := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", host, "mkdir -p "+matrixCoreDir).CombinedOutput(); err != nil {
-		return fmt.Errorf("ssh %s: %v: %s", host, err, strings.TrimSpace(string(out)))
+	// The core is 70 MB and the link from here to a vantage can cut a long
+	// flow (04.11: 25 MB died at both vantages while 5 MB passed). So it goes
+	// gzipped, in parts small enough to pass, each retried on its own; the
+	// vantage checks the whole against the hash before it replaces the old
+	// core, so a cut upload never leaves a half core for the next run.
+	parts, err := gzipParts(core, matrixUploadPart)
+	if err != nil {
+		return err
 	}
-	if out, err := exec.CommandContext(ctx, "scp", "-q", "-o", "BatchMode=yes", core, host+":"+remote).CombinedOutput(); err != nil {
-		return fmt.Errorf("scp %s: %v: %s", host, err, strings.TrimSpace(string(out)))
+	dir := matrixCoreDir + "/up"
+	if out, err := sshRun(host, "rm -rf "+dir+" && mkdir -p "+dir, nil, time.Minute); err != nil {
+		return fmt.Errorf("upload to %s: %v: %s", host, err, out)
+	}
+	for i, part := range parts {
+		var last error
+		for try := 0; try < 3; try++ {
+			out, err := sshRun(host, fmt.Sprintf("cat > %s/p%04d", dir, i), part, 3*time.Minute)
+			if err == nil {
+				last = nil
+				break
+			}
+			last = fmt.Errorf("part %d/%d: %v: %s", i+1, len(parts), err, out)
+		}
+		if last != nil {
+			return fmt.Errorf("upload to %s: %w", host, last)
+		}
+	}
+	join := fmt.Sprintf(`set -e; cat %[1]s/p* | gunzip > %[2]s.up; [ "$(sha256sum %[2]s.up | cut -d' ' -f1)" = %[3]s ] || { rm -f %[2]s.up; echo hash mismatch; exit 1; }; chmod 755 %[2]s.up; mv -f %[2]s.up %[2]s; rm -rf %[1]s`, dir, remote, sum)
+	if out, err := sshRun(host, join, nil, 2*time.Minute); err != nil {
+		return fmt.Errorf("upload to %s: %v: %s", host, err, out)
 	}
 	return nil
+}
+
+// gzipParts is a file gzipped and cut into parts of at most size bytes.
+func gzipParts(path string, size int) ([][]byte, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write(raw); err != nil {
+		return nil, err
+	}
+	if err := gz.Close(); err != nil {
+		return nil, err
+	}
+	all := buf.Bytes()
+	var parts [][]byte
+	for len(all) > 0 {
+		n := min(size, len(all))
+		parts = append(parts, all[:n])
+		all = all[n:]
+	}
+	return parts, nil
+}
+
+// sshRun runs a command on host with stdin, within wait.
+func sshRun(host, command string, stdin []byte, wait time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=10", host, command)
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
 }
 
 func fileSHA256(path string) (string, error) {

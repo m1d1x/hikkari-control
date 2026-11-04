@@ -70,7 +70,9 @@ type Row struct {
 var (
 	reLabel = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,80}$`)
 	reValue = regexp.MustCompile(`^[A-Za-z0-9._,/:-]{0,64}$`)
-	reEnd   = regexp.MustCompile(`^(ok|timeout|closed|http\d{3}|error|)$`)
+	// reCore names a core build: "sing-box-lx v1.14.3-lx.21+489ac0f3".
+	reCore = regexp.MustCompile(`^[A-Za-z0-9._+ -]{0,80}$`)
+	reEnd  = regexp.MustCompile(`^(ok|timeout|closed|http\d{3}|error|)$`)
 )
 
 // Validate refuses a row that could not have come from a measurement, so a
@@ -89,7 +91,7 @@ func (r Row) Validate() error {
 		return fmt.Errorf("profile %q", r.Profile)
 	case r.Knob != "" && r.Knob != KnobBaseline && r.Knob != KnobBurst && !isKnob(r.Knob):
 		return fmt.Errorf("knob %q", r.Knob)
-	case !reValue.MatchString(r.Value) || !reValue.MatchString(r.Core) || !reValue.MatchString(r.Proto) || !reValue.MatchString(r.Network):
+	case !reValue.MatchString(r.Value) || !reCore.MatchString(r.Core) || !reValue.MatchString(r.Proto) || !reValue.MatchString(r.Network):
 		return errors.New("a field is not a plain value")
 	case !reEnd.MatchString(r.DlEnd):
 		return fmt.Errorf("dl_end %q", r.DlEnd)

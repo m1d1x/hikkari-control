@@ -187,6 +187,7 @@ func TestBuildChart(t *testing.T) {
 
 func TestValidate(t *testing.T) {
 	ok := Row{Source: SourceStand, MeasuredAt: time.Now(), Vantage: "spb", Profile: "amsterdam-1-002", Knob: "fp", Value: "chrome",
+		Core:   "sing-box-lx v1.14.3-lx.21+489ac0f3",
 		Params: map[string]string{"fp": "chrome"}, Burst: 3, BurstTotal: 50, AfterTotal: 3, DlEnd: "ok"}
 	if err := ok.Validate(); err != nil {
 		t.Fatal(err)
@@ -200,6 +201,7 @@ func TestValidate(t *testing.T) {
 		func(r *Row) { r.MeasuredAt = time.Now().Add(time.Hour) },
 		func(r *Row) { r.Profile = "" },
 		func(r *Row) { r.DlEnd = "weird" },
+		func(r *Row) { r.Core = "a\nb" },
 	}
 	for i, f := range bad {
 		r := ok

@@ -180,7 +180,10 @@ func handleRPC(c *client, req rpcRequest) (any, map[string]any) {
 			}
 			text, err := c.call(t.command, p.Arguments)
 			if err != nil {
-				return toolResult(err.Error(), true), nil
+				if text != "" {
+					text += "\n"
+				}
+				return toolResult(text+err.Error(), true), nil
 			}
 			return toolResult(text, false), nil
 		}

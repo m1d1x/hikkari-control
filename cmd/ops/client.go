@@ -312,6 +312,8 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 		return c.load(args)
 	case "matrix":
 		return c.matrix(args)
+	case "runs-record":
+		return c.runsRecord(args)
 	case "runs":
 		q := url.Values{}
 		for _, k := range []string{"profile", "source", "last", "limit"} {

@@ -77,8 +77,12 @@ func main() {
 	if err == nil {
 		var out string
 		out, err = ops.call(cmd, args)
-		if err == nil {
+		// A command can fail part-way with what it measured so far (matrix at
+		// one vantage): that is printed before the error, never dropped.
+		if out != "" {
 			fmt.Println(out)
+		}
+		if err == nil {
 			return
 		}
 	}
