@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -197,7 +198,7 @@ func (s *Service) LinksFor(ctx context.Context, token, engine string) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	return s.links(ctx, account, engine, false)
+	return s.links(ctx, account, engine, false, 0)
 }
 
 // featuresHeader is how a client says what it can dial beyond what every client
@@ -218,7 +219,27 @@ func wantsAwg(h http.Header) bool {
 	return false
 }
 
-func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, awg bool) ([]string, error) {
+// networkHeader is the subscriber's network as the client resolves it from
+// the database embedded in it (hikkari-client engine/core/netinfo): «AS12389».
+// The hub never sees the subscriber's address, so this is the only way it
+// learns the network; a node's knobs for that network then stand in for its
+// own (entry_node_network_knobs). Absent or malformed is no known network.
+const networkHeader = "Hikkari-Network"
+
+// networkOf reads networkHeader; 0 is no known network.
+func networkOf(h http.Header) uint32 {
+	v, ok := strings.CutPrefix(strings.TrimSpace(h.Get(networkHeader)), "AS")
+	if !ok || v == "" || v[0] == '0' {
+		return 0
+	}
+	n, err := strconv.ParseUint(v, 10, 32)
+	if err != nil {
+		return 0
+	}
+	return uint32(n)
+}
+
+func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, awg bool, asn uint32) ([]string, error) {
 	key, err := s.accessKey(ctx, account)
 	if err != nil {
 		return nil, err
@@ -229,9 +250,9 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 	}
 	nodes := map[string]entry.NodeName{}
 	if registry, ok := s.batch.(interface {
-		NodeNames(context.Context) (map[string]entry.NodeName, error)
+		NodeNamesFor(context.Context, uint32) (map[string]entry.NodeName, error)
 	}); ok {
-		nodes, err = registry.NodeNames(ctx)
+		nodes, err = registry.NodeNamesFor(ctx, asn)
 		if err != nil {
 			return nil, err
 		}
@@ -337,7 +358,7 @@ func (s *Service) Handler() http.HandlerFunc {
 			terms, err = s.terms(r.Context(), account)
 		}
 		if err == nil {
-			links, err = s.links(r.Context(), account, engine, wantsAwg(r.Header))
+			links, err = s.links(r.Context(), account, engine, wantsAwg(r.Header), networkOf(r.Header))
 		}
 		if err != nil {
 			applog.Error(r.Context(), "subscription", "batch failed", applog.F("err", err.Error()))

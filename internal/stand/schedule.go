@@ -250,8 +250,16 @@ func (s *Scheduler) Finish(ctx context.Context, slot string, id uuid.UUID, res R
 	if err != nil {
 		return 0, fmt.Errorf("%w: %v", ErrNotAResult, err)
 	}
-	for _, r := range data {
-		if err := r.Validate(); err != nil {
+	// The point's network is the operator's (entry_vantages.network): the hub
+	// never sees where a point connects from, and what the point would say
+	// about itself is no more than what the operator set.
+	var network string
+	if err := s.pool.QueryRow(ctx, `SELECT coalesce(network, '') FROM entry_vantages WHERE slot = $1`, slot).Scan(&network); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return 0, fmt.Errorf("stand point network: %w", err)
+	}
+	for i := range data {
+		data[i].Network = network
+		if err := data[i].Validate(); err != nil {
 			return 0, fmt.Errorf("%w: %v", ErrNotAResult, err)
 		}
 	}

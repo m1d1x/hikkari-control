@@ -25,7 +25,9 @@ export interface RelayKnobEvent {
 	node: string;
 	profile: string;
 	knob: string;
-	kind: 'switch' | 'all_red' | 'address_cut';
+	kind: 'switch' | 'all_red' | 'address_cut' | 'network_red';
+	/** The subscribers' network the line is about; absent for the node's own value. */
+	asn?: number;
 	from?: string;
 	to?: string;
 	reason?: string;

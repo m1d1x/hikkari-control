@@ -119,6 +119,10 @@ func TestDBStandFinishWritesRowsAsThePointsOwn(t *testing.T) {
 	ctx := context.Background()
 	pool := dbPool(t)
 	standOn(t, pool, "stand-acc")
+	// The point's network is the operator's: the rows carry it.
+	if _, err := pool.Exec(ctx, `INSERT INTO entry_vantages (slot, title, network) VALUES ('ru-spb', 'spb', 'AS41733')`); err != nil {
+		t.Fatal(err)
+	}
 	store := relayruns.NewStore(pool)
 	s := NewScheduler(pool, fakeSlots{"ru-spb"}, fakeSubs{url: "https://sub/x"}, store)
 	if _, err := s.Tick(ctx); err != nil {
@@ -153,7 +157,7 @@ func TestDBStandFinishWritesRowsAsThePointsOwn(t *testing.T) {
 		t.Fatalf("rows %+v err %v", rows, err)
 	}
 	for _, r := range rows {
-		if r.Vantage != "ru-spb" || r.Source != relayruns.SourceStand || r.Core != res.Core {
+		if r.Vantage != "ru-spb" || r.Source != relayruns.SourceStand || r.Core != res.Core || r.Network != "AS41733" {
 			t.Fatalf("row %+v is not the point's own", r)
 		}
 	}

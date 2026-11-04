@@ -34,6 +34,7 @@
 		switch: '#e8e8e8',
 		all_red: '#e66767',
 		address_cut: '#c98500',
+		network_red: '#d55181',
 	};
 	const COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
 	const BASELINE_COLOR = '#71717a';
@@ -100,14 +101,18 @@
 
 	// What the knob controller did, at its moment on every chart: a switch, or
 	// a state it could not act on.
+	// A line about one network's value names it; the reason already does too.
 	function eventLabel(e: RelayKnobEvent): string {
+		const who = e.asn ? `контроллер, сеть AS${e.asn}` : 'контроллер';
 		switch (e.kind) {
 			case 'switch':
-				return `контроллер: ${e.from} → ${e.to}. ${e.reason ?? ''}`;
+				return `${who}: ${e.from} → ${e.to}. ${e.reason ?? ''}`;
 			case 'all_red':
-				return `контроллер: все кандидаты красные. ${e.reason ?? ''}`;
+				return `${who}: все кандидаты красные. ${e.reason ?? ''}`;
+			case 'network_red':
+				return `${who}: красное у тестеров, точки стенда нет. ${e.reason ?? ''}`;
 			default:
-				return `контроллер: режут адрес. ${e.reason ?? ''}`;
+				return `${who}: режут адрес. ${e.reason ?? ''}`;
 		}
 	}
 

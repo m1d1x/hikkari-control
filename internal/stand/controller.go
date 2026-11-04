@@ -32,6 +32,21 @@ package stand
 // measuring the old value after the switch, so a return needs that value to
 // pass on rows measured since.
 //
+// # By network
+//
+// What the censor cuts differs by provider, so a node may hold a value for the
+// subscribers of one ASN (entry_node_network_knobs, migration 027) beside its
+// own. A point of the stand in Russia names its network (entry_vantages.network,
+// set by the operator); the same rule, on that network's points alone, sets the
+// network's value. It runs only when the points in Russia are not all of one
+// network: then the node's own value is already that network's.
+//
+// Testers measure only the value they were given, so their rows ([diag:load],
+// network from the client's own lookup) choose nothing: when a network's
+// testers see its value red over testerWindow and no point of the stand is in
+// that network, the controller writes network_red and touches nothing. A
+// second point there (task 5) turns that into a switch.
+//
 // # When things fail
 //
 // Too few rounds of the node's own value (the stand silent, a point down) is
@@ -43,6 +58,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,6 +70,11 @@ import (
 // baselineFloor is the share of the burst with no protocol below which the
 // address counts as cut. The baseline passes 148–150 of 150 on a live address.
 const baselineFloor = 0.9
+
+// testerWindow is how far back testers' rows count for network_red. A tester
+// runs [diag:load] every 30 minutes, so the stand's window would hold three of
+// one tester's rounds at most.
+const testerWindow = 6 * time.Hour
 
 // repeatQuiet is how long a state the controller cannot act on (all red, the
 // address cut) is not written again for the same node and knob.
@@ -194,13 +215,33 @@ func (c *Controller) policy(ctx context.Context) (Policy, error) {
 	return p, nil
 }
 
-// node is a live node and its knob values as entry_nodes holds them.
+// node is a live node and its knob values as entry_nodes holds them, and its
+// values for networks as entry_node_network_knobs holds them.
 type node struct {
 	slug, label string
-	values      map[string]string // knob → column value, "" when unset
+	values      map[string]string            // knob → column value, "" when unset
+	networks    map[uint32]map[string]string // asn → knob → column value, "" when the node's own
 }
 
-// Tick runs the rule once over every live node and controllable knob.
+// column is the node's column value of knob for asn: the network's own when it
+// has one, else the node's. own says which.
+func (n node) column(knob string, asn uint32) (v string, own bool) {
+	if v := n.networks[asn][knob]; asn != 0 && v != "" {
+		return v, true
+	}
+	return n.values[knob], asn == 0
+}
+
+// scope is whose value a decision is about: the node's own (asn 0, decided on
+// every active point) or one network's (decided on its points and the control
+// points).
+type scope struct {
+	asn   uint32
+	slots []string
+}
+
+// Tick runs the rule once over every live node and controllable knob, for the
+// node's own value and for every network the stand measures from.
 func (c *Controller) Tick(ctx context.Context) error {
 	p, err := c.policy(ctx)
 	if err != nil || p.Mode != "auto" {
@@ -218,15 +259,82 @@ func (c *Controller) Tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	scopes, err := c.scopes(ctx, p, slots)
+	if err != nil {
+		return err
+	}
+	measured := map[uint32]bool{}
+	for _, sc := range scopes {
+		measured[sc.asn] = true
+	}
 	now := c.now()
 	for _, n := range nodes {
 		for knob, cands := range knobs {
-			if err := c.decideNode(ctx, p, slots, n, knob, cands, now); err != nil {
+			for _, sc := range scopes {
+				if err := c.decideNode(ctx, p, sc, n, knob, cands, now); err != nil {
+					return err
+				}
+			}
+			if err := c.testersNode(ctx, p, n, knob, measured, now); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// scopes is the node's own scope and, when the points in Russia are of more
+// than one network or some name none, one scope per network they name.
+func (c *Controller) scopes(ctx context.Context, p Policy, slots []string) ([]scope, error) {
+	out := []scope{{slots: slots}}
+	rows, err := c.pool.Query(ctx, `
+		SELECT slot, coalesce(network, '') FROM entry_vantages
+		WHERE slot = ANY($1) AND NOT slot = ANY($2) ORDER BY slot`, slots, p.Control)
+	if err != nil {
+		return nil, fmt.Errorf("controller networks: %w", err)
+	}
+	defer rows.Close()
+	bySlot := map[uint32][]string{}
+	var order []uint32
+	unnamed := false
+	for rows.Next() {
+		var slot, network string
+		if err := rows.Scan(&slot, &network); err != nil {
+			return nil, err
+		}
+		asn := parseNetwork(network)
+		if asn == 0 {
+			unnamed = true
+			continue
+		}
+		if _, ok := bySlot[asn]; !ok {
+			order = append(order, asn)
+		}
+		bySlot[asn] = append(bySlot[asn], slot)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(order) == 0 || (len(order) == 1 && !unnamed) {
+		return out, nil
+	}
+	for _, asn := range order {
+		out = append(out, scope{asn: asn, slots: append(bySlot[asn], p.Control...)})
+	}
+	return out, nil
+}
+
+// parseNetwork reads «AS12389»; 0 for anything else.
+func parseNetwork(s string) uint32 {
+	v, ok := strings.CutPrefix(s, "AS")
+	if !ok || v == "" || v[0] == '0' {
+		return 0
+	}
+	n, err := strconv.ParseUint(v, 10, 32)
+	if err != nil {
+		return 0
+	}
+	return uint32(n)
 }
 
 func (c *Controller) candidates(ctx context.Context) (map[string][]string, error) {
@@ -267,7 +375,42 @@ func (c *Controller) nodes(ctx context.Context) ([]node, error) {
 		n.values = map[string]string{"fp": fp, "sni": sni, "alpn": alpn}
 		out = append(out, n)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	return out, c.networkValues(ctx, out)
+}
+
+// networkValues fills each node's values for networks.
+func (c *Controller) networkValues(ctx context.Context, nodes []node) error {
+	at := map[string]int{}
+	for i := range nodes {
+		at[nodes[i].slug] = i
+	}
+	rows, err := c.pool.Query(ctx, `
+		SELECT slug, asn, coalesce(fingerprint, ''), coalesce(sni, ''), coalesce(alpn, '')
+		FROM entry_node_network_knobs`)
+	if err != nil {
+		return fmt.Errorf("controller network knobs: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var slug, fp, sni, alpn string
+		var asn int64
+		if err := rows.Scan(&slug, &asn, &fp, &sni, &alpn); err != nil {
+			return err
+		}
+		i, ok := at[slug]
+		if !ok {
+			continue
+		}
+		if nodes[i].networks == nil {
+			nodes[i].networks = map[uint32]map[string]string{}
+		}
+		nodes[i].networks[uint32(asn)] = map[string]string{"fp": fp, "sni": sni, "alpn": alpn}
+	}
+	return rows.Err()
 }
 
 // currentValue is the node's value of knob as the stand names it, "" when the
@@ -301,16 +444,17 @@ func nodeValue(knob, v string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(v, "/", ","), "http1.1", "http/1.1")
 }
 
-func (c *Controller) decideNode(ctx context.Context, p Policy, slots []string, n node, knob string, cands []string, now time.Time) error {
-	current := currentValue(knob, n.values[knob])
+func (c *Controller) decideNode(ctx context.Context, p Policy, sc scope, n node, knob string, cands []string, now time.Time) error {
+	col, _ := n.column(knob, sc.asn)
+	current := currentValue(knob, col)
 	if current == "" {
 		return nil
 	}
-	ev, err := c.evidence(ctx, p, slots, n.label, knob, now)
+	ev, err := c.evidence(ctx, p, sc.slots, n.label, knob, now)
 	if err != nil {
 		return err
 	}
-	lastSwitch, lastQuiet, err := c.lastEvents(ctx, n.slug, knob)
+	lastSwitch, lastQuiet, err := c.lastEvents(ctx, n.slug, knob, sc.asn)
 	if err != nil {
 		return err
 	}
@@ -319,32 +463,59 @@ func (c *Controller) decideNode(ctx context.Context, p Policy, slots []string, n
 		return nil
 	}
 	evidence, _ := json.Marshal(ev)
-	line := relayruns.KnobEvent{Node: n.slug, Profile: n.label, Knob: knob, Kind: d.Kind, From: current, To: d.To,
+	line := relayruns.KnobEvent{Node: n.slug, Profile: n.label, Knob: knob, Kind: d.Kind, ASN: sc.asn, From: current, To: d.To,
 		Reason: d.Reason, Evidence: evidence}
+	if sc.asn != 0 {
+		line.Reason = fmt.Sprintf("сеть AS%d: %s", sc.asn, line.Reason)
+	}
 	if d.Kind != relayruns.EventSwitch {
 		if q, ok := lastQuiet[d.Kind]; ok && now.Sub(q) < repeatQuiet {
 			return nil
 		}
 		return relayruns.RecordKnobEvent(ctx, c.pool, line)
 	}
-	return c.apply(ctx, n, knob, d.To, line)
+	return c.apply(ctx, n, knob, sc.asn, d.To, line)
 }
 
-// apply sets the node's value and writes the journal line in one transaction,
-// only if the node still holds the value the decision was made on.
-func (c *Controller) apply(ctx context.Context, n node, knob, to string, line relayruns.KnobEvent) error {
+// apply sets the value of asn (the node's own for 0) and writes the journal
+// line in one transaction, only if that value is still the one the decision
+// was made on.
+func (c *Controller) apply(ctx context.Context, n node, knob string, asn uint32, to string, line relayruns.KnobEvent) error {
 	col := nodeColumn[knob]
 	tx, err := c.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	tag, err := tx.Exec(ctx, `UPDATE entry_nodes SET `+col+` = $1 WHERE slug = $2 AND coalesce(`+col+`, '') = $3`,
-		nodeValue(knob, to), n.slug, n.values[knob])
-	if err != nil {
-		return fmt.Errorf("switch %s %s: %w", n.label, knob, err)
+	var changed int64
+	if asn == 0 {
+		tag, err := tx.Exec(ctx, `UPDATE entry_nodes SET `+col+` = $1 WHERE slug = $2 AND coalesce(`+col+`, '') = $3`,
+			nodeValue(knob, to), n.slug, n.values[knob])
+		if err != nil {
+			return fmt.Errorf("switch %s %s: %w", n.label, knob, err)
+		}
+		changed = tag.RowsAffected()
+	} else {
+		// The network's value was its own, or the node's when it had none:
+		// either has to be what the decision read.
+		was, own := n.column(knob, asn)
+		ownWas := ""
+		if own {
+			ownWas = was
+		}
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO entry_node_network_knobs AS k (slug, asn, `+col+`)
+			SELECT $1, $2, $3 FROM entry_nodes n
+			WHERE n.slug = $1 AND ($4 <> '' OR coalesce(n.`+col+`, '') = $5)
+			ON CONFLICT (slug, asn) DO UPDATE SET `+col+` = EXCLUDED.`+col+`, updated_at = now()
+			WHERE coalesce(k.`+col+`, '') = $4`,
+			n.slug, int64(asn), nodeValue(knob, to), ownWas, n.values[knob])
+		if err != nil {
+			return fmt.Errorf("switch %s %s for AS%d: %w", n.label, knob, asn, err)
+		}
+		changed = tag.RowsAffected()
 	}
-	if tag.RowsAffected() == 0 {
+	if changed == 0 {
 		return nil // changed under us: the next tick decides on the new value
 	}
 	if err := relayruns.RecordKnobEvent(ctx, tx, line); err != nil {
@@ -353,7 +524,7 @@ func (c *Controller) apply(ctx context.Context, n node, knob, to string, line re
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	applog.Info(ctx, "knobs", "node switched", applog.F("node", n.label), applog.F("knob", knob),
+	applog.Info(ctx, "knobs", "node switched", applog.F("node", n.label), applog.F("knob", knob), applog.F("asn", asn),
 		applog.F("from", line.From), applog.F("to", to), applog.F("reason", line.Reason))
 	return nil
 }
@@ -396,11 +567,82 @@ func (c *Controller) evidence(ctx context.Context, p Policy, slots []string, pro
 	return ev, rows.Err()
 }
 
-// lastEvents is when the node last switched knob, and when each quiet kind
-// was last written.
-func (c *Controller) lastEvents(ctx context.Context, slug, knob string) (time.Time, map[string]time.Time, error) {
+// testerParam is the parameter of a tester's row ([diag:load], the client's
+// own config) that names the knob's value as the stand does. ALPN is left out:
+// the client writes it as the link does (h2/http/1.1), which the stand's form
+// (h2/http1.1) cannot be told from reliably.
+var testerParam = map[string]string{"fp": "fp", "sni": "sni"}
+
+// testersNode writes network_red for every network whose testers see the
+// node's value for them red over testerWindow, when no point of the stand is in
+// that network (measured): nothing there can be chosen on evidence.
+func (c *Controller) testersNode(ctx context.Context, p Policy, n node, knob string, measured map[uint32]bool, now time.Time) error {
+	param, ok := testerParam[knob]
+	if !ok {
+		return nil
+	}
 	rows, err := c.pool.Query(ctx, `
-		SELECT kind, max(at) FROM relay_knob_events WHERE node = $1 AND knob = $2 GROUP BY kind`, slug, knob)
+		SELECT network, params->>$3, count(*),
+		       sum(CASE WHEN load_error THEN 0 ELSE burst END),
+		       sum(CASE WHEN load_error THEN $4::int ELSE burst_total END)
+		FROM relay_runs
+		WHERE source = 'tester' AND profile = $1 AND measured_at > $2 AND network LIKE 'AS%' AND params ? $3
+		GROUP BY 1, 2`, n.label, now.Add(-testerWindow), param, Burst)
+	if err != nil {
+		return fmt.Errorf("controller testers: %w", err)
+	}
+	type key struct {
+		asn   uint32
+		value string
+	}
+	shares := map[key]Share{}
+	for rows.Next() {
+		var network, value string
+		var s Share
+		if err := rows.Scan(&network, &value, &s.Rounds, &s.Answered, &s.Asked); err != nil {
+			rows.Close()
+			return err
+		}
+		if asn := parseNetwork(network); asn != 0 {
+			shares[key{asn, value}] = s
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for k, s := range shares {
+		if measured[k.asn] {
+			continue
+		}
+		col, _ := n.column(knob, k.asn)
+		current := currentValue(knob, col)
+		if current == "" || k.value != current || s.Rounds < p.MinRounds || s.Of() >= p.Low {
+			continue
+		}
+		_, quiet, err := c.lastEvents(ctx, n.slug, knob, k.asn)
+		if err != nil {
+			return err
+		}
+		if q, ok := quiet[relayruns.EventNetworkRed]; ok && now.Sub(q) < repeatQuiet {
+			continue
+		}
+		evidence, _ := json.Marshal(map[string]any{"window": testerWindow.String(), "testers": map[string]Share{current: s}})
+		if err := relayruns.RecordKnobEvent(ctx, c.pool, relayruns.KnobEvent{Node: n.slug, Profile: n.label, Knob: knob,
+			Kind: relayruns.EventNetworkRed, ASN: k.asn, From: current, Evidence: evidence,
+			Reason: fmt.Sprintf("сеть AS%d: %s у тестеров %s ниже %.0f%%, точки стенда в этой сети нет", k.asn, current, s, p.Low*100),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// lastEvents is when the node last switched knob for asn, and when each quiet
+// kind was last written for it.
+func (c *Controller) lastEvents(ctx context.Context, slug, knob string, asn uint32) (time.Time, map[string]time.Time, error) {
+	rows, err := c.pool.Query(ctx, `
+		SELECT kind, max(at) FROM relay_knob_events WHERE node = $1 AND knob = $2 AND asn = $3 GROUP BY kind`, slug, knob, int64(asn))
 	if err != nil {
 		return time.Time{}, nil, fmt.Errorf("controller journal: %w", err)
 	}
@@ -427,6 +669,9 @@ type NodeKnobs struct {
 	Node    string            `json:"node"`
 	Profile string            `json:"profile"`
 	Values  map[string]string `json:"values"`
+	// Networks is the node's values for subscribers of a network, by «AS…»,
+	// only the knobs the network sets itself.
+	Networks map[string]map[string]string `json:"networks,omitempty"`
 }
 
 // Nodes lists the live nodes and their knob values, an unset one as the
@@ -444,7 +689,22 @@ func (c *Controller) Nodes(ctx context.Context) ([]NodeKnobs, error) {
 				v[k] = cur
 			}
 		}
-		out = append(out, NodeKnobs{Node: n.slug, Profile: n.label, Values: v})
+		nk := NodeKnobs{Node: n.slug, Profile: n.label, Values: v}
+		for asn, cols := range n.networks {
+			own := map[string]string{}
+			for k, col := range cols {
+				if col != "" {
+					own[k] = standValue(k, col)
+				}
+			}
+			if len(own) > 0 {
+				if nk.Networks == nil {
+					nk.Networks = map[string]map[string]string{}
+				}
+				nk.Networks[fmt.Sprintf("AS%d", asn)] = own
+			}
+		}
+		out = append(out, nk)
 	}
 	return out, nil
 }

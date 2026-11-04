@@ -219,3 +219,129 @@ func TestDBControllerOffTouchesNothing(t *testing.T) {
 		t.Fatalf("switched to %q with the controller off", *fp)
 	}
 }
+
+// seedPoints names the network of each point of the stand.
+func seedPoints(t *testing.T, pool *pgxpool.Pool, networks map[string]string) {
+	t.Helper()
+	for slot, network := range networks {
+		if _, err := pool.Exec(context.Background(), `INSERT INTO entry_vantages (slot, title, network) VALUES ($1, $1, NULLIF($2, ''))`,
+			slot, network); err != nil {
+			t.Fatalf("seed point: %v", err)
+		}
+	}
+}
+
+func TestDBControllerSetsANetworksValueOnItsOwnPoints(t *testing.T) {
+	ctx := context.Background()
+	pool := dbPool(t)
+	store := relayruns.NewStore(pool)
+	seedNode(t, pool, "n-ams", "amsterdam-1-002", "")
+	seedPoints(t, pool, map[string]string{"ru-spb": "AS41733", "ru-msk": "AS12389", "lv-main": ""})
+	six := func(a int) []int { return []int{a, a, a, a, a, a} }
+	// Russia as a whole passes chrome (540 of 600), Moscow's network does not.
+	seedRuns(t, store, "ru-spb", "amsterdam-1-002", "fp", "chrome", six(50)...)
+	seedRuns(t, store, "ru-msk", "amsterdam-1-002", "fp", "chrome", six(40)...)
+	seedRuns(t, store, "ru-spb", "amsterdam-1-002", "fp", "firefox", six(49)...)
+	seedRuns(t, store, "ru-msk", "amsterdam-1-002", "fp", "firefox", six(49)...)
+
+	c := NewController(pool, fakeSlots{"lv-main", "ru-msk", "ru-spb"})
+	for range 2 {
+		if err := c.Tick(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var own *string
+	if err := pool.QueryRow(ctx, `SELECT fingerprint FROM entry_nodes WHERE slug = 'n-ams'`).Scan(&own); err != nil || own != nil {
+		t.Fatalf("the node's own value moved: %v err %v", own, err)
+	}
+	var theirs string
+	if err := pool.QueryRow(ctx, `SELECT fingerprint FROM entry_node_network_knobs WHERE slug = 'n-ams' AND asn = 12389`).Scan(&theirs); err != nil || theirs != "firefox" {
+		t.Fatalf("AS12389 got %q err %v", theirs, err)
+	}
+	var others int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM entry_node_network_knobs WHERE asn <> 12389`).Scan(&others)
+	if others != 0 {
+		t.Fatalf("%d values for networks that pass", others)
+	}
+	evs, err := store.KnobEvents(ctx, "", "", time.Now().Add(-time.Hour), 0)
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("events %+v err %v", evs, err)
+	}
+	if ev := evs[0]; ev.Kind != relayruns.EventSwitch || ev.ASN != 12389 || ev.From != "chrome" || ev.To != "firefox" ||
+		!strings.Contains(ev.Reason, "AS12389") {
+		t.Fatalf("event %+v", ev)
+	}
+	nodes, err := c.Nodes(ctx)
+	if err != nil || len(nodes) != 1 || nodes[0].Networks["AS12389"]["fp"] != "firefox" || nodes[0].Values["fp"] != "chrome" {
+		t.Fatalf("nodes %+v err %v", nodes, err)
+	}
+}
+
+func TestDBControllerOneNetworkIsTheNodesOwn(t *testing.T) {
+	ctx := context.Background()
+	pool := dbPool(t)
+	store := relayruns.NewStore(pool)
+	seedNode(t, pool, "n-ams", "amsterdam-1-002", "")
+	seedPoints(t, pool, map[string]string{"ru-spb": "AS41733", "lv-main": "AS9002"})
+	six := func(a int) []int { return []int{a, a, a, a, a, a} }
+	seedRuns(t, store, "ru-spb", "amsterdam-1-002", "fp", "chrome", six(30)...)
+	seedRuns(t, store, "ru-spb", "amsterdam-1-002", "fp", "firefox", six(49)...)
+	if err := NewController(pool, fakeSlots{"lv-main", "ru-spb"}).Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var fp string
+	if err := pool.QueryRow(ctx, `SELECT coalesce(fingerprint, '') FROM entry_nodes WHERE slug = 'n-ams'`).Scan(&fp); err != nil || fp != "firefox" {
+		t.Fatalf("fingerprint %q err %v", fp, err)
+	}
+	var networks int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM entry_node_network_knobs`).Scan(&networks)
+	if networks != 0 {
+		t.Fatalf("a network value beside the node's own: %d", networks)
+	}
+}
+
+func TestDBControllerSaysANetworksTestersSeeItRed(t *testing.T) {
+	ctx := context.Background()
+	pool := dbPool(t)
+	store := relayruns.NewStore(pool)
+	seedNode(t, pool, "n-ams", "amsterdam-1-002", "firefox")
+	seedPoints(t, pool, map[string]string{"ru-spb": "AS41733", "lv-main": ""})
+	var rows []relayruns.Row
+	for i := range 6 {
+		for _, tc := range []struct {
+			network, fp string
+			burst       int
+		}{
+			{"AS8359", "firefox", 10}, // the network's testers: red
+			{"AS8359", "chrome", 50},  // a value the node does not give: not evidence
+			{"AS25159", "firefox", 49},
+		} {
+			rows = append(rows, relayruns.Row{Source: relayruns.SourceTester, MeasuredAt: time.Now().Add(-time.Duration(i+1) * 30 * time.Minute),
+				Vantage: "t-" + tc.network + tc.fp, Network: tc.network, Profile: "amsterdam-1-002", Proto: "vless-reality",
+				Params: map[string]string{"fp": tc.fp}, Dl: Bytes, DlEnd: "ok", Burst: tc.burst, BurstTotal: Burst, After: 3, AfterTotal: 3})
+		}
+	}
+	if _, err := store.Insert(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	c := NewController(pool, fakeSlots{"lv-main", "ru-spb"})
+	for range 3 {
+		if err := c.Tick(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	evs, err := store.KnobEvents(ctx, "", "", time.Now().Add(-time.Hour), 0)
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("events %+v err %v", evs, err)
+	}
+	if ev := evs[0]; ev.Kind != relayruns.EventNetworkRed || ev.ASN != 8359 || ev.From != "firefox" || !strings.Contains(string(ev.Evidence), "testers") {
+		t.Fatalf("event %+v", ev)
+	}
+	var fp string
+	var networks int
+	_ = pool.QueryRow(ctx, `SELECT fingerprint FROM entry_nodes WHERE slug = 'n-ams'`).Scan(&fp)
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM entry_node_network_knobs`).Scan(&networks)
+	if fp != "firefox" || networks != 0 {
+		t.Fatalf("testers' rows moved a value: fp %q, %d network values", fp, networks)
+	}
+}

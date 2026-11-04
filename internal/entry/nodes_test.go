@@ -132,3 +132,38 @@ func TestNodeLabelReadsCityAndNumber(t *testing.T) {
 		t.Fatalf("nodeLabel = %q", got)
 	}
 }
+
+func TestANetworksKnobStandsInForTheNodesOwn(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	box, _ := h.box()
+	relay := h.relay(box, KindPersonal)
+	h.admit(relay)
+	own, err := h.svc.NodeNames(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slug := own[relay].Slug
+	if _, err := h.pool.Exec(ctx, `UPDATE entry_nodes SET fingerprint = 'firefox', alpn = 'h2' WHERE slug = $1`, slug); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.pool.Exec(ctx, `INSERT INTO entry_node_network_knobs (slug, asn, fingerprint) VALUES ($1, 12389, 'safari')`, slug); err != nil {
+		t.Fatal(err)
+	}
+	theirs, err := h.svc.NodeNamesFor(ctx, 12389)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := theirs[relay]; got.Fingerprint != "safari" || got.ALPN != "h2" || got.Slug != slug {
+		t.Fatalf("network 12389 got %+v, want its own fingerprint and the node's ALPN", got)
+	}
+	for _, asn := range []uint32{0, 8359} {
+		other, err := h.svc.NodeNamesFor(ctx, asn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := other[relay]; got.Fingerprint != "firefox" || got.ALPN != "h2" {
+			t.Fatalf("network %d got %+v, want the node's own", asn, got)
+		}
+	}
+}

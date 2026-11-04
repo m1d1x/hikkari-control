@@ -134,6 +134,37 @@ func runEntryVantageAdd(args []string) {
 	os.Exit(0)
 }
 
+// runEntryVantageNetwork sets the network a point of the stand measures from
+// (AS12389), which its rows carry into the dataset and by which the knob
+// controller chooses that network's values; "-" clears it. The hub never sees
+// where a point connects from, so this is the operator's to say.
+//
+//	cmd/server entry-vantage-network <slot> <AS…|->
+func runEntryVantageNetwork(args []string) {
+	fail := func(err error) {
+		fmt.Fprintf(os.Stderr, "entry-vantage-network: %v\n", err)
+		os.Exit(1)
+	}
+	if len(args) != 2 {
+		fail(fmt.Errorf("usage: cmd/server entry-vantage-network <slot> <AS…|->"))
+	}
+	ctx, cancel, pool := adminCLIPool()
+	defer cancel()
+	defer pool.Close()
+	var network any
+	if args[1] != "-" {
+		network = args[1]
+	}
+	tag, err := pool.Exec(ctx, `UPDATE entry_vantages SET network = $2, updated_at = now(), updated_by = 'cli' WHERE slot = $1`, args[0], network)
+	if err != nil {
+		fail(err)
+	}
+	if tag.RowsAffected() == 0 {
+		fail(fmt.Errorf("no such slot %q", args[0]))
+	}
+	os.Exit(0)
+}
+
 // benchSink takes the hub's finished bench runs into ClickHouse.
 type benchSink struct{ store *analytics.Store }
 

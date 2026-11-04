@@ -351,3 +351,18 @@ func TestALinkTakesItsNodesALPN(t *testing.T) {
 		t.Fatalf("hysteria alpn changed to %q", got)
 	}
 }
+
+func TestTheClientNamesItsNetwork(t *testing.T) {
+	for v, want := range map[string]uint32{
+		"AS12389": 12389, " AS8359 ": 8359, "": 0, "12389": 0, "AS": 0, "AS0": 0, "AS012": 0,
+		"AS4294967296": 0, "AS-1": 0, "as12389": 0, "AS12389x": 0,
+	} {
+		h := http.Header{}
+		if v != "" {
+			h.Set(networkHeader, v)
+		}
+		if got := networkOf(h); got != want {
+			t.Errorf("%q: got %d, want %d", v, got, want)
+		}
+	}
+}

@@ -147,12 +147,25 @@ func (s *Service) FleetNodes(ctx context.Context) ([]FleetNode, error) {
 // the client instead of the defaults (migrations 021 and 023).
 type NodeName struct{ Slug, Label, Fingerprint, SNI, ALPN string }
 
-// NodeNames is every serving relay's node, by relay name.
+// NodeNames is every serving relay's node, by relay name, with the node's own
+// knobs: what a subscriber of no known network gets.
 func (s *Service) NodeNames(ctx context.Context) (map[string]NodeName, error) {
+	return s.NodeNamesFor(ctx, 0)
+}
+
+// NodeNamesFor is NodeNames for a subscriber of network asn: a knob the node
+// sets for that network (entry_node_network_knobs, migration 027) stands in
+// for the node's own, one knob at a time. asn 0 is no known network.
+func (s *Service) NodeNamesFor(ctx context.Context, asn uint32) (map[string]NodeName, error) {
 	if err := s.syncFleetNodes(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT r.name,n.slug,coalesce(n.label,''),coalesce(n.fingerprint,''),coalesce(n.sni,''),coalesce(n.alpn,'') FROM entry_nodes n JOIN entry_relays r ON r.id=n.relay_id WHERE r.status='alive'`)
+	rows, err := s.pool.Query(ctx, `
+		SELECT r.name, n.slug, coalesce(n.label, ''),
+		       coalesce(k.fingerprint, n.fingerprint, ''), coalesce(k.sni, n.sni, ''), coalesce(k.alpn, n.alpn, '')
+		FROM entry_nodes n JOIN entry_relays r ON r.id = n.relay_id
+		LEFT JOIN entry_node_network_knobs k ON k.slug = n.slug AND k.asn = $1
+		WHERE r.status = 'alive'`, int64(asn))
 	if err != nil {
 		return nil, err
 	}
