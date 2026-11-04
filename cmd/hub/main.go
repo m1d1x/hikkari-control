@@ -30,6 +30,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/presets"
 	"github.com/m1d1x/hikkari-control/internal/probesink"
 	"github.com/m1d1x/hikkari-control/internal/relayruns"
+	"github.com/m1d1x/hikkari-control/internal/stand"
 	"github.com/m1d1x/hikkari-control/internal/subscription"
 	"github.com/m1d1x/hikkari-control/internal/support"
 	"github.com/m1d1x/hikkari-control/internal/telemetry"
@@ -328,6 +329,12 @@ func run() error {
 	relayruns.RegisterOpsRoutes(adminMux, relayRuns, opsGate)
 	relayruns.RegisterAdminRoutes(adminMux, relayRuns, testerAliases(testerStore), adminSecurity)
 	go relayruns.NewIngester(relayRuns, pool).Run(ctx, 2*time.Minute)
+	// The stand on the hub's schedule: every active observation point runs
+	// every enabled knob over the stand's subscription, rows into relayRuns.
+	standRuns := stand.NewScheduler(pool, svc, standSubscriptions{subs}, relayRuns)
+	stand.RegisterProberRoutes(mux, standRuns, entry.VantageGate(svc), entry.VantageOf)
+	stand.RegisterOpsRoutes(adminMux, standRuns, opsGate)
+	go standRuns.Run(ctx, time.Minute)
 	support.RegisterTesterRoutes(adminMux, testerStore, testerLimiter)
 
 	port := os.Getenv("PORT")

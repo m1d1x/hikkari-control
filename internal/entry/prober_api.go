@@ -63,6 +63,13 @@ func vantageGate(auth VantageAuth) func(http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// VantageGate is the gate of the prober routes for routes mounted outside
+// this package (internal/stand): a bearer of an active slot, or 401.
+func VantageGate(auth VantageAuth) func(http.HandlerFunc) http.HandlerFunc { return vantageGate(auth) }
+
+// VantageOf is the slot a request passed VantageGate as.
+func VantageOf(r *http.Request) string { return vantageOf(r) }
+
 // RegisterProberRoutes mounts the prober routes on the public mux.
 func RegisterProberRoutes(mux *http.ServeMux, svc *Service) {
 	gate := vantageGate(svc)

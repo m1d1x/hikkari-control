@@ -54,6 +54,12 @@
 //	                           at base+200.
 //	ENTRY_PROBE_FINGERPRINT    uTLS fingerprint profile (default "chrome").
 //	ENTRY_PROBE_DIAL_TIMEOUT_MS per-signal timeout (default 8000).
+//	ENTRY_PROBE_STAND          "0" turns the matrix stand off (stand.go).
+//	ENTRY_PROBE_STAND_KIT      the stand kit's manifest (default
+//	                           "https://update.hikkari.net/stand/linux-amd64.json").
+//	ENTRY_PROBE_STAND_DIR      where the kit is kept (default
+//	                           "/tmp/hikkari-stand", the unit's private /tmp).
+//	ENTRY_PROBE_STAND_POLL_SEC seconds between asks for a stand run (default 60).
 //
 // Admission probes (roadmap 42 П6.15): the hub provisioning a box queues a
 // task; this prober claims it, probes those relays on a separate xray, pushes
@@ -137,6 +143,7 @@ type config struct {
 	socksBase   int
 	fingerprint string
 	timeout     time.Duration
+	stand       standConfig
 }
 
 func main() {
@@ -156,6 +163,7 @@ func main() {
 		socksBase:   envInt("ENTRY_PROBE_SOCKS_BASE", 10810),
 		fingerprint: envStr("ENTRY_PROBE_FINGERPRINT", "chrome"),
 		timeout:     time.Duration(envInt("ENTRY_PROBE_DIAL_TIMEOUT_MS", 8000)) * time.Millisecond,
+		stand:       standFromEnv(),
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -172,6 +180,9 @@ func main() {
 	// round on an engine of their own), polled rarely — a suspect waits its
 	// probe interval between asks anyway.
 	go cfg.serveReprobes(ctx)
+	// The matrix stand on the hub's schedule (stand.go): minutes-long runs of
+	// the core users run, one at a time.
+	go cfg.serveStand(ctx)
 	cfg.watchPool(ctx)
 	log.Println("entry-prober: shutdown")
 }

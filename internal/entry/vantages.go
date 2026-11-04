@@ -46,6 +46,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
@@ -636,6 +637,21 @@ func (s *Service) activeVantageSet(ctx context.Context) (map[string]bool, error)
 		out[slot] = true
 	}
 	return out, rows.Err()
+}
+
+// ActiveSlots lists the active observation points by slot, sorted: the
+// points the stand queues its runs for (internal/stand).
+func (s *Service) ActiveSlots(ctx context.Context) ([]string, error) {
+	set, err := s.activeVantageSet(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("entry: active slots: %w", err)
+	}
+	out := make([]string, 0, len(set))
+	for slot := range set {
+		out = append(out, slot)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // noteAdmissionPoll records the admission worker's control-plane contact,

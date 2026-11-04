@@ -312,6 +312,16 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 		return c.load(args)
 	case "matrix":
 		return c.matrix(args)
+	case "stand":
+		q := url.Values{}
+		if v := args["limit"]; v != "" {
+			q.Set("limit", v)
+		}
+		data, err := c.request(http.MethodGet, "/api/v1/ops/stand", q, nil)
+		if err != nil {
+			return "", err
+		}
+		return prettyJSON(data), nil
 	case "runs-record":
 		return c.runsRecord(args)
 	case "runs":

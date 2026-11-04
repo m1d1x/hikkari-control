@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/m1d1x/hikkari-control/internal/relayruns"
+	"github.com/m1d1x/hikkari-control/internal/subscription"
 	"github.com/m1d1x/hikkari-control/internal/support"
 )
 
@@ -28,4 +30,20 @@ func testerAliases(store support.TesterStore) relayruns.Namer {
 			return id
 		}, nil
 	}
+}
+
+// standSubscriptions opens the stand's subscription link by its account's
+// name. Only a live subscription is measured: an expired one serves no
+// profiles, and the stand would read that as every node gone.
+type standSubscriptions struct{ subs *subscription.Service }
+
+func (s standSubscriptions) URLByName(ctx context.Context, name string) (string, error) {
+	sum, err := s.subs.Get(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	if sum.State != subscription.StateLive {
+		return "", fmt.Errorf("подписка не живая: %s", sum.State)
+	}
+	return s.subs.URL(ctx, sum.Account)
 }
