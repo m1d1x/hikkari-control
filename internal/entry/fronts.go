@@ -255,7 +255,7 @@ func (p *Provisioner) AttachFront(ctx context.Context, f NewFront) error {
 	if _, err := r.Run(ctx, "bash -s -- "+strings.Join(open, " "), strings.NewReader(hardenScript)); err != nil {
 		return fmt.Errorf("закрытие машины: %w", err)
 	}
-	j.log("вход по паролю выключен, ufw: 22 %s", strings.Join(open, " "))
+	j.log("вход по паролю выключен, ufw: 22 только с хаба, %s", strings.Join(open, " "))
 
 	arch, err := j.arch(r)
 	if err != nil {

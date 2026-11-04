@@ -29,7 +29,7 @@ import (
 //     it works BEFORE anything is locked down;
 //  2. hardens: password login off (the drop-in sorts before cloud-init's
 //     50-, whose PasswordAuthentication yes wins otherwise — sshd keeps the
-//     first value), ufw with ssh and the relay ports;
+//     first value), ufw with ssh from the hub alone and the relay ports;
 //  3. mints a relay if the box has none and deploys every relay that is not
 //     dead, from the binaries in the hub's image;
 //  4. asks a vantage for an admission probe: the box enters the pool only if
@@ -1010,7 +1010,7 @@ func (j *jobRun) harden(r Remote, relays []provRelay) error {
 	if err != nil {
 		return fmt.Errorf("закрытие машины: %w", err)
 	}
-	j.log("вход по паролю выключен, ufw: 22 %s", strings.Join(ports, " "))
+	j.log("вход по паролю выключен, ufw: 22 только с хаба, %s", strings.Join(ports, " "))
 	_ = out
 	return nil
 }
@@ -1030,9 +1030,16 @@ case "$effective" in
 	*"passwordauthentication no"*) ;;
 	*) echo "sshd still allows passwords" >&2; exit 1 ;;
 esac
-` + installUfwScript + `ufw allow 22/tcp >/dev/null
+` + installUfwScript + `# SSH answers only the address this very session came from: the hub. Scanners
+# read an open port as a hint (NTC Party 25993), and the hub is the only one who
+# ever logs in. Rules before the enable, the open rule out last: a rerun on a
+# running machine never leaves the hub without a way in.
+hub="${SSH_CONNECTION%% *}"
+[ -n "$hub" ] || { echo "no SSH_CONNECTION: who is the hub?" >&2; exit 1; }
+ufw allow from "$hub" to any port 22 proto tcp >/dev/null
 for p in "$@"; do ufw allow "$p" >/dev/null; done
 ufw --force enable >/dev/null
+ufw delete allow 22/tcp >/dev/null 2>&1 || true
 `
 
 // installUfwScript runs on a machine that has only just booted, and apt is not
