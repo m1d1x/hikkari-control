@@ -660,7 +660,9 @@ func matrixUpload(host, core string) error {
 			return fmt.Errorf("upload to %s: %w", host, last)
 		}
 	}
-	join := fmt.Sprintf(`set -e; cat %[1]s/p* | gunzip > %[2]s.up; [ "$(sha256sum %[2]s.up | cut -d' ' -f1)" = %[3]s ] || { rm -f %[2]s.up; echo hash mismatch; exit 1; }; chmod 755 %[2]s.up; mv -f %[2]s.up %[2]s; rm -rf %[1]s`, dir, remote, sum)
+	// A file of its own: a writer left from a cut upload must not share it, or
+	// the core is renamed into place still open for writing ("text file busy").
+	join := fmt.Sprintf(`set -e; t=$(mktemp %[2]s.XXXXXX); cat %[1]s/p* | gunzip > $t; [ "$(sha256sum $t | cut -d' ' -f1)" = %[3]s ] || { rm -f $t; echo hash mismatch; exit 1; }; chmod 755 $t; mv -f $t %[2]s; rm -rf %[1]s`, dir, remote, sum)
 	if out, err := sshRun(host, join, nil, 2*time.Minute); err != nil {
 		return fmt.Errorf("upload to %s: %v: %s", host, err, out)
 	}
