@@ -41,8 +41,11 @@ import (
 )
 
 const (
-	matrixBytes     = 1 << 20
-	matrixBurst     = 50
+	matrixBytes    = 1 << 20
+	matrixBurst    = 50
+	matrixMaxBurst = 200
+	// matrixLoadBurst is the load knob: the burst's size, not the config's.
+	matrixLoadBurst = "burst"
 	matrixAfter     = 3
 	matrixRounds    = 3
 	matrixMaxRounds = 10
@@ -106,7 +109,19 @@ var matrixKnobs = map[string]func(ob map[string]interface{}, v string) error{
 		if err != nil {
 			return err
 		}
-		tls["alpn"] = strings.Split(v, "/")
+		// Values are split by "/", so http/1.1 is written http1.1.
+		var list []interface{}
+		for _, p := range strings.Split(v, "/") {
+			switch p {
+			case "h2", "h3":
+				list = append(list, p)
+			case "http1.1":
+				list = append(list, "http/1.1")
+			default:
+				return fmt.Errorf("alpn %q: h2, h3 or http1.1, joined by /", p)
+			}
+		}
+		tls["alpn"] = list
 		return nil
 	},
 }
@@ -131,6 +146,7 @@ type matrixRow struct {
 	Dl           int64  `json:"dl"`
 	DlEnd        string `json:"dl_end"`
 	Burst        int    `json:"burst"`
+	BurstTotal   int    `json:"burst_total"`
 	BurstTimeout int    `json:"burst_timeout"`
 	After        int    `json:"after"`
 	LoadError    bool   `json:"load_error,omitempty"`
@@ -146,9 +162,13 @@ type matrixPlan struct {
 	Values  []string
 	Configs []string            // whole core configs, one per value, listen port left as __PORT__
 	Params  []map[string]string // the knobs each config runs with, one per value
-	Server  string
-	SNI     string
-	Port    int
+	Bursts  []int               // how many requests each value's burst opens at once
+	// Base is the knobs set on every value before the varied one, so a knob
+	// is tried on a base that shows a difference (alpn on fp=chrome).
+	Base   string
+	Server string
+	SNI    string
+	Port   int
 	// BasePath is fetched with no protocol: a page of the cover site big
 	// enough to pass a cut by volume, "/" when none is named.
 	BasePath string
@@ -196,6 +216,9 @@ func (c *client) matrix(args map[string]string) (string, error) {
 	}
 	wg.Wait()
 	out := matrixSummary(rows)
+	if plan.Base != "" {
+		out = "база: " + plan.Base + "\n" + out
+	}
 	if len(rows) > 0 {
 		// Every run is history: the rows go to the hub's dataset, so the next
 		// question about this knob starts from them, not from scrollback.
@@ -246,7 +269,7 @@ func matrixDatasetRows(rows []matrixRow) ([]relayruns.Row, error) {
 		d := relayruns.Row{
 			Source: relayruns.SourceStand, MeasuredAt: at, Vantage: r.Vantage, Core: r.Core, Profile: r.Profile,
 			Knob: r.Knob, Value: r.Value, Params: r.Params, Round: r.Round, Dl: r.Dl, DlEnd: r.DlEnd,
-			Burst: r.Burst, BurstTotal: matrixBurst, BurstTimeout: r.BurstTimeout, LoadError: r.LoadError,
+			Burst: r.Burst, BurstTotal: r.BurstTotal, BurstTimeout: r.BurstTimeout, LoadError: r.LoadError,
 		}
 		if r.Knob != matrixBaseline {
 			d.After, d.AfterTotal = r.After, matrixAfter
@@ -268,6 +291,11 @@ func matrixPlanOf(args map[string]string) (matrixPlan, error) {
 	}
 	name, list, ok := strings.Cut(knob, "=")
 	set, known := matrixKnobs[name]
+	if name == matrixLoadBurst {
+		// Not a knob of the config: how many requests the burst opens at once,
+		// on the profile as it is. It finds the count a cut starts at.
+		set, known = func(map[string]interface{}, string) error { return nil }, true
+	}
 	if !ok || !known {
 		return matrixPlan{}, fmt.Errorf("knob %q: want one of %s as name=v1,v2", knob, strings.Join(matrixKnobNames(), ", "))
 	}
@@ -292,7 +320,11 @@ func matrixPlanOf(args map[string]string) (matrixPlan, error) {
 	if err != nil {
 		return matrixPlan{}, err
 	}
-	plan := matrixPlan{Profile: label, Knob: name, Values: values, Rounds: rounds, BasePath: "/"}
+	base, err := matrixApplyBase(outbound, args["base"], name)
+	if err != nil {
+		return matrixPlan{}, err
+	}
+	plan := matrixPlan{Profile: label, Knob: name, Values: values, Rounds: rounds, BasePath: "/", Base: base}
 	if v := args["baseline_path"]; v != "" {
 		if !matrixPath.MatchString(v) {
 			return matrixPlan{}, fmt.Errorf("baseline_path %q", v)
@@ -317,15 +349,52 @@ func matrixPlanOf(args map[string]string) (matrixPlan, error) {
 		}
 		plan.Configs = append(plan.Configs, cfg)
 		plan.Params = append(plan.Params, params)
+		n := matrixBurst
+		if name == matrixLoadBurst {
+			if n, err = strconv.Atoi(v); err != nil || n < 1 || n > matrixMaxBurst {
+				return matrixPlan{}, fmt.Errorf("burst %q: 1 to %d", v, matrixMaxBurst)
+			}
+		}
+		plan.Bursts = append(plan.Bursts, n)
 	}
 	return plan, nil
 }
 
+// matrixApplyBase sets the --base knobs, "fp=chrome;alpn=h2", on the outbound
+// every value starts from. The varied knob cannot be among them, nor can the
+// burst, which is not a knob of the config. It returns the base as given, for
+// the summary.
+func matrixApplyBase(ob map[string]interface{}, base, varied string) (string, error) {
+	if base == "" {
+		return "", nil
+	}
+	var names []string
+	for _, pair := range strings.Split(base, ";") {
+		k, v, ok := strings.Cut(pair, "=")
+		set, known := matrixKnobs[k]
+		if !ok || !known {
+			return "", fmt.Errorf("base %q: want knob=value;knob=value", pair)
+		}
+		if k == varied {
+			return "", fmt.Errorf("base sets %s, the knob this run varies", k)
+		}
+		if !matrixValue.MatchString(v) {
+			return "", fmt.Errorf("base value %q", v)
+		}
+		if err := set(ob, v); err != nil {
+			return "", fmt.Errorf("base %s=%s: %w", k, v, err)
+		}
+		names = append(names, k+"="+v)
+	}
+	return strings.Join(names, ";"), nil
+}
+
 func matrixKnobNames() []string {
-	out := make([]string, 0, len(matrixKnobs))
+	out := make([]string, 0, len(matrixKnobs)+1)
 	for k := range matrixKnobs {
 		out = append(out, k)
 	}
+	out = append(out, matrixLoadBurst)
 	sort.Strings(out)
 	return out
 }
@@ -435,10 +504,10 @@ trap 'rm -rf $d' EXIT
 freeport() { local p; while :; do p=$((20000 + RANDOM % 40000)); ss -ltn | grep -q ":$p " || { echo $p; return; }; done; }
 end() { case $1 in 0) case $2 in 2??) echo ok;; *) echo "http$2";; esac;; 28) echo timeout;; *) echo closed;; esac; }
 burst() {
-  local tag=$1 bp="" ok=0 to=0 i c rc; shift
-  for i in $(seq ` + strconv.Itoa(matrixBurst) + `); do (c=$(curl -s -o /dev/null -m 15 -w "%{http_code}" "$@" 2>/dev/null); echo "$? $c" > $d/$tag.$i) & bp="$bp $!"; done
+  local n=$1 tag=$2 bp="" ok=0 to=0 i c rc; shift 2
+  for i in $(seq $n); do (c=$(curl -s -o /dev/null -m 15 -w "%{http_code}" "$@" 2>/dev/null); echo "$? $c" > $d/$tag.$i) & bp="$bp $!"; done
   wait $bp
-  for i in $(seq ` + strconv.Itoa(matrixBurst) + `); do read rc c < $d/$tag.$i; [ "$rc" = 0 ] && [ "$c" != 000 ] && ok=$((ok+1)); [ "$rc" = 28 ] && to=$((to+1)); done
+  for i in $(seq $n); do read rc c < $d/$tag.$i; [ "$rc" = 0 ] && [ "$c" != 000 ] && ok=$((ok+1)); [ "$rc" = 28 ] && to=$((to+1)); done
   echo "$ok $to"
 }
 `)
@@ -449,14 +518,14 @@ baseline() {
   local n c rc t
   t=$(date +%%s)
   set -- $1 $(curl -s -o /dev/null -m 20 --resolve %s:%d:$ip -w "%%{size_download} %%{http_code}" https://%s:%d%s 2>/dev/null); rc=$?
-  echo "B $t $1 ${2:-0} $(end $rc ${3:-000}) $(burst b$1 --resolve %s:%d:$ip https://%s:%d/)"
+  echo "B $t $1 ${2:-0} $(end $rc ${3:-000}) $(burst %d b$1 --resolve %s:%d:$ip https://%s:%d/)"
 }
-`, p.Server, p.Server, p.SNI, p.Port, p.SNI, p.Port, p.BasePath, p.SNI, p.Port, p.SNI, p.Port)
+`, p.Server, p.Server, p.SNI, p.Port, p.SNI, p.Port, p.BasePath, matrixBurst, p.SNI, p.Port, p.SNI, p.Port)
 	} else {
 		b.WriteString("baseline() { :; }\n")
 	}
 	fmt.Fprintf(&b, `variant() {
-  local i=$1 r=$2 cfg=$3 port pid k n c rc a=0 t
+  local i=$1 r=$2 cfg=$3 bn=$4 port pid k n c rc a=0 t
   t=$(date +%%s)
   port=$(freeport)
   printf '%%s' "$cfg" | base64 -d | sed "s/__PORT__/$port/" > $d/c$i.json
@@ -466,7 +535,7 @@ baseline() {
   P="--socks5-hostname 127.0.0.1:$port"
   read n c < <(curl -s -o /dev/null -m 20 $P -w "%%{size_download} %%{http_code}" "https://speed.cloudflare.com/__down?bytes=%d" 2>/dev/null; echo " $?" > $d/rc$i)
   rc=$(tr -d ' ' < $d/rc$i)
-  set -- $(burst v$i.$r $P http://cp.cloudflare.com/generate_204)
+  set -- $(burst $bn v$i.$r $P http://cp.cloudflare.com/generate_204)
   for k in $(seq %d); do [ "$(curl -s -o /dev/null -m 5 $P -w "%%{http_code}" http://cp.cloudflare.com/generate_204 2>/dev/null)" = 204 ] && a=$((a+1)); done
   kill $pid 2>/dev/null; wait $pid 2>/dev/null
   echo "R $t $i $r ${n:-0} $(end $rc ${c:-000}) $1 $2 $a"
@@ -477,10 +546,18 @@ baseline() {
 	}
 	fmt.Fprintf(&b, "for r in $(seq %d); do\n  baseline $r; sleep 2\n", p.Rounds)
 	for i := range p.Configs {
-		fmt.Fprintf(&b, "  variant %d $r \"$CFG%d\"; sleep 2\n", i, i)
+		fmt.Fprintf(&b, "  variant %d $r \"$CFG%d\" %d; sleep 2\n", i, i, p.burstOf(i))
 	}
 	b.WriteString("done\n")
 	return b.String(), nil
+}
+
+// burstOf is how many requests value i opens at once.
+func (p matrixPlan) burstOf(i int) int {
+	if i < len(p.Bursts) {
+		return p.Bursts[i]
+	}
+	return matrixBurst
 }
 
 // matrixRun puts the core on the vantage if it is not there yet and runs the
@@ -557,6 +634,7 @@ func parseMatrix(text, vantage string, p matrixPlan) []matrixRow {
 		switch {
 		case len(f) == 7 && f[0] == "B":
 			row.Knob, row.Value = matrixBaseline, "no-protocol"
+			row.BurstTotal = matrixBurst
 			row.Round, _ = strconv.Atoi(f[2])
 			row.Dl, _ = strconv.ParseInt(f[3], 10, 64)
 			row.DlEnd = f[4]
@@ -571,6 +649,7 @@ func parseMatrix(text, vantage string, p matrixPlan) []matrixRow {
 			if i < len(p.Params) {
 				row.Params = p.Params[i]
 			}
+			row.BurstTotal = p.burstOf(i)
 			row.Round, _ = strconv.Atoi(f[3])
 			if f[4] == "load_error" {
 				row.LoadError = true
@@ -596,7 +675,7 @@ func parseMatrix(text, vantage string, p matrixPlan) []matrixRow {
 func matrixSummary(rows []matrixRow) string {
 	type key struct{ vantage, knob, value string }
 	type sum struct {
-		rounds, dlFull, burst, timeouts, after, loadErrors int
+		rounds, dlFull, burst, asked, timeouts, after, loadErrors int
 	}
 	sums := map[key]*sum{}
 	var order []key
@@ -617,6 +696,7 @@ func matrixSummary(rows []matrixRow) string {
 			s.dlFull++
 		}
 		s.burst += r.Burst
+		s.asked += r.BurstTotal
 		s.timeouts += r.BurstTimeout
 		s.after += r.After
 	}
@@ -631,7 +711,7 @@ func matrixSummary(rows []matrixRow) string {
 			after = "-"
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d/%d\t%d/%d\t%d\t%s\t%d\n", k.vantage, k.knob, k.value, s.rounds,
-			s.dlFull, s.rounds-s.loadErrors, s.burst, (s.rounds-s.loadErrors)*matrixBurst, s.timeouts, after, s.loadErrors)
+			s.dlFull, s.rounds-s.loadErrors, s.burst, s.asked, s.timeouts, after, s.loadErrors)
 	}
 	w.Flush()
 	return strings.TrimRight(b.String(), "\n")

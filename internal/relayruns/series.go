@@ -60,6 +60,9 @@ func valueOf(r Row, knob string) string {
 	if r.Knob == KnobBaseline {
 		return "no-protocol"
 	}
+	if knob == KnobBurst {
+		return strconv.Itoa(r.BurstTotal)
+	}
 	if v, ok := r.Params[knob]; ok {
 		return v
 	}
@@ -76,7 +79,7 @@ func BuildChart(rows []Row, window, knob, profile string, now time.Time, name fu
 	end := now.Truncate(win.Step)
 	n := int(win.Span / win.Step)
 	first := end.Add(-time.Duration(n-1) * win.Step)
-	c := Chart{Window: window, BucketSeconds: int(win.Step.Seconds()), Knob: knob, Knobs: Knobs, Profile: profile, Series: []Series{}}
+	c := Chart{Window: window, BucketSeconds: int(win.Step.Seconds()), Knob: knob, Knobs: append(append([]string{}, Knobs...), KnobBurst), Profile: profile, Series: []Series{}}
 	for i := 0; i < n; i++ {
 		c.Buckets = append(c.Buckets, first.Add(time.Duration(i)*win.Step))
 	}
@@ -173,7 +176,7 @@ func ChartHandler(s *Store, namer Namer) http.HandlerFunc {
 		if knob == "" {
 			knob = "fp"
 		}
-		if !isKnob(knob) {
+		if !isKnob(knob) && knob != KnobBurst {
 			writeErr(w, http.StatusBadRequest, "unknown knob")
 			return
 		}

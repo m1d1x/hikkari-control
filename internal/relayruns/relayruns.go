@@ -37,6 +37,11 @@ const KnobBaseline = "baseline"
 // and the tester's config name them the same way.
 var Knobs = []string{"fp", "sni", "port", "flow", "alpn"}
 
+// KnobBurst is the stand's load knob: how many requests the burst opens at
+// once. It is not a knob of the config, so no params carry it; every row has a
+// value for it, its BurstTotal.
+const KnobBurst = "burst"
+
 // Row is one profile in one round from one vantage.
 type Row struct {
 	Source       string            `json:"source"`
@@ -82,7 +87,7 @@ func (r Row) Validate() error {
 		return fmt.Errorf("vantage %q", r.Vantage)
 	case !reLabel.MatchString(r.Profile):
 		return fmt.Errorf("profile %q", r.Profile)
-	case r.Knob != "" && r.Knob != KnobBaseline && !isKnob(r.Knob):
+	case r.Knob != "" && r.Knob != KnobBaseline && r.Knob != KnobBurst && !isKnob(r.Knob):
 		return fmt.Errorf("knob %q", r.Knob)
 	case !reValue.MatchString(r.Value) || !reValue.MatchString(r.Core) || !reValue.MatchString(r.Proto) || !reValue.MatchString(r.Network):
 		return errors.New("a field is not a plain value")

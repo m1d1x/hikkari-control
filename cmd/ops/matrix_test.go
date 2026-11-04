@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
@@ -115,5 +116,63 @@ R 1762211587 7 1 1 ok 1 1 1
 	sum := matrixSummary(rows)
 	if !strings.Contains(sum, "firefox") || !strings.Contains(sum, "49/50") || !strings.Contains(sum, "0/50") {
 		t.Fatalf("summary:\n%s", sum)
+	}
+}
+
+func TestMatrixALPNNamesHTTP11(t *testing.T) {
+	ob := realityOutbound()
+	if err := matrixKnobs["alpn"](ob, "h2/http1.1"); err != nil {
+		t.Fatal(err)
+	}
+	tls := ob["tls"].(map[string]interface{})
+	got := fmt.Sprint(tls["alpn"])
+	if got != "[h2 http/1.1]" {
+		t.Fatalf("alpn %s", got)
+	}
+	if err := matrixKnobs["alpn"](realityOutbound(), "http/1.1"); err == nil {
+		t.Fatal("http/1.1 split into two names passed")
+	}
+}
+
+func TestMatrixBaseSetsEveryValue(t *testing.T) {
+	ob := realityOutbound()
+	base, err := matrixApplyBase(ob, "fp=chrome;alpn=http1.1", "sni")
+	if err != nil || base != "fp=chrome;alpn=http1.1" {
+		t.Fatalf("base %q err %v", base, err)
+	}
+	cfg, params, err := matrixConfig(ob, matrixKnobs["sni"], "www.nvidia.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if params["fp"] != "chrome" || params["alpn"] != "http/1.1" || params["sni"] != "www.nvidia.com" {
+		t.Fatalf("params %v", params)
+	}
+	if !strings.Contains(cfg, `"server_name":"www.nvidia.com"`) {
+		t.Fatal(cfg)
+	}
+	if _, err := matrixApplyBase(realityOutbound(), "sni=www.samsung.com", "sni"); err == nil {
+		t.Fatal("base set the varied knob")
+	}
+	if _, err := matrixApplyBase(realityOutbound(), "burst=3", "fp"); err == nil {
+		t.Fatal("base set the burst")
+	}
+}
+
+func TestMatrixBurstKnobSizesTheBurst(t *testing.T) {
+	p := matrixPlan{Profile: "x", Knob: "burst", Values: []string{"3", "50"}, Bursts: []int{3, 50}, Rounds: 1, Configs: []string{"{}", "{}"}}
+	script, err := matrixScript(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(script, `variant 0 $r "$CFG0" 3;`) || !strings.Contains(script, `variant 1 $r "$CFG1" 50;`) {
+		t.Fatal(script)
+	}
+	rows := parseMatrix("R 1700000000 0 1 1048576 ok 3 0 3\nR 1700000000 1 1 1048576 ok 20 30 0", "spb", p)
+	if len(rows) != 2 || rows[0].BurstTotal != 3 || rows[1].BurstTotal != 50 || rows[0].Value != "3" {
+		t.Fatalf("rows %+v", rows)
+	}
+	d, err := matrixDatasetRows(rows)
+	if err != nil || d[0].BurstTotal != 3 || d[0].Validate() != nil {
+		t.Fatalf("dataset %+v err %v / %v", d, err, d[0].Validate())
 	}
 }
