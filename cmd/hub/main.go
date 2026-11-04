@@ -69,6 +69,8 @@ func main() {
 			runOpsToken(os.Args[2:])
 		case "entry-vantage-token":
 			runEntryVantageToken(os.Args[2:])
+		case "entry-vantage-add":
+			runEntryVantageAdd(os.Args[2:])
 		case "mail-test":
 			runMailTest(os.Args[2:])
 		case "subscriber-add", "subscriber-renew", "subscriber-status", "subscriber-revoke", "plan-set", "plan-retire":

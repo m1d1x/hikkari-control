@@ -4,6 +4,10 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/m1d1x/hikkari-control/internal/stand"
@@ -19,6 +23,25 @@ import (
 // One run at a time, profiles one after another: a run opens up to 50
 // connections at once and takes minutes, and it must not crowd the routine
 // rounds of the pool beside it.
+
+// runStandOnly is the prober of a point that measures for the stand alone
+// (ENTRY_PROBE_ROLE=stand): no xray, no pool, only the stand's runs.
+func runStandOnly() {
+	cfg := config{
+		hub: hubClient{
+			base:  strings.TrimRight(mustEnv("PROBE_INGEST_URL"), "/"),
+			token: mustEnv("PROBE_INGEST_TOKEN"),
+			http:  &http.Client{Timeout: 10 * time.Second},
+		},
+		stand: standFromEnv(),
+	}
+	cfg.stand.enabled = true
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	log.Printf("entry-prober: stand only, hub=%s kit=%s", cfg.hub.base, cfg.stand.kitURL)
+	cfg.serveStand(ctx)
+	log.Println("entry-prober: shutdown")
+}
 
 // standConfig is the stand's part of the environment.
 type standConfig struct {

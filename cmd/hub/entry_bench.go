@@ -102,6 +102,38 @@ func runEntryVantageToken(args []string) {
 	os.Exit(0)
 }
 
+// runEntryVantageAdd registers an observation point slot with no machine the
+// hub reaches — a standalone box the owner runs the prober on by hand, such
+// as the stand's control point on hikkari-main — and prints its token. A slot
+// already active is refused: its machine changes through a new token.
+//
+//	cmd/server entry-vantage-add <slot> <title>
+func runEntryVantageAdd(args []string) {
+	fail := func(err error) {
+		fmt.Fprintf(os.Stderr, "entry-vantage-add: %v\n", err)
+		os.Exit(1)
+	}
+	if len(args) != 2 {
+		fail(fmt.Errorf("usage: cmd/server entry-vantage-add <slot> <title>"))
+	}
+	if err := cryptobox.Configure(os.Getenv); err != nil {
+		fail(fmt.Errorf("content key: %w", err))
+	}
+	ctx, cancel, pool := adminCLIPool()
+	defer cancel()
+	defer pool.Close()
+	svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+	if err != nil {
+		fail(err)
+	}
+	v, err := svc.CreateVantage(ctx, entry.VantageSpec{Slot: args[0], Title: args[1]}, "cli")
+	if err != nil {
+		fail(err)
+	}
+	fmt.Println(v.Token)
+	os.Exit(0)
+}
+
 // benchSink takes the hub's finished bench runs into ClickHouse.
 type benchSink struct{ store *analytics.Store }
 

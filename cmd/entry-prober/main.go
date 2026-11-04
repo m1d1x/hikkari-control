@@ -54,6 +54,10 @@
 //	                           at base+200.
 //	ENTRY_PROBE_FINGERPRINT    uTLS fingerprint profile (default "chrome").
 //	ENTRY_PROBE_DIAL_TIMEOUT_MS per-signal timeout (default 8000).
+//	ENTRY_PROBE_ROLE           "stand": this point runs the matrix stand and
+//	                           nothing else — no pool rounds, admissions,
+//	                           benches or reprobes, no xray. For a control point
+//	                           outside Russia (stand.go). Default "all".
 //	ENTRY_PROBE_STAND          "0" turns the matrix stand off (stand.go).
 //	ENTRY_PROBE_STAND_KIT      the stand kit's manifest (default
 //	                           "https://update.hikkari.net/stand/linux-amd64.json").
@@ -147,6 +151,12 @@ type config struct {
 }
 
 func main() {
+	// A point outside Russia measures for the stand only: its verdicts on the
+	// pool would be a control's word in the detector, which reads Russia.
+	if envStr("ENTRY_PROBE_ROLE", "all") == "stand" {
+		runStandOnly()
+		return
+	}
 	cfg := config{
 		tunnelURL: mustEnv("ENTRY_PROBE_TUNNEL_URL"),
 		hub: hubClient{
