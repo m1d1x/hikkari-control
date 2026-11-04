@@ -5,10 +5,12 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/m1d1x/hikkari-control/internal/applog"
+	"github.com/m1d1x/hikkari-control/internal/relayruns"
 )
 
 // maxResultBytes bounds a finish body: maxTaskRows rows of a few hundred bytes.
@@ -84,4 +86,34 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// RegisterKnobOpsRoutes mounts the agent's view of the knob controller: its
+// policy, every live node's values and the journal of the last days.
+func RegisterKnobOpsRoutes(mux *http.ServeMux, c *Controller, runs *relayruns.Store, gate func(action string, h http.HandlerFunc) http.HandlerFunc) {
+	mux.HandleFunc("GET /api/v1/ops/knobs", gate("", func(w http.ResponseWriter, r *http.Request) {
+		days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+		if days <= 0 || days > 30 {
+			days = 7
+		}
+		p, err := c.PolicyNow(r.Context())
+		if err == nil {
+			var nodes []NodeKnobs
+			nodes, err = c.Nodes(r.Context())
+			if err == nil {
+				var events []relayruns.KnobEvent
+				events, err = runs.KnobEvents(r.Context(), r.URL.Query().Get("profile"), "", time.Now().AddDate(0, 0, -days), 0)
+				if err == nil {
+					writeJSON(w, http.StatusOK, map[string]any{
+						"policy": map[string]any{"mode": p.Mode, "window": p.Window.String(), "min_rounds": p.MinRounds,
+							"low": p.Low, "high": p.High, "margin": p.Margin, "cooldown": p.Cooldown.String(), "control_slots": p.Control},
+						"nodes": nodes, "events": events,
+					})
+					return
+				}
+			}
+		}
+		applog.Error(r.Context(), "knobs", "ops view failed", applog.F("err", err.Error()))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
+	}))
 }

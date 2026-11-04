@@ -19,6 +19,18 @@ export interface RelayRunSeries {
 	totalAsked: number;
 }
 
+/** A line of the knob controller's journal (hub internal/stand controller.go). */
+export interface RelayKnobEvent {
+	at: string;
+	node: string;
+	profile: string;
+	knob: string;
+	kind: 'switch' | 'all_red' | 'address_cut';
+	from?: string;
+	to?: string;
+	reason?: string;
+}
+
 export interface RelayRunChart {
 	window: RelayRunWindow;
 	bucketSeconds: number;
@@ -28,6 +40,7 @@ export interface RelayRunChart {
 	profile: string;
 	profiles: string[];
 	series: RelayRunSeries[];
+	events: RelayKnobEvent[] | null;
 }
 
 export async function fetchRelayRunChart(

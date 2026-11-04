@@ -1,9 +1,15 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import PageShell from '$components/layout/PageShell.svelte';
-	import TrendChart, { type TrendSeries } from '$components/entry/TrendChart.svelte';
+	import TrendChart, { type TrendMark, type TrendSeries } from '$components/entry/TrendChart.svelte';
 	import { describeApiError } from '$lib/api/client';
-	import { fetchRelayRunChart, type RelayRunChart, type RelayRunSeries, type RelayRunWindow } from '$lib/api/relayRuns';
+	import {
+		fetchRelayRunChart,
+		type RelayKnobEvent,
+		type RelayRunChart,
+		type RelayRunSeries,
+		type RelayRunWindow,
+	} from '$lib/api/relayRuns';
 
 	// One knob of a relay's config over time (plans/2026-11-04-relay-search-method.md):
 	// a line per value of the knob and per vantage — the matrix stand from SPb
@@ -18,7 +24,17 @@
 		flow: 'flow',
 		alpn: 'ALPN',
 	};
-	const VANTAGE_LABEL: Record<string, string> = { spb: 'СПб', lv: 'Латвия' };
+	const VANTAGE_LABEL: Record<string, string> = {
+		spb: 'СПб',
+		lv: 'Латвия',
+		'ru-spb': 'СПб, стенд по расписанию',
+		'lv-main': 'Латвия, стенд по расписанию',
+	};
+	const EVENT_COLOR: Record<RelayKnobEvent['kind'], string> = {
+		switch: '#e8e8e8',
+		all_red: '#e66767',
+		address_cut: '#c98500',
+	};
 	const COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
 	const BASELINE_COLOR = '#71717a';
 	const REFRESH_MS = 120_000;
@@ -82,6 +98,23 @@
 		}));
 	}
 
+	// What the knob controller did, at its moment on every chart: a switch, or
+	// a state it could not act on.
+	function eventLabel(e: RelayKnobEvent): string {
+		switch (e.kind) {
+			case 'switch':
+				return `контроллер: ${e.from} → ${e.to}. ${e.reason ?? ''}`;
+			case 'all_red':
+				return `контроллер: все кандидаты красные. ${e.reason ?? ''}`;
+			default:
+				return `контроллер: режут адрес. ${e.reason ?? ''}`;
+		}
+	}
+
+	const marks = $derived<TrendMark[]>(
+		(data?.events ?? []).map((e) => ({ at: e.at, label: eventLabel(e), color: EVENT_COLOR[e.kind] })),
+	);
+
 	const charts = $derived([
 		{ title: '50 соединений разом: ответило', lines: lines((s) => s.burstPct) },
 		{ title: '3 запроса после всплеска: ответило', lines: lines((s) => s.afterPct) },
@@ -138,14 +171,18 @@
 						formatAxis={percent}
 						max={100}
 						height={200}
+						{marks}
 					/>
 				</section>
 			{/each}
 
 			<p class="hint">
-				Строки пишут стенд <code>ops matrix</code> (СПб и Латвия) и раунды <code>[diag:load]</code> тестеров раз в 30 минут.
-				Значение ручки у тестера берётся из его конфига; «не известно» значит, что конфиг в логе обрезан до профиля. Опыт
-				меняет одну ручку: линии разных ручек одного профиля не сравнивают между собой.
+				Строки пишут стенд по расписанию на hub (раз в 30 минут с <code>ru-spb</code> и <code>lv-main</code>), ручной
+				стенд
+				<code>ops matrix</code> (СПб и Латвия) и раунды <code>[diag:load]</code> тестеров раз в 30 минут. Вертикальные отметки
+				— журнал контроллера ручек: белая — переключение ноды, красная — все кандидаты красные, жёлтая — режут адрес. Значение
+				ручки у тестера берётся из его конфига; «не известно» значит, что конфиг в логе обрезан до профиля. Опыт меняет одну
+				ручку: линии разных ручек одного профиля не сравнивают между собой.
 			</p>
 		{/if}
 	</div>

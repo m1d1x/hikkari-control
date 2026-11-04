@@ -322,6 +322,18 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 			return "", err
 		}
 		return prettyJSON(data), nil
+	case "knobs":
+		q := url.Values{}
+		for _, k := range []string{"profile", "days"} {
+			if v := args[k]; v != "" {
+				q.Set(k, v)
+			}
+		}
+		data, err := c.request(http.MethodGet, "/api/v1/ops/knobs", q, nil)
+		if err != nil {
+			return "", err
+		}
+		return prettyJSON(data), nil
 	case "runs-record":
 		return c.runsRecord(args)
 	case "runs":

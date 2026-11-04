@@ -15,6 +15,16 @@
 		primary?: boolean;
 	}
 
+	/** A moment on the time axis: an event the lines should be read against. */
+	export interface TrendMark {
+		/** ISO time of the event */
+		at: string;
+		/** what happened, as the tooltip says it */
+		label: string;
+		/** any CSS colour; a neutral one when unset */
+		color?: string;
+	}
+
 	/**
 	 * The overview's line chart: several series over the window's buckets on
 	 * one value axis. Money, traffic and survival all draw through it, so the
@@ -35,9 +45,20 @@
 		empty?: string;
 		/** a fixed axis top, for a figure with a natural ceiling such as a percentage */
 		max?: number;
+		/** events drawn as vertical marks at their moment, listed in the tooltip of their bucket */
+		marks?: TrendMark[];
 	}
 
-	let { buckets, bucketSeconds, series, formatAxis, height = 160, empty = 'нет данных за это окно', max }: Props = $props();
+	let {
+		buckets,
+		bucketSeconds,
+		series,
+		formatAxis,
+		height = 160,
+		empty = 'нет данных за это окно',
+		max,
+		marks = [],
+	}: Props = $props();
 
 	let containerEl = $state<HTMLDivElement | null>(null);
 	let containerWidth = $state<number>(850);
@@ -116,6 +137,21 @@
 
 	const TICKS = [1, 0.75, 0.5, 0.25, 0];
 
+	/** Each mark at its moment between the buckets, with the bucket it falls in; marks outside the window are left out. */
+	const placedMarks = $derived.by(() => {
+		if (n === 0) return [] as { mark: TrendMark; x: number; bucket: number; key: string }[];
+		const start = Date.parse(buckets[0]);
+		const step = bucketSeconds * 1000;
+		return marks
+			.map((mark, k) => {
+				const pos = (Date.parse(mark.at) - start) / step;
+				const bucket = Math.floor(pos);
+				const clamped = Math.max(0, Math.min(n - 1, pos));
+				return { mark, x: n < 2 ? PAD_L + PW / 2 : PAD_L + (clamped / (n - 1)) * PW, bucket, key: `${mark.at}-${k}` };
+			})
+			.filter((p) => p.bucket >= 0 && p.bucket < n);
+	});
+
 	/** Up to six evenly spread labels along the bottom. */
 	const axis = $derived.by(() => {
 		if (n === 0) return [] as { label: string; x: number }[];
@@ -180,6 +216,21 @@
 			{/each}
 		{/each}
 
+		{#each placedMarks as p (p.key)}
+			<line
+				x1={p.x}
+				y1={PAD_T}
+				x2={p.x}
+				y2={PAD_T + PH}
+				class="mark"
+				style="stroke: {p.mark.color ?? 'oklch(0.8 0 0)'}"
+			/>
+			<path
+				d="M{(p.x - 4).toFixed(1)},{PAD_T - 7} L{(p.x + 4).toFixed(1)},{PAD_T - 7} L{p.x.toFixed(1)},{PAD_T - 1} Z"
+				style="fill: {p.mark.color ?? 'oklch(0.8 0 0)'}"
+			/>
+		{/each}
+
 		{#each axis as a (a.x)}
 			<text x={a.x} y={height - 8} class="x-label" text-anchor="middle">{a.label}</text>
 		{/each}
@@ -198,6 +249,9 @@
 	{#if hovered}
 		<div class="tooltip" class:to-left={hovered.toLeft} style="left: {(hovered.x / W) * 100}%">
 			<div class="tt-head">{bucketTitle(buckets[hovered.i], bucketSeconds)}</div>
+			{#each placedMarks.filter((p) => p.bucket === hovered.i) as p (p.key)}
+				<div class="tt-mark"><i style="background: {p.mark.color ?? 'oklch(0.8 0 0)'}"></i>{p.mark.label}</div>
+			{/each}
 			{#each series as s (s.key)}
 				{@const v = s.values[hovered.i]}
 				<div class="tt-row" class:primary={s.primary}>
@@ -266,6 +320,31 @@
 
 	.line.primary {
 		stroke-width: 2.4;
+	}
+
+	.mark {
+		stroke-width: 1.5;
+		stroke-dasharray: 5 3;
+		opacity: 0.8;
+		pointer-events: none;
+	}
+
+	.tt-mark {
+		display: flex;
+		align-items: flex-start;
+		gap: 7px;
+		max-width: 340px;
+		font-size: 11px;
+		white-space: normal;
+		color: var(--text, oklch(0.93 0 0));
+	}
+
+	.tt-mark i {
+		width: 7px;
+		height: 7px;
+		margin-top: 4px;
+		border-radius: 50%;
+		flex-shrink: 0;
 	}
 
 	.slice-line {

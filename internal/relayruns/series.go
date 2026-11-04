@@ -49,6 +49,9 @@ type Chart struct {
 	Profile       string      `json:"profile"`
 	Profiles      []string    `json:"profiles"`
 	Series        []Series    `json:"series"`
+	// Events are the knob controller's lines for this profile and knob in the
+	// window, newest first: the marks on the chart.
+	Events []KnobEvent `json:"events"`
 }
 
 // ValueUnknown is a row that does not say the knob's value: an old client
@@ -204,6 +207,11 @@ func ChartHandler(s *Store, namer Namer) http.HandlerFunc {
 		}
 		c := BuildChart(rows, window, knob, profile, now, name)
 		c.Profiles = profiles
+		c.Events, err = s.KnobEvents(r.Context(), profile, knob, since, 0)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "read failed")
+			return
+		}
 		writeJSON(w, http.StatusOK, c)
 	}
 }
