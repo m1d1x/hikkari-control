@@ -42,6 +42,10 @@ var Knobs = []string{"fp", "sni", "port", "flow", "alpn"}
 // value for it, its BurstTotal.
 const KnobBurst = "burst"
 
+// EndAddrDead ends a tester's row whose address did not answer a ClientHello on
+// any flow: no value was measured, so the row counts for no knob.
+const EndAddrDead = "addr_dead"
+
 // Row is one profile in one round from one vantage.
 type Row struct {
 	Source       string            `json:"source"`
@@ -72,7 +76,7 @@ var (
 	reValue = regexp.MustCompile(`^[A-Za-z0-9._,/:-]{0,64}$`)
 	// reCore names a core build: "sing-box-lx v1.14.3-lx.21+489ac0f3".
 	reCore = regexp.MustCompile(`^[A-Za-z0-9._+ -]{0,80}$`)
-	reEnd  = regexp.MustCompile(`^(ok|timeout|closed|http\d{3}|error|)$`)
+	reEnd  = regexp.MustCompile(`^(ok|timeout|closed|http\d{3}|error|addr_dead|)$`)
 )
 
 // Validate refuses a row that could not have come from a measurement, so a

@@ -100,6 +100,20 @@ func (f fakeChunks) lastBefore(_ context.Context, _ string, _ int64, marker stri
 	return f.before[marker], nil
 }
 
+func TestParseLoadLineOfADeadAddress(t *testing.T) {
+	l, ok := parseLoadLine("2026/11/04 03:33:06.289 [diag:load] p-amsterdam-1-002 proto=vless-reality fp=firefox sni=www.samsung.com port=8443 flow=xtls-rprx-vision addr_dead=1 tcp=12/12 reply=0/12")
+	if !ok {
+		t.Fatal("not read")
+	}
+	r := l.row("t-x", time.Date(2026, 11, 4, 3, 33, 6, 0, time.UTC), "AS12389", nil)
+	if r.DlEnd != EndAddrDead || r.BurstTotal != 0 || r.LoadError || r.Params["fp"] != "firefox" {
+		t.Fatalf("%+v", r)
+	}
+	if err := r.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRowsOfTakesConfigInForce(t *testing.T) {
 	at := time.Date(2026, 11, 3, 22, 30, 0, 0, time.UTC)
 	chrome := strings.ReplaceAll(configFirefox, `"fingerprint":"firefox"`, `"fingerprint":"chrome"`)

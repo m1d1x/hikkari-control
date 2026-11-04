@@ -19,6 +19,10 @@ package stand
 // Over the window, from the points in Russia (every active slot outside
 // control_slots), the share of the burst that answered, per value:
 //
+//   - the address did not answer a ClientHello on any flow (addr_dead rounds, no
+//     row of any value) and did at the control points → it is banned, no knob
+//     helps: say so, touch nothing. The fleet replaces the machine on the pool
+//     prober's own ip_banned verdict (entry/detector.go), the owner of rotation;
 //   - the address with no protocol is cut → no knob helps: say so, touch nothing;
 //   - the node's value is at or above knob_low → nothing to do;
 //   - a candidate measured enough rounds, at or above knob_high, and ahead of
@@ -120,6 +124,10 @@ type Evidence struct {
 	Russia   map[string]Share `json:"russia"`
 	Control  map[string]Share `json:"control,omitempty"`
 	Baseline Share            `json:"baseline"`
+	// Dead and ControlDead are the rounds that stopped at the address check, in
+	// Russia and at the control points. Baseline holds none of them.
+	Dead        Share `json:"dead,omitempty"`
+	ControlDead Share `json:"control_dead,omitempty"`
 }
 
 // Decision is what the rule says for one node and knob.
@@ -133,6 +141,14 @@ type Decision struct {
 // its order (the tie-break); current is the node's value; lastSwitch is when
 // the node last switched this knob (zero for never).
 func Decide(p Policy, current string, candidates []string, ev Evidence, lastSwitch, now time.Time) Decision {
+	// Before the rounds of the value: a dead address has none, by design.
+	if ev.Dead.Rounds >= p.MinRounds {
+		if ev.ControlDead.Rounds >= p.MinRounds {
+			return Decision{} // silent from everywhere: the machine, not the censor
+		}
+		return Decision{Kind: relayruns.EventAddressCut,
+			Reason: fmt.Sprintf("адрес не отвечает на ClientHello из РФ: %d р. без ответа ни по одному потоку, вне РФ отвечает", ev.Dead.Rounds)}
+	}
 	cur := ev.Russia[current]
 	if cur.Rounds < p.MinRounds {
 		return Decision{}
@@ -553,6 +569,16 @@ func (c *Controller) evidence(ctx context.Context, p Policy, slots []string, pro
 			return ev, err
 		}
 		switch {
+		case k == Baseline && v == ValueVantageDown:
+			// The point's own network was down: no evidence about anything.
+		case k == Baseline && (v == ValueAddrDead || v == ValueNoTCP):
+			dead := &ev.Dead
+			if control {
+				dead = &ev.ControlDead
+			}
+			dead.Rounds += s.Rounds
+			dead.Answered += s.Answered
+			dead.Asked += s.Asked
 		case k == Baseline && !control:
 			ev.Baseline.Rounds += s.Rounds
 			ev.Baseline.Answered += s.Answered
@@ -587,7 +613,8 @@ func (c *Controller) testersNode(ctx context.Context, p Policy, n node, knob str
 		       sum(CASE WHEN load_error THEN $4::int ELSE burst_total END)
 		FROM relay_runs
 		WHERE source = 'tester' AND profile = $1 AND measured_at > $2 AND network LIKE 'AS%' AND params ? $3
-		GROUP BY 1, 2`, n.label, now.Add(-testerWindow), param, Burst)
+		  AND coalesce(dl_end, '') <> $5
+		GROUP BY 1, 2`, n.label, now.Add(-testerWindow), param, Burst, relayruns.EndAddrDead)
 	if err != nil {
 		return fmt.Errorf("controller testers: %w", err)
 	}

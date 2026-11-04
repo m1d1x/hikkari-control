@@ -3,8 +3,12 @@ package stand
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -116,6 +120,158 @@ R 1762211587 7 1 1 ok 1 1 1
 	sum := Summary(rows)
 	if !strings.Contains(sum, "firefox") || !strings.Contains(sum, "49/50") || !strings.Contains(sum, "0/50") {
 		t.Fatalf("summary:\n%s", sum)
+	}
+}
+
+func TestParseMatrixReadsADeadRound(t *testing.T) {
+	p := testPlan(t)
+	rows := Parse(`D 1762211579 1 addr_dead 12
+D 1762211589 2 no_tcp 0
+D 1762211599 3 vantage_down 0
+D 1762211609 4 something_else 0
+`, "spb", p)
+	if len(rows) != 3 {
+		t.Fatalf("%+v", rows)
+	}
+	if rows[0].Knob != Baseline || rows[0].Value != ValueAddrDead || rows[0].Burst != 0 || rows[0].BurstTotal != AddrFlows || rows[0].BurstTimeout != 12 || rows[0].Round != 1 {
+		t.Fatalf("%+v", rows[0])
+	}
+	if rows[1].Value != ValueNoTCP || rows[2].Value != ValueVantageDown {
+		t.Fatalf("%+v", rows[1:])
+	}
+	data, err := DatasetRows(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range data {
+		if err := data[i].Validate(); err != nil {
+			t.Fatalf("%+v: %v", data[i], err)
+		}
+	}
+}
+
+// controlCurl puts a curl on PATH that answers for the point's control as the
+// test says and is the real curl for everything else: what curl reports about a
+// silent connection is the very thing under test (on a timeout it says
+// time_connect 0 even with TCP open).
+func controlCurl(t *testing.T, control string) string {
+	t.Helper()
+	real, err := exec.LookPath("curl")
+	if err != nil {
+		t.Skip("no curl")
+	}
+	dir := t.TempDir()
+	script := "#!/bin/bash\ncase \"$*\" in\n*1.1.1.1*) " + control + ";;\n*) exec " + real + " \"$@\";;\nesac\n"
+	if err := os.WriteFile(filepath.Join(dir, "curl"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// addrListener is a real listener on loopback doing what serve says with each
+// connection; its port is free again once the test closes it.
+func addrListener(t *testing.T, serve func(net.Conn)) (int, func()) {
+	t.Helper()
+	l, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go serve(c)
+		}
+	}()
+	return l.Addr().(*net.TCPAddr).Port, func() { _ = l.Close() }
+}
+
+// TestScriptStopsARoundOnADeadAddress runs the script's own address check with
+// real curl against real sockets.
+func TestScriptStopsARoundOnADeadAddress(t *testing.T) {
+	silent := func(c net.Conn) { time.Sleep(time.Minute); _ = c.Close() }
+	var answers atomic.Int64
+	oneAnswers := func(c net.Conn) {
+		if answers.Add(1)%2 == 0 { // the check opens each flow twice: TCP, then TLS
+			_ = c.Close()
+			return
+		}
+		silent(c)
+	}
+	closing := func(c net.Conn) { _ = c.Close() }
+	for _, c := range []struct {
+		name     string
+		serve    func(net.Conn) // nil: nobody listens
+		control  string
+		want     string
+		variants bool
+	}{
+		{name: "TCP opens, nothing comes back", serve: silent, control: "exit 0", want: "addr_dead 12"},
+		{name: "no TCP at all", control: "exit 0", want: "no_tcp 0"},
+		{name: "the point itself is down", control: "exit 7", want: "vantage_down 0"},
+		{name: "some flows answer: not dead", serve: oneAnswers, control: "exit 0", variants: true},
+		{name: "a closed connection is an answer", serve: closing, control: "exit 0", variants: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			var port int
+			if c.serve != nil {
+				p, stop := addrListener(t, c.serve)
+				defer stop()
+				port = p
+			} else {
+				p, stop := addrListener(t, closing)
+				stop()
+				port = p
+			}
+			plan, err := NewPlan(map[string]any{"type": "vless", "server": "127.0.0.1", "server_port": port, "tag": "p",
+				"tls": map[string]any{"enabled": true, "server_name": "www.example.com"}},
+				Spec{Profile: "p", Knob: "fp", Values: []string{"firefox"}, Rounds: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			script, err := Script(plan, "/nonexistent/core")
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("bash", "-s")
+			cmd.Stdin = strings.NewReader(script)
+			cmd.Env = append(os.Environ(), "PATH="+controlCurl(t, c.control)+":"+os.Getenv("PATH"))
+			out, _ := cmd.CombinedOutput()
+			text := string(out)
+			if c.variants {
+				if strings.Contains(text, "D ") {
+					t.Fatalf("an answering address read as dead:\n%s", text)
+				}
+				return
+			}
+			if !strings.Contains(text, " 1 "+c.want+"\n") {
+				t.Fatalf("want %q:\n%s", c.want, text)
+			}
+			if strings.Contains(text, "R ") || strings.Contains(text, "B ") {
+				t.Fatalf("a dead round measured a value:\n%s", text)
+			}
+		})
+	}
+}
+
+func TestPlanOfAUDPProfileAsksNoTCP(t *testing.T) {
+	plan, err := NewPlan(map[string]any{"type": "hysteria2", "server": "1.2.3.4", "server_port": 443, "tag": "p",
+		"tls": map[string]any{"enabled": true, "server_name": "x.example.com"}}, Spec{Profile: "p", Knob: "alpn", Values: []string{"h3"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.SNI != "" {
+		t.Fatalf("SNI %q", plan.SNI)
+	}
+	script, err := Script(plan, "/tmp/core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(script, "addrcheck() { :; }") {
+		t.Fatal("a UDP profile would ask TCP whether its address is alive")
 	}
 }
 

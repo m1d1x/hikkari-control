@@ -8,6 +8,12 @@
 // within a round, not variant after variant, so a path that worsens over the
 // run does not pass for a worse value.
 //
+// A round starts by asking whether the address answers at all: AddrFlows
+// connections, a ClientHello on each. A banned address opens TCP and then loses
+// the first packet of data, whatever the protocol (NTC Party 26076), so every
+// value of every knob would read red there and say nothing about the knob. Such
+// a round writes one row, addr_dead, and measures no value.
+//
 // The run itself is a bash script over curl: the same script runs on a vantage
 // over SSH (`ops matrix`) and locally under the vantage's prober (the stand on
 // the hub's schedule, schedule.go), so rows from either are the same
@@ -44,7 +50,33 @@ const (
 	MaxValues = 8
 	// Baseline is the knob of the rows with no protocol.
 	Baseline = relayruns.KnobBaseline
+	// AddrFlows connections ask whether the address answers, each given
+	// addrWait seconds. A censor drops some flows by source port and leaves
+	// others (plans/2026-11-02-tcp-flow-loss.md), so one answer is enough.
+	AddrFlows = 12
+	addrWait  = 8
 )
+
+// Values of a baseline row that end a round before any value is measured.
+const (
+	// ValueNoProtocol is the ordinary baseline: the cover site with no protocol.
+	ValueNoProtocol = "no-protocol"
+	// ValueAddrDead: TCP opened and not one flow got a byte back for its
+	// ClientHello.
+	ValueAddrDead = "addr_dead"
+	// ValueNoTCP: no flow opened at all.
+	ValueNoTCP = "no_tcp"
+	// ValueVantageDown: the address is silent, and so is the point's control.
+	// It says nothing about the address.
+	ValueVantageDown = "vantage_down"
+)
+
+// addrControl is a site the point reaches when its own network is up.
+const addrControl = "https://1.1.1.1/"
+
+// udpOutbounds carry no TCP, so neither the baseline's TLS nor the address
+// check says anything about them.
+var udpOutbounds = map[string]bool{"hysteria": true, "hysteria2": true, "tuic": true, "wireguard": true}
 
 var (
 	reHost  = regexp.MustCompile(`^[A-Za-z0-9.-]{1,253}$`)
@@ -245,6 +277,9 @@ func NewPlan(outbound map[string]any, spec Spec) (Plan, error) {
 	if plan.SNI != "" && !reHost.MatchString(plan.SNI) {
 		return Plan{}, errors.New("the profile's server name is not a host name")
 	}
+	if typ, _ := ob["type"].(string); udpOutbounds[typ] {
+		plan.SNI = "" // no TCP to ask: no baseline and no address check
+	}
 	for _, v := range spec.Values {
 		cfg, params, err := Config(ob, set, v)
 		if err != nil {
@@ -341,14 +376,18 @@ func (p Plan) BurstOf(i int) int {
 }
 
 // Wait is the longest a run of the plan takes: about 25 s a value a round at
-// worst, plus the baseline.
+// worst, plus the baseline and the address check.
 func (p Plan) Wait() time.Duration {
-	return time.Duration(p.Rounds*(len(p.Configs)+1)*45+60) * time.Second
+	return time.Duration(p.Rounds*((len(p.Configs)+1)*45+addrWait+7)+60) * time.Second
 }
 
-// Script is the whole run, with the core at core. Every value that reaches it
+// Script is the whole run, with the core at core. The address check counts TCP
+// by itself: on a timeout curl reports time_connect 0 whether or not TCP opened.
+// A connection refused (7) or timed out (28) before TLS is no answer; anything
+// else is, a reset among them: it is not the silence of a banned address. Every value that reaches it
 // was checked above or is base64; it prints one line a round:
 //
+//	D <unix> <round> <addr_dead|no_tcp|vantage_down> <silent flows>     the round stops here
 //	B <unix> <round> <bytes> <end> <ok> <timeouts>                      no protocol
 //	R <unix> <index> <round> <bytes> <end> <ok> <timeouts> <after>      a value
 //	R <unix> <index> <round> load_error                                 the core did not start
@@ -380,9 +419,33 @@ baseline() {
   set -- $1 $(curl -s -o /dev/null -m 20 --resolve %s:%d:$ip -w "%%{size_download} %%{http_code}" https://%s:%d%s 2>/dev/null); rc=$?
   echo "B $t $1 ${2:-0} $(end $rc ${3:-000}) $(burst %d b$1 --resolve %s:%d:$ip https://%s:%d/)"
 }
-`, p.Server, p.Server, p.SNI, p.Port, p.SNI, p.Port, p.BasePath, Burst, p.SNI, p.Port, p.SNI, p.Port)
+tcpopen() {
+  (exec 3<>/dev/tcp/$ip/%d) 2>/dev/null & local p=$! k rc
+  (sleep %d; kill $p 2>/dev/null) >/dev/null 2>&1 & k=$!
+  wait $p 2>/dev/null; rc=$?
+  kill $k 2>/dev/null
+  return $rc
+}
+addrcheck() {
+  local i bp="" tcp=0 said=0 t o rc a v
+  t=$(date +%%s)
+  for i in $(seq %d); do (o=0; tcpopen && o=1; a=$(curl -skI -o /dev/null -m %d --resolve %s:%d:$ip -w "%%{time_appconnect}" https://%s:%d/ 2>/dev/null); rc=$?; echo "$o $rc $a" > $d/a.$i) & bp="$bp $!"; done
+  wait $bp
+  for i in $(seq %d); do
+    read o rc a < $d/a.$i
+    [ "$o" = 1 ] && tcp=$((tcp+1))
+    case "$rc" in 28|7) [ "${a:-0.000000}" != 0.000000 ] && said=$((said+1));; *) said=$((said+1));; esac
+  done
+  [ $said -gt 0 ] && return 0
+  v=%s; [ $tcp = 0 ] && v=%s
+  curl -skI -o /dev/null -m 5 %s 2>/dev/null || v=%s
+  echo "D $t $1 $v $tcp"
+  return 1
+}
+`, p.Server, p.Server, p.SNI, p.Port, p.SNI, p.Port, p.BasePath, Burst, p.SNI, p.Port, p.SNI, p.Port,
+			p.Port, addrWait/2, AddrFlows, addrWait, p.SNI, p.Port, p.SNI, p.Port, AddrFlows, ValueAddrDead, ValueNoTCP, addrControl, ValueVantageDown)
 	} else {
-		b.WriteString("baseline() { :; }\n")
+		b.WriteString("baseline() { :; }\naddrcheck() { :; }\n")
 	}
 	fmt.Fprintf(&b, `variant() {
   local i=$1 r=$2 cfg=$3 bn=$4 port pid k n c rc a=0 t
@@ -404,7 +467,7 @@ baseline() {
 	for i, cfg := range p.Configs {
 		fmt.Fprintf(&b, "CFG%d=%s\n", i, base64.StdEncoding.EncodeToString([]byte(cfg)))
 	}
-	fmt.Fprintf(&b, "for r in $(seq %d); do\n  baseline $r; sleep 2\n", p.Rounds)
+	fmt.Fprintf(&b, "for r in $(seq %d); do\n  addrcheck $r || { sleep 2; continue; }\n  baseline $r; sleep 2\n", p.Rounds)
 	for i := range p.Configs {
 		fmt.Fprintf(&b, "  variant %d $r \"$CFG%d\" %d; sleep 2\n", i, i, p.BurstOf(i))
 	}
@@ -427,8 +490,17 @@ func Parse(text, vantage string, p Plan) []Row {
 		}
 		row := Row{TS: time.Unix(unix, 0).UTC().Format(time.RFC3339), Vantage: vantage, Profile: p.Profile, Core: p.Core}
 		switch {
+		case len(f) == 5 && f[0] == "D":
+			if f[3] != ValueAddrDead && f[3] != ValueNoTCP && f[3] != ValueVantageDown {
+				continue
+			}
+			row.Knob, row.Value = Baseline, f[3]
+			row.BurstTotal = AddrFlows
+			row.Round, _ = strconv.Atoi(f[2])
+			row.DlEnd = "timeout"
+			row.BurstTimeout, _ = strconv.Atoi(f[4])
 		case len(f) == 7 && f[0] == "B":
-			row.Knob, row.Value = Baseline, "no-protocol"
+			row.Knob, row.Value = Baseline, ValueNoProtocol
 			row.BurstTotal = Burst
 			row.Round, _ = strconv.Atoi(f[2])
 			row.Dl, _ = strconv.ParseInt(f[3], 10, 64)

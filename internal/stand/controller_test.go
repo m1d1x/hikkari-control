@@ -58,6 +58,16 @@ func TestDecide(t *testing.T) {
 		{name: "the address cut: no knob helps", current: "chrome",
 			ev:   Evidence{Russia: map[string]Share{"chrome": share(0, 6), "firefox": share(0, 6)}, Baseline: share(20, 6)},
 			kind: relayruns.EventAddressCut},
+		{name: "a dead address has no row of any value and still says so", current: "chrome",
+			ev:   Evidence{Russia: map[string]Share{}, Dead: Share{Rounds: 6, Asked: 6 * AddrFlows}},
+			kind: relayruns.EventAddressCut},
+		{name: "a dead address moves no knob, whatever the rows of a value say", current: "chrome",
+			ev:   Evidence{Russia: map[string]Share{"chrome": share(0, 6), "firefox": healthy}, Dead: Share{Rounds: 6, Asked: 6 * AddrFlows}},
+			kind: relayruns.EventAddressCut},
+		{name: "too few dead rounds are no evidence", current: "chrome",
+			ev: Evidence{Russia: map[string]Share{}, Dead: Share{Rounds: 5, Asked: 5 * AddrFlows}}},
+		{name: "silent from outside Russia too: the machine, not the censor", current: "chrome",
+			ev: Evidence{Russia: map[string]Share{}, Dead: Share{Rounds: 6, Asked: 72}, ControlDead: Share{Rounds: 6, Asked: 72}}},
 		{name: "within the cooldown nothing switches", current: "chrome", lastSwitch: now.Add(-30 * time.Minute),
 			ev: Evidence{Russia: map[string]Share{"chrome": share(100, 6), "firefox": healthy}}},
 		{name: "after the cooldown it switches", current: "chrome", lastSwitch: now.Add(-61 * time.Minute),
@@ -170,6 +180,65 @@ func TestDBControllerSwitchesACutNodeAndSaysWhy(t *testing.T) {
 	}
 	if evs, _ := store.KnobEvents(ctx, "", "", time.Now().Add(-time.Hour), 0); len(evs) != 1 {
 		t.Fatalf("a second line after the switch: %+v", evs)
+	}
+}
+
+// seedDead writes rounds that stopped at the address check, as the stand writes
+// them.
+func seedDead(t *testing.T, store *relayruns.Store, vantage, profile string, rounds int) {
+	t.Helper()
+	var rows []relayruns.Row
+	for i := range rounds {
+		rows = append(rows, relayruns.Row{Source: relayruns.SourceStand, MeasuredAt: time.Now().Add(-time.Duration(i+1) * time.Minute),
+			Vantage: vantage, Profile: profile, Knob: Baseline, Value: ValueAddrDead, Round: i + 1, DlEnd: "timeout",
+			BurstTotal: AddrFlows, BurstTimeout: AddrFlows})
+	}
+	if _, err := store.Insert(context.Background(), rows); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDBControllerOnADeadAddressSaysSoAndMovesNoKnob(t *testing.T) {
+	ctx := context.Background()
+	pool := dbPool(t)
+	store := relayruns.NewStore(pool)
+	seedNode(t, pool, "n-ams", "amsterdam-1-001", "chrome")
+	seedDead(t, store, "ru-spb", "amsterdam-1-001", 6)
+	// Old rows of a healthy candidate inside the window: a switch would take it.
+	seedRuns(t, store, "ru-spb", "amsterdam-1-001", "fp", "firefox", 50, 50, 50, 50, 50, 50)
+	seedRuns(t, store, "ru-spb", "amsterdam-1-001", "fp", "chrome", 10, 10, 10, 10, 10, 10)
+	c := NewController(pool, fakeSlots{"lv-main", "ru-spb"})
+	for range 3 {
+		if err := c.Tick(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var fp string
+	_ = pool.QueryRow(ctx, `SELECT fingerprint FROM entry_nodes WHERE slug = 'n-ams'`).Scan(&fp)
+	if fp != "chrome" {
+		t.Fatalf("the knob moved on a dead address: %q", fp)
+	}
+	evs, err := store.KnobEvents(ctx, "", "", time.Now().Add(-time.Hour), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || evs[0].Kind != relayruns.EventAddressCut || !strings.Contains(evs[0].Reason, "ClientHello") {
+		t.Fatalf("%+v", evs)
+	}
+}
+
+func TestDBControllerSilentFromEverywhereIsNotACut(t *testing.T) {
+	ctx := context.Background()
+	pool := dbPool(t)
+	store := relayruns.NewStore(pool)
+	seedNode(t, pool, "n-ams", "amsterdam-1-001", "chrome")
+	seedDead(t, store, "ru-spb", "amsterdam-1-001", 6)
+	seedDead(t, store, "lv-main", "amsterdam-1-001", 6)
+	if err := NewController(pool, fakeSlots{"lv-main", "ru-spb"}).Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if evs, _ := store.KnobEvents(ctx, "", "", time.Now().Add(-time.Hour), 0); len(evs) != 0 {
+		t.Fatalf("%+v", evs)
 	}
 }
 

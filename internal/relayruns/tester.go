@@ -40,8 +40,9 @@ type loadLine struct {
 }
 
 // parseLoadLine reads «2026/11/04 03:33:06.289 [diag:load] p-x proto=... dl=a/b
-// took=... end=ok burst=n/50 timeout=n med=... after=n/3 med=...». Only the
-// first of repeated keys is kept (med appears twice).
+// took=... end=ok burst=n/50 timeout=n med=... after=n/3 med=...», or «p-x
+// proto=... addr_dead=1 tcp=n/12 reply=0/12» for a profile whose address did not
+// answer. Only the first of repeated keys is kept (med appears twice).
 func parseLoadLine(line string) (loadLine, bool) {
 	m := reLoadLine.FindStringSubmatch(line)
 	if m == nil {
@@ -67,7 +68,8 @@ func parseLoadLine(line string) (loadLine, bool) {
 	}
 	_, hasDl := out.fields["dl"]
 	_, failed := out.fields["load_error"]
-	return out, hasDl || failed
+	_, dead := out.fields["addr_dead"]
+	return out, hasDl || failed || dead
 }
 
 func ratio(s string) (int64, int64) {
@@ -98,6 +100,12 @@ func (l loadLine) row(install string, at time.Time, network string, params map[s
 	}
 	if l.fields["load_error"] != "" {
 		r.LoadError = true
+		return r
+	}
+	if l.fields["addr_dead"] != "" {
+		// Nothing was measured: the round asked the path for nothing, and the
+		// row says about the address what no count of the knob would.
+		r.DlEnd = EndAddrDead
 		return r
 	}
 	got, _ := ratio(l.fields["dl"])
