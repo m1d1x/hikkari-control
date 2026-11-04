@@ -134,6 +134,7 @@
 			<h1>протоколы</h1>
 			<div class="chips">
 				<a class="chip" href="/protocols/servers">со стороны серверов</a>
+				<a class="chip" href="/protocols/knobs">ручки релеев</a>
 				{#each WINDOWS as w (w)}
 					<button class="chip" class:on={window === w} onclick={() => pick(w)}>{w}</button>
 				{/each}

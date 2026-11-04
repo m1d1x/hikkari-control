@@ -312,6 +312,18 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 		return c.load(args)
 	case "matrix":
 		return c.matrix(args)
+	case "runs":
+		q := url.Values{}
+		for _, k := range []string{"profile", "source", "last", "limit"} {
+			if v := args[k]; v != "" {
+				q.Set(k, v)
+			}
+		}
+		data, err := c.request(http.MethodGet, "/api/v1/ops/relay-runs", q, nil)
+		if err != nil {
+			return "", err
+		}
+		return ndjsonRows(data)
 	case "census-add":
 		return c.censusAdd(args)
 	case "census-add-addr":
@@ -739,4 +751,20 @@ func (c *client) releaseStatus() (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// ndjsonRows prints a JSON array one element a line, the way the dataset is
+// read and grepped.
+func ndjsonRows(data []byte) (string, error) {
+	var rows []json.RawMessage
+	if err := json.Unmarshal(data, &rows); err != nil {
+		return "", errors.New("unreadable answer")
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d строк\n", len(rows))
+	for _, r := range rows {
+		b.Write(r)
+		b.WriteByte('\n')
+	}
+	return b.String(), nil
 }

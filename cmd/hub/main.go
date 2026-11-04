@@ -29,6 +29,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/mailer"
 	"github.com/m1d1x/hikkari-control/internal/presets"
 	"github.com/m1d1x/hikkari-control/internal/probesink"
+	"github.com/m1d1x/hikkari-control/internal/relayruns"
 	"github.com/m1d1x/hikkari-control/internal/subscription"
 	"github.com/m1d1x/hikkari-control/internal/support"
 	"github.com/m1d1x/hikkari-control/internal/telemetry"
@@ -321,6 +322,12 @@ func run() error {
 	censusStore := census.NewStore(pool, testerStore)
 	census.RegisterOpsRoutes(adminMux, censusStore, opsGate)
 	census.RegisterPublicRoutes(mux, censusStore)
+	// The relay dataset: the matrix stand posts its rows, testers' load rounds
+	// are read from their log stream (plans/2026-11-04-relay-search-method.md).
+	relayRuns := relayruns.NewStore(pool)
+	relayruns.RegisterOpsRoutes(adminMux, relayRuns, opsGate)
+	relayruns.RegisterAdminRoutes(adminMux, relayRuns, testerAliases(testerStore), adminSecurity)
+	go relayruns.NewIngester(relayRuns, pool).Run(ctx, 2*time.Minute)
 	support.RegisterTesterRoutes(adminMux, testerStore, testerLimiter)
 
 	port := os.Getenv("PORT")

@@ -20,7 +20,7 @@ func realityOutbound() map[string]interface{} {
 
 func TestMatrixConfigSetsOnlyTheKnob(t *testing.T) {
 	ob := realityOutbound()
-	cfg, err := matrixConfig(ob, matrixKnobs["fp"], "firefox")
+	cfg, _, err := matrixConfig(ob, matrixKnobs["fp"], "firefox")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,12 +50,12 @@ func TestMatrixConfigSetsOnlyTheKnob(t *testing.T) {
 
 func TestMatrixKnobsRefuseWhatTheyCannotTake(t *testing.T) {
 	for knob, v := range map[string]string{"port": "0", "sni": "a b"} {
-		if _, err := matrixConfig(realityOutbound(), matrixKnobs[knob], v); err == nil {
+		if _, _, err := matrixConfig(realityOutbound(), matrixKnobs[knob], v); err == nil {
 			t.Fatalf("%s=%q taken", knob, v)
 		}
 	}
 	plain := map[string]interface{}{"type": "hysteria2", "server": "1.2.3.4", "server_port": float64(443)}
-	if _, err := matrixConfig(plain, matrixKnobs["fp"], "firefox"); err == nil {
+	if _, _, err := matrixConfig(plain, matrixKnobs["fp"], "firefox"); err == nil {
 		t.Fatal("fp set on a profile with no TLS")
 	}
 }
@@ -64,7 +64,7 @@ func matrixTestPlan(t *testing.T) matrixPlan {
 	p := matrixPlan{Profile: "amsterdam-1-002", Knob: "fp", Values: []string{"chrome", "firefox"},
 		Server: "146.103.121.11", SNI: "www.samsung.com", Port: 8443, Rounds: 2, Core: "test"}
 	for _, v := range p.Values {
-		cfg, err := matrixConfig(realityOutbound(), matrixKnobs["fp"], v)
+		cfg, _, err := matrixConfig(realityOutbound(), matrixKnobs["fp"], v)
 		if err != nil {
 			t.Fatal(err)
 		}

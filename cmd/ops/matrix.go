@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,6 +36,8 @@ import (
 	"sync"
 	"text/tabwriter"
 	"time"
+
+	"github.com/m1d1x/hikkari-control/internal/relayruns"
 )
 
 const (
@@ -131,6 +134,9 @@ type matrixRow struct {
 	BurstTimeout int    `json:"burst_timeout"`
 	After        int    `json:"after"`
 	LoadError    bool   `json:"load_error,omitempty"`
+	// Params are every knob the round ran with, the varied one included; none
+	// on a baseline row, which runs no protocol.
+	Params map[string]string `json:"params,omitempty"`
 }
 
 // matrixPlan is what one run measures.
@@ -138,7 +144,8 @@ type matrixPlan struct {
 	Profile string
 	Knob    string
 	Values  []string
-	Configs []string // whole core configs, one per value, listen port left as __PORT__
+	Configs []string            // whole core configs, one per value, listen port left as __PORT__
+	Params  []map[string]string // the knobs each config runs with, one per value
 	Server  string
 	SNI     string
 	Port    int
@@ -189,6 +196,15 @@ func (c *client) matrix(args map[string]string) (string, error) {
 	}
 	wg.Wait()
 	out := matrixSummary(rows)
+	if len(rows) > 0 {
+		// Every run is history: the rows go to the hub's dataset, so the next
+		// question about this knob starts from them, not from scrollback.
+		if n, err := c.recordMatrix(rows); err != nil {
+			errs = append(errs, "dataset: "+err.Error())
+		} else {
+			out += fmt.Sprintf("\nдатасет на hub: %d новых строк из %d", n, len(rows))
+		}
+	}
 	for _, r := range rows {
 		line, _ := json.Marshal(r)
 		out += "\n" + string(line)
@@ -196,6 +212,49 @@ func (c *client) matrix(args map[string]string) (string, error) {
 	if len(errs) > 0 {
 		sort.Strings(errs)
 		return out, errors.New(strings.Join(errs, "; "))
+	}
+	return out, nil
+}
+
+// recordMatrix sends the run's rows to the hub's relay dataset.
+func (c *client) recordMatrix(rows []matrixRow) (int, error) {
+	out, err := matrixDatasetRows(rows)
+	if err != nil {
+		return 0, err
+	}
+	data, err := c.request(http.MethodPost, "/api/v1/ops/relay-runs", nil, out)
+	if err != nil {
+		return 0, err
+	}
+	var ans struct {
+		Added int `json:"added"`
+	}
+	if err := json.Unmarshal(data, &ans); err != nil {
+		return 0, errors.New("unreadable answer")
+	}
+	return ans.Added, nil
+}
+
+// matrixDatasetRows are the run's rows as the dataset keeps them.
+func matrixDatasetRows(rows []matrixRow) ([]relayruns.Row, error) {
+	out := make([]relayruns.Row, 0, len(rows))
+	for _, r := range rows {
+		at, err := time.Parse(time.RFC3339, r.TS)
+		if err != nil {
+			return nil, fmt.Errorf("row time %q", r.TS)
+		}
+		d := relayruns.Row{
+			Source: relayruns.SourceStand, MeasuredAt: at, Vantage: r.Vantage, Core: r.Core, Profile: r.Profile,
+			Knob: r.Knob, Value: r.Value, Params: r.Params, Round: r.Round, Dl: r.Dl, DlEnd: r.DlEnd,
+			Burst: r.Burst, BurstTotal: matrixBurst, BurstTimeout: r.BurstTimeout, LoadError: r.LoadError,
+		}
+		if r.Knob != matrixBaseline {
+			d.After, d.AfterTotal = r.After, matrixAfter
+		}
+		if r.LoadError {
+			d.BurstTotal = 0
+		}
+		out = append(out, d)
 	}
 	return out, nil
 }
@@ -252,11 +311,12 @@ func matrixPlanOf(args map[string]string) (matrixPlan, error) {
 		return matrixPlan{}, errors.New("the profile's server name is not a host name")
 	}
 	for _, v := range values {
-		cfg, err := matrixConfig(outbound, set, v)
+		cfg, params, err := matrixConfig(outbound, set, v)
 		if err != nil {
 			return matrixPlan{}, fmt.Errorf("%s=%s: %w", name, v, err)
 		}
 		plan.Configs = append(plan.Configs, cfg)
+		plan.Params = append(plan.Params, params)
 	}
 	return plan, nil
 }
@@ -317,21 +377,21 @@ func matrixOutbound(sub, label string) (map[string]interface{}, error) {
 // with the knob set, behind a local mixed inbound. Fields that name the
 // client's own config or are set for testers only are dropped, so every value
 // runs what a user runs but for the knob.
-func matrixConfig(outbound map[string]interface{}, set func(map[string]interface{}, string) error, value string) (string, error) {
+func matrixConfig(outbound map[string]interface{}, set func(map[string]interface{}, string) error, value string) (string, map[string]string, error) {
 	raw, err := json.Marshal(outbound)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	var ob map[string]interface{}
 	if err := json.Unmarshal(raw, &ob); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	for _, k := range []string{"domain_resolver", "detour", "bind_interface", "routing_mark", "flow_retry_delay"} {
 		delete(ob, k)
 	}
 	ob["tag"] = "probe"
 	if err := set(ob, value); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	cfg, err := json.Marshal(map[string]interface{}{
 		"log":       map[string]interface{}{"level": "error"},
@@ -340,10 +400,10 @@ func matrixConfig(outbound map[string]interface{}, set func(map[string]interface
 		"route":     map[string]interface{}{"final": "probe"},
 	})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	// The port is chosen on the vantage, among its free ones.
-	return strings.Replace(string(cfg), `"__PORT__"`, "__PORT__", 1), nil
+	return strings.Replace(string(cfg), `"__PORT__"`, "__PORT__", 1), relayruns.ParamsOf(ob), nil
 }
 
 func matrixVantageList(s string) ([]string, error) {
@@ -508,6 +568,9 @@ func parseMatrix(text, vantage string, p matrixPlan) []matrixRow {
 				continue
 			}
 			row.Knob, row.Value = p.Knob, p.Values[i]
+			if i < len(p.Params) {
+				row.Params = p.Params[i]
+			}
 			row.Round, _ = strconv.Atoi(f[3])
 			if f[4] == "load_error" {
 				row.LoadError = true
