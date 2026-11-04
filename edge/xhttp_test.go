@@ -7,6 +7,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -280,5 +283,59 @@ func TestTheBuiltInDecoyDiffersByDomain(t *testing.T) {
 	}
 	if strings.Contains(decoyPage("<x>.example.xyz"), "<x>") {
 		t.Fatal("the domain is not escaped")
+	}
+}
+
+// What a scanner reads from the decoy must be what nginx would say, not Go.
+func TestTheDecoyAnswersLikeNginx(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>home</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "notes", "secret.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, site := range map[string]http.Handler{"built-in": decoy("alpha.example.xyz", ""), "site dir": decoy("alpha.example.xyz", dir)} {
+		t.Run(name, func(t *testing.T) {
+			get := func(method, path string) *http.Response {
+				rec := httptest.NewRecorder()
+				site.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+				return rec.Result()
+			}
+			home := get(http.MethodGet, "/")
+			if home.StatusCode != 200 || home.Header.Get("Server") != "nginx" {
+				t.Fatalf("home: %d %v", home.StatusCode, home.Header)
+			}
+			for _, c := range []struct {
+				method, path string
+				code         int
+				title        string
+			}{
+				{http.MethodGet, "/nope", 404, "404 Not Found"},
+				{http.MethodGet, "/notes/", 404, "404 Not Found"}, // no listing
+				{http.MethodPost, "/", 405, "405 Not Allowed"},
+			} {
+				if name == "built-in" && c.path == "/notes/" {
+					continue
+				}
+				res := get(c.method, c.path)
+				body, _ := io.ReadAll(res.Body)
+				if res.StatusCode != c.code {
+					t.Fatalf("%s %s: %d", c.method, c.path, res.StatusCode)
+				}
+				if !strings.Contains(string(body), "<center><h1>"+c.title+"</h1></center>\r\n<hr><center>nginx</center>") {
+					t.Fatalf("%s %s: %q", c.method, c.path, body)
+				}
+				if res.Header.Get("Server") != "nginx" || res.Header.Get("Content-Type") != "text/html" {
+					t.Fatalf("%s %s: %v", c.method, c.path, res.Header)
+				}
+				if res.Header.Get("X-Content-Type-Options") != "" || res.Header.Get("Allow") != "" {
+					t.Fatalf("%s %s: Go's own headers: %v", c.method, c.path, res.Header)
+				}
+			}
+		})
 	}
 }

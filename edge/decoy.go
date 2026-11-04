@@ -5,12 +5,14 @@ import (
 	"hash/fnv"
 	"html"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 )
 
 // decoy is the site an XHTTP edge shows to everyone without the secret path:
-// a browser, a scanner, an active probe. SiteDir, when set, is served as is.
+// a browser, a scanner, an active probe. SiteDir, when set, is served as nginx
+// would serve it.
 // Otherwise a one-page site is drawn from the domain, so relays do not share
 // one byte-identical page a censor could fingerprint across addresses.
 //
@@ -18,33 +20,83 @@ import (
 // a crafted site. A relay that needs more gets EDGE_SITE_DIR.
 func decoy(domain, siteDir string) http.Handler {
 	if siteDir != "" {
-		return onlyRead(http.FileServer(http.Dir(siteDir)))
+		return likeNginx(siteFiles(siteDir))
 	}
 	page := []byte(decoyPage(domain))
-	notFound := []byte(decoyNotFound)
 	modified := time.Now().UTC().Truncate(24 * time.Hour)
-	return onlyRead(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return likeNginx(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write(notFound)
+			nginxError(w, http.StatusNotFound)
 			return
 		}
+		w.Header().Set("Content-Type", "text/html")
 		w.Header().Set("Last-Modified", modified.Format(http.TimeFormat))
+		w.Header().Set("Accept-Ranges", "bytes")
 		_, _ = w.Write(page)
 	}))
 }
 
-// onlyRead answers GET and HEAD; a static site has nothing else.
-func onlyRead(h http.Handler) http.Handler {
+// likeNginx is what a scanner reads besides the page: the Server header, and
+// the error a static nginx gives. Go's own answers carry "404 page not found",
+// X-Content-Type-Options and a text/plain error body, which nginx never does
+// (NTC Party 25993: what a scanner sees is what gets an address banned).
+//
+// The order of headers is the one difference left: net/http sorts them. It shows
+// on HTTP/1.1 only to whoever compares the order; the certificate and ALPN of
+// the same answer say h2 first.
+func likeNginx(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Server", "nginx")
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.Header().Set("Allow", "GET, HEAD")
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			nginxError(w, http.StatusMethodNotAllowed)
 			return
 		}
 		h.ServeHTTP(w, r)
 	})
+}
+
+// siteFiles serves dir as nginx would with no autoindex: index.html for a
+// directory, and a 404 for a directory without one, not a listing.
+func siteFiles(dir string) http.Handler {
+	root := http.Dir(dir)
+	files := http.FileServer(root)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f, err := root.Open(path.Clean("/" + r.URL.Path))
+		if err != nil {
+			nginxError(w, http.StatusNotFound)
+			return
+		}
+		defer f.Close()
+		st, err := f.Stat()
+		if err != nil {
+			nginxError(w, http.StatusNotFound)
+			return
+		}
+		if st.IsDir() {
+			index, err := root.Open(path.Join(path.Clean("/"+r.URL.Path), "index.html"))
+			if err != nil {
+				nginxError(w, http.StatusNotFound)
+				return
+			}
+			_ = index.Close()
+		}
+		files.ServeHTTP(w, r)
+	})
+}
+
+// nginxStatus are the titles of the errors a static site gives. nginx calls 405
+// "Not Allowed", not Go's "Method Not Allowed".
+var nginxStatus = map[int]string{
+	http.StatusNotFound:         "404 Not Found",
+	http.StatusMethodNotAllowed: "405 Not Allowed",
+}
+
+// nginxError writes the error page nginx writes, byte for byte.
+func nginxError(w http.ResponseWriter, code int) {
+	title := nginxStatus[code]
+	w.Header().Set("Content-Type", "text/html")
+	w.WriteHeader(code)
+	_, _ = fmt.Fprintf(w, "<html>\r\n<head><title>%s</title></head>\r\n<body>\r\n<center><h1>%s</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n", title, title)
 }
 
 var (
@@ -95,8 +147,3 @@ footer{margin-top:3rem;font-size:.85rem;opacity:.6}
 </html>
 `, html.EscapeString(topic.title), name, html.EscapeString(topic.line), c.bg, c.fg, c.accent)
 }
-
-const decoyNotFound = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>404 Not Found</title></head>
-<body><h1>Not Found</h1><p>The requested URL was not found on this server.</p></body></html>
-`
