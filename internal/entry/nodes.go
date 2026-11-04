@@ -143,16 +143,16 @@ func (s *Service) FleetNodes(ctx context.Context) ([]FleetNode, error) {
 }
 
 // NodeName is a serving relay's logical node as a subscription names it.
-// Fingerprint, when set, is the TLS fingerprint the node's link asks of the
-// client instead of the default one.
-type NodeName struct{ Slug, Label, Fingerprint string }
+// Fingerprint, SNI and ALPN, when set, are the knobs the node's link asks of
+// the client instead of the defaults (migrations 021 and 023).
+type NodeName struct{ Slug, Label, Fingerprint, SNI, ALPN string }
 
 // NodeNames is every serving relay's node, by relay name.
 func (s *Service) NodeNames(ctx context.Context) (map[string]NodeName, error) {
 	if err := s.syncFleetNodes(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT r.name,n.slug,coalesce(n.label,''),coalesce(n.fingerprint,'') FROM entry_nodes n JOIN entry_relays r ON r.id=n.relay_id WHERE r.status='alive'`)
+	rows, err := s.pool.Query(ctx, `SELECT r.name,n.slug,coalesce(n.label,''),coalesce(n.fingerprint,''),coalesce(n.sni,''),coalesce(n.alpn,'') FROM entry_nodes n JOIN entry_relays r ON r.id=n.relay_id WHERE r.status='alive'`)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +161,7 @@ func (s *Service) NodeNames(ctx context.Context) (map[string]NodeName, error) {
 	for rows.Next() {
 		var relay string
 		var n NodeName
-		if err := rows.Scan(&relay, &n.Slug, &n.Label, &n.Fingerprint); err != nil {
+		if err := rows.Scan(&relay, &n.Slug, &n.Label, &n.Fingerprint, &n.SNI, &n.ALPN); err != nil {
 			return nil, err
 		}
 		out[relay] = n

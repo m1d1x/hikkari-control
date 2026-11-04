@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -260,7 +261,7 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 		}
 		link, err := render(withKey(rec, key))
 		if err == nil && rec.Proto != entry.ProtoAmneziaWG {
-			link = namedLink(link, nodes[rec.Name])
+			link = namedLink(link, nodes[rec.Name], coversOf(rec))
 		}
 		if err != nil {
 			continue
@@ -270,10 +271,21 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 	return links, nil
 }
 
+// coversOf is the Reality covers a relay serves; none for other protocols.
+func coversOf(rec entry.RelayRecord) []string {
+	if rec.Proto == entry.ProtoVlessRealityVision && rec.RealityParams != nil {
+		return rec.RealityParams.Covers
+	}
+	return nil
+}
+
 // namedLink puts a relay's logical node on its link: the name a subscriber
-// reads, the id the downdetector keys on and the node's fingerprint, all
-// surviving the relay's replacement. A relay with no node yet keeps the link it was rendered with.
-func namedLink(link string, node entry.NodeName) string {
+// reads, the id the downdetector keys on and the node's knobs (fingerprint,
+// SNI, ALPN), all surviving the relay's replacement. A relay with no node yet
+// keeps the link it was rendered with. covers are the relay's Reality covers:
+// the node's SNI is taken only when the relay serves it, since a name the
+// relay does not accept would make the link dead rather than different.
+func namedLink(link string, node entry.NodeName, covers []string) string {
 	u, err := url.Parse(link)
 	if err != nil || node.Slug == "" {
 		return link
@@ -284,6 +296,13 @@ func namedLink(link string, node entry.NodeName) string {
 	// (Hysteria2) has no TLS fingerprint to choose.
 	if node.Fingerprint != "" && q.Get("fp") != "" {
 		q.Set("fp", node.Fingerprint)
+	}
+	if node.SNI != "" && q.Get("security") == "reality" && slices.Contains(covers, node.SNI) {
+		q.Set("sni", node.SNI)
+	}
+	// ALPN is the client's offer in its ClientHello; only TLS links have one.
+	if node.ALPN != "" && u.Scheme == "vless" && (q.Get("security") == "reality" || q.Get("security") == "tls") {
+		q.Set("alpn", node.ALPN)
 	}
 	u.RawQuery = q.Encode()
 	if node.Label != "" {

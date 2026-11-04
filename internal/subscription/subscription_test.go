@@ -249,14 +249,14 @@ func TestALinkTakesItsNodesFingerprint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u, err := url.Parse(namedLink(link, entry.NodeName{Slug: "abc", Fingerprint: "firefox"}))
+	u, err := url.Parse(namedLink(link, entry.NodeName{Slug: "abc", Fingerprint: "firefox"}, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := u.Query().Get("fp"); got != "firefox" {
 		t.Fatalf("fp %q in %s", got, u)
 	}
-	u, err = url.Parse(namedLink(link, entry.NodeName{Slug: "abc"}))
+	u, err = url.Parse(namedLink(link, entry.NodeName{Slug: "abc"}, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestALinkTakesItsNodesFingerprint(t *testing.T) {
 		t.Fatalf("a node with no fingerprint changed fp to %q", got)
 	}
 	plain := "hysteria2://auth@1.2.3.4:443?sni=x#n"
-	u, err = url.Parse(namedLink(plain, entry.NodeName{Slug: "abc", Fingerprint: "firefox"}))
+	u, err = url.Parse(namedLink(plain, entry.NodeName{Slug: "abc", Fingerprint: "firefox"}, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,14 +278,76 @@ func TestALinkCarriesItsNodesNameAndID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u, err := url.Parse(namedLink(link, entry.NodeName{Slug: "abc", Label: "рига-001"}))
+	u, err := url.Parse(namedLink(link, entry.NodeName{Slug: "abc", Label: "рига-001"}, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if u.Fragment != "рига-001" || u.Query().Get("hikkari-node") != "n:abc" {
 		t.Fatalf("link %s", u)
 	}
-	if got := namedLink(link, entry.NodeName{}); got != link {
+	if got := namedLink(link, entry.NodeName{}, nil); got != link {
 		t.Fatalf("a relay with no node changed: %s", got)
+	}
+}
+
+func TestALinkTakesItsNodesSNIOnlyFromItsCovers(t *testing.T) {
+	rec := realityRecord()
+	rec.RealityParams.Covers = []string{"www.samsung.com", "www.lg.com"}
+	link, err := Link(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(namedLink(link, entry.NodeName{Slug: "abc", SNI: "www.lg.com"}, coversOf(rec)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := u.Query().Get("sni"); got != "www.lg.com" {
+		t.Fatalf("sni %q in %s", got, u)
+	}
+	// A name the relay does not serve would make the link dead: the first
+	// cover stays.
+	u, err = url.Parse(namedLink(link, entry.NodeName{Slug: "abc", SNI: "www.apple.com"}, coversOf(rec)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := u.Query().Get("sni"); got != "www.samsung.com" {
+		t.Fatalf("sni %q for a cover the relay lacks", got)
+	}
+	xhttp := "vless://u@1.2.3.4:443?security=tls&type=xhttp&sni=own.example&host=own.example&alpn=h2%2Chttp%2F1.1&fp=chrome#n"
+	u, err = url.Parse(namedLink(xhttp, entry.NodeName{Slug: "abc", SNI: "www.lg.com"}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := u.Query().Get("sni"); got != "own.example" {
+		t.Fatalf("xhttp sni changed to %q", got)
+	}
+}
+
+func TestALinkTakesItsNodesALPN(t *testing.T) {
+	link, err := Link(realityRecord())
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(namedLink(link, entry.NodeName{Slug: "abc", ALPN: "http/1.1"}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := u.Query().Get("alpn"); got != "http/1.1" {
+		t.Fatalf("alpn %q in %s", got, u)
+	}
+	u, err = url.Parse(namedLink(link, entry.NodeName{Slug: "abc"}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Query().Has("alpn") {
+		t.Fatalf("a node with no alpn got one: %s", u)
+	}
+	plain := "hysteria2://auth@1.2.3.4:443?sni=x&alpn=h3#n"
+	u, err = url.Parse(namedLink(plain, entry.NodeName{Slug: "abc", ALPN: "h2"}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := u.Query().Get("alpn"); got != "h3" {
+		t.Fatalf("hysteria alpn changed to %q", got)
 	}
 }
