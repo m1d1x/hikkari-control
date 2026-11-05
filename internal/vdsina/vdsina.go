@@ -725,14 +725,15 @@ func (c *Client) OrderIPv6(ctx context.Context, id string) error {
 		map[string]any{"type": "6", "count": 1}, nil)
 }
 
-// IPv6 reads a server's IPv6, false when it has none yet: the services ordered
-// for it (GET /server.ip/{id}) name the address, and GET /ip/{id} has its
-// gateway and netmask.
+// IPv6 reads a server's IPv6, false when it has none yet. The services ordered
+// for it (GET /server.ip/{id}) carry the network, as "2a14:1e00:3:3c1::/64", with
+// its gateway and netmask.
 func (c *Client) IPv6(ctx context.Context, id string) (IPv6, bool, error) {
 	var services []struct {
 		IP []struct {
-			ID int    `json:"id"`
-			IP string `json:"ip"`
+			IP      string `json:"ip"`
+			Gateway string `json:"gateway"`
+			Netmask string `json:"netmask"`
 		} `json:"ip"`
 	}
 	if err := c.call(ctx, http.MethodGet, "/server.ip/"+url.PathEscape(id), nil, &services); err != nil {
@@ -740,25 +741,19 @@ func (c *Client) IPv6(ctx context.Context, id string) (IPv6, bool, error) {
 	}
 	for _, service := range services {
 		for _, ip := range service.IP {
-			addr, err := netip.ParseAddr(ip.IP)
+			network, _, _ := strings.Cut(ip.IP, "/")
+			addr, err := netip.ParseAddr(network)
 			if err != nil || !addr.Is6() {
 				continue
 			}
-			var info struct {
-				Gateway string `json:"gateway"`
-				Netmask string `json:"netmask"`
-			}
-			if err := c.call(ctx, http.MethodGet, "/ip/"+strconv.Itoa(ip.ID), nil, &info); err != nil {
-				return IPv6{}, false, err
-			}
-			prefix, err := strconv.Atoi(info.Netmask)
+			prefix, err := strconv.Atoi(ip.Netmask)
 			if err != nil || prefix < 1 || prefix > 128 {
-				return IPv6{}, false, fmt.Errorf("vdsina: IPv6 %s: netmask %q", ip.IP, info.Netmask)
+				return IPv6{}, false, fmt.Errorf("vdsina: IPv6 %s: netmask %q", ip.IP, ip.Netmask)
 			}
-			if _, err := netip.ParseAddr(info.Gateway); err != nil {
-				return IPv6{}, false, fmt.Errorf("vdsina: IPv6 %s: gateway %q", ip.IP, info.Gateway)
+			if _, err := netip.ParseAddr(ip.Gateway); err != nil {
+				return IPv6{}, false, fmt.Errorf("vdsina: IPv6 %s: gateway %q", ip.IP, ip.Gateway)
 			}
-			return IPv6{Address: firstHost(addr).String(), Prefix: prefix, Gateway: info.Gateway}, true, nil
+			return IPv6{Address: firstHost(addr).String(), Prefix: prefix, Gateway: ip.Gateway}, true, nil
 		}
 	}
 	return IPv6{}, false, nil

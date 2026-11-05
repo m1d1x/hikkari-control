@@ -85,11 +85,9 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/server.ip/101":
 		services := []map[string]any{{"id": 7, "ip": []map[string]any{{"id": 119402, "ip": "146.103.121.12", "type": "4"}}}}
 		if a.ipv6 != "" {
-			services = append(services, map[string]any{"id": 8, "ip": []map[string]any{{"id": 555, "ip": a.ipv6, "type": "6"}}})
+			services = append(services, map[string]any{"id": 8, "ip": []map[string]any{{"id": 555, "ip": a.ipv6, "type": "6", "gateway": "fe80::1", "netmask": "64", "is_net": true}}})
 		}
 		write(services)
-	case r.URL.Path == "/ip/555":
-		write(map[string]any{"id": 555, "ip": a.ipv6, "type": "6", "gateway": "fe80::1", "netmask": "64", "is_net": true})
 	case r.URL.Path == "/account.balance":
 		write(map[string]any{
 			"real":  2818.50,
@@ -377,7 +375,8 @@ func TestAServersIPv6IsOrderedApartAndReadWhenAllocated(t *testing.T) {
 	if _, ok, err := c.IPv6(context.Background(), "101"); err != nil || ok {
 		t.Fatalf("before allocation: ok=%v err=%v", ok, err)
 	}
-	a.ipv6 = "2a14:1e00:1:3f2::"
+	// As the live API wrote it on 05.11: the network with its prefix.
+	a.ipv6 = "2a14:1e00:1:3f2::/64"
 	got, ok, err := c.IPv6(context.Background(), "101")
 	if err != nil || !ok {
 		t.Fatalf("after allocation: ok=%v err=%v", ok, err)
@@ -386,7 +385,7 @@ func TestAServersIPv6IsOrderedApartAndReadWhenAllocated(t *testing.T) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 	// An address that is already a host's stays as it is.
-	a.ipv6 = "2a14:1e00:1:3f2::5"
+	a.ipv6 = "2a14:1e00:1:3f2::5/64"
 	if got, _, _ := c.IPv6(context.Background(), "101"); got.Address != "2a14:1e00:1:3f2::5" {
 		t.Fatalf("host address changed: %s", got.Address)
 	}
