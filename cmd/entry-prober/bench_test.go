@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -138,6 +140,22 @@ func TestADeadTunnelIsNoMeasurement(t *testing.T) {
 	r := runBench(context.Background(), target, 2*time.Second, quickShape)
 	if r.Error == "" || r.ChatN != 0 {
 		t.Fatalf("a dead path measured something: %+v", r)
+	}
+}
+
+// Caddy's 1MB is a million bytes and a bench uploads 1 MiB: with no exception
+// for the bench routes every upload got a 413, and no box had a usable baseline.
+func TestTheHubsProxyTakesABenchsUpload(t *testing.T) {
+	caddyfile, err := os.ReadFile("../../deploy/Caddyfile.hub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "@bench path " + entrybench.Base + "/*\n    request_body @bench {\n        max_size 8MiB"
+	if !strings.Contains(string(caddyfile), want) {
+		t.Fatalf("deploy/Caddyfile.hub has no exception for the bench routes:\n%s", want)
+	}
+	if messengerShape.mediaUp > 8<<20 {
+		t.Fatalf("a bench uploads %d bytes, past the proxy's cap", messengerShape.mediaUp)
 	}
 }
 
