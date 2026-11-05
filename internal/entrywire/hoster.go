@@ -445,7 +445,7 @@ func (h vdsinaHoster) Create(ctx context.Context, o entry.BoxOrder) (entry.BoxIn
 }
 
 func (h vdsinaHoster) OrderIPv6(ctx context.Context, id string) error {
-	return h.c.OrderIPv6(ctx, id)
+	return hosterRefusal(h.c.OrderIPv6(ctx, id))
 }
 
 func (h vdsinaHoster) InstanceIPv6(ctx context.Context, id string) (entry.BoxIPv6, bool, error) {

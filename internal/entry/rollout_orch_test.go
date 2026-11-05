@@ -417,6 +417,29 @@ func TestACanaryCutOffByARestartIsRolledBackAndTriedAgain(t *testing.T) {
 	}
 }
 
+// The record is on the machine's row: two claims give one order and the first
+// one's time; forgetting permits a new one.
+func TestTheIPv6OrderRecordAllowsOneOrder(t *testing.T) {
+	rh := newRolloutHarness(t)
+	ctx := context.Background()
+	box := rh.boxOnV1()
+	orders := rh.svc.ipv6Orders(box)
+	first, claimed, err := orders.claim(ctx)
+	if err != nil || !claimed {
+		t.Fatalf("first claim: claimed=%v err=%v", claimed, err)
+	}
+	again, claimed, err := orders.claim(ctx)
+	if err != nil || claimed || !again.Equal(first) {
+		t.Fatalf("second claim: %v claimed=%v err=%v, first %v", again, claimed, err, first)
+	}
+	if err := rh.svc.ForgetIPv6Order(ctx, box); err != nil {
+		t.Fatal(err)
+	}
+	if _, claimed, err := orders.claim(ctx); err != nil || !claimed {
+		t.Fatalf("after forgetting: claimed=%v err=%v", claimed, err)
+	}
+}
+
 // An older relay build would send names with both records to IPv6 at random and
 // let Russian IPv6 out: no address, and no bill, until the machine is on this build.
 func TestGivingIPv6WaitsForTheRelayBuildThatFiltersIt(t *testing.T) {

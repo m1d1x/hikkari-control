@@ -14,6 +14,10 @@ package main
 //	cmd/server entry-box order [region] [plan]
 //	                                    # order a Reality machine from the saved
 //	                                    # hoster and stand it up (П9.2)
+//	cmd/server entry-box ipv6 <box> forget-order
+//	                                    # drop the record of an IPv6 order the
+//	                                    # hoster does not have, so the next run
+//	                                    # of entry-box ipv6 may buy
 //	cmd/server entry-box retire <box> [reason]
 //	                                    # hand a machine back and delete it at
 //	                                    # the hoster that is saved now
@@ -152,6 +156,19 @@ func runEntryBox(args []string) {
 		}
 		for _, p := range cat.Plans {
 			fmt.Printf("plan %s  %d vCPU  %d MB  %d GB  counted at $%0.2f  regions %v\n", p.ID, p.VCPUs, p.RAMMB, p.DiskGB, float64(p.MonthlyCents)/100, p.Regions)
+		}
+		os.Exit(0)
+	}
+	if len(args) == 3 && args[0] == "ipv6" && args[2] == "forget-order" {
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		if err := svc.ForgetIPv6Order(ctx, args[1]); err != nil {
+			fail(err)
 		}
 		os.Exit(0)
 	}

@@ -1028,7 +1028,7 @@ func (j *jobRun) ipv6(r Remote, mayBuy bool) {
 	if instance == "" || provider != h.kind {
 		return
 	}
-	ip, ok, err := ensureBoxIPv6(j.ctx, hoster, instance, mayBuy, ipv6AllocationWait, ipv6AllocationPoll)
+	ip, ok, err := ensureBoxIPv6(j.ctx, hoster, svc.ipv6Orders(j.box), instance, mayBuy, ipv6AllocationWait, ipv6AllocationPoll)
 	if err != nil {
 		j.log("IPv6 не настроен: %v", err)
 		return
@@ -1082,7 +1082,7 @@ func (p *Provisioner) giveBoxIPv6(ctx context.Context, hoster BoxIPv6Hoster, box
 	if err := p.edgeIsThisImages(ctx, box); err != nil {
 		return "", err
 	}
-	ip, _, err := ensureBoxIPv6(ctx, hoster, instance, true, ipv6AllocationWait, ipv6AllocationPoll)
+	ip, _, err := ensureBoxIPv6(ctx, hoster, p.svc.ipv6Orders(box), instance, true, ipv6AllocationWait, ipv6AllocationPoll)
 	if err != nil {
 		return "", err
 	}
@@ -1121,16 +1121,51 @@ const (
 	ipv6AllocationPoll = 5 * time.Second
 )
 
+// ipv6OrderLedger is the hub's own record of an IPv6 order in flight for one
+// machine. The hoster's list cannot stand in for it: what it shows for a queued
+// order is not known.
+type ipv6OrderLedger interface {
+	// claim records an order about to go out. claimed is false when one is already
+	// in flight, and since says when that order was made.
+	claim(ctx context.Context) (since time.Time, claimed bool, err error)
+	// clear ends the record: the address has come, or the hoster refused.
+	clear(ctx context.Context) error
+}
+
 // ensureBoxIPv6 reads a machine's IPv6 and, only if mayBuy, orders one and waits
 // for it. A job on a machine the hub already runs never buys: rerunning a job
-// must not add to the bill.
-func ensureBoxIPv6(ctx context.Context, h BoxIPv6Hoster, instance string, mayBuy bool, wait, poll time.Duration) (BoxIPv6, bool, error) {
+// must not add to the bill. Neither does a second run after an order that has no
+// address yet: it waits for that order.
+func ensureBoxIPv6(ctx context.Context, h BoxIPv6Hoster, orders ipv6OrderLedger, instance string, mayBuy bool, wait, poll time.Duration) (BoxIPv6, bool, error) {
 	ip, ok, err := h.InstanceIPv6(ctx, instance)
-	if err != nil || ok || !mayBuy {
-		return ip, ok, err
+	if err != nil {
+		return BoxIPv6{}, false, err
 	}
-	if err := h.OrderIPv6(ctx, instance); err != nil {
-		return BoxIPv6{}, false, fmt.Errorf("заказ: %w", err)
+	if ok {
+		if err := orders.clear(ctx); err != nil {
+			return BoxIPv6{}, false, err
+		}
+		return ip, true, nil
+	}
+	if !mayBuy {
+		return BoxIPv6{}, false, nil
+	}
+	since, claimed, err := orders.claim(ctx)
+	if err != nil {
+		return BoxIPv6{}, false, err
+	}
+	if claimed {
+		if err := h.OrderIPv6(ctx, instance); err != nil {
+			if !errors.Is(err, ErrProviderRefused) {
+				// A reset or a 5xx says nothing about the order: it may have gone
+				// through, so the record stays and a second run does not buy.
+				return BoxIPv6{}, false, fmt.Errorf("заказ: ответа нет, он мог пройти, новый не пойдёт: %w", err)
+			}
+			if clearErr := orders.clear(ctx); clearErr != nil {
+				return BoxIPv6{}, false, errors.Join(fmt.Errorf("заказ: %w", err), clearErr)
+			}
+			return BoxIPv6{}, false, fmt.Errorf("заказ: %w", err)
+		}
 	}
 	deadline := time.Now().Add(wait)
 	for time.Now().Before(deadline) {
@@ -1144,10 +1179,58 @@ func ensureBoxIPv6(ctx context.Context, h BoxIPv6Hoster, instance string, mayBuy
 			return BoxIPv6{}, false, err
 		}
 		if ok {
+			if err := orders.clear(ctx); err != nil {
+				return BoxIPv6{}, false, err
+			}
 			return ip, true, nil
 		}
 	}
-	return BoxIPv6{}, false, fmt.Errorf("заказан, но адреса нет за %s", wait)
+	return BoxIPv6{}, false, fmt.Errorf("заказ от %s: адреса нет, ждали %s; новый не пойдёт, пока услуги нет у хостера и запись не снята: entry-box ipv6 <box> forget-order",
+		since.UTC().Format("02.01 15:04 UTC"), wait)
+}
+
+// boxIPv6Orders is the ledger of one machine, on its entry_boxes row.
+type boxIPv6Orders struct {
+	s   *Service
+	box string
+}
+
+func (s *Service) ipv6Orders(box string) ipv6OrderLedger { return boxIPv6Orders{s: s, box: box} }
+
+// claim is one statement, so two runs at once cannot both order.
+func (o boxIPv6Orders) claim(ctx context.Context) (time.Time, bool, error) {
+	var since time.Time
+	var claimed bool
+	err := o.s.pool.QueryRow(ctx, `
+		WITH claimed AS (
+			UPDATE entry_boxes SET ipv6_ordered_at = now()
+			WHERE name = $1 AND ipv6_ordered_at IS NULL
+			RETURNING ipv6_ordered_at
+		)
+		SELECT ipv6_ordered_at, true FROM claimed
+		UNION ALL
+		SELECT ipv6_ordered_at, false FROM entry_boxes
+		WHERE name = $1 AND NOT EXISTS (SELECT 1 FROM claimed)
+	`, o.box).Scan(&since, &claimed)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("запись заказа IPv6 %s: %w", o.box, err)
+	}
+	return since, claimed, nil
+}
+
+func (o boxIPv6Orders) clear(ctx context.Context) error {
+	if _, err := o.s.pool.Exec(ctx,
+		`UPDATE entry_boxes SET ipv6_ordered_at = NULL WHERE name = $1 AND ipv6_ordered_at IS NOT NULL`, o.box); err != nil {
+		return fmt.Errorf("запись заказа IPv6 %s: %w", o.box, err)
+	}
+	return nil
+}
+
+// ForgetIPv6Order drops the record of an order that never became a service at the
+// hoster, so that `entry-box ipv6` may buy again. The operator checks the hoster
+// first: this is what permits spending.
+func (s *Service) ForgetIPv6Order(ctx context.Context, box string) error {
+	return s.ipv6Orders(box).clear(ctx)
 }
 
 // ipv6Script puts an address on the interface of the default IPv4 route, as a

@@ -2,6 +2,8 @@ package entry
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -174,30 +176,103 @@ func (f *fakeIPv6Hoster) InstanceIPv6(context.Context, string) (BoxIPv6, bool, e
 	return BoxIPv6{}, false, nil
 }
 
+// memIPv6Orders is the ledger without a database; the real one is tested with the
+// rollout harness.
+type memIPv6Orders struct {
+	since time.Time
+}
+
+func (m *memIPv6Orders) claim(context.Context) (time.Time, bool, error) {
+	if !m.since.IsZero() {
+		return m.since, false, nil
+	}
+	m.since = time.Now()
+	return m.since, true, nil
+}
+
+func (m *memIPv6Orders) clear(context.Context) error {
+	m.since = time.Time{}
+	return nil
+}
+
 // Running a job again on a machine the hub already runs must not add to the bill.
 func TestOnlyAFreshlyOrderedMachineBuysIPv6(t *testing.T) {
 	ctx := context.Background()
 	f := &fakeIPv6Hoster{ip: BoxIPv6{Address: "2001:db8::1", Prefix: 64, Gateway: "fe80::1"}}
-	if _, ok, err := ensureBoxIPv6(ctx, f, "1", false, time.Second, time.Millisecond); err != nil || ok || f.orders != 0 {
+	orders := &memIPv6Orders{}
+	if _, ok, err := ensureBoxIPv6(ctx, f, orders, "1", false, time.Second, time.Millisecond); err != nil || ok || f.orders != 0 {
 		t.Fatalf("a running machine: ok=%v err=%v orders=%d", ok, err, f.orders)
 	}
-	got, ok, err := ensureBoxIPv6(ctx, f, "1", true, time.Second, time.Millisecond)
+	got, ok, err := ensureBoxIPv6(ctx, f, orders, "1", true, time.Second, time.Millisecond)
 	if err != nil || !ok || got != f.ip || f.orders != 1 {
 		t.Fatalf("a fresh machine: %+v ok=%v err=%v orders=%d", got, ok, err, f.orders)
 	}
-	// The machine already has its address: a rerun of the job configures it again.
-	if _, ok, err := ensureBoxIPv6(ctx, f, "1", true, time.Second, time.Millisecond); err != nil || !ok || f.orders != 1 {
-		t.Fatalf("a rerun: ok=%v err=%v orders=%d", ok, err, f.orders)
+	if !orders.since.IsZero() {
+		t.Fatal("the record outlived the address")
 	}
-	stuck := &stuckIPv6Hoster{}
-	if _, ok, err := ensureBoxIPv6(ctx, stuck, "1", true, 5*time.Millisecond, time.Millisecond); err == nil || ok {
-		t.Fatalf("an address that never comes: ok=%v err=%v", ok, err)
+	// The machine already has its address: a rerun of the job configures it again.
+	if _, ok, err := ensureBoxIPv6(ctx, f, orders, "1", true, time.Second, time.Millisecond); err != nil || !ok || f.orders != 1 {
+		t.Fatalf("a rerun: ok=%v err=%v orders=%d", ok, err, f.orders)
 	}
 }
 
-type stuckIPv6Hoster struct{}
+// The address has not come in time: the second run waits for the order it has,
+// and buys nothing, until the address comes or the operator drops the record.
+func TestASecondRunWaitsForTheOrderInsteadOfBuyingAnother(t *testing.T) {
+	ctx := context.Background()
+	stuck := &stuckIPv6Hoster{}
+	orders := &memIPv6Orders{}
+	for run := 1; run <= 2; run++ {
+		_, ok, err := ensureBoxIPv6(ctx, stuck, orders, "1", true, 5*time.Millisecond, time.Millisecond)
+		if err == nil || ok || !strings.Contains(err.Error(), "forget-order") {
+			t.Fatalf("run %d: ok=%v err=%v", run, ok, err)
+		}
+		if stuck.orders != 1 {
+			t.Fatalf("run %d: %d orders", run, stuck.orders)
+		}
+	}
+	f := &fakeIPv6Hoster{ip: BoxIPv6{Address: "2001:db8::1", Prefix: 64, Gateway: "fe80::1"}, allocated: true}
+	if _, ok, err := ensureBoxIPv6(ctx, f, orders, "1", true, time.Second, time.Millisecond); err != nil || !ok || f.orders != 0 {
+		t.Fatalf("the address came: ok=%v err=%v orders=%d", ok, err, f.orders)
+	}
+	if !orders.since.IsZero() {
+		t.Fatal("the record outlived the address")
+	}
+}
 
-func (*stuckIPv6Hoster) OrderIPv6(context.Context, string) error { return nil }
+// A refusal means nothing was bought, so the next run may order. Any other
+// failure may have bought it, so the next run may not.
+func TestAFailedOrderKeepsItsRecordUnlessTheHosterRefused(t *testing.T) {
+	ctx := context.Background()
+	refused := &stuckIPv6Hoster{orderErr: fmt.Errorf("%w: no money", ErrProviderRefused)}
+	orders := &memIPv6Orders{}
+	if _, _, err := ensureBoxIPv6(ctx, refused, orders, "1", true, time.Millisecond, time.Millisecond); !errors.Is(err, ErrProviderRefused) {
+		t.Fatalf("refused: %v", err)
+	}
+	if !orders.since.IsZero() {
+		t.Fatal("a refusal left a record")
+	}
+	reset := &stuckIPv6Hoster{orderErr: errors.New("connection reset")}
+	if _, _, err := ensureBoxIPv6(ctx, reset, orders, "1", true, time.Millisecond, time.Millisecond); err == nil {
+		t.Fatal("a reset passed")
+	}
+	if orders.since.IsZero() {
+		t.Fatal("a reset dropped the record")
+	}
+	if _, _, err := ensureBoxIPv6(ctx, reset, orders, "1", true, time.Millisecond, time.Millisecond); err == nil || reset.orders != 1 {
+		t.Fatalf("after a reset: err=%v orders=%d", err, reset.orders)
+	}
+}
+
+type stuckIPv6Hoster struct {
+	orders   int
+	orderErr error
+}
+
+func (s *stuckIPv6Hoster) OrderIPv6(context.Context, string) error {
+	s.orders++
+	return s.orderErr
+}
 func (*stuckIPv6Hoster) InstanceIPv6(context.Context, string) (BoxIPv6, bool, error) {
 	return BoxIPv6{}, false, nil
 }
