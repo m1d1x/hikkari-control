@@ -155,6 +155,29 @@ func runEntryBox(args []string) {
 		}
 		os.Exit(0)
 	}
+	if len(args) == 2 && args[0] == "ipv6" {
+		// entry-box ipv6 <box> — buys IPv6 for a machine in service and configures
+		// it. This spends money and reapplies the machine's network.
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		_, cancel, pool := adminCLIPool()
+		cancel() // the order outlives the CLI's 30 s connect budget
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		svc.SetProviderConnector(entrywire.Providers())
+		ctx, stop := context.WithTimeout(context.Background(), 6*time.Minute)
+		defer stop()
+		out, err := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir).GiveBoxIPv6(ctx, args[1])
+		fmt.Print(out)
+		if err != nil {
+			fail(err)
+		}
+		os.Exit(0)
+	}
 	// hoster=<kind> as the last word of an order: from that enabled hoster, for
 	// this one order; the running hub keeps its own (entry.Service.UseHoster).
 	namedHoster := ""

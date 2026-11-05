@@ -442,13 +442,24 @@ func (o *Orchestrator) recover(ctx context.Context, build EdgeBuild) error {
 	}
 	for _, ro := range moving {
 		if ro.Stage == RolloutCanary && ro.CanaryBox != "" {
-			// A canary cut off by a restart says nothing about the build: put
-			// the old one back and let the canary run again from the start.
-			applog.Warn(ctx, "entry", "rollout: canary cut off, rolling it back", applog.F("sha", ro.EdgeSHA[:12]), applog.F("box", ro.CanaryBox))
-			if err := o.prov.execJob(ctx, JobCanary, ro.CanaryBox, ro.ID, func(j *jobRun) error {
-				return j.undoCanary(ro.EdgeSHA)
-			}); err != nil {
-				return fmt.Errorf("откат прерванной канарейки %s: %w", ro.CanaryBox, err)
+			acc, err := o.svc.boxAccess(ctx, ro.CanaryBox)
+			if err != nil {
+				return err
+			}
+			if acc.retired {
+				// The machine went back to the hoster, and its address may be
+				// someone else's by now: there is nothing to roll back, and a
+				// failed login here would hold up every later build.
+				applog.Warn(ctx, "entry", "rollout: canary box retired, nothing to roll back", applog.F("sha", ro.EdgeSHA[:12]), applog.F("box", ro.CanaryBox))
+			} else {
+				// A canary cut off by a restart says nothing about the build: put
+				// the old one back and let the canary run again from the start.
+				applog.Warn(ctx, "entry", "rollout: canary cut off, rolling it back", applog.F("sha", ro.EdgeSHA[:12]), applog.F("box", ro.CanaryBox))
+				if err := o.prov.execJob(ctx, JobCanary, ro.CanaryBox, ro.ID, func(j *jobRun) error {
+					return j.undoCanary(ro.EdgeSHA)
+				}); err != nil {
+					return fmt.Errorf("откат прерванной канарейки %s: %w", ro.CanaryBox, err)
+				}
 			}
 			if _, err := o.svc.pool.Exec(ctx, setRolloutBox, ro.ID, nil); err != nil {
 				return err

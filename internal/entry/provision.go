@@ -1036,13 +1036,83 @@ func (j *jobRun) ipv6(r Remote, mayBuy bool) {
 	if !ok {
 		return
 	}
-	args := fmt.Sprintf("bash -s -- %s %d %s", ip.Address, ip.Prefix, ip.Gateway)
-	out, err := r.Run(j.ctx, args, strings.NewReader(ipv6Script))
+	out, err := r.Run(j.ctx, ipv6ScriptCommand(ip), strings.NewReader(ipv6Script))
 	if err != nil {
 		j.log("IPv6 %s не настроен: %v", ip.Address, err)
 		return
 	}
 	j.log("IPv6 %s: %s", ip.Address, strings.TrimSpace(out))
+}
+
+func ipv6ScriptCommand(ip BoxIPv6) string {
+	return fmt.Sprintf("bash -s -- %s %d %s", ip.Address, ip.Prefix, ip.Gateway)
+}
+
+// GiveBoxIPv6 buys IPv6 for a machine already in service and configures it: the
+// operator's command (`cmd/server entry-box ipv6`), since a job on such a machine
+// never buys. A machine that already has its address is configured without a
+// second order.
+func (p *Provisioner) GiveBoxIPv6(ctx context.Context, box string) (string, error) {
+	instance, provider, err := p.svc.boxHosting(ctx, box)
+	if err != nil {
+		return "", err
+	}
+	if instance == "" {
+		return "", fmt.Errorf("%w: %s арендована вручную, у хостера её не заказать", ErrRejected, box)
+	}
+	bp, err := p.svc.hostingClientFor(ctx, provider, nil)
+	if err != nil {
+		return "", err
+	}
+	hoster, ok := bp.(BoxIPv6Hoster)
+	if !ok {
+		return "", fmt.Errorf("%w: %s не продаёт IPv6 отдельно", ErrRejected, provider)
+	}
+	return p.giveBoxIPv6(ctx, hoster, box, instance)
+}
+
+func (p *Provisioner) giveBoxIPv6(ctx context.Context, hoster BoxIPv6Hoster, box, instance string) (string, error) {
+	acc, err := p.svc.boxAccess(ctx, box)
+	if err != nil {
+		return "", err
+	}
+	if acc.retired {
+		return "", fmt.Errorf("%w: %s", ErrBoxRetired, box)
+	}
+	if err := p.edgeIsThisImages(ctx, box); err != nil {
+		return "", err
+	}
+	ip, _, err := ensureBoxIPv6(ctx, hoster, instance, true, ipv6AllocationWait, ipv6AllocationPoll)
+	if err != nil {
+		return "", err
+	}
+	out, err := p.RunOnBox(ctx, box, ipv6ScriptCommand(ip), strings.NewReader(ipv6Script))
+	if err != nil {
+		return out, fmt.Errorf("IPv6 %s не настроен: %w", ip.Address, err)
+	}
+	return ip.Address + ": " + out, nil
+}
+
+// edgeIsThisImages refuses a machine whose relay build is not the one this hub
+// carries. An older build may choose IPv6 at random for a name with both records
+// and filter only part of the Russian IPv6: an address must not reach it.
+func (p *Provisioner) edgeIsThisImages(ctx context.Context, box string) error {
+	fleet, err := p.svc.fleet(ctx)
+	if err != nil {
+		return err
+	}
+	for _, b := range fleet {
+		if b.name != box {
+			continue
+		}
+		for _, build := range p.EdgeBuilds() {
+			if build.Arch == b.arch && build.SHA == b.sha {
+				return nil
+			}
+		}
+		return fmt.Errorf("%w: на %s сборка edge %s, сначала раскатка", ErrRejected, box, shortSHA(b.sha))
+	}
+	return fmt.Errorf("%w: у %s нет живых релеев", ErrRejected, box)
 }
 
 const (

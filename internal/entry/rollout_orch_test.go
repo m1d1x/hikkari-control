@@ -3,6 +3,7 @@ package entry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -413,6 +414,71 @@ func TestACanaryCutOffByARestartIsRolledBackAndTriedAgain(t *testing.T) {
 		FROM entry_jobs j JOIN entry_job_log l ON l.job_id = j.id WHERE j.rollout_id = $1`, ro.ID).Scan(&log)
 	if !strings.Contains(log, "откат: на машине снова "+rh.sha1[:12]) {
 		t.Fatalf("no rollback in the log: %s", log)
+	}
+}
+
+// An older relay build would send names with both records to IPv6 at random and
+// let Russian IPv6 out: no address, and no bill, until the machine is on this build.
+func TestGivingIPv6WaitsForTheRelayBuildThatFiltersIt(t *testing.T) {
+	rh := newRolloutHarness(t)
+	ctx := context.Background()
+	box := rh.boxOnV1()
+	f := &fakeIPv6Hoster{ip: BoxIPv6{Address: "2001:db8::1", Prefix: 64, Gateway: "fe80::1"}}
+	if _, err := rh.v2.giveBoxIPv6(ctx, f, box, "1"); !errors.Is(err, ErrRejected) {
+		t.Fatalf("err = %v, want a refusal", err)
+	}
+	if f.orders != 0 {
+		t.Fatalf("%d orders for a machine on the old build", f.orders)
+	}
+	has := &fakeIPv6Hoster{ip: f.ip, allocated: true}
+	out, err := rh.v1.giveBoxIPv6(ctx, has, box, "1")
+	if err != nil {
+		t.Fatalf("on the image's own build: %v", err)
+	}
+	if !strings.HasPrefix(out, "2001:db8::1: ") {
+		t.Fatalf("out %q", out)
+	}
+	fb := rh.fleet.box(t, rh.harness, box)
+	fb.mu.Lock()
+	ran := strings.Join(fb.cmds, "\n")
+	fb.mu.Unlock()
+	if !strings.Contains(ran, "bash -s -- 2001:db8::1 64 fe80::1") {
+		t.Fatalf("script not run with the address: %q", ran)
+	}
+}
+
+// A canary's machine handed back to the hoster: its address may be someone
+// else's, so the hub must not log in, and every later build must still move.
+func TestACanaryOnARetiredBoxDoesNotHoldUpTheRollout(t *testing.T) {
+	rh := newRolloutHarness(t)
+	ctx := context.Background()
+	gone := rh.boxOnV1()
+	ro, err := rh.svc.rolloutOf(ctx, "amd64", rh.sha2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rh.pool.Exec(ctx, setRolloutBox, ro.ID, gone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rh.pool.Exec(ctx, `UPDATE entry_boxes SET retired_at = now(), retired_reason = $2 WHERE name = $1`, gone, DeathRotated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rh.pool.Exec(ctx, `UPDATE entry_relays SET status = 'dead', died_at = now(), died_reason = 'other' WHERE box = $1`, gone); err != nil {
+		t.Fatal(err)
+	}
+	live := rh.boxOnV1()
+
+	rh.orchestrator().round(ctx)
+
+	if got := rh.rolloutOfV2(); got.Stage != RolloutDone || got.CanaryBox != live {
+		t.Fatalf("rollout %+v, want done on %s", got, live)
+	}
+	var jobs int
+	if err := rh.pool.QueryRow(ctx, `SELECT count(*) FROM entry_jobs WHERE box = $1 AND rollout_id = $2`, gone, ro.ID).Scan(&jobs); err != nil {
+		t.Fatal(err)
+	}
+	if jobs != 0 {
+		t.Fatalf("%d jobs on a machine already handed back", jobs)
 	}
 }
 
