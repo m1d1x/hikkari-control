@@ -483,7 +483,7 @@ func (c *Client) Create(ctx context.Context, p CreateParams) (Instance, error) {
 		"size":               p.Plan,
 		"image":              image,
 		"backups":            false,
-		"ipv6":               false,
+		"ipv6":               true,
 	}
 	if p.SSHKeyID != "" {
 		if id, err := strconv.Atoi(p.SSHKeyID); err == nil {

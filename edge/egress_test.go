@@ -55,8 +55,8 @@ func TestTheExitRefusesTheBoxThePrivateNetsAndSMTP(t *testing.T) {
 	}
 	nets := toString(rules[2]["ip"])
 	for _, n := range []string{
-		"127.0.0.0/8", "10.0.0.0/8", "169.254.0.0/16", "100.64.0.0/10", "fc00::/7", "::1/128",
-		"77.88.0.0/18", "185.71.76.0/22", "91.194.226.0/23", "5.136.0.0/13", "2a02:6b8::/32",
+		"127.0.0.0/8", "10.0.0.0/8", "169.254.0.0/16", "100.64.0.0/10", "fc00::/7", "::1/128", "2002::/16",
+		"77.88.0.0/18", "185.71.76.0/22", "91.194.226.0/23", "5.136.0.0/13", "2a02:6b8::/29",
 	} {
 		if !strings.Contains(nets, n) {
 			t.Errorf("denylist misses %s", n)
@@ -71,13 +71,22 @@ func TestTheExitRefusesTheBoxThePrivateNetsAndSMTP(t *testing.T) {
 		prefixes = append(prefixes, p)
 	}
 	for _, sample := range []string{
-		"77.88.55.242",  // Yandex
-		"185.71.76.1",   // VK
-		"194.54.14.1",   // Sberbank
-		"91.194.226.10", // T-Bank
-		"5.136.10.20",   // Rostelecom
-		"176.59.10.1",   // Tele2 RU
-		"2a02:6b8::1",   // Yandex IPv6
+		"77.88.55.242",        // Yandex
+		"185.71.76.1",         // VK
+		"194.54.14.1",         // Sberbank
+		"91.194.226.10",       // T-Bank
+		"5.136.10.20",         // Rostelecom
+		"176.59.10.1",         // Tele2 RU
+		"2a02:6b8::1",         // Yandex IPv6
+		"2a00:1148::1",        // VK / Mail.ru
+		"2a00:bdc0::1",        // VK
+		"2a00:1fa0::1",        // MTS
+		"2a02:2168::1",        // Beeline
+		"2a01:620::1",         // outside the four blocks the table used to have
+		"2a03:6f00::1",        // same
+		"2002:4d58:37f2::1",   // 6to4 of 77.88.55.242
+		"64:ff9b::4d58:37f2",  // NAT64 of 77.88.55.242
+		"2001:0:4d58:37f2::1", // Teredo
 	} {
 		ip := netip.MustParseAddr(sample)
 		covered := false
@@ -93,6 +102,15 @@ func TestTheExitRefusesTheBoxThePrivateNetsAndSMTP(t *testing.T) {
 	}
 	if len(blockedRUNets) < 8000 {
 		t.Fatalf("expected full RU CIDR table (>8000 blocks), got %d", len(blockedRUNets))
+	}
+	var ipv6 int
+	for _, n := range blockedRUNets {
+		if strings.Contains(n, ":") {
+			ipv6++
+		}
+	}
+	if ipv6 < 2000 {
+		t.Fatalf("expected the full RU IPv6 table (>2000 blocks), got %d", ipv6)
 	}
 	if toString(rules[3]["ip"]) != "[0.0.0.0/0 ::/0]" {
 		t.Fatalf("last rule must open the internet: %v", rules[3])
@@ -169,6 +187,10 @@ func TestTheEdgeBlocksRussianDomainsAndIPsWhileAllowingTheInternet(t *testing.T)
 		"open-com":       "example.com",
 		"open-org":       "wikipedia.org",
 		"open-ip":        "1.1.1.1",
+		"open-ip6":       "2606:4700:4700::1111",
+		"ru-ip6-yandex":  "2a02:6b8::2:242",
+		"ru-ip6-vk":      "2a00:bdc0::1",
+		"ru-ip6-rt":      "2a01:620::1",
 		"ru-tld":         "gosuslugi.ru",
 		"ru-sub":         "online.sberbank.ru",
 		"rf-tld":         "xn--80a1acny.xn--p1ai",
@@ -185,11 +207,12 @@ func TestTheEdgeBlocksRussianDomainsAndIPsWhileAllowingTheInternet(t *testing.T)
 		"ru-ip-rt":       "5.136.10.20",
 		"ru-ip-regional": "176.59.10.1",
 	}
-	allowedList := []string{"open-com", "open-org", "open-ip"}
+	allowedList := []string{"open-com", "open-org", "open-ip", "open-ip6"}
 	blockedList := []string{
 		"ru-tld", "ru-sub", "rf-tld", "su-tld",
 		"vk-com", "yandex-com", "tbank", "ozon-cdn", "wildberries",
 		"ru-ip-yandex", "ru-ip-vk", "ru-ip-sber", "ru-ip-tbank", "ru-ip-rt", "ru-ip-regional",
+		"ru-ip6-yandex", "ru-ip6-vk", "ru-ip6-rt",
 	}
 
 	redirectExit := func(t *testing.T, doc map[string]any, network string, sitePort int) {

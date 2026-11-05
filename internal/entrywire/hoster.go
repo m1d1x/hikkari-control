@@ -444,6 +444,18 @@ func (h vdsinaHoster) Create(ctx context.Context, o entry.BoxOrder) (entry.BoxIn
 	return toBoxInstanceVDSina(inst), nil
 }
 
+func (h vdsinaHoster) OrderIPv6(ctx context.Context, id string) error {
+	return h.c.OrderIPv6(ctx, id)
+}
+
+func (h vdsinaHoster) InstanceIPv6(ctx context.Context, id string) (entry.BoxIPv6, bool, error) {
+	ip, ok, err := h.c.IPv6(ctx, id)
+	if err != nil || !ok {
+		return entry.BoxIPv6{}, false, err
+	}
+	return entry.BoxIPv6{Address: ip.Address, Prefix: ip.Prefix, Gateway: ip.Gateway}, true, nil
+}
+
 func (h vdsinaHoster) Instance(ctx context.Context, id string) (entry.BoxInstance, error) {
 	inst, err := h.c.Instance(ctx, id)
 	if errors.Is(err, vdsina.ErrNotFound) {

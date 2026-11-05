@@ -714,6 +714,17 @@ func (s *Service) boxInstanceID(ctx context.Context, box string) (string, error)
 	return *id, nil
 }
 
+// boxHosting is a box's instance at the hoster and the hoster's kind. The
+// instance is empty for a box rented by hand.
+func (s *Service) boxHosting(ctx context.Context, box string) (instance, provider string, err error) {
+	err = s.pool.QueryRow(ctx,
+		`SELECT coalesce(provider_instance_id, ''), provider FROM entry_boxes WHERE name = $1`, box).Scan(&instance, &provider)
+	if err != nil {
+		return "", "", fmt.Errorf("entry: box %s: %w", box, err)
+	}
+	return instance, provider, nil
+}
+
 // boxRental is what a box costs and where it was ordered, for a replacement
 // that should land on the same shelf.
 type boxRental struct {

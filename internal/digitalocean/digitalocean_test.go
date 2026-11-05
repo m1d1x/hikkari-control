@@ -229,7 +229,7 @@ func TestCreateReturnsNoAddressUntilTheMachineHasOne(t *testing.T) {
 		t.Errorf("address %q on a machine that is still pending", inst.Address)
 	}
 	if got := a.created[0]; got["image"] != "ubuntu-24-04-x64" || got["backups"] != false ||
-		got["ipv6"] != false || got["name"] != "ams3" || got["region"] != "ams3" {
+		got["ipv6"] != true || got["name"] != "ams3" || got["region"] != "ams3" {
 		t.Errorf("order body = %v", got)
 	}
 	if ks, ok := a.created[0]["ssh_keys"].([]any); !ok || len(ks) != 1 || ks[0] != float64(1) {

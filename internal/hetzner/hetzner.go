@@ -485,6 +485,8 @@ func (c *Client) Create(ctx context.Context, p CreateParams) (Instance, error) {
 		"location":           p.Region,
 		"image":              image,
 		"start_after_create": true,
+		// An exit without IPv6 cannot reach a site that has only an AAAA record.
+		"public_net": map[string]any{"enable_ipv4": true, "enable_ipv6": true},
 	}
 	if p.SSHKeyID != "" {
 		if id, err := strconv.Atoi(p.SSHKeyID); err == nil {

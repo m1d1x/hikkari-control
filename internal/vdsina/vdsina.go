@@ -14,6 +14,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -707,6 +708,74 @@ func (c *Client) Create(ctx context.Context, p CreateParams) (Instance, error) {
 		inst.Plan = p.Plan
 	}
 	return inst, nil
+}
+
+// IPv6 is the address a server has, as the box's network config needs it.
+type IPv6 struct {
+	Address string // a host address, not the network
+	Prefix  int
+	Gateway string
+}
+
+// OrderIPv6 orders one IPv6 network for a server (POST /server.ip/{id}). It is
+// a service of its own at VDSina, not an option of the order: the answer only
+// says it is queued, and IPv6 reads the address once it has one.
+func (c *Client) OrderIPv6(ctx context.Context, id string) error {
+	return c.call(ctx, http.MethodPost, "/server.ip/"+url.PathEscape(id),
+		map[string]any{"type": "6", "count": 1}, nil)
+}
+
+// IPv6 reads a server's IPv6, false when it has none yet: the services ordered
+// for it (GET /server.ip/{id}) name the address, and GET /ip/{id} has its
+// gateway and netmask.
+func (c *Client) IPv6(ctx context.Context, id string) (IPv6, bool, error) {
+	var services []struct {
+		IP []struct {
+			ID int    `json:"id"`
+			IP string `json:"ip"`
+		} `json:"ip"`
+	}
+	if err := c.call(ctx, http.MethodGet, "/server.ip/"+url.PathEscape(id), nil, &services); err != nil {
+		return IPv6{}, false, err
+	}
+	for _, service := range services {
+		for _, ip := range service.IP {
+			addr, err := netip.ParseAddr(ip.IP)
+			if err != nil || !addr.Is6() {
+				continue
+			}
+			var info struct {
+				Gateway string `json:"gateway"`
+				Netmask string `json:"netmask"`
+			}
+			if err := c.call(ctx, http.MethodGet, "/ip/"+strconv.Itoa(ip.ID), nil, &info); err != nil {
+				return IPv6{}, false, err
+			}
+			prefix, err := strconv.Atoi(info.Netmask)
+			if err != nil || prefix < 1 || prefix > 128 {
+				return IPv6{}, false, fmt.Errorf("vdsina: IPv6 %s: netmask %q", ip.IP, info.Netmask)
+			}
+			if _, err := netip.ParseAddr(info.Gateway); err != nil {
+				return IPv6{}, false, fmt.Errorf("vdsina: IPv6 %s: gateway %q", ip.IP, info.Gateway)
+			}
+			return IPv6{Address: firstHost(addr).String(), Prefix: prefix, Gateway: info.Gateway}, true, nil
+		}
+	}
+	return IPv6{}, false, nil
+}
+
+// firstHost is the address to put on a machine: VDSina names a network by its
+// base (2a14:1e00:1:3f2::), which is the subnet-router anycast address and not
+// a host's.
+func firstHost(addr netip.Addr) netip.Addr {
+	raw := addr.As16()
+	for _, b := range raw[8:] {
+		if b != 0 {
+			return addr
+		}
+	}
+	raw[15] = 1
+	return netip.AddrFrom16(raw)
 }
 
 // CreateInstance is an alias for Create.

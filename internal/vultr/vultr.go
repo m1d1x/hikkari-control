@@ -479,9 +479,9 @@ type CreateParams struct {
 // is taken; the instance's Address is usually empty until it has booted, so
 // the caller polls [Client.Instance].
 //
-// Backups are off and IPv6 is off: a relay is a throwaway whose whole state
-// lives in the hub, paying for snapshots of it is waste, and a second address
-// family is a second thing to get the firewall right on.
+// Backups are off: a relay is a throwaway whose whole state lives in the hub,
+// and paying for snapshots of it is waste. IPv6 is on: an exit without it cannot
+// reach a site that has only an AAAA record.
 func (c *Client) Create(ctx context.Context, p CreateParams) (Instance, error) {
 	if p.OSID == 0 {
 		os, err := c.UbuntuLTS(ctx)
@@ -497,7 +497,7 @@ func (c *Client) Create(ctx context.Context, p CreateParams) (Instance, error) {
 		"label":       p.Label,
 		"hostname":    p.Hostname,
 		"backups":     "disabled",
-		"enable_ipv6": false,
+		"enable_ipv6": true,
 	}
 	if p.SSHKeyID != "" {
 		body["sshkey_id"] = []string{p.SSHKeyID}

@@ -21,6 +21,11 @@ import (
 //   - outbound SMTP (port 25): the first thing an abused exit sends, and the
 //     reason a hoster suspends a machine without asking.
 //
+// The box has IPv6, so both families are refused alike. The IPv6 forms that
+// carry an IPv4 address (NAT64, 6to4, Teredo) are refused whole: through them a
+// client would reach what the IPv4 list refuses. Xray reads a mapped address
+// (::ffff:a.b.c.d) as the IPv4 itself, so the IPv4 rules already cover it.
+//
 // The rules are freedom's finalRules, checked against the address actually
 // dialled — after a domain is resolved — so a name that resolves into a
 // private range is refused as well. The one loopback destination allowed is
@@ -45,18 +50,28 @@ var privateNets = []string{
 	"198.18.0.0/15",
 	"224.0.0.0/4",
 	"240.0.0.0/4",
+	"::/128",
 	"::1/128",
+	"64:ff9b::/96",
+	"64:ff9b:1::/48",
+	"100::/64",
+	"2001::/32",
+	"2001:db8::/32",
+	"2002::/16",
 	"fc00::/7",
 	"fe80::/10",
+	"fec0::/10",
 	"ff00::/8",
 }
 
 //go:embed ru_cidrs.txt.gz
 var ruCIDRsGz []byte
 
-// blockedRUNets holds the full RIPE/ipdeny Russian IPv4 CIDR table (8,600+
-// collapsed blocks) plus Russian IPv6 allocations, embedded directly in the
-// binary so nekko-edge needs no external geoip.dat on disk.
+// blockedRUNets holds the full RIPE/ipdeny Russian CIDR table, IPv4 (8,600+
+// collapsed blocks) then IPv6 (2,100+), embedded directly in the binary so
+// nekko-edge needs no external geoip.dat on disk. The IPv6 part is every RU
+// ipv6 record of RIPE's delegated stats and ipdeny's ru-aggregated zone, nested
+// blocks dropped. The other four RIRs list no RU IPv6.
 var blockedRUNets = loadBlockedRUNets()
 
 func loadBlockedRUNets() []string {
@@ -69,16 +84,7 @@ func loadBlockedRUNets() []string {
 	if err != nil {
 		panic("edge: reading embedded ru_cidrs.txt.gz: " + err.Error())
 	}
-	lines := strings.Fields(string(raw))
-	out := make([]string, 0, len(lines)+4)
-	out = append(out, lines...)
-	out = append(out,
-		"2a02:6b8::/32",  // Yandex IPv6
-		"2a00:1148::/32", // VK / Mail.ru IPv6
-		"2a00:1fa0::/32", // MTS IPv6
-		"2a02:2168::/32", // Beeline / VimpelCom IPv6
-	)
-	return out
+	return strings.Fields(string(raw))
 }
 
 // tunnelSniffing inspects TLS SNI, HTTP Host and QUIC SNI inside the tunnel
@@ -225,8 +231,11 @@ func directOutbound(echo int) map[string]any {
 		"tag":      directTag,
 		"protocol": "freedom",
 		"settings": map[string]any{
-			// Resolve on the box, so finalRules see the real address.
-			"domainStrategy": "UseIP",
+			// Resolve on the box, so finalRules see the real address. IPv4
+			// first, IPv6 only for a name with no A record: UseIP would pick
+			// at random, moving IPv4 sites onto the box's IPv6 whenever they
+			// also have an AAAA record.
+			"domainStrategy": "UseIPv4v6",
 			"finalRules":     egressFinalRules(echo),
 		},
 	}

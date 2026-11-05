@@ -234,7 +234,7 @@ func TestCreateReturnsNoAddressUntilTheMachineHasOne(t *testing.T) {
 		t.Errorf("address %q on a machine that is still pending", inst.Address)
 	}
 	if got := a.created[0]; got["os_id"] != float64(2284) || got["backups"] != "disabled" ||
-		got["enable_ipv6"] != false || got["hostname"] != "ams1" {
+		got["enable_ipv6"] != true || got["hostname"] != "ams1" {
 		t.Errorf("order body = %v", got)
 	}
 	if ks, ok := a.created[0]["sshkey_id"].([]any); !ok || len(ks) != 1 || ks[0] != "key-a" {

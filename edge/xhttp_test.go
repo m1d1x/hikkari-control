@@ -93,7 +93,13 @@ func TestOnlyTheSecretPathAndBelowIsTheTunnel(t *testing.T) {
 // tcpEcho echoes every connection on 127.0.0.1:port, prefixed with tag.
 func tcpEcho(t *testing.T, port int, tag string) {
 	t.Helper()
-	l, err := net.Listen("tcp4", "127.0.0.1:"+strconv.Itoa(port))
+	tcpEchoOn(t, "127.0.0.1", port, tag)
+}
+
+// tcpEchoOn is tcpEcho on one address of the machine.
+func tcpEchoOn(t *testing.T, host string, port int, tag string) {
+	t.Helper()
+	l, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,16 +155,35 @@ func xhttpClient(t *testing.T, edgePort int, pin, mode string, dests map[string]
 // xhttpClientAs is xhttpClient dialing as user id.
 func xhttpClientAs(t *testing.T, id string, edgePort int, pin, mode string, dests map[string]int) map[string]int {
 	t.Helper()
-	doors := map[string]int{}
-	var inbounds []map[string]any
+	targets := map[string]string{}
 	for name, port := range dests {
 		// The address, not "localhost": the echoes listen on IPv4 only, and an
 		// exit that resolved localhost to ::1 would find nobody there.
+		targets[name] = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	}
+	return xhttpClientTo(t, id, edgePort, pin, mode, targets)
+}
+
+// xhttpClientTo is the client with one local door per "host:port", the host
+// an address or a name for the exit to resolve.
+func xhttpClientTo(t *testing.T, id string, edgePort int, pin, mode string, targets map[string]string) map[string]int {
+	t.Helper()
+	doors := map[string]int{}
+	var inbounds []map[string]any
+	for name, target := range targets {
+		host, portText, err := net.SplitHostPort(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		port, err := strconv.Atoi(portText)
+		if err != nil {
+			t.Fatal(err)
+		}
 		door := freePort(t, "tcp")
 		doors[name] = door
 		inbounds = append(inbounds, map[string]any{
 			"tag": "door-" + name, "listen": "127.0.0.1", "port": door, "protocol": "dokodemo-door",
-			"settings": map[string]any{"address": "127.0.0.1", "port": port, "network": "tcp"},
+			"settings": map[string]any{"address": host, "port": port, "network": "tcp"},
 		})
 	}
 	startXray(t, map[string]any{

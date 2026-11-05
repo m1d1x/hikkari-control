@@ -22,6 +22,9 @@ type api struct {
 	fail     map[string]int
 	failMsg  map[string]string
 	auth     []string
+	// ipv6 is the address /server.ip/101 lists, empty until one is allocated.
+	ipv6        string
+	orderedIPv6 []map[string]any
 }
 
 // server is a machine as the API really shows it: nested objects, and no ip
@@ -76,6 +79,17 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	switch {
+	case r.URL.Path == "/server.ip/101" && r.Method == http.MethodPost:
+		a.orderedIPv6 = append(a.orderedIPv6, body)
+		write(nil)
+	case r.URL.Path == "/server.ip/101":
+		services := []map[string]any{{"id": 7, "ip": []map[string]any{{"id": 119402, "ip": "146.103.121.12", "type": "4"}}}}
+		if a.ipv6 != "" {
+			services = append(services, map[string]any{"id": 8, "ip": []map[string]any{{"id": 555, "ip": a.ipv6, "type": "6"}}})
+		}
+		write(services)
+	case r.URL.Path == "/ip/555":
+		write(map[string]any{"id": 555, "ip": a.ipv6, "type": "6", "gateway": "fe80::1", "netmask": "64", "is_net": true})
 	case r.URL.Path == "/account.balance":
 		write(map[string]any{
 			"real":  2818.50,
@@ -348,5 +362,32 @@ func TestPlanLimitReadsAsCapacity(t *testing.T) {
 	_, err := New("t", WithBaseURL(srv.URL)).Create(context.Background(), CreateParams{Region: "4", Plan: "36", TemplateID: 64, Hostname: "ams1"})
 	if !errors.Is(err, ErrOutOfCapacity) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAServersIPv6IsOrderedApartAndReadWhenAllocated(t *testing.T) {
+	a, c := newAPI(t)
+	if err := c.OrderIPv6(context.Background(), "101"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.orderedIPv6) != 1 || a.orderedIPv6[0]["type"] != "6" || a.orderedIPv6[0]["count"] != float64(1) {
+		t.Fatalf("order: %v", a.orderedIPv6)
+	}
+	// An additional IPv4 on the server is not the answer.
+	if _, ok, err := c.IPv6(context.Background(), "101"); err != nil || ok {
+		t.Fatalf("before allocation: ok=%v err=%v", ok, err)
+	}
+	a.ipv6 = "2a14:1e00:1:3f2::"
+	got, ok, err := c.IPv6(context.Background(), "101")
+	if err != nil || !ok {
+		t.Fatalf("after allocation: ok=%v err=%v", ok, err)
+	}
+	if want := (IPv6{Address: "2a14:1e00:1:3f2::1", Prefix: 64, Gateway: "fe80::1"}); got != want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	// An address that is already a host's stays as it is.
+	a.ipv6 = "2a14:1e00:1:3f2::5"
+	if got, _, _ := c.IPv6(context.Background(), "101"); got.Address != "2a14:1e00:1:3f2::5" {
+		t.Fatalf("host address changed: %s", got.Address)
 	}
 }

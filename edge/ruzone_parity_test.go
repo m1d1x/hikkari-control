@@ -44,17 +44,7 @@ func TestClientSendsDirectWhatTheEdgeRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	src, err := os.ReadFile(filepath.Join(clientRUZone, "ruzone.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := strings.Fields(string(raw))
-	for _, extra := range blockedRUNets[len(got):] {
-		if !bytes.Contains(src, []byte(`"`+extra+`"`)) {
-			t.Errorf("client ruzone.go has no %s", extra)
-		}
-	}
-	if !slices.Equal(got, blockedRUNets[:min(len(got), len(blockedRUNets))]) {
+	if !slices.Equal(strings.Fields(string(raw)), blockedRUNets) {
 		t.Error("client cidrs.txt.gz differs from ru_cidrs.txt.gz")
 	}
 }

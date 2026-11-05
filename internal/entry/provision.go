@@ -671,12 +671,19 @@ func (j *jobRun) provision(password string) error {
 		return fmt.Errorf("ssh-ключ хаба: %w", err)
 	}
 
+	// Before the login records the host key: an empty one is a machine the hub
+	// has never logged in to.
+	freshlyOrdered := j.firstUse == trustIfNeverMet && acc.hostKey == ""
+
 	j.step("login")
 	r, err := j.login(acc, hubKey, hubPub, password)
 	if err != nil {
 		return err
 	}
 	defer r.Close()
+
+	j.step("ipv6")
+	j.ipv6(r, freshlyOrdered)
 
 	// An XHTTP box needs its domain live before anything is deployed: relays
 	// are minted from the box's sealed domain, and the edge orders its
@@ -1000,6 +1007,114 @@ func (s *Service) relayIdentities(ctx context.Context, box string) ([]provRelay,
 	return out, nil
 }
 
+// ipv6 gives the machine its IPv6 where the hoster leaves that to the owner. A
+// failure is logged and the job goes on: without IPv6 the relay still does all
+// it did before, only an IPv6-only site does not open through it.
+func (j *jobRun) ipv6(r Remote, mayBuy bool) {
+	svc := j.p.svc
+	h, err := svc.hoster()
+	if err != nil {
+		return
+	}
+	hoster, ok := h.bp.(BoxIPv6Hoster)
+	if !ok {
+		return
+	}
+	instance, provider, err := svc.boxHosting(j.ctx, j.box)
+	if err != nil {
+		j.log("IPv6: %v", err)
+		return
+	}
+	if instance == "" || provider != h.kind {
+		return
+	}
+	ip, ok, err := ensureBoxIPv6(j.ctx, hoster, instance, mayBuy, ipv6AllocationWait, ipv6AllocationPoll)
+	if err != nil {
+		j.log("IPv6 не настроен: %v", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	args := fmt.Sprintf("bash -s -- %s %d %s", ip.Address, ip.Prefix, ip.Gateway)
+	out, err := r.Run(j.ctx, args, strings.NewReader(ipv6Script))
+	if err != nil {
+		j.log("IPv6 %s не настроен: %v", ip.Address, err)
+		return
+	}
+	j.log("IPv6 %s: %s", ip.Address, strings.TrimSpace(out))
+}
+
+const (
+	// ipv6AllocationWait: the hoster queues the order and answers at once.
+	ipv6AllocationWait = 3 * time.Minute
+	ipv6AllocationPoll = 5 * time.Second
+)
+
+// ensureBoxIPv6 reads a machine's IPv6 and, only if mayBuy, orders one and waits
+// for it. A job on a machine the hub already runs never buys: rerunning a job
+// must not add to the bill.
+func ensureBoxIPv6(ctx context.Context, h BoxIPv6Hoster, instance string, mayBuy bool, wait, poll time.Duration) (BoxIPv6, bool, error) {
+	ip, ok, err := h.InstanceIPv6(ctx, instance)
+	if err != nil || ok || !mayBuy {
+		return ip, ok, err
+	}
+	if err := h.OrderIPv6(ctx, instance); err != nil {
+		return BoxIPv6{}, false, fmt.Errorf("заказ: %w", err)
+	}
+	deadline := time.Now().Add(wait)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return BoxIPv6{}, false, ctx.Err()
+		case <-time.After(poll):
+		}
+		ip, ok, err := h.InstanceIPv6(ctx, instance)
+		if err != nil {
+			return BoxIPv6{}, false, err
+		}
+		if ok {
+			return ip, true, nil
+		}
+	}
+	return BoxIPv6{}, false, fmt.Errorf("заказан, но адреса нет за %s", wait)
+}
+
+// ipv6Script puts an address on the interface of the default IPv4 route, as a
+// netplan file of its own next to the hoster's. $1 address, $2 prefix, $3
+// gateway. A machine that already routes IPv6 is left alone. It prints whether
+// the machine reaches the IPv6 internet.
+const ipv6Script = `set -eu
+if ip -6 route show default | grep -q .; then
+	echo "маршрут уже есть"
+	exit 0
+fi
+iface="$(ip -4 route show default | awk '{print $5; exit}')"
+[ -n "$iface" ] || { echo "no default IPv4 route" >&2; exit 1; }
+cat >/etc/netplan/60-nekko-ipv6.yaml <<YAML
+network:
+  version: 2
+  ethernets:
+    $iface:
+      addresses: ["$1/$2"]
+      routes:
+        - to: "::/0"
+          via: "$3"
+          on-link: true
+YAML
+chmod 600 /etc/netplan/60-nekko-ipv6.yaml
+netplan generate
+netplan apply
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+	if curl -6 -sS -m 5 -o /dev/null https://www.google.com 2>/dev/null; then
+		echo "настроен на $iface, интернет по IPv6 доступен"
+		exit 0
+	fi
+	sleep 2
+done
+echo "настроен на $iface, интернет по IPv6 не отвечает"
+`
+
 func (j *jobRun) harden(r Remote, relays []provRelay) error {
 	ports := make([]string, 0, len(relays))
 	for _, rel := range relays {
@@ -1030,7 +1145,7 @@ case "$effective" in
 	*"passwordauthentication no"*) ;;
 	*) echo "sshd still allows passwords" >&2; exit 1 ;;
 esac
-` + installUfwScript + `# SSH answers only the address this very session came from: the hub. Scanners
+` + installUfwScript + ufwFiltersIPv6Script + `# SSH answers only the address this very session came from: the hub. Scanners
 # read an open port as a hint (NTC Party 25993), and the hub is the only one who
 # ever logs in. Rules before the enable, the open rule out last: a rerun on a
 # running machine never leaves the hub without a way in.
@@ -1040,6 +1155,13 @@ ufw allow from "$hub" to any port 22 proto tcp >/dev/null
 for p in "$@"; do ufw allow "$p" >/dev/null; done
 ufw --force enable >/dev/null
 ufw delete allow 22/tcp >/dev/null 2>&1 || true
+`
+
+// ufwFiltersIPv6Script comes before the first rule: ufw writes IPv6 rules only
+// with IPV6=yes. With it off, an image's setting would leave the machine's IPv6
+// address unfiltered, sshd included, behind a firewall that looks closed.
+const ufwFiltersIPv6Script = `{ grep -v '^IPV6=' /etc/default/ufw || true; echo IPV6=yes; } >/etc/default/ufw.new
+mv /etc/default/ufw.new /etc/default/ufw
 `
 
 // installUfwScript runs on a machine that has only just booted, and apt is not

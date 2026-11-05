@@ -33,6 +33,23 @@ import (
 // names it, and the box comes up with the hub already in authorized_keys. The
 // provisioner then needs no password at all, exactly as it needs none for a
 // box whose key was pasted into a panel by hand.
+// BoxIPv6Hoster is a hoster that sells IPv6 apart from the machine and leaves
+// the address for the machine's owner to configure. The other hosters take IPv6
+// as an option of the order and configure it themselves.
+type BoxIPv6Hoster interface {
+	// OrderIPv6 buys an IPv6 for a machine. The address comes later.
+	OrderIPv6(ctx context.Context, instanceID string) error
+	// InstanceIPv6 reads a machine's IPv6, false when it has none yet.
+	InstanceIPv6(ctx context.Context, instanceID string) (BoxIPv6, bool, error)
+}
+
+// BoxIPv6 is what a machine's network config needs.
+type BoxIPv6 struct {
+	Address string
+	Prefix  int
+	Gateway string
+}
+
 type BoxProvider interface {
 	// Regions is where this hoster sells machines.
 	Regions(ctx context.Context) ([]BoxRegion, error)

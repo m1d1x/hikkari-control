@@ -1,11 +1,13 @@
 package entry
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A freshly booted machine shares apt with PackageKit, which apt-get update
@@ -71,6 +73,7 @@ func hardenRun(t *testing.T, sshConnection string, ports ...string) ([]string, e
 	// The script writes the sshd drop-in under /etc: a test machine has none to
 	// write, so the path is pointed at the temporary directory.
 	script := strings.ReplaceAll(hardenScript, "/etc/ssh/sshd_config.d/", dir+"/")
+	script = strings.ReplaceAll(script, "/etc/default/ufw", dir+"/ufw-default")
 	cmd := exec.Command(shell, append([]string{"-s", "--"}, ports...)...)
 	cmd.Stdin = strings.NewReader(script)
 	cmd.Env = []string{"PATH=" + dir + ":/usr/bin:/bin"}
@@ -108,6 +111,31 @@ func TestHardenLetsSSHInFromTheHubAlone(t *testing.T) {
 	}
 }
 
+// ufw writes IPv6 rules only with IPV6=yes, so an image that ships it off would
+// leave the machine's IPv6 address unfiltered behind a firewall that looks shut.
+func TestHardenTurnsOnUfwForIPv6BeforeTheFirstRule(t *testing.T) {
+	if strings.Index(hardenScript, "echo IPV6=yes") > strings.Index(hardenScript, "ufw allow") {
+		t.Fatal("rules are written before ufw is told to filter IPv6")
+	}
+	shell, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	file := filepath.Join(t.TempDir(), "ufw")
+	if err := os.WriteFile(file, []byte("IPV6=no\nDEFAULT_INPUT_POLICY=\"DROP\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(shell, "-s")
+	cmd.Stdin = strings.NewReader("set -eu\n" + strings.ReplaceAll(ufwFiltersIPv6Script, "/etc/default/ufw", file))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	got, _ := os.ReadFile(file)
+	if string(got) != "DEFAULT_INPUT_POLICY=\"DROP\"\nIPV6=yes\n" {
+		t.Fatalf("/etc/default/ufw: %q", got)
+	}
+}
+
 // Without knowing the hub the script must stop before it touches the firewall:
 // going on would either lock the hub out or leave SSH open and say it is shut.
 func TestHardenStopsWhenItCannotNameTheHub(t *testing.T) {
@@ -117,5 +145,109 @@ func TestHardenStopsWhenItCannotNameTheHub(t *testing.T) {
 	}
 	if len(cmds) != 0 {
 		t.Fatalf("touched the firewall: %v", cmds)
+	}
+}
+
+type fakeIPv6Hoster struct {
+	ip        BoxIPv6
+	allocated bool
+	orders    int
+	readsLeft int
+}
+
+func (f *fakeIPv6Hoster) OrderIPv6(context.Context, string) error {
+	f.orders++
+	f.readsLeft = 1
+	return nil
+}
+
+func (f *fakeIPv6Hoster) InstanceIPv6(context.Context, string) (BoxIPv6, bool, error) {
+	if f.allocated {
+		return f.ip, true, nil
+	}
+	if f.orders > 0 {
+		if f.readsLeft == 0 {
+			f.allocated = true
+		}
+		f.readsLeft--
+	}
+	return BoxIPv6{}, false, nil
+}
+
+// Running a job again on a machine the hub already runs must not add to the bill.
+func TestOnlyAFreshlyOrderedMachineBuysIPv6(t *testing.T) {
+	ctx := context.Background()
+	f := &fakeIPv6Hoster{ip: BoxIPv6{Address: "2001:db8::1", Prefix: 64, Gateway: "fe80::1"}}
+	if _, ok, err := ensureBoxIPv6(ctx, f, "1", false, time.Second, time.Millisecond); err != nil || ok || f.orders != 0 {
+		t.Fatalf("a running machine: ok=%v err=%v orders=%d", ok, err, f.orders)
+	}
+	got, ok, err := ensureBoxIPv6(ctx, f, "1", true, time.Second, time.Millisecond)
+	if err != nil || !ok || got != f.ip || f.orders != 1 {
+		t.Fatalf("a fresh machine: %+v ok=%v err=%v orders=%d", got, ok, err, f.orders)
+	}
+	// The machine already has its address: a rerun of the job configures it again.
+	if _, ok, err := ensureBoxIPv6(ctx, f, "1", true, time.Second, time.Millisecond); err != nil || !ok || f.orders != 1 {
+		t.Fatalf("a rerun: ok=%v err=%v orders=%d", ok, err, f.orders)
+	}
+	stuck := &stuckIPv6Hoster{}
+	if _, ok, err := ensureBoxIPv6(ctx, stuck, "1", true, 5*time.Millisecond, time.Millisecond); err == nil || ok {
+		t.Fatalf("an address that never comes: ok=%v err=%v", ok, err)
+	}
+}
+
+type stuckIPv6Hoster struct{}
+
+func (*stuckIPv6Hoster) OrderIPv6(context.Context, string) error { return nil }
+func (*stuckIPv6Hoster) InstanceIPv6(context.Context, string) (BoxIPv6, bool, error) {
+	return BoxIPv6{}, false, nil
+}
+
+func ipv6ScriptRun(t *testing.T, ip6Routes string) (string, string) {
+	t.Helper()
+	shell, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	dir := t.TempDir()
+	stub := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stub("ip", `case "$1" in
+-6) echo "`+ip6Routes+`" ;;
+-4) echo "default via 146.103.121.1 dev ens3 proto static" ;;
+esac`)
+	stub("netplan", `echo "$*" >> "`+dir+`/netplan.log"`)
+	stub("curl", "exit 0")
+	script := strings.ReplaceAll(ipv6Script, "/etc/netplan/", dir+"/")
+	cmd := exec.Command(shell, "-s", "--", "2001:db8::1", "64", "fe80::1")
+	cmd.Stdin = strings.NewReader(script)
+	cmd.Env = []string{"PATH=" + dir + ":/usr/bin:/bin"}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	yaml, _ := os.ReadFile(filepath.Join(dir, "60-nekko-ipv6.yaml"))
+	return string(out), string(yaml)
+}
+
+func TestTheIPv6ScriptWritesTheAddressOnTheDefaultInterface(t *testing.T) {
+	out, yaml := ipv6ScriptRun(t, "")
+	for _, want := range []string{"ens3:", `["2001:db8::1/64"]`, `via: "fe80::1"`, "on-link: true"} {
+		if !strings.Contains(yaml, want) {
+			t.Errorf("netplan misses %q:\n%s", want, yaml)
+		}
+	}
+	if !strings.Contains(out, "доступен") {
+		t.Errorf("output: %s", out)
+	}
+}
+
+func TestTheIPv6ScriptLeavesAMachineThatRoutesIPv6Alone(t *testing.T) {
+	out, yaml := ipv6ScriptRun(t, "default via fe80::1 dev ens3")
+	if yaml != "" || !strings.Contains(out, "уже есть") {
+		t.Fatalf("output %q, netplan %q", out, yaml)
 	}
 }
