@@ -160,6 +160,10 @@ func runEntryBox(args []string) {
 		os.Exit(0)
 	}
 	if len(args) == 3 && args[0] == "ipv6" && args[2] == "forget-order" {
+		// The service derives its batch key from the content key.
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
 		ctx, cancel, pool := adminCLIPool()
 		defer cancel()
 		defer pool.Close()
