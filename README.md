@@ -113,8 +113,15 @@ push в `main` собирает образы `hub`, `admin`, `postgres` в пр�
 Секреты (`secrets/`) и остальные ключи `.env` остаются серверными, CI их не видит.
 Хранятся образы текущей и предыдущей ревизии.
 
+Контейнер держит inode смонтированного файла, поэтому новый файл доходит до него только
+с новым контейнером. Хеши `Caddyfile.hub` и `clickhouse-privacy.xml` лежат в `.env` и в
+label сервисов: при их смене `compose up` пересоздаёт только этот сервис, в том числе при
+откате. `hub-downdetector.yaml` доходит сам: `hub` получает новый образ с каждым релизом.
+Новый смонтированный файл с постоянным образом требует такого же хеша.
+
 `.env` сервера: `DOMAIN`, `PUBLIC_BASE_DOMAIN`, `PUBLIC_API_HOST`, `PUBLIC_SUB_HOST`,
-`ENTRY_AUTOPILOT_ENABLED=1`, плюс записываемые деплоем `HUB_REGISTRY`, `HUB_REVISION`.
+`ENTRY_AUTOPILOT_ENABLED=1`, плюс записываемые деплоем `HUB_REGISTRY`, `HUB_REVISION`,
+`CADDYFILE_SHA`, `CLICKHOUSE_PRIVACY_SHA`.
 
 Разовая настройка (и после правки `deploy/server/hikkari-hub-deploy`):
 

@@ -65,6 +65,13 @@ for f in $files; do
 done
 setenv "$root/.env" HUB_REGISTRY "$registry"
 setenv "$root/.env" HUB_REVISION "$revision"
+# A container holds the inode its one-file mount started with, so a new file
+# reaches it only through a new container. Caddy and ClickHouse keep their image
+# from release to release: their services carry these hashes as labels, and
+# compose replaces exactly the one whose file changed, here and in the rollback
+# below, which brings .env back. The hub takes a new image with every release.
+setenv "$root/.env" CADDYFILE_SHA "$(sha256sum < "$root/deploy/Caddyfile.hub" | cut -d' ' -f1)"
+setenv "$root/.env" CLICKHOUSE_PRIVACY_SHA "$(sha256sum < "$root/deploy/clickhouse-privacy.xml" | cut -d' ' -f1)"
 
 if compose pull --quiet && compose up -d --no-build --remove-orphans --wait --wait-timeout 240; then
 	echo "release $revision is up"

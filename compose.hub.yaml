@@ -23,6 +23,9 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:24.8-alpine
     env_file: ./secrets/hub-local.env
+    # A new privacy.xml takes a new container: deploy/server/hikkari-hub-deploy.
+    labels:
+      hikkari.mounted-file-sha: ${CLICKHOUSE_PRIVACY_SHA:-}
     volumes:
       - hub-ch:/var/lib/clickhouse
       - ./deploy/clickhouse-privacy.xml:/etc/clickhouse-server/config.d/privacy.xml:ro
@@ -84,6 +87,9 @@ services:
       NEKKO_API_URL: http://localhost:${ADMIN_PORT:-9443}
   caddy:
     image: caddy:2.10-alpine
+    # A new Caddyfile takes a new container: deploy/server/hikkari-hub-deploy.
+    labels:
+      hikkari.mounted-file-sha: ${CADDYFILE_SHA:-}
     environment:
       DOMAIN: ${DOMAIN:-localhost}
     ports:
