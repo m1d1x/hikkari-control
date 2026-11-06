@@ -535,6 +535,21 @@ func (id Identity) rotatedReality() (Identity, error) {
 	return fresh, nil
 }
 
+// withXhttpDomain is the identity of an XHTTP relay moved to another domain:
+// the VLESS id, the secret path, the mode and the ports stay, only the name
+// the relay answers to changes. Not an XHTTP relay is refused, since a repair
+// that changed nothing must not report success.
+func (id Identity) withXhttpDomain(domain string) (Identity, error) {
+	if id.Xhttp == nil {
+		return Identity{}, fmt.Errorf("%w: релей говорит %s, домена у него нет", ErrRejected, id.proto())
+	}
+	moved := id
+	x := *id.Xhttp
+	x.Domain = domain
+	moved.Xhttp = &x
+	return moved, nil
+}
+
 // EdgeEnv renders the identity as the env nekko-edge runs with (edge/config.go).
 // Every relay is a VPN exit: what its tunnel carries leaves through the
 // edge's own exit (edge/egress.go), so the env names no destination at all.

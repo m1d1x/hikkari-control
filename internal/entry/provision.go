@@ -608,6 +608,9 @@ type jobRun struct {
 	// front: box names a РФ-каскад front (fronts.go), whose host key lives in
 	// entry_fronts, not entry_boxes.
 	front bool
+	// movedRelays are the relays this run moved to the box's new domain
+	// (moveRelaysToDomain): their holders carry records naming the old one.
+	movedRelays []string
 }
 
 func (j *jobRun) step(name string) {
@@ -702,6 +705,16 @@ func (j *jobRun) provision(password string) error {
 	}
 	j.log("релеи: %s", strings.Join(relayNames(relays), ", "))
 
+	// A relay carries the domain it was minted on. A box that was given
+	// another name (the evicted one's replacement) must move its relays to it
+	// first: the front, the certificate and the edge env all read the relay's
+	// domain, and left on the old one they serve a name nobody dials now.
+	if acc.proto == ProtoVlessXhttp {
+		if relays, err = j.moveRelaysToDomain(relays); err != nil {
+			return err
+		}
+	}
+
 	j.step("harden")
 	if err := j.harden(r, relays); err != nil {
 		return err
@@ -755,7 +768,44 @@ func (j *jobRun) provision(password string) error {
 			j.log("%s переподписан", rel.name)
 		}
 	}
+	// A moved relay's old records name the old domain: the nudge is the
+	// difference between a client reconnecting in seconds and one waiting out
+	// its record's lifetime (П6.11).
+	if err := svc.nudgeHolders(j.ctx, j.movedRelays); err != nil {
+		j.log("предупредить держателей не удалось: %v — они дотянут до следующего фетча", err)
+	}
 	return nil
+}
+
+// moveRelaysToDomain rewrites the identity of every XHTTP relay whose domain
+// is not the box's, and returns the relays as they stand after. The records
+// the holders carry name the old domain, so a moved relay's holders are told
+// to come back for the re-signed one (the sign step re-signs it).
+func (j *jobRun) moveRelaysToDomain(relays []provRelay) ([]provRelay, error) {
+	domain := j.acc.domain
+	if domain == "" {
+		return relays, nil
+	}
+	var moved []string
+	for _, rel := range relays {
+		if rel.id.Xhttp == nil || rel.id.Xhttp.Domain == domain {
+			continue
+		}
+		fresh, err := rel.id.withXhttpDomain(domain)
+		if err != nil {
+			return nil, fmt.Errorf("релей %s: %w", rel.name, err)
+		}
+		if err := j.p.svc.setRelayIdentity(j.ctx, rel.name, fresh); err != nil {
+			return nil, fmt.Errorf("домен релея %s: %w", rel.name, err)
+		}
+		j.log("%s: релей переведён на домен %s", rel.name, domain)
+		moved = append(moved, rel.name)
+	}
+	if len(moved) == 0 {
+		return relays, nil
+	}
+	j.movedRelays = moved
+	return j.liveRelays()
 }
 
 // ensureDomain gives an XHTTP box a domain and waits until public resolvers

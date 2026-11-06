@@ -2,6 +2,7 @@ package entry
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -91,5 +92,81 @@ func TestInstallFrontKeepsTheSecretOffArgumentsAndTunnelsToLoopback(t *testing.T
 	}
 	if !strings.Contains(script, "certbot certonly --webroot") || !strings.Contains(script, "listen 443 ssl http2;") {
 		t.Fatal("the script is missing the certificate or the TLS front")
+	}
+}
+
+// An identity moved to another domain keeps its VLESS id, secret path, mode and
+// ports: only the name changes, and the original is left as it was.
+func TestAnXhttpIdentityMovesToAnotherDomainAndKeepsItsSecrets(t *testing.T) {
+	id, err := newXhttpIdentity(443, 10001, "pine6573.lol")
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved, err := id.withXhttpDomain("cirrus9867.lol")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved.Xhttp.Domain != "cirrus9867.lol" {
+		t.Fatalf("domain = %q, want cirrus9867.lol", moved.Xhttp.Domain)
+	}
+	if moved.UUID != id.UUID || moved.Xhttp.Path != id.Xhttp.Path || moved.Xhttp.Mode != id.Xhttp.Mode ||
+		moved.Port != id.Port || moved.LocalPortBase != id.LocalPortBase {
+		t.Fatal("a domain move changed something besides the name")
+	}
+	if id.Xhttp.Domain != "pine6573.lol" {
+		t.Fatal("the original identity was changed in place")
+	}
+
+	reality, err := newIdentity(443, 10001)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reality.withXhttpDomain("x.lol"); !errors.Is(err, ErrRejected) {
+		t.Fatalf("a Reality relay has no domain to move: err = %v", err)
+	}
+}
+
+// A box given a replacement domain (evict_domain) moves its relays to it
+// before anything is deployed; relays already on it are left alone.
+func TestProvisionMovesRelaysToTheBoxsNewDomain(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	box, _ := h.xhttpBox()
+	relay := h.relay(box, KindPersonal)
+	before, err := h.svc.RelayIdentity(ctx, relay)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	relays, err := h.svc.relayIdentities(ctx, box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := &jobRun{p: &Provisioner{svc: h.svc}, ctx: ctx, box: box, acc: boxAccess{domain: "cirrus9867.lol"}}
+	moved, err := j.moveRelaysToDomain(relays)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(moved) != 1 || moved[0].id.Xhttp.Domain != "cirrus9867.lol" {
+		t.Fatalf("relays after the move = %+v, want one on cirrus9867.lol", moved)
+	}
+	after, err := h.svc.RelayIdentity(ctx, relay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Xhttp.Domain != "cirrus9867.lol" || after.Xhttp.Path != before.Xhttp.Path || after.UUID != before.UUID {
+		t.Fatalf("stored identity = %+v, want the same secrets on cirrus9867.lol", after.Xhttp)
+	}
+	if len(j.movedRelays) != 1 || j.movedRelays[0] != relay {
+		t.Fatalf("movedRelays = %v, want [%s]", j.movedRelays, relay)
+	}
+
+	// A relay already on the box's domain is not touched, and nobody is told.
+	j2 := &jobRun{p: &Provisioner{svc: h.svc}, ctx: ctx, box: box, acc: boxAccess{domain: "cirrus9867.lol"}}
+	if _, err := j2.moveRelaysToDomain(moved); err != nil {
+		t.Fatal(err)
+	}
+	if len(j2.movedRelays) != 0 {
+		t.Fatalf("a relay on the right domain was reported moved: %v", j2.movedRelays)
 	}
 }
