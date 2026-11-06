@@ -722,17 +722,6 @@ func (j *jobRun) provision(password string) error {
 		}
 	}
 
-	// A real nginx fronts the XHTTP edge (H10): it terminates TLS on :443, owns
-	// the certificate and the cover site, and forwards the secret path to the
-	// edge on loopback. The edge is up now, so a request through the path finds
-	// the tunnel listening the moment nginx starts.
-	if acc.proto == ProtoVlessXhttp && len(relays) > 0 {
-		j.step("front")
-		if err := j.installFront(r, relays[0]); err != nil {
-			return fmt.Errorf("nginx-фронт %s: %w", j.acc.domain, err)
-		}
-	}
-
 	// The certificate is certbot's, ordered over HTTP-01 in the front step; the
 	// vantage's probe would otherwise meet a still-validating order and read a
 	// healthy fresh box as domain_blocked (01.11). The hub makes the first
@@ -1400,6 +1389,15 @@ func (j *jobRun) deploy(r Remote, build EdgeBuild, rel provRelay) error {
 	if err := j.install(r, rel); err != nil {
 		return err
 	}
+	// An XHTTP edge binds a loopback front and nothing public: the real nginx
+	// in front is part of deploying it, not a one-off provisioning step, so a
+	// rollout's swap (which comes through here too) refreshes the front and
+	// never leaves the edge on loopback with nothing on :443. Idempotent.
+	if rel.id.Xhttp != nil {
+		if err := j.installFront(r, rel); err != nil {
+			return fmt.Errorf("nginx-фронт %s: %w", rel.name, err)
+		}
+	}
 	// A swap that fails after moving the binary into place leaves the box
 	// recorded at its old build; the next run reads the truth off the box.
 	j.recordEdge(build.Arch, want)
@@ -1528,7 +1526,11 @@ domain="$1"; front="$2"
 secret="$(cat /run/nekko-front.path)"; rm -f /run/nekko-front.path
 [ -n "$secret" ] || { echo "no secret path" >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
-` + installNginxScript + `webroot="/var/www/$domain"
+` + installNginxScript + `# :80 for the ACME HTTP-01 challenge and the site. harden opens it on a fresh
+# node; a rollout's swap comes through here without harden, so open it here too
+# (idempotent) — else certbot cannot be reached and the front never comes up.
+command -v ufw >/dev/null && ufw allow 80/tcp >/dev/null 2>&1 || true
+webroot="/var/www/$domain"
 mkdir -p "$webroot/.well-known/acme-challenge"
 rm -f /etc/nginx/sites-enabled/default
 
