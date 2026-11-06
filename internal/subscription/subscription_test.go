@@ -205,7 +205,13 @@ func TestASubscriptionServesTheBatchAndStopsWhenRevoked(t *testing.T) {
 		t.Fatalf("batch asked for %v", batch.asked)
 	}
 
-	if rec := get("x" + token[1:]); rec.Code != http.StatusNotFound {
+	// One character off, never the token itself: a random token may start
+	// with the replacement.
+	wrong := "x" + token[1:]
+	if token[0] == 'x' {
+		wrong = "y" + token[1:]
+	}
+	if rec := get(wrong); rec.Code != http.StatusNotFound {
 		t.Fatalf("a wrong token: %d", rec.Code)
 	}
 	var stored int
