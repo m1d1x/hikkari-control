@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -295,6 +297,125 @@ func TestAnXhttpEdgeTunnelsUnderTheSecretPathAndIsASiteElsewhere(t *testing.T) {
 	defer conn.Close()
 	if names := conn.ConnectionState().PeerCertificates[0].DNSNames; len(names) != 1 || names[0] != testDomain {
 		t.Fatalf("no-SNI certificate: %v", names)
+	}
+}
+
+// EDGE_XH_FRONT decides who terminates TLS on the public port, and that sets
+// where the edge listens: its own :443 by default, a loopback port when a proxy
+// is in front.
+func TestEDGEXHFrontChoosesWhoTerminatesTLS(t *testing.T) {
+	m, _ := xhttpEnv(t, 0, 10001)
+	delete(m, "EDGE_LISTEN")
+
+	c, err := XhttpConfigFromEnv(env(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Front != frontTLS || c.Listen != "0.0.0.0:443" {
+		t.Fatalf("default: front %q listen %q, want %q and the public port", c.Front, c.Listen, frontTLS)
+	}
+
+	m["EDGE_XH_FRONT"] = "plaintext"
+	c, err = XhttpConfigFromEnv(env(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Front != frontPlaintext || c.Listen != "127.0.0.1:8443" {
+		t.Fatalf("plaintext: front %q listen %q, want loopback", c.Front, c.Listen)
+	}
+
+	// A plaintext front needs no certificate of its own: the proxy owns it.
+	delete(m, "EDGE_XH_CERT")
+	delete(m, "EDGE_XH_KEY")
+	if _, err := XhttpConfigFromEnv(env(m)); err != nil {
+		t.Fatalf("plaintext without a cert: %v", err)
+	}
+
+	// An explicit listen is kept.
+	m["EDGE_LISTEN"] = "127.0.0.1:9000"
+	if c, err := XhttpConfigFromEnv(env(m)); err != nil || c.Listen != "127.0.0.1:9000" {
+		t.Fatalf("explicit listen: %q %v", c.Listen, err)
+	}
+
+	m["EDGE_XH_FRONT"] = "caddy"
+	if _, err := XhttpConfigFromEnv(env(m)); err == nil || !strings.Contains(err.Error(), "EDGE_XH_FRONT") {
+		t.Fatalf("unknown front: %v", err)
+	}
+}
+
+// tlsFrontProxy stands in for nginx: it terminates TLS on its own port with the
+// domain's certificate and forwards every request to the edge's loopback over
+// h2c, streaming both ways (nginx's proxy_buffering off).
+func tlsFrontProxy(t *testing.T, edgeAddr string) (int, string) {
+	t.Helper()
+	cert, key, pin := leafFor(t, testDomain)
+	crt, err := tls.X509KeyPair([]byte(cert), []byte(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := &url.URL{Scheme: "http", Host: edgeAddr}
+	protos := new(http.Protocols)
+	protos.SetUnencryptedHTTP2(true)
+	rp := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(target)
+			pr.Out.Host = pr.In.Host
+		},
+		Transport: &http.Transport{
+			Protocols:           protos,
+			MaxIdleConnsPerHost: 4,
+			IdleConnTimeout:     90 * time.Second,
+		},
+		FlushInterval: -1,
+	}
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	srv := &http.Server{Handler: rp, TLSConfig: &tls.Config{Certificates: []tls.Certificate{crt}}}
+	go func() { _ = srv.ServeTLS(ln, "", "") }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return ln.Addr().(*net.TCPAddr).Port, pin
+}
+
+// With a proxy in front, the edge serves the tunnel in cleartext on loopback and
+// the client's XHTTP still reaches a site through the secret path. This is the
+// fronted shape a real nginx gives on a node (H10); the proxy here is the stand
+// -in, nginx itself is verified on the box.
+func TestAPlaintextFrontTunnelsBehindATLSProxy(t *testing.T) {
+	edgePort, local := freePort(t, "tcp"), freePort(t, "tcp")
+	sitePort := freePort(t, "tcp")
+	tcpEcho(t, sitePort, "site")
+
+	m, _ := xhttpEnv(t, edgePort, local)
+	delete(m, "EDGE_XH_CERT")
+	delete(m, "EDGE_XH_KEY")
+	m["EDGE_XH_FRONT"] = "plaintext"
+	c, err := XhttpConfigFromEnv(env(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Front != frontPlaintext {
+		t.Fatalf("front %q", c.Front)
+	}
+	doc := c.XrayConfig()
+	asInternet(t, doc, "tcp", sitePort)
+	startXray(t, doc)
+	if err := serveFront(t.Context(), c); err != nil {
+		t.Fatal(err)
+	}
+
+	frontPort, pin := tlsFrontProxy(t, c.Listen)
+	// stream-one is a single full-duplex POST a half-duplex proxy cannot carry;
+	// it is measured on the node, where nginx's behaviour is the real answer.
+	for _, mode := range []string{"packet-up", "stream-up"} {
+		t.Run(mode, func(t *testing.T) {
+			doors := xhttpClient(t, frontPort, pin, mode, map[string]int{"site": sitePort})
+			if got := talk(t, doors["site"], 5*time.Second); got != "site:ping" {
+				t.Fatalf("through the fronted tunnel: %q", got)
+			}
+		})
 	}
 }
 

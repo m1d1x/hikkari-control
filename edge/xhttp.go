@@ -22,16 +22,29 @@ import (
 )
 
 // An XHTTP edge (plan 42 П4в; EDGE_PROTO=vless-xhttp) is an ordinary HTTPS
-// site on the relay's own domain with a tunnel under one secret path. The
-// edge terminates TLS itself — a real certificate, Let's Encrypt over
-// TLS-ALPN-01 on the same :443 — so there is no nginx on the box (П5: one
-// binary) and nothing on the path buffers a streaming upload.
+// site on the relay's own domain with a tunnel under one secret path.
+//
+// By default the edge terminates TLS itself — a real certificate, Let's Encrypt
+// over TLS-ALPN-01 on the same :443 — so there is no nginx on the box (П5: one
+// binary) and nothing on the path buffers a streaming upload:
 //
 //	:443 TLS (own domain, real cert) ─► net/http
 //	  ├─ <secret path>/…  ─► reverse proxy, h2c ─► Xray XHTTP inbound 127.0.0.1:<base>
 //	  │                                              └─ VLESS user ─► rule by destination
 //	  │                                                   └─ direct (egress.go)
 //	  └─ anything else     ─► the decoy site
+//
+// EDGE_XH_FRONT=plaintext puts a real reverse proxy (nginx) in front instead:
+// the proxy terminates TLS on :443, owns the certificate and serves the cover
+// site, and forwards the secret path to the edge, which then listens in
+// cleartext on a loopback EDGE_LISTEN and keeps only the tunnel:
+//
+//	nginx :443 TLS ─► <secret path>/… ─► 127.0.0.1:8443 cleartext (h2c / HTTP/1.1)
+//	                                       └─ this edge's reverse proxy ─► Xray
+//
+// A node whose address must look lived-in (H10) takes this front: a genuine
+// nginx and a real site, as zovfy has, in place of the Go front's `Server:
+// nginx` on a placeholder page.
 //
 // A prober without the path sees a small site and its 404s, never an Xray
 // error: the path, not the protocol, is what tells the tunnel apart.
@@ -62,7 +75,24 @@ type XhttpConfig struct {
 	SiteDir string
 	// LogLevel is Xray's loglevel.
 	LogLevel string
+	// Front says who terminates TLS on the public port: the edge itself
+	// (frontTLS, the default) or a reverse proxy ahead of it (frontPlaintext),
+	// in which case the edge listens in cleartext on a loopback EDGE_LISTEN and
+	// the proxy owns the certificate and the cover site.
+	Front string
 }
+
+// Front values for EDGE_XH_FRONT: who terminates TLS on the public port.
+const (
+	// frontTLS: the edge terminates TLS itself on EDGE_LISTEN (one binary, no
+	// nginx). The default.
+	frontTLS = "tls"
+	// frontPlaintext: a reverse proxy (nginx) terminates TLS ahead of the edge
+	// and forwards the secret path to it; the edge serves the same handler in
+	// cleartext on a loopback EDGE_LISTEN. The certificate and the cover site
+	// belong to the proxy.
+	frontPlaintext = "plaintext"
+)
 
 // minSecretPathLen and secretPathRe mirror nekko-entry record.rs
 // check_secret_path: the client refuses any other shape.
@@ -83,9 +113,19 @@ func XhttpConfigFromEnv(getenv func(string) string) (XhttpConfig, error) {
 		ACMEURL:   getenv("EDGE_ACME_URL"),
 		SiteDir:   getenv("EDGE_SITE_DIR"),
 		LogLevel:  getenv("EDGE_LOG_LEVEL"),
+		Front:     strings.ToLower(strings.TrimSpace(getenv("EDGE_XH_FRONT"))),
+	}
+	if c.Front == "" {
+		c.Front = frontTLS
 	}
 	if c.Listen == "" {
-		c.Listen = "0.0.0.0:443"
+		// Behind a proxy the edge is never the public port: it listens on
+		// loopback, where only the proxy reaches it.
+		if c.Front == frontPlaintext {
+			c.Listen = "127.0.0.1:8443"
+		} else {
+			c.Listen = "0.0.0.0:443"
+		}
 	}
 	if c.LogLevel == "" {
 		c.LogLevel = "warning"
@@ -109,6 +149,9 @@ func XhttpConfigFromEnv(getenv func(string) string) (XhttpConfig, error) {
 	}
 	if len(c.Clients) == 0 {
 		errs = append(errs, errors.New("EDGE_CLIENTS is empty"))
+	}
+	if c.Front != frontTLS && c.Front != frontPlaintext {
+		errs = append(errs, fmt.Errorf("EDGE_XH_FRONT: want %q or %q, got %q", frontTLS, frontPlaintext, c.Front))
 	}
 
 	c.LocalPort = 10001
@@ -284,8 +327,12 @@ func (c XhttpConfig) tlsConfig() (*tls.Config, error) {
 	return cfg, nil
 }
 
-// serveFront runs the HTTPS site until ctx ends.
+// serveFront runs the site until ctx ends: the edge's own HTTPS when it
+// terminates TLS, or cleartext on loopback when a proxy does (frontPlaintext).
 func serveFront(ctx context.Context, c XhttpConfig) error {
+	if c.Front == frontPlaintext {
+		return servePlaintextFront(ctx, c)
+	}
 	cfg, err := c.tlsConfig()
 	if err != nil {
 		return err
@@ -311,6 +358,41 @@ func serveFront(ctx context.Context, c XhttpConfig) error {
 	}()
 	go func() {
 		if err := srv.ServeTLS(ln, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("nekko-edge: front: %v", err)
+		}
+	}()
+	return nil
+}
+
+// servePlaintextFront runs the site in cleartext on c.Listen, a loopback port a
+// reverse proxy (nginx) forwards the secret path to after terminating TLS. It
+// speaks HTTP/1.1 and h2c with prior knowledge, so the proxy may use either;
+// the tunnel's streams are flushed, never buffered — the proxy must do the same
+// (nginx: proxy_buffering off, proxy_request_buffering off).
+func servePlaintextFront(ctx context.Context, c XhttpConfig) error {
+	ln, err := net.Listen("tcp", c.Listen)
+	if err != nil {
+		return err
+	}
+	protos := new(http.Protocols)
+	protos.SetHTTP1(true)
+	protos.SetUnencryptedHTTP2(true)
+	srv := &http.Server{
+		Handler:           c.handler(),
+		Protocols:         protos,
+		ReadHeaderTimeout: 10 * time.Second,
+		// No read/write timeout: the tunnel's requests are long-lived streams.
+		IdleTimeout: 5 * time.Minute,
+		ErrorLog:    log.New(discard{}, "", 0),
+	}
+	go func() {
+		<-ctx.Done()
+		shut, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shut)
+	}()
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("nekko-edge: front: %v", err)
 		}
 	}()
