@@ -39,12 +39,14 @@ case " $* " in
 	*" DPkg::Lock::Timeout="*) ;;
 	*) exit 100 ;;
 	esac
+	# One transient clash even with the lock timeout: apt_install must retry.
+	[ -e "$D/install-failed" ] || { : >"$D/install-failed"; exit 100; }
 	: >"$D/installed"
 	;;
 esac`)
 
 	cmd := exec.Command(shell, "-s")
-	cmd.Stdin = strings.NewReader("set -eu\n" + installUfwScript)
+	cmd.Stdin = strings.NewReader("set -eu\n" + aptInstallScript + installUfwScript)
 	cmd.Env = []string{"PATH=" + dir}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("the script gave up on a lock that would have been released: %v\n%s", err, out)

@@ -1303,7 +1303,7 @@ case "$effective" in
 	*"passwordauthentication no"*) ;;
 	*) echo "sshd still allows passwords" >&2; exit 1 ;;
 esac
-` + installUfwScript + ufwFiltersIPv6Script + `# SSH answers only the address this very session came from: the hub. Scanners
+` + aptInstallScript + installUfwScript + ufwFiltersIPv6Script + `# SSH answers only the address this very session came from: the hub. Scanners
 # read an open port as a hint (NTC Party 25993), and the hub is the only one who
 # ever logs in. Rules before the enable, the open rule out last: a rerun on a
 # running machine never leaves the hub without a way in.
@@ -1322,25 +1322,34 @@ const ufwFiltersIPv6Script = `{ grep -v '^IPV6=' /etc/default/ufw || true; echo 
 mv /etc/default/ufw.new /etc/default/ufw
 `
 
-// installUfwScript runs on a machine that has only just booted, and apt is not
-// the hub's alone there: apt-get update itself wakes PackageKit, which takes
-// apt's locks for its own refresh, and apt-get exits 100 on a lock it cannot
-// get. eun13 was lost at this step that way. DPkg::Lock::Timeout makes install
-// wait for the dpkg lock; it does not cover update's lock on the lists, so
-// update is tried again instead.
-const installUfwScript = `if ! command -v ufw >/dev/null; then
+// aptInstallScript defines apt_install, which installs packages on a machine
+// that has only just booted, where apt is not the hub's alone: PackageKit,
+// unattended-upgrades and cloud-init all reach for apt's locks, and apt-get
+// exits 100 on a lock it cannot get. eun13 was lost refreshing the lists that
+// way; euw1's nginx failed the same race on a rollout (06.11). So both steps
+// are retried — the list refresh (its lock is not covered by DPkg::Lock) and
+// the install itself (which also waits on the dpkg lock) — rather than failing
+// the whole job on one transient clash.
+const aptInstallScript = `apt_install() {
 	export DEBIAN_FRONTEND=noninteractive
 	updated=
 	for _ in 1 2 3 4 5 6 7 8; do
-		if apt-get update -qq >/dev/null; then
-			updated=1
-			break
-		fi
+		if apt-get update -qq >/dev/null; then updated=1; break; fi
 		sleep 15
 	done
-	[ -n "$updated" ] || { echo "apt-get update failed" >&2; exit 1; }
-	apt-get -o DPkg::Lock::Timeout=300 install -y -qq ufw >/dev/null
-fi
+	[ -n "$updated" ] || { echo "apt-get update failed" >&2; return 1; }
+	for _ in 1 2 3 4 5 6 7 8; do
+		if apt-get -o DPkg::Lock::Timeout=300 install -y -qq "$@" >/dev/null; then return 0; fi
+		sleep 15
+	done
+	echo "apt-get install $* failed" >&2
+	return 1
+}
+`
+
+// installUfwScript installs ufw through apt_install (aptInstallScript must be
+// sourced first) when the box has none.
+const installUfwScript = `if ! command -v ufw >/dev/null; then apt_install ufw; fi
 `
 
 // transport is what the box's relays listen on: a Reality relay on TCP, a
@@ -1525,8 +1534,7 @@ const frontScript = `set -eu
 domain="$1"; front="$2"
 secret="$(cat /run/nekko-front.path)"; rm -f /run/nekko-front.path
 [ -n "$secret" ] || { echo "no secret path" >&2; exit 1; }
-export DEBIAN_FRONTEND=noninteractive
-` + installNginxScript + `# :80 for the ACME HTTP-01 challenge and the site. harden opens it on a fresh
+` + aptInstallScript + installNginxScript + `# :80 for the ACME HTTP-01 challenge and the site. harden opens it on a fresh
 # node; a rollout's swap comes through here without harden, so open it here too
 # (idempotent) — else certbot cannot be reached and the front never comes up.
 command -v ufw >/dev/null && ufw allow 80/tcp >/dev/null 2>&1 || true
@@ -1597,18 +1605,10 @@ systemctl reload nginx
 echo "nginx up for $domain"
 `
 
-// installNginxScript installs nginx and certbot with the same apt-lock dance as
-// installUfwScript (PackageKit wakes on update and holds the lock; eun13 was
-// lost to it). Idempotent: skips when both are already present.
-const installNginxScript = `if ! command -v nginx >/dev/null || ! command -v certbot >/dev/null; then
-	updated=
-	for _ in 1 2 3 4 5 6 7 8; do
-		if apt-get update -qq >/dev/null; then updated=1; break; fi
-		sleep 15
-	done
-	[ -n "$updated" ] || { echo "apt-get update failed" >&2; exit 1; }
-	apt-get -o DPkg::Lock::Timeout=300 install -y -qq nginx certbot >/dev/null
-fi
+// installNginxScript installs nginx and certbot through apt_install
+// (aptInstallScript must be sourced first). Idempotent: skips when both are
+// already present.
+const installNginxScript = `if ! command -v nginx >/dev/null || ! command -v certbot >/dev/null; then apt_install nginx certbot; fi
 `
 
 // swapIn writes one nekko-edge instance's env and runs the swap: check the
