@@ -722,12 +722,22 @@ func (j *jobRun) provision(password string) error {
 		}
 	}
 
-	// An XHTTP edge orders its certificate on its first TLS handshake, and
-	// the vantage's probe can be that handshake: Let's Encrypt still
-	// validating, the named TLS fails, and a healthy fresh box reads as
-	// domain_blocked (01.11). The hub makes the first handshake itself and
-	// waits for the certificate to verify before anyone judges the box. The
-	// address is dialled directly, front or not: it is the box's own cert.
+	// A real nginx fronts the XHTTP edge (H10): it terminates TLS on :443, owns
+	// the certificate and the cover site, and forwards the secret path to the
+	// edge on loopback. The edge is up now, so a request through the path finds
+	// the tunnel listening the moment nginx starts.
+	if acc.proto == ProtoVlessXhttp && len(relays) > 0 {
+		j.step("front")
+		if err := j.installFront(r, relays[0]); err != nil {
+			return fmt.Errorf("nginx-фронт %s: %w", j.acc.domain, err)
+		}
+	}
+
+	// The certificate is certbot's, ordered over HTTP-01 in the front step; the
+	// vantage's probe would otherwise meet a still-validating order and read a
+	// healthy fresh box as domain_blocked (01.11). The hub makes the first
+	// handshake itself and waits for the certificate to verify on :443 — now
+	// nginx's — before anyone judges the box.
 	if acc.proto == ProtoVlessXhttp && len(relays) > 0 {
 		j.step("cert")
 		if err := j.p.certCheck(j.ctx, acc.address, relays[0].id.Port, j.acc.domain); err != nil {
@@ -1269,9 +1279,15 @@ echo "настроен на $iface, интернет по IPv6 не отвеча
 `
 
 func (j *jobRun) harden(r Remote, relays []provRelay) error {
-	ports := make([]string, 0, len(relays))
+	ports := make([]string, 0, len(relays)+1)
 	for _, rel := range relays {
 		ports = append(ports, strconv.Itoa(rel.id.Port)+"/"+j.transport())
+	}
+	if j.acc.proto == ProtoVlessXhttp {
+		// nginx answers :80 for the ACME HTTP-01 challenge certbot runs, and a
+		// lived-in site answers there too (zovfy's :80 is open). :443 is already
+		// in the relay ports above.
+		ports = append(ports, "80/tcp")
 	}
 	sort.Strings(ports)
 	out, err := r.Run(j.ctx, "bash -s -- "+strings.Join(ports, " "), strings.NewReader(hardenScript))
@@ -1444,14 +1460,154 @@ func (j *jobRun) install(r Remote, rel provRelay) error {
 	if j.acc.proto == ProtoVlessXhttp {
 		j.log("%s: сайт на домене релея, туннель под секретным путём", rel.name)
 	}
-	if err := j.swapIn(r, rel.name, "entry_relays.identity_ct", envMap, rel.id.Port, j.transport()); err != nil {
+	// The port the swap waits to see listening is the one the edge binds: an
+	// XHTTP edge binds a loopback front (nginx holds the public port), every
+	// other protocol binds the public port itself.
+	listen := rel.id.edgeListenPort()
+	if err := j.swapIn(r, rel.name, "entry_relays.identity_ct", envMap, listen, j.transport()); err != nil {
 		return err
 	}
 	// The hub's own words, not the script's last line (migration 043: the
 	// job log never carries raw remote output).
-	j.log("nekko-edge@%s запущен на :%d", rel.name, rel.id.Port)
+	if j.acc.proto == ProtoVlessXhttp {
+		j.log("nekko-edge@%s запущен на loopback :%d, за nginx на :%d", rel.name, listen, rel.id.Port)
+	} else {
+		j.log("nekko-edge@%s запущен на :%d", rel.name, listen)
+	}
 	return nil
 }
+
+// shellSafeDomainRe guards a domain before it goes into a shell command and a
+// file path in the front step. A relay domain is already a validated hostname
+// (checkRelayDomain); this refuses anything that is not, rather than trusting
+// the caller.
+var shellSafeDomainRe = regexp.MustCompile(`^[a-z0-9.-]+$`)
+
+// installFront puts a real nginx in front of the XHTTP edge (H10): the relay's
+// own cover site on :443, a Let's Encrypt certificate ordered over HTTP-01, and
+// the secret path forwarded to the edge's loopback front. The edge keeps only
+// the tunnel. Idempotent: a rerun refreshes the site and the config and reuses
+// a certificate already on the box.
+func (j *jobRun) installFront(r Remote, rel provRelay) error {
+	x := rel.id.Xhttp
+	if x == nil {
+		return fmt.Errorf("релей %s не XHTTP", rel.name)
+	}
+	domain := x.Domain
+	if !shellSafeDomainRe.MatchString(domain) {
+		return fmt.Errorf("домен %s не похож на имя", remoteWord(domain))
+	}
+	front := rel.id.xhttpFrontPort()
+
+	// The cover site, drawn from the domain, uploaded to the webroot.
+	site := frontSite(domain)
+	if _, err := r.Run(j.ctx, "umask 022 && mkdir -p /var/www/"+domain+" && cat > /var/www/"+domain+"/index.html",
+		bytes.NewReader(site)); err != nil {
+		return fmt.Errorf("сайт: %w", err)
+	}
+
+	// The secret path is a credential: it goes to the box on stdin, into a
+	// root-only tmpfs file the script reads and deletes, never an argument (a
+	// local `ps` would read an argument) and never the job log.
+	if _, err := r.Run(j.ctx, "umask 077 && cat > /run/nekko-front.path", strings.NewReader(x.Path)); err != nil {
+		return fmt.Errorf("секретный путь: %w", err)
+	}
+	if _, err := r.Run(j.ctx, "bash -s -- "+domain+" "+strconv.Itoa(front), strings.NewReader(frontScript)); err != nil {
+		return err
+	}
+	j.log("nginx на :%d, сайт %d КБ, сертификат Let's Encrypt, туннель → loopback :%d", rel.id.Port, len(site)>>10, front)
+	return nil
+}
+
+// frontScript installs nginx and certbot, serves the cover site on :80, orders
+// the certificate over HTTP-01, then serves :443 with TLS, the site, and the
+// tunnel under the secret path alone. $1 is the domain, $2 the edge's loopback
+// front port; the secret path is read from /run/nekko-front.path. Idempotent.
+const frontScript = `set -eu
+domain="$1"; front="$2"
+secret="$(cat /run/nekko-front.path)"; rm -f /run/nekko-front.path
+[ -n "$secret" ] || { echo "no secret path" >&2; exit 1; }
+export DEBIAN_FRONTEND=noninteractive
+` + installNginxScript + `webroot="/var/www/$domain"
+mkdir -p "$webroot/.well-known/acme-challenge"
+rm -f /etc/nginx/sites-enabled/default
+
+# :80 first: the cover site and the ACME challenge, enough to order the cert.
+cat >/etc/nginx/sites-available/$domain <<NGINX
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $domain;
+    root $webroot;
+    index index.html;
+    location /.well-known/acme-challenge/ { root $webroot; }
+    location / { try_files \$uri \$uri/ =404; }
+}
+NGINX
+ln -sf /etc/nginx/sites-available/$domain /etc/nginx/sites-enabled/$domain
+nginx -t
+systemctl enable --now nginx >/dev/null 2>&1 || systemctl restart nginx
+systemctl reload nginx
+
+# The certificate over HTTP-01. Kept across reruns; renewal reloads nginx.
+if [ ! -d "/etc/letsencrypt/live/$domain" ]; then
+	certbot certonly --webroot -w "$webroot" -d "$domain" \
+		--non-interactive --agree-tos --register-unsafely-without-email \
+		--deploy-hook "systemctl reload nginx" >/dev/null
+fi
+
+# :443 with TLS, the cover site, and the tunnel under the secret path only. A
+# path that merely starts with the same characters is the site's 404, as every
+# other path is — the edge, behind the proxy, never shows a page of its own.
+cat >/etc/nginx/sites-available/$domain <<NGINX
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $domain;
+    root $webroot;
+    index index.html;
+    location /.well-known/acme-challenge/ { root $webroot; }
+    location / { try_files \$uri \$uri/ =404; }
+}
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name $domain;
+    ssl_certificate /etc/letsencrypt/live/$domain/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$domain/privkey.pem;
+    root $webroot;
+    index index.html;
+    location ~ "^$secret(\$|/)" {
+        proxy_pass http://127.0.0.1:$front;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_set_header Host \$host;
+        proxy_set_header Connection "";
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+    }
+    location / { try_files \$uri \$uri/ =404; }
+}
+NGINX
+nginx -t
+systemctl reload nginx
+echo "nginx up for $domain"
+`
+
+// installNginxScript installs nginx and certbot with the same apt-lock dance as
+// installUfwScript (PackageKit wakes on update and holds the lock; eun13 was
+// lost to it). Idempotent: skips when both are already present.
+const installNginxScript = `if ! command -v nginx >/dev/null || ! command -v certbot >/dev/null; then
+	updated=
+	for _ in 1 2 3 4 5 6 7 8; do
+		if apt-get update -qq >/dev/null; then updated=1; break; fi
+		sleep 15
+	done
+	[ -n "$updated" ] || { echo "apt-get update failed" >&2; exit 1; }
+	apt-get -o DPkg::Lock::Timeout=300 install -y -qq nginx certbot >/dev/null
+fi
+`
 
 // swapIn writes one nekko-edge instance's env and runs the swap: check the
 // staged binary against it, move both in, restart, wait until port listens.

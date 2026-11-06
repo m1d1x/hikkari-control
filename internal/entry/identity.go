@@ -244,6 +244,26 @@ func (id Identity) echoPort() int {
 	return id.LocalPortBase + relayLoopbackBlock - 1
 }
 
+// xhttpFrontPort is the loopback port the XHTTP edge's cleartext front listens
+// on, with nginx terminating TLS ahead of it (EDGE_XH_FRONT=plaintext). It sits
+// one past the Xray XHTTP inbound at LocalPortBase, inside the relay's own
+// loopback block, so it stays distinct per relay on a box and never reaches the
+// firewall (loopback only).
+func (id Identity) xhttpFrontPort() int {
+	return id.LocalPortBase + 1
+}
+
+// edgeListenPort is the port nekko-edge binds and the install waits to see
+// listening: the public Port for a protocol the edge fronts itself, but the
+// loopback front port for an XHTTP edge, which binds no public port — nginx
+// holds :443 and forwards the secret path to this loopback.
+func (id Identity) edgeListenPort() int {
+	if id.Xhttp != nil {
+		return id.xhttpFrontPort()
+	}
+	return id.Port
+}
+
 // voiceCertLifetime outlives any relay: the pin, not the validity window, is
 // what the client checks, and an expiring leaf would only be a way for a
 // forgotten relay to die on a date.
@@ -541,9 +561,15 @@ func (id Identity) EdgeEnv() (map[string]string, error) {
 		}, nil
 	}
 	if x := id.Xhttp; x != nil {
+		// A real nginx terminates TLS on the public port and serves the cover
+		// site (H10: a lived-in address); the edge keeps only the tunnel, in
+		// cleartext on a loopback port nginx forwards the secret path to. The
+		// public port is nginx's, so EDGE_LISTEN names the loopback front, not
+		// id.Port.
 		return map[string]string{
 			"EDGE_PROTO":           ProtoVlessXhttp,
-			"EDGE_LISTEN":          "0.0.0.0:" + strconv.Itoa(id.Port),
+			"EDGE_XH_FRONT":        "plaintext",
+			"EDGE_LISTEN":          "127.0.0.1:" + strconv.Itoa(id.xhttpFrontPort()),
 			"EDGE_XH_DOMAIN":       x.Domain,
 			"EDGE_XH_PATH":         x.Path,
 			"EDGE_CLIENTS":         id.UUID,

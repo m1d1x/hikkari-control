@@ -322,6 +322,12 @@ func TestNewXhttpIdentityIsDialable(t *testing.T) {
 		e["EDGE_MEDIA"] != "" || e["EDGE_ECHO_PORT"] != "" {
 		t.Fatalf("edge env %v", e)
 	}
+	// nginx holds the public port: the edge serves the tunnel in cleartext on
+	// the loopback front, one past the Xray inbound at LocalPortBase.
+	if e["EDGE_XH_FRONT"] != "plaintext" || e["EDGE_LISTEN"] != "127.0.0.1:10002" ||
+		e["EDGE_LOCAL_PORT_BASE"] != "10001" {
+		t.Fatalf("edge env front: %v", e)
+	}
 }
 
 func TestARelayDomainIsAPlainDomainAndNeverTheBrands(t *testing.T) {
