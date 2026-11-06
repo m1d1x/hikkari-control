@@ -43,6 +43,11 @@
 //	                           most once per its probe interval (hours).
 //	ENTRY_PROBE_K2_CONTROL     allowed-site control host:port (default
 //	                           "www.samsung.com:443").
+//	ENTRY_PROBE_RU_CONTROL     comma-separated Russian host[:port] list the point
+//	                           reaches for to prove its own health (default
+//	                           ya.ru, vk.com, gosuslugi, mail.ru, ozon, rbc);
+//	                           "off" disables it (control.go).
+//	ENTRY_PROBE_RU_CONTROL_SEC seconds between controls (default 120).
 //	ENTRY_PROBE_K1_SNI         SNI for the K1 bare-TLS control instead of the
 //	                           relay's cover. Unset in normal operation; set it
 //	                           to a name the censor is known to cut (§8.2: apple)
@@ -148,6 +153,10 @@ type config struct {
 	fingerprint string
 	timeout     time.Duration
 	stand       standConfig
+	// controlHosts are the Russian sites the point reaches for to show it is
+	// itself in working order (control.go); empty turns the control off.
+	controlHosts []string
+	controlEvery time.Duration
 }
 
 func main() {
@@ -174,6 +183,9 @@ func main() {
 		fingerprint: envStr("ENTRY_PROBE_FINGERPRINT", "chrome"),
 		timeout:     time.Duration(envInt("ENTRY_PROBE_DIAL_TIMEOUT_MS", 8000)) * time.Millisecond,
 		stand:       standFromEnv(),
+
+		controlHosts: controlHosts(envStr("ENTRY_PROBE_RU_CONTROL", defaultControlHosts)),
+		controlEvery: time.Duration(envInt("ENTRY_PROBE_RU_CONTROL_SEC", 120)) * time.Second,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -193,6 +205,9 @@ func main() {
 	// The matrix stand on the hub's schedule (stand.go): minutes-long runs of
 	// the core users run, one at a time.
 	go cfg.serveStand(ctx)
+	// The point's own health from inside Russia (control.go): the hub retires
+	// a slot whose controls fail twice in a row.
+	go cfg.serveControl(ctx, stop)
 	cfg.watchPool(ctx)
 	log.Println("entry-prober: shutdown")
 }

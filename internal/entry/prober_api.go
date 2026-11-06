@@ -118,6 +118,28 @@ func RegisterProberRoutes(mux *http.ServeMux, svc *Service) {
 		}
 		writeJSON(w, http.StatusOK, task)
 	}))
+	// The prober's own health seen from inside Russia (vantage_control.go):
+	// ControlKickAfter failed reports in a row retire the slot, and the answer
+	// says so, so the prober stops instead of retrying into a 401.
+	mux.HandleFunc("POST /api/v1/internal/entry-probes/control", gate(func(w http.ResponseWriter, r *http.Request) {
+		var body VantageControl
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "body is not {\"reached\",\"total\",\"failed\"}"})
+			return
+		}
+		kicked, err := svc.RecordVantageControl(r.Context(), vantageOf(r), body)
+		switch {
+		case errors.Is(err, ErrRejected):
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		case errors.Is(err, ErrNoSuchVantage):
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		case err != nil:
+			applog.Error(r.Context(), "entry", "vantage control failed", applog.F("err", err.Error()))
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
+		default:
+			writeJSON(w, http.StatusOK, map[string]any{"passed": body.Passed(), "kicked": kicked})
+		}
+	}))
 	// The verdicts of a claimed probe, and a bench's result.
 	mux.HandleFunc("POST /api/v1/internal/entry-probes/tasks/{id}", gate(func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(r.PathValue("id"))
