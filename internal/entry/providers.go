@@ -215,10 +215,13 @@ func (s *Service) loadHosterLocked(rows map[string]providerRow) {
 // hub prefers. The running hub is not touched: its autopilot keeps ordering
 // from, and handing back to, the hoster it loaded.
 //
-// A machine ordered this way is not handed back by the hub while another hoster
-// is its active one (hosting.go reads machines by the active hoster's kind): the
-// operator retires it through the same CLI.
-func (s *Service) UseHoster(ctx context.Context, kind string) error {
+// region, when not empty, is the region the order names: see [Service.hostingIn].
+//
+// A machine ordered this way is not handed back by the hub's own passes while
+// another hoster is its active one (hosting.go reads machines by the active
+// hoster's kind): the operator retires it with `entry-box retire`, which goes
+// to the machine's own hoster.
+func (s *Service) UseHoster(ctx context.Context, kind, region string) error {
 	row, exists, err := s.repo.provider(ctx, kind)
 	if err != nil {
 		return err
@@ -226,11 +229,15 @@ func (s *Service) UseHoster(ctx context.Context, kind string) error {
 	if !exists || !row.Enabled {
 		return fmt.Errorf("%w: %s", ErrNoHoster, kind)
 	}
-	bp, err := s.hostingClientFor(ctx, kind, nil)
+	bp, err := s.hostingIn(ctx, kind, region)
 	if err != nil {
 		return err
 	}
-	s.SetHoster(kind, bp, row.hostingPolicy())
+	policy := row.hostingPolicy()
+	if region != "" {
+		policy.Region = region
+	}
+	s.SetHoster(kind, bp, policy)
 	return nil
 }
 

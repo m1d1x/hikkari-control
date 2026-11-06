@@ -651,16 +651,18 @@ func cityPrefix(reg BoxRegion) string {
 // down without the make-before-break the pool requires. A box with no
 // instance id was rented by hand — there is nothing to delete, which this
 // call says rather than treating as success.
+//
+// The delete goes to the hoster and region the machine was rented from, not to
+// the active hoster: asked about an id it never issued, another hoster answers
+// "no such instance", which reads as handed back while the real one keeps
+// charging.
 func (s *Service) DeleteBoxInstance(ctx context.Context, box string) error {
-	h, err := s.hoster()
-	if err != nil {
-		return err
-	}
 	var instanceID *string
 	var retired *time.Time
-	err = s.pool.QueryRow(ctx,
-		`SELECT provider_instance_id, retired_at FROM entry_boxes WHERE name = $1`, box,
-	).Scan(&instanceID, &retired)
+	var provider, region string
+	err := s.pool.QueryRow(ctx,
+		`SELECT provider_instance_id, retired_at, provider, provider_region FROM entry_boxes WHERE name = $1`, box,
+	).Scan(&instanceID, &retired, &provider, &region)
 	if err != nil {
 		return fmt.Errorf("entry: box %s: %w", box, err)
 	}
@@ -670,7 +672,11 @@ func (s *Service) DeleteBoxInstance(ctx context.Context, box string) error {
 	case instanceID == nil || *instanceID == "":
 		return fmt.Errorf("%w: машина %s заведена руками, у хостера её удалять нечем", ErrRejected, box)
 	}
-	if err := h.bp.Delete(ctx, *instanceID); err != nil && !errors.Is(err, ErrNoSuchInstance) {
+	bp, err := s.hostingIn(ctx, provider, region)
+	if err != nil {
+		return fmt.Errorf("хостер машины %s: %w", box, err)
+	}
+	if err := bp.Delete(ctx, *instanceID); err != nil && !errors.Is(err, ErrNoSuchInstance) {
 		return fmt.Errorf("удалить инстанс %s: %w", *instanceID, err)
 	}
 	// The charge has stopped: the box leaves the budget (С1). Until this is

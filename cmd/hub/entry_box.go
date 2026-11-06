@@ -133,9 +133,10 @@ func runEntryBox(args []string) {
 		}
 		os.Exit(0)
 	}
-	if len(args) == 2 && args[0] == "catalog" {
-		// entry-box catalog <hoster> — what that account offers and what the hub
-		// counts a plan at, before an order names one. Reads only.
+	if (len(args) == 2 || len(args) == 3) && args[0] == "catalog" {
+		// entry-box catalog <hoster> [region] — what that account offers and what
+		// the hub counts a plan at, before an order names one. Reads only. A
+		// region reads that region's plans: OpenStack's differ by region.
 		if err := cryptobox.Configure(os.Getenv); err != nil {
 			fail(fmt.Errorf("content key: %w", err))
 		}
@@ -147,7 +148,11 @@ func runEntryBox(args []string) {
 			fail(err)
 		}
 		svc.SetProviderConnector(entrywire.Providers())
-		cat, err := svc.PreviewProviderCatalog(ctx, args[1], nil)
+		region := ""
+		if len(args) == 3 {
+			region = args[2]
+		}
+		cat, err := svc.ProviderCatalogIn(ctx, args[1], region)
 		if err != nil {
 			fail(err)
 		}
@@ -281,7 +286,13 @@ func runEntryBox(args []string) {
 	// domains so a provisioning job can claim or buy a name (Ф6).
 	_ = wireEntryDomains(ctx, svc, prov)
 	if namedHoster != "" {
-		if err := svc.UseHoster(ctx, namedHoster); err != nil {
+		// The order's region reaches the client: an OpenStack client speaks to
+		// one region's endpoints and orders nowhere else.
+		orderRegion := ""
+		if len(args) > 1 && args[1] != "-" {
+			orderRegion = args[1]
+		}
+		if err := svc.UseHoster(ctx, namedHoster, orderRegion); err != nil {
 			fail(err)
 		}
 	}

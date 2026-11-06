@@ -551,6 +551,53 @@ func TestDeletingAnInstanceNeedsARetiredBoxTheHubOrdered(t *testing.T) {
 	}
 }
 
+// A machine goes back to the hoster it was rented from, in its own region. The
+// active hoster would answer "no such instance" about an id it never issued,
+// which reads as handed back while the real hoster keeps charging.
+func TestDeletingAnInstanceGoesToTheMachinesOwnHosterAndRegion(t *testing.T) {
+	h := newHostHarness(t)
+	ctx := context.Background()
+
+	if err := h.svc.UseHoster(ctx, fakeHostKind, "r9"); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.conn.keys[len(h.conn.keys)-1]["region"]; got != "r9" {
+		t.Fatalf("an order's client speaks to region %q, want r9", got)
+	}
+	ordered, err := h.prov.orderAndRecord(ctx, OrderSpec{Region: "r1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.svc.Retire(ctx, ordered, DeathRotated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.pool.Exec(ctx, `UPDATE entry_boxes SET provider_region = 'r7' WHERE name = $1`, ordered); err != nil {
+		t.Fatal(err)
+	}
+
+	active := newFakeHoster(t)
+	h.svc.SetHoster("otherhost", active, HostingPolicy{Region: "r1", Plan: "small"})
+	if err := h.svc.DeleteBoxInstance(ctx, ordered); err != nil {
+		t.Fatal(err)
+	}
+	if got := active.deletedIDs(); len(got) != 0 {
+		t.Fatalf("the active hoster was asked to delete %v", got)
+	}
+	if got := h.host.deletedIDs(); len(got) != 1 {
+		t.Fatalf("the machine's hoster deleted %v, want one instance", got)
+	}
+	if got := h.conn.keys[len(h.conn.keys)-1]["region"]; got != "r7" {
+		t.Fatalf("the delete spoke to region %q, want the machine's r7", got)
+	}
+	var released *time.Time
+	if err := h.pool.QueryRow(ctx, `SELECT released_at FROM entry_boxes WHERE name = $1`, ordered).Scan(&released); err != nil {
+		t.Fatal(err)
+	}
+	if released == nil {
+		t.Fatal("the charge is not recorded as stopped")
+	}
+}
+
 // takeNameMidOrder has a box appear under the name an order chose, between
 // the charge and the order's box row — a box typed in by hand at that moment.
 // The name was free when the order reserved it; the row write is what fails.

@@ -672,9 +672,16 @@ func (c *Client) Create(ctx context.Context, p CreateParams) (Instance, error) {
 	if netID == "" {
 		netID = c.cfg.NetworkID
 	}
-	if netID != "" {
-		serverBody["networks"] = []map[string]string{{"uuid": netID}}
+	if netID == "" {
+		// From compute 2.37 a create without `networks` is a 400. No network is
+		// saved for this region: take the one it has.
+		found, err := c.regionNetwork(ctx)
+		if err != nil {
+			return Instance{}, err
+		}
+		netID = found
 	}
+	serverBody["networks"] = []map[string]string{{"uuid": netID}}
 	if p.SSHKeyID != "" {
 		serverBody["key_name"] = p.SSHKeyID
 	}
@@ -831,6 +838,32 @@ func (c *Client) Networks(ctx context.Context) ([]Network, error) {
 		return nil, err
 	}
 	return out.Networks, nil
+}
+
+// regionNetwork picks the network a server of this region joins: an active
+// external one, since a relay needs a public address and the hub orders no
+// floating IPs, or else the only active one. Several private networks and no
+// external one is a choice the operator has to name in network_id.
+func (c *Client) regionNetwork(ctx context.Context) (string, error) {
+	nets, err := c.Networks(ctx)
+	if err != nil {
+		return "", fmt.Errorf("openstack: networks of region %q: %w", c.cfg.Region, err)
+	}
+	active := make([]Network, 0, len(nets))
+	for _, n := range nets {
+		if n.Status == "" || strings.EqualFold(n.Status, "ACTIVE") {
+			active = append(active, n)
+		}
+	}
+	for _, n := range active {
+		if n.External {
+			return n.ID, nil
+		}
+	}
+	if len(active) == 1 {
+		return active[0].ID, nil
+	}
+	return "", fmt.Errorf("openstack: region %q has %d active networks and no external one: name one in network_id", c.cfg.Region, len(active))
 }
 
 // relaySecurityGroup is the group every ordered server is put in. A server

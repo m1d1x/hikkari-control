@@ -3,6 +3,7 @@ package entry
 import (
 	"context"
 	"fmt"
+	"slices"
 )
 
 // ProviderCatalog is a hoster's offer, scoped to one account even when that
@@ -39,6 +40,47 @@ func (s *Service) hostingClientFor(ctx context.Context, kind string, credentials
 		return nil, err
 	}
 	return s.connector.Hosting(kind, creds)
+}
+
+// hostingIn is a client of kind's saved account for one region. A hoster whose
+// client is tied to a region by its credentials (OpenStack: the endpoints of
+// one region) gets that region instead of the saved one; any other ignores it,
+// its API takes the region per call. An empty region keeps the saved one.
+func (s *Service) hostingIn(ctx context.Context, kind, region string) (BoxProvider, error) {
+	k, ok := s.providerKind(kind)
+	if !ok {
+		return nil, ErrUnknownProvider
+	}
+	row, exists, err := s.repo.provider(ctx, kind)
+	if err != nil {
+		return nil, err
+	}
+	if !exists || row.CredsCT == nil {
+		return nil, fmt.Errorf("%w: введи ключ провайдера", ErrRejected)
+	}
+	creds, err := openCreds(row.CredsCT)
+	if err != nil {
+		return nil, err
+	}
+	if region != "" && slices.ContainsFunc(k.Fields, func(f CredentialField) bool { return f.Name == "region" }) {
+		// A saved network belongs to the saved region: named in another, the
+		// hoster refuses the order (HostVDS, 05.11: http 400).
+		if creds["region"] != region {
+			delete(creds, "network_id")
+		}
+		creds["region"] = region
+	}
+	return s.hostingClientFor(ctx, kind, creds)
+}
+
+// ProviderCatalogIn reads the saved account's offer in one region; an empty
+// region is the saved one. See [Service.hostingIn].
+func (s *Service) ProviderCatalogIn(ctx context.Context, kind, region string) (ProviderCatalog, error) {
+	bp, err := s.hostingIn(ctx, kind, region)
+	if err != nil {
+		return ProviderCatalog{}, err
+	}
+	return readProviderCatalog(ctx, kind, bp)
 }
 
 func readProviderCatalog(ctx context.Context, kind string, bp BoxProvider) (ProviderCatalog, error) {

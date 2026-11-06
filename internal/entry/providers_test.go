@@ -31,6 +31,7 @@ func (c *fakeConnector) Kinds() []ProviderKind {
 		Kind: fakeHostKind, Title: "FakeHost", Role: RoleHosting,
 		Fields: []CredentialField{
 			{Name: "api_key", Label: "api key", Secret: true},
+			{Name: "region", Label: "region", Optional: true},
 		},
 	}}
 }
