@@ -537,8 +537,28 @@ func TestOpenStackHosterAdaptsAllMethods(t *testing.T) {
 								{"interface": "public", "region": "RegionOne", "url": srvURL + "/compute"},
 							},
 						},
+						{
+							"type": "network",
+							"endpoints": []map[string]any{
+								{"interface": "public", "region": "RegionOne", "url": srvURL + "/network"},
+							},
+						},
 					},
 				},
+			})
+		case r.URL.Path == "/network/v2.0/networks" && r.Method == http.MethodGet:
+			// A create with no network_id picks the region's active external
+			// network (openstack.Create → regionNetwork); the fake offers one.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"networks": []map[string]any{
+					{"id": "net-ext", "name": "public", "status": "ACTIVE", "router:external": true},
+				},
+			})
+		case r.URL.Path == "/network/v2.0/security-groups" && r.Method == http.MethodGet:
+			// With a network service in the catalog, Create ensures the relay
+			// security group; a non-empty list means it is already there.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"security_groups": []map[string]any{{"id": "sg-1", "name": "nekko-relay"}},
 			})
 		case r.URL.Path == "/compute/flavors/detail":
 			_ = json.NewEncoder(w).Encode(map[string]any{
