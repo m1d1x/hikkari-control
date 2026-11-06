@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/m1d1x/hikkari-control/internal/entry"
 )
 
 // Silence on UDP cannot tell a censor from a lost path, so it never accuses.
@@ -73,5 +76,47 @@ func TestAwgStaysOutOfTheEngine(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "x1-1") {
 		t.Fatalf("an awg relay reached the engine's config: %s", raw)
+	}
+}
+
+// The prober dials a 3.1 relay with every 3.1 field of the hub's record, by
+// the contract on the JSON (internal/entry AwgParams).
+func TestAwg31RecordReachesTheProbersDevice(t *testing.T) {
+	key := "pBNbQ3vIFMTZCbCkQtLObNUtsM9hAi+ZhlrgZbH0Xgc="
+	raw, err := json.Marshal(entry.AwgParams{
+		ServerPublicKey: key, ClientPrivateKey: key, ClientAddress: "10.66.0.1",
+		Jc: 4, Jmin: 40, Jmax: 70, S1: 16, S2: 16, S3: 16, S4: 16, H1: "1", H2: "2", H3: "3", H4: "4",
+		AwgV3: entry.AwgV3{
+			HeaderProtectionKey: key, ContentPaddingAddition: "10-50",
+			RekeyAfterTime: "100-120", RekeyTimeout: "5-7", RejectAfterTime: "170-190",
+			KeepaliveTimeout: "10-15", MaxHandshakeAttempts: "15-20",
+			RandomTrailers: true, DisableCookies: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var a awgEdge
+	if err := json.Unmarshal(raw, &a); err != nil {
+		t.Fatal(err)
+	}
+	got, err := awgConfig(edge{Name: "x1-1", Address: "203.0.113.9", Port: 31000, Proto: protoAwg, Awg: &a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyHex, _ := awgHex(key)
+	for _, want := range []string{
+		"header_protection_key=" + keyHex, "content_padding_addition=10-50", "rekey_after_time=100-120",
+		"rekey_timeout=5-7", "reject_after_time=170-190", "keepalive_timeout=10-15",
+		"max_handshake_attempts=15-20", "random_trailers=true", "disable_cookies=true",
+	} {
+		if !strings.Contains(got, want+"\n") {
+			t.Errorf("config lacks %q:\n%s", want, got)
+		}
+	}
+	// The device keys go before the peer's public_key, where the device reads
+	// them as its own.
+	if strings.Index(got, "disable_cookies=") > strings.Index(got, "public_key=") {
+		t.Errorf("3.1 keys after the peer:\n%s", got)
 	}
 }

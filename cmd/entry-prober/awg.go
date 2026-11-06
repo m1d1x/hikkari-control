@@ -22,9 +22,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amnezia-vpn/amneziawg-go/conn"
-	"github.com/amnezia-vpn/amneziawg-go/device"
-	"github.com/amnezia-vpn/amneziawg-go/tun/netstack"
+	"github.com/amnezia-vpn/amneziawg-go/v3/conn"
+	"github.com/amnezia-vpn/amneziawg-go/v3/device"
+	"github.com/amnezia-vpn/amneziawg-go/v3/tun/netstack"
 )
 
 // awgEdge is the hub's AwgParams, by contract on the JSON.
@@ -44,6 +44,16 @@ type awgEdge struct {
 	H3               string `json:"h3"`
 	H4               string `json:"h4"`
 	I1               string `json:"i1,omitempty"`
+	// AmneziaWG 3.1 (internal/entry AwgV3); all empty on a 2.0 relay.
+	HeaderProtectionKey    string `json:"header_protection_key,omitempty"`
+	ContentPaddingAddition string `json:"content_padding_addition,omitempty"`
+	RekeyAfterTime         string `json:"rekey_after_time,omitempty"`
+	RekeyTimeout           string `json:"rekey_timeout,omitempty"`
+	RejectAfterTime        string `json:"reject_after_time,omitempty"`
+	KeepaliveTimeout       string `json:"keepalive_timeout,omitempty"`
+	MaxHandshakeAttempts   string `json:"max_handshake_attempts,omitempty"`
+	RandomTrailers         bool   `json:"random_trailers,omitempty"`
+	DisableCookies         bool   `json:"disable_cookies,omitempty"`
 }
 
 const (
@@ -95,6 +105,31 @@ func awgConfig(e edge) (string, error) {
 		priv, a.Jc, a.Jmin, a.Jmax, a.S1, a.S2, a.S3, a.S4, a.H1, a.H2, a.H3, a.H4)
 	if a.I1 != "" {
 		fmt.Fprintf(&b, "i1=%s\n", a.I1)
+	}
+	if a.HeaderProtectionKey != "" {
+		key, err := awgHex(a.HeaderProtectionKey)
+		if err != nil {
+			return "", fmt.Errorf("header protection key: %w", err)
+		}
+		fmt.Fprintf(&b, "header_protection_key=%s\n", key)
+	}
+	for _, r := range []struct{ key, value string }{
+		{"content_padding_addition", a.ContentPaddingAddition},
+		{"rekey_after_time", a.RekeyAfterTime},
+		{"rekey_timeout", a.RekeyTimeout},
+		{"reject_after_time", a.RejectAfterTime},
+		{"keepalive_timeout", a.KeepaliveTimeout},
+		{"max_handshake_attempts", a.MaxHandshakeAttempts},
+	} {
+		if r.value != "" {
+			fmt.Fprintf(&b, "%s=%s\n", r.key, r.value)
+		}
+	}
+	if a.RandomTrailers {
+		b.WriteString("random_trailers=true\n")
+	}
+	if a.DisableCookies {
+		b.WriteString("disable_cookies=true\n")
 	}
 	fmt.Fprintf(&b, "public_key=%s\nendpoint=%s\nallowed_ip=0.0.0.0/0\n",
 		pub, net.JoinHostPort(e.Address, strconv.Itoa(e.Port)))

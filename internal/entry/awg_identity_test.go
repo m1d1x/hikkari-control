@@ -17,7 +17,7 @@ import (
 func TestNewAwgIdentityObeysTheProtocol(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 200; i++ {
-		id, err := newAwgIdentity(31000)
+		id, err := newAwgIdentity(31000, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -65,7 +65,7 @@ func TestNewAwgIdentityObeysTheProtocol(t *testing.T) {
 // The record round-trips, and a record of this protocol passes the same checks
 // as any other; one lacking its half does not.
 func TestAwgRecordRoundTrips(t *testing.T) {
-	id, err := newAwgIdentity(31000)
+	id, err := newAwgIdentity(31000, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestAwgRecordRoundTrips(t *testing.T) {
 
 // The env the hub plants is what the edge reads (edge/awg.go, by contract).
 func TestAwgEdgeEnvNamesEveryField(t *testing.T) {
-	id, err := newAwgIdentity(31000)
+	id, err := newAwgIdentity(31000, false)
 	if err != nil {
 		t.Fatal(err)
 	}

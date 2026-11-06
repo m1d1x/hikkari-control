@@ -198,7 +198,7 @@ func (s *Service) LinksFor(ctx context.Context, token, engine string) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	return s.links(ctx, account, engine, false, 0)
+	return s.links(ctx, account, engine, awgCaps{}, 0)
 }
 
 // featuresHeader is how a client says what it can dial beyond what every client
@@ -209,14 +209,36 @@ const featuresHeader = "Hikkari-Features"
 
 const featureAmneziaWG = "amneziawg"
 
-// wantsAwg reads featuresHeader, a comma-separated list.
-func wantsAwg(h http.Header) bool {
+// featureAmneziaWG31 is a client that carries AmneziaWG 3.1's parameters. One
+// that only says featureAmneziaWG refuses a 3.1 config (hikkari-client 1.0.52)
+// or, older, drops the parameters and gets no answer; it gets the 2.0 relays.
+const featureAmneziaWG31 = "amneziawg-3.1"
+
+// awgCaps is which AmneziaWG relays a client can dial.
+type awgCaps struct{ v20, v31 bool }
+
+// dials reports whether a client with these caps can dial rec.
+func (c awgCaps) dials(rec entry.RelayRecord) bool {
+	if rec.AwgParams != nil && rec.AwgParams.AwgV3.IsSet() {
+		return c.v31
+	}
+	return c.v20
+}
+
+// wantsAwg reads featuresHeader, a comma-separated list. 3.1 is said on top of
+// AmneziaWG, never instead of it.
+func wantsAwg(h http.Header) awgCaps {
+	var c awgCaps
 	for _, f := range strings.Split(h.Get(featuresHeader), ",") {
-		if strings.TrimSpace(f) == featureAmneziaWG {
-			return true
+		switch strings.TrimSpace(f) {
+		case featureAmneziaWG:
+			c.v20 = true
+		case featureAmneziaWG31:
+			c.v31 = true
 		}
 	}
-	return false
+	c.v31 = c.v31 && c.v20
+	return c
 }
 
 // networkHeader is the subscriber's network as the client resolves it from
@@ -239,7 +261,7 @@ func networkOf(h http.Header) uint32 {
 	return uint32(n)
 }
 
-func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, awg bool, asn uint32) ([]string, error) {
+func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, awg awgCaps, asn uint32) ([]string, error) {
 	key, err := s.accessKey(ctx, account)
 	if err != nil {
 		return nil, err
@@ -272,7 +294,7 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 			render = SingBoxHysteriaLink
 		}
 		if rec.Proto == entry.ProtoAmneziaWG {
-			if !awg {
+			if !awg.dials(rec) {
 				continue
 			}
 			if err := s.ensureAwgKey(ctx, account, &key); err != nil {

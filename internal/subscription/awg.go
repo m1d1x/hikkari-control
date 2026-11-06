@@ -106,6 +106,29 @@ func AwgLink(r entry.RelayRecord) (string, error) {
 		"H4 = " + p.H4,
 		"I1 = " + p.I1,
 	}
+	// AmneziaWG 3.1, under the .conf names the client's parser takes
+	// (hikkari-client engine/core/profile/legacy/awg3.go).
+	if v := p.AwgV3; v.IsSet() {
+		for _, r := range []struct{ name, value string }{
+			{"HeaderProtectionKey", v.HeaderProtectionKey},
+			{"ContentPaddingAddition", v.ContentPaddingAddition},
+			{"RekeyAfterTime", v.RekeyAfterTime},
+			{"RekeyTimeout", v.RekeyTimeout},
+			{"RejectAfterTime", v.RejectAfterTime},
+			{"KeepaliveTimeout", v.KeepaliveTimeout},
+			{"MaxHandshakeAttempts", v.MaxHandshakeAttempts},
+		} {
+			if r.value != "" {
+				lines = append(lines, r.name+" = "+r.value)
+			}
+		}
+		if v.RandomTrailers {
+			lines = append(lines, "RandomTrailers = 1")
+		}
+		if v.DisableCookies {
+			lines = append(lines, "DisableCookies = 1")
+		}
+	}
 	if p.DecoyDomain != "" {
 		// Ip, Id and Ib ask for the core's live generator, which builds a real
 		// browser ClientHello for every handshake. A client that knows them drops

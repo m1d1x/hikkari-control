@@ -76,6 +76,123 @@ type AwgIdentity struct {
 	// DecoyDomain is the name in the real QUIC ClientHello a client that can
 	// generate one sends in place of I1.
 	DecoyDomain string `json:"decoy_domain"`
+	// AwgV3 is set on an AmneziaWG 3.1 relay and empty on a 2.0 one.
+	AwgV3
+}
+
+// AwgV3 is what AmneziaWG 3.1 adds to 2.0, under the names the client's core
+// (sing-box-lx) and amneziawg-go's control protocol take. Both ends must agree
+// on all of it: the server reads the header protection, the paddings and the
+// trailers the client writes, and a 2.0 client gets no answer from a 3.1
+// server. Ranges are "N" or "N-M". Zero value: AmneziaWG 2.0.
+type AwgV3 struct {
+	// HeaderProtectionKey is the base64 32-byte key of the header cipher. It
+	// needs S1..S4 of at least awgV3MinPadding: the padding carries the nonce.
+	HeaderProtectionKey    string `json:"header_protection_key,omitempty"`
+	ContentPaddingAddition string `json:"content_padding_addition,omitempty"`
+	RekeyAfterTime         string `json:"rekey_after_time,omitempty"`
+	RekeyTimeout           string `json:"rekey_timeout,omitempty"`
+	RejectAfterTime        string `json:"reject_after_time,omitempty"`
+	KeepaliveTimeout       string `json:"keepalive_timeout,omitempty"`
+	MaxHandshakeAttempts   string `json:"max_handshake_attempts,omitempty"`
+	RandomTrailers         bool   `json:"random_trailers,omitempty"`
+	DisableCookies         bool   `json:"disable_cookies,omitempty"`
+}
+
+// IsSet: the relay speaks AmneziaWG 3.1.
+func (v AwgV3) IsSet() bool { return v != AwgV3{} }
+
+// awgV3MinPadding is the header cipher's nonce, which rides in the first bytes
+// of every S1..S4 padding (amneziawg-go HeaderCipherNonceSize).
+const awgV3MinPadding = 12
+
+// AwgV3Range is one of AwgV3's ranges by its control-protocol key.
+type AwgV3Range struct{ Key, Value string }
+
+// Ranges lists the set ranges in the order the control protocol takes them.
+func (v AwgV3) Ranges() []AwgV3Range {
+	var out []AwgV3Range
+	for _, r := range []AwgV3Range{
+		{"content_padding_addition", v.ContentPaddingAddition},
+		{"rekey_after_time", v.RekeyAfterTime},
+		{"rekey_timeout", v.RekeyTimeout},
+		{"reject_after_time", v.RejectAfterTime},
+		{"keepalive_timeout", v.KeepaliveTimeout},
+		{"max_handshake_attempts", v.MaxHandshakeAttempts},
+	} {
+		if r.Value != "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// check is what both ends' amneziawg-go would refuse, said before a relay is
+// signed or deployed with it. s are S1..S4; h are H1..H4.
+func (v AwgV3) check(s [4]int, h [4]string) error {
+	if !v.IsSet() {
+		return nil
+	}
+	if v.HeaderProtectionKey != "" {
+		key, err := base64.StdEncoding.DecodeString(v.HeaderProtectionKey)
+		if err != nil || len(key) != 32 {
+			return fmt.Errorf("header_protection_key is not a base64 32-byte key")
+		}
+		for i, n := range s {
+			if n < awgV3MinPadding {
+				return fmt.Errorf("s%d=%d is below %d, which header protection needs", i+1, n, awgV3MinPadding)
+			}
+		}
+	}
+	for _, r := range v.Ranges() {
+		if _, _, err := awgRange(r.Value); err != nil {
+			return fmt.Errorf("%s: %w", r.Key, err)
+		}
+	}
+	// amneziawg-go#186 (open on v3.1.20260828): with random trailers on, a
+	// data packet longer than a handshake message is tried as one first, and
+	// is lost when its bytes fall in H1..H3. A range as wide as AWG 2.0 draws
+	// loses a share of all traffic; single values lose next to none.
+	if v.RandomTrailers {
+		for i, spec := range h {
+			if lo, hi, err := awgRange(spec); err != nil || lo != hi {
+				return fmt.Errorf("random_trailers needs a single value in h%d, not %q (amneziawg-go#186)", i+1, spec)
+			}
+		}
+	}
+	return nil
+}
+
+// env is the 3.1 half of EDGE_AWG_*, nothing on a 2.0 relay (edge/awg.go).
+func (v AwgV3) env() map[string]string {
+	if !v.IsSet() {
+		return nil
+	}
+	env := map[string]string{"EDGE_AWG_HEADER_PROTECTION_KEY": v.HeaderProtectionKey}
+	for _, r := range v.Ranges() {
+		env["EDGE_AWG_"+strings.ToUpper(r.Key)] = r.Value
+	}
+	for name, on := range map[string]bool{"EDGE_AWG_RANDOM_TRAILERS": v.RandomTrailers, "EDGE_AWG_DISABLE_COOKIES": v.DisableCookies} {
+		if on {
+			env[name] = "1"
+		}
+	}
+	return env
+}
+
+// awgRange reads "N" or "N-M" (uint32, N <= M), as amneziawg-go's UintRange.
+func awgRange(spec string) (lo, hi uint64, err error) {
+	a, b, isRange := strings.Cut(strings.TrimSpace(spec), "-")
+	if lo, err = strconv.ParseUint(strings.TrimSpace(a), 10, 32); err != nil {
+		return 0, 0, fmt.Errorf("%q is not N or N-M", spec)
+	}
+	hi = lo
+	if isRange {
+		if hi, err = strconv.ParseUint(strings.TrimSpace(b), 10, 32); err != nil || hi < lo {
+			return 0, 0, fmt.Errorf("%q is not N or N-M", spec)
+		}
+	}
+	return lo, hi, nil
 }
 
 // AwgProbeAddress is the vantage's address inside every AmneziaWG relay; the
@@ -134,8 +251,8 @@ const (
 // a phone pays for it. S1 and S2 must not make the two handshake messages the
 // same size (S1+148 != S2+92), or the message type could be read off the length.
 // S4 is added to every data packet, so it stays small and within what the 1280
-// MTU leaves room for.
-func newAwgIdentity(port int) (Identity, error) {
+// MTU leaves room for. v31 mints an AmneziaWG 3.1 relay instead (newAwgV3).
+func newAwgIdentity(port int, v31 bool) (Identity, error) {
 	serverPriv, serverPub, err := NewAwgKeyPair()
 	if err != nil {
 		return Identity{}, err
@@ -178,6 +295,12 @@ func newAwgIdentity(port int) (Identity, error) {
 			break
 		}
 	}
+	if v31 {
+		if err := newAwgV3(a); err != nil {
+			return Identity{}, err
+		}
+		return Identity{Port: port, Awg: a}, nil
+	}
 	for i, h := range []*string{&a.H1, &a.H2, &a.H3, &a.H4} {
 		lo, err := randomInt(awgHeaderBase+i*awgHeaderSlot, awgHeaderBase+(i+1)*awgHeaderSlot-awgHeaderWidth-1)
 		if err != nil {
@@ -186,6 +309,54 @@ func newAwgIdentity(port int) (Identity, error) {
 		*h = strconv.Itoa(lo) + "-" + strconv.Itoa(lo+awgHeaderWidth)
 	}
 	return Identity{Port: port, Awg: a}, nil
+}
+
+// newAwgV3 turns a freshly drawn 2.0 relay into a 3.1 one, as the 06.11 stand
+// measured it working from Russia (plans/research/2026-11-06-awg-experiment.md):
+// a header protection key of its own, every S at least the cipher's nonce,
+// content padding 10-50, the WireGuard timers drawn around their defaults,
+// random trailers and no cookies. The headers are single values, as on the
+// stand: header protection masks the type field, so the value itself shows
+// nothing on the wire, and random trailers lose traffic over a header range
+// (amneziawg-go#186).
+func newAwgV3(a *AwgIdentity) error {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return err
+	}
+	for _, f := range []struct {
+		to     *int
+		lo, hi int
+	}{
+		{&a.S3, 16, 64}, {&a.S4, 16, 32},
+	} {
+		var err error
+		if *f.to, err = randomInt(f.lo, f.hi); err != nil {
+			return err
+		}
+	}
+	for a.S1 < 16 || a.S2 < 16 || a.S1+148 == a.S2+92 {
+		var err error
+		if a.S1, err = randomInt(16, 120); err != nil {
+			return err
+		}
+		if a.S2, err = randomInt(16, 120); err != nil {
+			return err
+		}
+	}
+	a.H1, a.H2, a.H3, a.H4 = "1", "2", "3", "4"
+	a.AwgV3 = AwgV3{
+		HeaderProtectionKey:    base64.StdEncoding.EncodeToString(key),
+		ContentPaddingAddition: "10-50",
+		RekeyAfterTime:         "100-120",
+		RekeyTimeout:           "5-7",
+		RejectAfterTime:        "170-190",
+		KeepaliveTimeout:       "10-15",
+		MaxHandshakeAttempts:   "15-20",
+		RandomTrailers:         true,
+		DisableCookies:         true,
+	}
+	return a.AwgV3.check([4]int{a.S1, a.S2, a.S3, a.S4}, [4]string{a.H1, a.H2, a.H3, a.H4})
 }
 
 // XhttpIdentity is the XHTTP half of a stream relay (П4в): the box's domain,
@@ -592,7 +763,7 @@ func (id Identity) EdgeEnv() (map[string]string, error) {
 		}, nil
 	}
 	if a := id.Awg; a != nil {
-		return map[string]string{
+		env := map[string]string{
 			"EDGE_PROTO":             ProtoAmneziaWG,
 			"EDGE_PORT":              strconv.Itoa(id.Port),
 			"EDGE_AWG_PRIVATE_KEY":   a.ServerPrivateKey,
@@ -609,7 +780,11 @@ func (id Identity) EdgeEnv() (map[string]string, error) {
 			"EDGE_AWG_H2":            a.H2,
 			"EDGE_AWG_H3":            a.H3,
 			"EDGE_AWG_H4":            a.H4,
-		}, nil
+		}
+		for k, v := range a.AwgV3.env() {
+			env[k] = v
+		}
+		return env, nil
 	}
 	covers := ""
 	for i, c := range id.Covers {
@@ -709,6 +884,7 @@ func (id Identity) record(name, address, region string, issuedAt, expiresAt int6
 				ClientAddress:    AwgProbeAddress,
 				Jc:               a.Jc, Jmin: a.Jmin, Jmax: a.Jmax, S1: a.S1, S2: a.S2, S3: a.S3, S4: a.S4,
 				H1: a.H1, H2: a.H2, H3: a.H3, H4: a.H4, I1: a.I1, DecoyDomain: a.DecoyDomain,
+				AwgV3: a.AwgV3,
 			},
 			IssuedAt:  issuedAt,
 			ExpiresAt: expiresAt,

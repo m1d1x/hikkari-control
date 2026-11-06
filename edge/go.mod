@@ -3,7 +3,7 @@ module github.com/m1d1x/hikkari-control/edge
 go 1.27
 
 require (
-	github.com/amnezia-vpn/amneziawg-go v0.2.19
+	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828
 	github.com/xtls/xray-core v1.260327.1-0.20261010092107-701af60772cd
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.60.0

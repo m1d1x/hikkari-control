@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amnezia-vpn/amneziawg-go/conn"
-	"github.com/amnezia-vpn/amneziawg-go/device"
-	"github.com/amnezia-vpn/amneziawg-go/tun/netstack"
+	"github.com/amnezia-vpn/amneziawg-go/v3/conn"
+	"github.com/amnezia-vpn/amneziawg-go/v3/device"
+	"github.com/amnezia-vpn/amneziawg-go/v3/tun/netstack"
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/core"
 	"golang.org/x/crypto/curve25519"
@@ -67,6 +67,12 @@ func awgClient(t *testing.T, serverPub string, port int, addr string, obf AwgObf
 	pubHex, _ := awgKeyHex(serverPub)
 	cfg := fmt.Sprintf("private_key=%s\njc=%d\njmin=%d\njmax=%d\ns1=%d\ns2=%d\ns3=%d\ns4=%d\nh1=%s\nh2=%s\nh3=%s\nh4=%s\ni1=%s\npublic_key=%s\nendpoint=127.0.0.1:%d\nallowed_ip=0.0.0.0/0\npersistent_keepalive_interval=1\n",
 		privHex, obf.Jc, obf.Jmin, obf.Jmax, obf.S1, obf.S2, obf.S3, obf.S4, obf.H1, obf.H2, obf.H3, obf.H4, testDecoy, pubHex, port)
+	v3, err := obf.V3.uapi()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The 3.1 keys are the device's, not the peer's: they go before public_key.
+	cfg = strings.Replace(cfg, "public_key=", v3+"public_key=", 1)
 	if err := dev.IpcSet(cfg); err != nil {
 		t.Fatal(err)
 	}

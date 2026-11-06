@@ -209,6 +209,9 @@ type AwgParams struct {
 	H4               string `json:"h4"`
 	I1               string `json:"i1,omitempty"`
 	DecoyDomain      string `json:"decoy_domain,omitempty"`
+	// AwgV3 is set on an AmneziaWG 3.1 relay: a client without it gets no
+	// answer. Absent from a 2.0 relay's record, which stays byte for byte.
+	AwgV3
 }
 
 // RealityParams is the Reality half of a stream relay (record.rs Reality).
@@ -315,6 +318,9 @@ func (r RelayRecord) check() error {
 			return fmt.Errorf("%w: relay %s has no awg keys", ErrMalformed, r.Name)
 		case a.Jc < 1 || a.Jmin < 1 || a.Jmax < a.Jmin || a.H1 == "" || a.H2 == "" || a.H3 == "" || a.H4 == "":
 			return fmt.Errorf("%w: relay %s: awg obfuscation", ErrMalformed, r.Name)
+		}
+		if err := a.AwgV3.check([4]int{a.S1, a.S2, a.S3, a.S4}, [4]string{a.H1, a.H2, a.H3, a.H4}); err != nil {
+			return fmt.Errorf("%w: relay %s: awg 3.1: %v", ErrMalformed, r.Name, err)
 		}
 	case ProtoHysteria2:
 		h := r.HysteriaParams

@@ -41,9 +41,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/amnezia-vpn/amneziawg-go/conn"
-	"github.com/amnezia-vpn/amneziawg-go/device"
-	wgtun "github.com/amnezia-vpn/amneziawg-go/tun"
+	"github.com/amnezia-vpn/amneziawg-go/v3/conn"
+	"github.com/amnezia-vpn/amneziawg-go/v3/device"
+	wgtun "github.com/amnezia-vpn/amneziawg-go/v3/tun"
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/core"
@@ -88,10 +88,41 @@ type AwgConfig struct {
 // every message and header ranges. H1..H4 are "x-y" or a single value. Junk and
 // the I1 decoy are the dialling side's alone, so they are not the edge's to agree
 // on, except as what a device sends when it starts a handshake itself.
+//
+// V3 is AmneziaWG 3.1 on top, empty on a 2.0 relay: header protection, content
+// padding and random trailers change what is on the wire, so the device must
+// read them as the client writes them; the timers and the cookie switch are
+// the device's own handshakes and keepalives, set as the hub drew them.
 type AwgObfuscation struct {
 	Jc, Jmin, Jmax, S1, S2, S3, S4 int
 	H1, H2, H3, H4                 string
+	V3                             AwgV3
 }
+
+// AwgV3 is EDGE_AWG_* of AmneziaWG 3.1 (hub internal/entry AwgV3).
+type AwgV3 struct {
+	// HeaderProtectionKey is base64, as the hub mints it; the device takes hex.
+	HeaderProtectionKey string
+	// Ranges are "N" or "N-M", by the device's control-protocol key.
+	Ranges         map[string]string
+	RandomTrailers bool
+	DisableCookies bool
+}
+
+func (v AwgV3) set() bool {
+	return v.HeaderProtectionKey != "" || len(v.Ranges) > 0 || v.RandomTrailers || v.DisableCookies
+}
+
+// awgV3Ranges are the 3.1 ranges in the device's order; each is read from
+// EDGE_AWG_<KEY>.
+var awgV3Ranges = []string{
+	"content_padding_addition", "rekey_after_time", "rekey_timeout",
+	"reject_after_time", "keepalive_timeout", "max_handshake_attempts",
+}
+
+// awgV3MinPadding: header protection carries its nonce in the first bytes of
+// every S1..S4 padding (amneziawg-go HeaderCipherNonceSize).
+const awgV3MinPadding = 12
 
 // AwgConfigFromEnv reads EDGE_PORT and EDGE_AWG_*.
 func AwgConfigFromEnv(getenv func(string) string) (AwgConfig, error) {
@@ -142,7 +173,98 @@ func AwgConfigFromEnv(getenv func(string) string) (AwgConfig, error) {
 			return c, fmt.Errorf("%s is empty", f.name)
 		}
 	}
+	v3, err := awgV3FromEnv(getenv, [4]int{c.Obf.S1, c.Obf.S2, c.Obf.S3, c.Obf.S4})
+	if err != nil {
+		return c, err
+	}
+	c.Obf.V3 = v3
 	return c, nil
+}
+
+// awgV3FromEnv reads AmneziaWG 3.1's EDGE_AWG_*; none set is a 2.0 relay. What
+// the device would refuse is refused here, by name, before it starts.
+func awgV3FromEnv(getenv func(string) string, s [4]int) (AwgV3, error) {
+	v := AwgV3{HeaderProtectionKey: getenv("EDGE_AWG_HEADER_PROTECTION_KEY"), Ranges: map[string]string{}}
+	if v.HeaderProtectionKey != "" {
+		if _, err := awgKeyHex(v.HeaderProtectionKey); err != nil {
+			return v, fmt.Errorf("EDGE_AWG_HEADER_PROTECTION_KEY: %w", err)
+		}
+		for i, n := range s {
+			if n < awgV3MinPadding {
+				return v, fmt.Errorf("EDGE_AWG_S%d %d is below %d, which EDGE_AWG_HEADER_PROTECTION_KEY needs", i+1, n, awgV3MinPadding)
+			}
+		}
+	}
+	for _, key := range awgV3Ranges {
+		name := "EDGE_AWG_" + strings.ToUpper(key)
+		spec := strings.TrimSpace(getenv(name))
+		if spec == "" {
+			continue
+		}
+		if !awgRangeSpec(spec) {
+			return v, fmt.Errorf("%s: %q is not N or N-M", name, spec)
+		}
+		v.Ranges[key] = spec
+	}
+	for _, f := range []struct {
+		name string
+		to   *bool
+	}{
+		{"EDGE_AWG_RANDOM_TRAILERS", &v.RandomTrailers}, {"EDGE_AWG_DISABLE_COOKIES", &v.DisableCookies},
+	} {
+		switch getenv(f.name) {
+		case "", "0":
+		case "1":
+			*f.to = true
+		default:
+			return v, fmt.Errorf("%s: %q is not 0 or 1", f.name, getenv(f.name))
+		}
+	}
+	if len(v.Ranges) == 0 {
+		v.Ranges = nil
+	}
+	return v, nil
+}
+
+// awgRangeSpec: "N" or "N-M" of uint32 with N <= M, as the device's UintRange.
+func awgRangeSpec(spec string) bool {
+	a, b, isRange := strings.Cut(spec, "-")
+	lo, err := strconv.ParseUint(a, 10, 32)
+	if err != nil {
+		return false
+	}
+	if !isRange {
+		return true
+	}
+	hi, err := strconv.ParseUint(b, 10, 32)
+	return err == nil && hi >= lo
+}
+
+// uapi is the 3.1 half of the device's control text, "" on a 2.0 relay.
+func (v AwgV3) uapi() (string, error) {
+	if !v.set() {
+		return "", nil
+	}
+	var b strings.Builder
+	if v.HeaderProtectionKey != "" {
+		key, err := awgKeyHex(v.HeaderProtectionKey)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString("header_protection_key=" + key + "\n")
+	}
+	for _, key := range awgV3Ranges {
+		if spec := v.Ranges[key]; spec != "" {
+			b.WriteString(key + "=" + spec + "\n")
+		}
+	}
+	if v.RandomTrailers {
+		b.WriteString("random_trailers=true\n")
+	}
+	if v.DisableCookies {
+		b.WriteString("disable_cookies=true\n")
+	}
+	return b.String(), nil
 }
 
 // XrayConfig is the exit alone: no inbound, the router and the outbounds every
@@ -234,6 +356,12 @@ func startAwg(ctx context.Context, cfg AwgConfig, dial awgDialer) (*awgServer, e
 	fmt.Fprintf(&uapi, "private_key=%s\nlisten_port=%d\n", priv, cfg.Port)
 	fmt.Fprintf(&uapi, "jc=%d\njmin=%d\njmax=%d\ns1=%d\ns2=%d\ns3=%d\ns4=%d\nh1=%s\nh2=%s\nh3=%s\nh4=%s\n",
 		cfg.Obf.Jc, cfg.Obf.Jmin, cfg.Obf.Jmax, cfg.Obf.S1, cfg.Obf.S2, cfg.Obf.S3, cfg.Obf.S4, cfg.Obf.H1, cfg.Obf.H2, cfg.Obf.H3, cfg.Obf.H4)
+	v3, err := cfg.Obf.V3.uapi()
+	if err != nil {
+		dev.Close()
+		return nil, err
+	}
+	uapi.WriteString(v3)
 	if cfg.ProbeKey != "" {
 		p, err := parseAwgPeer(cfg.ProbeKey + " " + cfg.ProbeAddress)
 		if err != nil {

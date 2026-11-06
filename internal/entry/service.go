@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -158,6 +159,9 @@ type Service struct {
 	// only about the proven covers a healthy box is missing (covers.go).
 	// Nil is the real TLS handshake; tests put a fake here.
 	coverAnswers func(host string) bool
+	// awg31 mints new AmneziaWG relays as 3.1 (ENTRY_AWG_GENERATION=3.1);
+	// otherwise 2.0. Relays already minted keep what they were born with.
+	awg31 bool
 	// vantages counts the observation points the probe dataset has heard
 	// from (К3); nil leaves the hub unable to tell, and it refuses to enable
 	// two-vantage confirmation on that ground.
@@ -260,8 +264,13 @@ func NewService(pool db.Pool, signer *Signer, batchSize int) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("entry: reach key: %w", err)
 	}
+	awg31, err := awgGenerationFromEnv(os.Getenv(awgGenerationEnv))
+	if err != nil {
+		return nil, err
+	}
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	return &Service{
+		awg31:        awg31,
 		bg:           background{ctx: bgCtx, cancel: bgCancel},
 		pool:         pool,
 		repo:         NewRepository(pool),
@@ -273,6 +282,24 @@ func NewService(pool db.Pool, signer *Signer, batchSize int) (*Service, error) {
 		checkSpacing: checkSpacing,
 		instancePoll: instanceWaitPoll,
 	}, nil
+}
+
+// awgGenerationEnv picks the AmneziaWG generation new relays are minted in.
+// Every process that mints relays (the hub, its autopilot, `entry-box`) runs
+// with the hub's environment, so one setting holds for all of them. 3.1 is
+// opt-in: a client that cannot carry 3.1 gets no answer from such a relay.
+const awgGenerationEnv = "ENTRY_AWG_GENERATION"
+
+// awgGenerationFromEnv: "" and "2.0" are AmneziaWG 2.0, "3.1" is 3.1; anything
+// else is refused, so a typo does not quietly mint the other generation.
+func awgGenerationFromEnv(v string) (v31 bool, err error) {
+	switch strings.TrimSpace(v) {
+	case "", "2.0":
+		return false, nil
+	case "3.1":
+		return true, nil
+	}
+	return false, fmt.Errorf("entry: %s=%q: expected 2.0 or 3.1", awgGenerationEnv, v)
 }
 
 // SetNotifier wires the live nudge. Called once at startup; left unset, a
@@ -622,7 +649,7 @@ func (s *Service) AddRelay(ctx context.Context, box, kind string) (string, error
 		}
 		id, err = newXhttpIdentity(port, base, string(domain))
 	case ProtoAmneziaWG:
-		id, err = newAwgIdentity(port)
+		id, err = newAwgIdentity(port, s.awg31)
 	default:
 		if id, err = newIdentity(port, base); err == nil {
 			// A cover under its second chance, or struck by it, is not

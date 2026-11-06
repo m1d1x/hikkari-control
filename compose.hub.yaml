@@ -51,6 +51,10 @@ services:
       # Detector, mechanic and second-chance loops. Off unless the host's
       # .env turns them on: a local stack never acts on the fleet by itself.
       ENTRY_AUTOPILOT_ENABLED: ${ENTRY_AUTOPILOT_ENABLED:-0}
+      # AmneziaWG generation of newly minted relays (internal/entry service.go):
+      # 2.0 unless the host's .env says 3.1. A 3.1 relay goes only to clients
+      # that send Hikkari-Features: amneziawg-3.1; minted relays keep theirs.
+      ENTRY_AWG_GENERATION: ${ENTRY_AWG_GENERATION:-2.0}
       # API host: boxes' pulse, probers, client telemetry and downdetector.
       # Sub host: subscribers' /sub links only. On a server these name the
       # public hosts (deploy/README); locally nothing outside dials them.

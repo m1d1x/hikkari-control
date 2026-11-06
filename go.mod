@@ -58,7 +58,7 @@ require (
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.43.0
-	github.com/amnezia-vpn/amneziawg-go v0.2.19
+	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828
 	github.com/fxamacker/cbor/v2 v2.9.4
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
