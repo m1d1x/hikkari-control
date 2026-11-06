@@ -14,7 +14,7 @@ import (
 )
 
 // The matrix stand on the hub's schedule (internal/stand): the hub queues a
-// run of one knob over every profile of the stand's subscription for this
+// run of one knob over every relay of the fleet for this
 // point every interval; this loop claims it, brings the client's kit (the core
 // users run and their link parser) from the update channel, runs the stand's
 // script here and sends the rows back. The rows are this point's by the token

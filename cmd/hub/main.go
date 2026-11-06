@@ -334,8 +334,8 @@ func run() error {
 	relayruns.RegisterAdminRoutes(adminMux, relayRuns, testerAliases(testerStore), adminSecurity)
 	go relayruns.NewIngester(relayRuns, pool).Run(ctx, 2*time.Minute)
 	// The stand on the hub's schedule: every active observation point runs
-	// every enabled knob over the stand's subscription, rows into relayRuns.
-	standRuns := stand.NewScheduler(pool, svc, standSubscriptions{subs}, relayRuns)
+	// every enabled knob over every relay of the fleet, rows into relayRuns.
+	standRuns := stand.NewScheduler(pool, svc, standFleet{subs: subs, fleet: svc}, relayRuns, config.Default().APIURL())
 	stand.RegisterProberRoutes(mux, standRuns, entry.VantageGate(svc), entry.VantageOf)
 	stand.RegisterOpsRoutes(adminMux, standRuns, opsGate)
 	go standRuns.Run(ctx, time.Minute)

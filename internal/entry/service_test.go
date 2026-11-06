@@ -589,6 +589,50 @@ func TestAnExpiredGrantIsNotServedAndNotRefilled(t *testing.T) {
 	}
 }
 
+// The stand measures every relay a subscriber can be handed, whoever holds
+// it: a relay no account drew is served too, and a dead, bootstrap, pending
+// or expired one is not.
+func TestServingRecordsAreTheWholePoolASubscriberCouldDraw(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	t0 := time.Now()
+	live := h.personal(3)
+	h.admitted(KindBootstrap, 1)
+	box, _ := h.box()
+	h.relay(box, KindPersonal) // pending
+	dead := h.personal(1)[0]
+	if _, err := h.svc.MarkDead(ctx, dead, DeathOther); err != nil {
+		t.Fatal(err)
+	}
+	// One account holds two of the three: the third is still the stand's.
+	if got := h.batch(testAccount(t, h.pool)); len(got) != 2 {
+		t.Fatalf("batch %v", got)
+	}
+	names := func() []string {
+		envs, err := h.svc.ServingRecords(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, e := range envs {
+			r, err := OpenRecord(e, h.f.keys(t), t0)
+			if err != nil {
+				t.Fatalf("a serving record does not open: %v", err)
+			}
+			out = append(out, r.Name)
+		}
+		sort.Strings(out)
+		return out
+	}
+	if got := names(); fmt.Sprint(got) != fmt.Sprint(live) {
+		t.Fatalf("serving %v, want every alive personal relay %v", got, live)
+	}
+	h.svc.now = func() time.Time { return t0.Add(RecordLifetime + time.Hour) }
+	if got := names(); len(got) != 0 {
+		t.Fatalf("served expired records %v", got)
+	}
+}
+
 func TestBootstrapRelaysNeverJoinABatch(t *testing.T) {
 	h := newHarness(t)
 	h.admitted(KindBootstrap, 2)

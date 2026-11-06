@@ -686,6 +686,34 @@ func (s *Service) RelayEnvelope(ctx context.Context, name string) ([]byte, error
 	return cryptobox.Decrypt(ct)
 }
 
+// ServingRecords is the signed record of every relay a subscriber can be
+// handed now, whoever holds it: personal, alive, not past expiry. For the
+// matrix stand (internal/stand), which measures the fleet rather than one
+// account's batch: a relay no account drew is still one the next account may
+// draw. A record holds the relay's shared credential, which its edge always
+// lets through beside the accounts' own keys (edge keys.go).
+func (s *Service) ServingRecords(ctx context.Context) ([][]byte, error) {
+	rows, err := s.pool.Query(ctx, servingEnvelopes, s.now())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][]byte
+	for rows.Next() {
+		var name string
+		var ct []byte
+		if err := rows.Scan(&name, &ct); err != nil {
+			return nil, err
+		}
+		raw, err := cryptobox.Decrypt(ct)
+		if err != nil {
+			return nil, fmt.Errorf("entry: open relay %s: %w", name, err)
+		}
+		out = append(out, raw)
+	}
+	return out, rows.Err()
+}
+
 // Admit signs a pending relay into the pool: from now on it is handed out.
 // The caller has deployed it and seen it pass the admission probe.
 func (s *Service) Admit(ctx context.Context, name string) error {

@@ -7,9 +7,9 @@ package stand
 //
 // The hub owns the plan: stand_settings and stand_knobs say what is measured,
 // stand_tasks hold every run (migration 025). A vantage's prober owns the
-// measurement: it claims a task, parses the stand's subscription with the
-// client's own parser, runs Script locally on the core users run and sends the
-// rows back. The vantage a row is from is the slot of the prober's token, never
+// measurement: it claims a task, fetches the fleet's links from the task's
+// link (Claim) with the client's own parser, runs Script locally on the core
+// users run and sends the rows back. The vantage a row is from is the slot of the prober's token, never
 // a field of the request.
 //
 // # When things fail
@@ -17,12 +17,15 @@ package stand
 // A point that does not claim its task loses it after an interval: the queue
 // never grows behind a silent point, and the slot's silence is the registry's
 // to show. A claimed task not finished within claimTTL is expired the same
-// way. A subscription the hub cannot open fails the task at the claim, with
-// the reason, and the prober runs nothing. Rows of a run that failed half-way
+// way. A stand switched off between the queue and the claim fails the task at
+// the claim, with the reason, and the prober runs nothing. Rows of a run that failed half-way
 // are kept: each one is a measurement in its own right.
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -46,7 +49,8 @@ const (
 )
 
 // claimTTL is the longest a claimed run may take: 5 profiles × 5 values × 3
-// rounds at 45 s each is under an hour.
+// rounds at 45 s each is under an hour. The run's link to the fleet lives no
+// longer.
 const claimTTL = 75 * time.Minute
 
 // maxTaskRows bounds what one finish may carry.
@@ -60,11 +64,16 @@ type Slots interface {
 	ActiveSlots(ctx context.Context) ([]string, error)
 }
 
-// Subscriptions opens the stand's subscription link by account name
-// (subscription.Service in production).
-type Subscriptions interface {
-	URLByName(ctx context.Context, name string) (string, error)
+// Fleet renders every relay a subscriber can be handed as a subscription
+// link, with the relay's own credential (subscription.Service.FleetLinks over
+// entry.Service in production).
+type Fleet interface {
+	Links(ctx context.Context) ([]string, error)
 }
+
+// LinksPath is where a claimed run fetches the fleet's links, under the hub's
+// public API URL: GET LinksPath + token (RegisterProberRoutes).
+const LinksPath = "/api/v1/internal/entry-probes/stand/links/"
 
 // Rows is where the runs' rows go (relayruns.Store in production).
 type Rows interface {
@@ -75,18 +84,21 @@ type Rows interface {
 type Scheduler struct {
 	pool  db.Pool
 	slots Slots
-	subs  Subscriptions
+	fleet Fleet
 	rows  Rows
+	// apiURL is the hub's public API base URL, the one a point's prober
+	// reaches the hub at (config.Default().APIURL()).
+	apiURL string
 }
 
-// NewScheduler is the stand on pool.
-func NewScheduler(pool db.Pool, slots Slots, subs Subscriptions, rows Rows) *Scheduler {
-	return &Scheduler{pool: pool, slots: slots, subs: subs, rows: rows}
+// NewScheduler is the stand on pool; apiURL is the hub's public API base URL.
+func NewScheduler(pool db.Pool, slots Slots, fleet Fleet, rows Rows, apiURL string) *Scheduler {
+	return &Scheduler{pool: pool, slots: slots, fleet: fleet, rows: rows, apiURL: strings.TrimRight(apiURL, "/")}
 }
 
 // Settings is stand_settings.
 type Settings struct {
-	Subscription string `json:"subscription"`
+	Enabled      bool   `json:"enabled"`
 	Interval     int    `json:"interval_minutes"`
 	Rounds       int    `json:"rounds"`
 	BaselinePath string `json:"baseline_path"`
@@ -94,8 +106,8 @@ type Settings struct {
 
 func (s *Scheduler) settings(ctx context.Context) (Settings, error) {
 	var st Settings
-	err := s.pool.QueryRow(ctx, `SELECT subscription, interval_minutes, rounds, baseline_path FROM stand_settings WHERE id`).
-		Scan(&st.Subscription, &st.Interval, &st.Rounds, &st.BaselinePath)
+	err := s.pool.QueryRow(ctx, `SELECT enabled, interval_minutes, rounds, baseline_path FROM stand_settings WHERE id`).
+		Scan(&st.Enabled, &st.Interval, &st.Rounds, &st.BaselinePath)
 	if err != nil {
 		return Settings{}, fmt.Errorf("stand settings: %w", err)
 	}
@@ -130,7 +142,7 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 	}
 	interval := time.Duration(st.Interval) * time.Minute
 	if _, err := s.pool.Exec(ctx, `
-		UPDATE stand_tasks SET status = 'expired', finished_at = now(),
+		UPDATE stand_tasks SET status = 'expired', finished_at = now(), links_token_hash = NULL,
 		       error = CASE status WHEN 'queued' THEN 'точка не взяла прогон за интервал'
 		                           ELSE 'точка не закончила прогон' END
 		WHERE (status = 'queued' AND created_at < now() - $1::interval)
@@ -138,7 +150,7 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 		interval.String(), claimTTL.String()); err != nil {
 		return 0, fmt.Errorf("expire stand tasks: %w", err)
 	}
-	if st.Subscription == "" {
+	if !st.Enabled {
 		return 0, nil // the stand is off
 	}
 	slots, err := s.slots.ActiveSlots(ctx)
@@ -163,8 +175,10 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 	return queued, nil
 }
 
-// Task is a run handed to a point. SubURL holds the subscription's token:
-// it goes to the prober that claimed the task and nowhere else.
+// Task is a run handed to a point. SubURL is the run's own link to the
+// fleet's links (LinksPath), good while the run is claimed: it opens every
+// relay's shared credential, so it goes to the prober that claimed the task
+// and nowhere else.
 type Task struct {
 	ID           uuid.UUID `json:"id"`
 	Knob         string    `json:"knob"`
@@ -175,17 +189,21 @@ type Task struct {
 	SubURL       string    `json:"sub_url"`
 }
 
-// Claim hands slot its oldest queued run, or nil. A run whose subscription
-// the hub cannot open is failed here, with the reason, and the next one is
-// tried.
+// Claim hands slot its oldest queued run, or nil, with the run's own link to
+// the fleet's links. A run queued before the stand was switched off is failed
+// here, with the reason, and the next one is tried.
 func (s *Scheduler) Claim(ctx context.Context, slot string) (*Task, error) {
 	for {
+		token, err := linksToken()
+		if err != nil {
+			return nil, err
+		}
 		var t Task
-		err := s.pool.QueryRow(ctx, `
-			UPDATE stand_tasks SET status = 'claimed', claimed_at = now()
+		err = s.pool.QueryRow(ctx, `
+			UPDATE stand_tasks SET status = 'claimed', claimed_at = now(), links_token_hash = $2
 			WHERE id = (SELECT id FROM stand_tasks WHERE slot = $1 AND status = 'queued'
 			            ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
-			RETURNING id, knob, vals, base, rounds, baseline_path`, slot).
+			RETURNING id, knob, vals, base, rounds, baseline_path`, slot, linksTokenHash(token)).
 			Scan(&t.ID, &t.Knob, &t.Values, &t.Base, &t.Rounds, &t.BaselinePath)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -194,19 +212,14 @@ func (s *Scheduler) Claim(ctx context.Context, slot string) (*Task, error) {
 			return nil, fmt.Errorf("claim stand task: %w", err)
 		}
 		st, err := s.settings(ctx)
-		if err == nil && st.Subscription == "" {
-			err = errors.New("стенд выключен: в stand_settings не названа подписка")
+		if err == nil && !st.Enabled {
+			err = errors.New("стенд выключен: stand_settings.enabled = false")
 		}
 		if err == nil {
-			t.SubURL, err = s.subs.URLByName(ctx, st.Subscription)
-			if err != nil {
-				err = fmt.Errorf("подписка стенда %q: %w", st.Subscription, err)
-			}
-		}
-		if err == nil {
+			t.SubURL = s.apiURL + LinksPath + token
 			return &t, nil
 		}
-		if _, ferr := s.pool.Exec(ctx, `UPDATE stand_tasks SET status = 'failed', error = $2, finished_at = now() WHERE id = $1`,
+		if _, ferr := s.pool.Exec(ctx, `UPDATE stand_tasks SET status = 'failed', error = $2, finished_at = now(), links_token_hash = NULL WHERE id = $1`,
 			t.ID, err.Error()); ferr != nil {
 			return nil, fmt.Errorf("fail stand task: %w", ferr)
 		}
@@ -275,7 +288,7 @@ func (s *Scheduler) Finish(ctx context.Context, slot string, id uuid.UUID, res R
 		}
 	}
 	if _, err := s.pool.Exec(ctx, `
-		UPDATE stand_tasks SET status = $2, error = $3, core = $4, rows_sent = $5, rows_added = $6, finished_at = now()
+		UPDATE stand_tasks SET status = $2, error = $3, core = $4, rows_sent = $5, rows_added = $6, finished_at = now(), links_token_hash = NULL
 		WHERE id = $1`, id, status, reason, res.Core, len(rows), added); err != nil {
 		return added, fmt.Errorf("finish stand task: %w", err)
 	}
@@ -347,4 +360,43 @@ func (s *Scheduler) Plan(ctx context.Context) (Settings, map[string][]string, er
 		knobs[k] = v
 	}
 	return st, knobs, rows.Err()
+}
+
+// linksToken is a run's capability to read the fleet's links: random, and
+// stored only as its SHA-256 (stand_tasks.links_token_hash).
+func linksToken() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("stand links token: %w", err)
+	}
+	return hex.EncodeToString(raw), nil
+}
+
+func linksTokenHash(token string) []byte {
+	sum := sha256.Sum256([]byte(token))
+	return sum[:]
+}
+
+// ErrNoSuchLinks: no claimed run under that link.
+var ErrNoSuchLinks = errors.New("stand: no claimed run under that link")
+
+// FleetLinks is the fleet's links for the claimed run whose link token is:
+// every relay a subscriber can be handed, with its own credential. A run that
+// is no longer claimed, or claimed longer ago than claimTTL, has none.
+func (s *Scheduler) FleetLinks(ctx context.Context, token string) ([]string, error) {
+	if len(token) != 64 {
+		return nil, ErrNoSuchLinks
+	}
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM stand_tasks
+		               WHERE links_token_hash = $1 AND status = 'claimed' AND claimed_at > now() - $2::interval)`,
+		linksTokenHash(token), claimTTL.String()).Scan(&ok)
+	if err != nil {
+		return nil, fmt.Errorf("stand links: %w", err)
+	}
+	if !ok {
+		return nil, ErrNoSuchLinks
+	}
+	return s.fleet.Links(ctx)
 }

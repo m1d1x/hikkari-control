@@ -171,6 +171,12 @@ const (
 		       WHERE g.revoked_at IS NULL AND gr.box = r.box) < $3`
 	selectAliveEnvelope = `
 		SELECT envelope_ct FROM entry_relays WHERE name = $1 AND status = 'alive'`
+	// The relays a subscriber can be handed (grantCandidates without the
+	// account's own terms): what the stand measures.
+	servingEnvelopes = `
+		SELECT name, envelope_ct FROM entry_relays
+		WHERE kind = 'personal' AND status = 'alive' AND expires_at > $1
+		ORDER BY name`
 	insertGrant = `
 		INSERT INTO entry_grants (account_id, relay_id, trigger, meta_ct)
 		VALUES ($1, $2, $3, $4)`

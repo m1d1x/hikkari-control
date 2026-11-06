@@ -11,14 +11,15 @@ import (
 	"time"
 )
 
-// Profile is one entry of the stand's subscription as the client parses it.
+// Profile is one entry of the fleet's links as the client parses it.
 type Profile struct {
 	Label  string         `json:"label"`
 	Config map[string]any `json:"config"`
 }
 
-// Profiles runs the kit's parser over the subscription. The link goes on
-// stdin and never into an error: it holds the subscription's token.
+// Profiles runs the kit's parser over the run's link to the fleet's links
+// (Task.SubURL), fetched as a subscription. The link goes on stdin and never
+// into an error: its token opens every relay's credential.
 func Profiles(ctx context.Context, parser, subURL string) ([]Profile, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
@@ -68,7 +69,7 @@ type Runner struct {
 	Log func(format string, args ...any)
 }
 
-// Run measures every profile of the subscription the knob applies to, one
+// Run measures every profile of the fleet the knob applies to, one
 // after another, and returns the rows with the reasons any profile stopped
 // short. Rows of a profile that stopped half-way are kept.
 func (r Runner) Run(ctx context.Context, t Task) Result {
@@ -102,7 +103,7 @@ func (r Runner) Run(ctx context.Context, t Task) Result {
 		}
 	}
 	if measured == 0 && len(errs) == 0 {
-		errs = append(errs, fmt.Sprintf("в подписке стенда нет профиля, к которому применима ручка %s (профилей %d)", t.Knob, len(profiles)))
+		errs = append(errs, fmt.Sprintf("во флоте нет профиля, к которому применима ручка %s (профилей %d)", t.Knob, len(profiles)))
 	}
 	res.Error = strings.Join(errs, "; ")
 	return res

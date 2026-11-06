@@ -2,8 +2,11 @@ package stand
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -53,28 +56,36 @@ type fakeSlots []string
 
 func (f fakeSlots) ActiveSlots(context.Context) ([]string, error) { return f, nil }
 
-type fakeSubs struct {
-	url string
-	err error
+type fakeFleet []string
+
+func (f fakeFleet) Links(context.Context) ([]string, error) { return f, nil }
+
+const testAPI = "https://api.example"
+
+func newTestScheduler(pool *pgxpool.Pool, slots fakeSlots, rows Rows) *Scheduler {
+	return NewScheduler(pool, slots, fakeFleet{"vless://a@1.2.3.4:443#amsterdam-1-001", "vless://b@1.2.3.4:8443#amsterdam-1-002"}, rows, testAPI+"/")
 }
 
-func (f fakeSubs) URLByName(_ context.Context, name string) (string, error) {
-	if f.err != nil {
-		return "", f.err
-	}
-	return f.url + "#" + name, nil
-}
-
-func standOn(t *testing.T, pool *pgxpool.Pool, sub string) {
+func standOn(t *testing.T, pool *pgxpool.Pool, on bool) {
 	t.Helper()
-	if _, err := pool.Exec(context.Background(), `UPDATE stand_settings SET subscription = $1`, sub); err != nil {
+	if _, err := pool.Exec(context.Background(), `UPDATE stand_settings SET enabled = $1`, on); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestDBStandIsOffUntilASubscriptionIsNamed(t *testing.T) {
+// linksTokenOf is the token of a claimed run's link.
+func linksTokenOf(t *testing.T, task *Task) string {
+	t.Helper()
+	token, ok := strings.CutPrefix(task.SubURL, testAPI+LinksPath)
+	if !ok || len(token) != 64 {
+		t.Fatalf("task link %q is not the hub's links path with a token", task.SubURL)
+	}
+	return token
+}
+
+func TestDBStandIsOffUntilEnabled(t *testing.T) {
 	pool := dbPool(t)
-	s := NewScheduler(pool, fakeSlots{"ru-spb"}, fakeSubs{url: "https://sub/x"}, relayruns.NewStore(pool))
+	s := newTestScheduler(pool, fakeSlots{"ru-spb"}, relayruns.NewStore(pool))
 	if n, err := s.Tick(context.Background()); err != nil || n != 0 {
 		t.Fatalf("queued %d err %v with the stand off", n, err)
 	}
@@ -83,8 +94,8 @@ func TestDBStandIsOffUntilASubscriptionIsNamed(t *testing.T) {
 func TestDBStandQueuesOneRunPerPointAndKnobPerInterval(t *testing.T) {
 	ctx := context.Background()
 	pool := dbPool(t)
-	standOn(t, pool, "stand-acc")
-	s := NewScheduler(pool, fakeSlots{"lv-main", "ru-spb"}, fakeSubs{url: "https://sub/x"}, relayruns.NewStore(pool))
+	standOn(t, pool, true)
+	s := newTestScheduler(pool, fakeSlots{"lv-main", "ru-spb"}, relayruns.NewStore(pool))
 	if n, err := s.Tick(ctx); err != nil || n != 2 {
 		t.Fatalf("queued %d err %v, want one per point", n, err)
 	}
@@ -96,9 +107,10 @@ func TestDBStandQueuesOneRunPerPointAndKnobPerInterval(t *testing.T) {
 		t.Fatalf("claim %v %v", task, err)
 	}
 	if task.Knob != "fp" || strings.Join(task.Values, ",") != "chrome,chrome_155,firefox,safari" || task.Rounds != 3 ||
-		task.BaselinePath != "/" || task.SubURL != "https://sub/x#stand-acc" {
+		task.BaselinePath != "/" {
 		t.Fatalf("task %+v", task)
 	}
+	linksTokenOf(t, task)
 	if again, err := s.Claim(ctx, "ru-spb"); err != nil || again != nil {
 		t.Fatalf("a second claim got %+v %v", again, err)
 	}
@@ -118,13 +130,13 @@ func TestDBStandQueuesOneRunPerPointAndKnobPerInterval(t *testing.T) {
 func TestDBStandFinishWritesRowsAsThePointsOwn(t *testing.T) {
 	ctx := context.Background()
 	pool := dbPool(t)
-	standOn(t, pool, "stand-acc")
+	standOn(t, pool, true)
 	// The point's network is the operator's: the rows carry it.
 	if _, err := pool.Exec(ctx, `INSERT INTO entry_vantages (slot, title, network) VALUES ('ru-spb', 'spb', 'AS41733')`); err != nil {
 		t.Fatal(err)
 	}
 	store := relayruns.NewStore(pool)
-	s := NewScheduler(pool, fakeSlots{"ru-spb"}, fakeSubs{url: "https://sub/x"}, store)
+	s := newTestScheduler(pool, fakeSlots{"ru-spb"}, store)
 	if _, err := s.Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -173,29 +185,92 @@ func TestDBStandFinishWritesRowsAsThePointsOwn(t *testing.T) {
 	}
 }
 
-func TestDBStandFailsARunWhoseSubscriptionCannotBeOpened(t *testing.T) {
+func TestDBStandFailsARunQueuedBeforeItWasSwitchedOff(t *testing.T) {
 	ctx := context.Background()
 	pool := dbPool(t)
-	standOn(t, pool, "gone")
-	s := NewScheduler(pool, fakeSlots{"ru-spb"}, fakeSubs{err: errors.New("подписка не живая: expired")}, relayruns.NewStore(pool))
+	standOn(t, pool, true)
+	s := newTestScheduler(pool, fakeSlots{"ru-spb"}, relayruns.NewStore(pool))
 	if _, err := s.Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
+	standOn(t, pool, false)
 	task, err := s.Claim(ctx, "ru-spb")
 	if err != nil || task != nil {
 		t.Fatalf("handed out %+v err %v", task, err)
 	}
 	views, err := s.Recent(ctx, 10)
-	if err != nil || len(views) != 1 || views[0].Status != TaskFailed || !strings.Contains(views[0].Error, "expired") {
+	if err != nil || len(views) != 1 || views[0].Status != TaskFailed || !strings.Contains(views[0].Error, "выключен") {
 		t.Fatalf("views %+v err %v", views, err)
+	}
+	var left int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM stand_tasks WHERE links_token_hash IS NOT NULL`).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("a failed run kept its link (%d, %v)", left, err)
+	}
+}
+
+// A claimed run's link serves the fleet's links to whoever holds it, and
+// only while the run is claimed: a wrong token, another run's finished link
+// or one claimed longer ago than claimTTL get nothing.
+func TestDBStandLinksServeTheFleetOnlyWhileTheRunIsClaimed(t *testing.T) {
+	ctx := context.Background()
+	pool := dbPool(t)
+	standOn(t, pool, true)
+	s := newTestScheduler(pool, fakeSlots{"ru-spb", "lv-main"}, relayruns.NewStore(pool))
+	if _, err := s.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	spb, err := s.Claim(ctx, "ru-spb")
+	if err != nil || spb == nil {
+		t.Fatalf("claim %v %v", spb, err)
+	}
+	lv, err := s.Claim(ctx, "lv-main")
+	if err != nil || lv == nil {
+		t.Fatalf("claim %v %v", lv, err)
+	}
+	if linksTokenOf(t, spb) == linksTokenOf(t, lv) {
+		t.Fatal("two runs share a link")
+	}
+
+	mux := http.NewServeMux()
+	RegisterProberRoutes(mux, s, func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }
+	}, func(*http.Request) string { return "" })
+	get := func(path string) (int, string) {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec.Code, rec.Body.String()
+	}
+	code, body := get(LinksPath + linksTokenOf(t, spb))
+	raw, _ := base64.StdEncoding.DecodeString(body)
+	if code != http.StatusOK || string(raw) != "vless://a@1.2.3.4:443#amsterdam-1-001\nvless://b@1.2.3.4:8443#amsterdam-1-002" {
+		t.Fatalf("links %d %q", code, raw)
+	}
+	if code, _ := get(LinksPath + strings.Repeat("0", 64)); code != http.StatusNotFound {
+		t.Fatalf("a made-up token got %d", code)
+	}
+	if code, _ := get(LinksPath + "short"); code != http.StatusNotFound {
+		t.Fatalf("a malformed token got %d", code)
+	}
+
+	if _, err := s.Finish(ctx, "ru-spb", spb.ID, Result{Core: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.FleetLinks(ctx, linksTokenOf(t, spb)); !errors.Is(err, ErrNoSuchLinks) {
+		t.Fatalf("a finished run's link still served: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE stand_tasks SET claimed_at = now() - interval '76 minutes' WHERE id = $1`, lv.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.FleetLinks(ctx, linksTokenOf(t, lv)); !errors.Is(err, ErrNoSuchLinks) {
+		t.Fatalf("a run claimed past claimTTL still served: %v", err)
 	}
 }
 
 func TestDBStandFailedRunKeepsItsRows(t *testing.T) {
 	ctx := context.Background()
 	pool := dbPool(t)
-	standOn(t, pool, "stand-acc")
-	s := NewScheduler(pool, fakeSlots{"ru-spb"}, fakeSubs{url: "https://sub/x"}, relayruns.NewStore(pool))
+	standOn(t, pool, true)
+	s := newTestScheduler(pool, fakeSlots{"ru-spb"}, relayruns.NewStore(pool))
 	if _, err := s.Tick(ctx); err != nil {
 		t.Fatal(err)
 	}

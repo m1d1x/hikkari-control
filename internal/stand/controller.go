@@ -2,7 +2,7 @@ package stand
 
 // The knob controller (hikkari-client plans/2026-11-04-tspu-detection-research.md,
 // «Что делать дальше», 2). The stand measures every candidate of a knob on
-// every node of its subscription from every point, whatever value the node
+// every node of the fleet from every point, whatever value the node
 // has now; the controller reads those rows and moves a node off a value Russia
 // cuts onto a candidate that passes, before a tester complains.
 //

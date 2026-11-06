@@ -1,10 +1,12 @@
 package stand
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,6 +36,26 @@ func RegisterProberRoutes(mux *http.ServeMux, s *Scheduler, gate func(http.Handl
 		}
 		writeJSON(w, http.StatusOK, task)
 	}))
+	// The fleet's links for a claimed run, in the subscription format (base64
+	// of the links, one per line), so the point reads them with the client's
+	// own fetcher and parser. Not behind the point's bearer: the parser fetches
+	// a bare URL. The path's token is the credential, good only while its run
+	// is claimed; anything else gets the same 404.
+	mux.HandleFunc("GET "+LinksPath+"{token}", func(w http.ResponseWriter, r *http.Request) {
+		links, err := s.FleetLinks(r.Context(), r.PathValue("token"))
+		if errors.Is(err, ErrNoSuchLinks) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			applog.Error(r.Context(), "stand", "fleet links failed", applog.F("err", err.Error()))
+			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))))
+	})
 	// A run's rows, and why it stopped short.
 	mux.HandleFunc("POST /api/v1/internal/entry-probes/stand/{id}", gate(func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(r.PathValue("id"))
