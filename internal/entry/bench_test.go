@@ -165,7 +165,7 @@ func TestAnAdmissionProbeCarriesNoResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ph.svc.finishJob(ctx, job, nil) //nolint:errcheck // frees the box
-	task, err := ph.svc.createProbeTask(ctx, job, []string{relay})
+	task, err := ph.svc.createProbeTask(ctx, job, []string{relay}, "")
 	if err != nil {
 		t.Fatal(err)
 	}

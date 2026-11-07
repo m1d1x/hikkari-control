@@ -300,7 +300,7 @@ func (s *Service) Vantages(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	active, err := s.activeVantageSet(ctx)
+	active, err := s.censorVantageSet(ctx)
 	if err != nil {
 		return nil, err
 	}

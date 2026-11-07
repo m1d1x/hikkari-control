@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // A box retired by hand for the censor needs the vantage's word. On 02.11
@@ -62,5 +64,63 @@ func TestABanWithoutAVerdictIsRefused(t *testing.T) {
 	}
 	if queued != 0 {
 		t.Fatalf("%d probe tasks left queued for a verdict nobody reads", queued)
+	}
+}
+
+// One point's refusal is not a verdict: the second point sees the relay clean,
+// and the relay reads unconfirmed — neither admitted nor refused.
+func TestARefusalOnePointGivesIsUnconfirmed(t *testing.T) {
+	ph := newProvHarness(t)
+	ctx := context.Background()
+	box, _ := ph.harness.box()
+	relay := ph.relay(box, KindPersonal)
+	ph.admit(relay)
+
+	go func() {
+		for i, slot := range []string{testVantage, testVantage2} {
+			verdict := []string{VerdictIPBanned, VerdictClean}[i]
+			for j := 0; j < 200; j++ {
+				task, err := ph.svc.ClaimProbeTask(ctx, slot, TaskAdmission)
+				if err == nil && task != nil {
+					_ = ph.svc.FinishProbeTask(ctx, task.ID, slot, map[string]string{relay: verdict}, nil)
+					break
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		}
+	}()
+	v, err := ph.svc.askConfirmed(ctx, uuid.Nil, []string{relay}, time.Now().Add(10*time.Second), 20*time.Millisecond, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v[relay] != verdictUnconfirmed {
+		t.Fatalf("verdict %q, want %s", v[relay], verdictUnconfirmed)
+	}
+}
+
+// A point abroad claims no admission probe: its "clean" says nothing about a
+// block in Russia. Its bench runs are its own.
+func TestAPointAbroadDoesNotJudgeABan(t *testing.T) {
+	ph := newProvHarness(t)
+	ctx := context.Background()
+	if _, err := ph.pool.Exec(ctx, `
+		INSERT INTO entry_vantages (slot, title, in_russia) VALUES ('lv-test', 'abroad', false)
+		ON CONFLICT (slot) DO UPDATE SET status = 'active', retired_at = NULL, in_russia = false`); err != nil {
+		t.Fatal(err)
+	}
+	box, _ := ph.harness.box()
+	relay := ph.relay(box, KindPersonal)
+	ph.admit(relay)
+	task, err := ph.svc.createProbeTask(ctx, uuid.Nil, []string{relay}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = ph.pool.Exec(context.Background(), `DELETE FROM entry_probe_tasks WHERE id = $1`, task) })
+	got, err := ph.svc.ClaimProbeTask(ctx, "lv-test", TaskAdmission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("the point abroad claimed admission task %s", got.ID)
 	}
 }

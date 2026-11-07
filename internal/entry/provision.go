@@ -1927,28 +1927,8 @@ func admissionRefusal(verdict string) bool {
 // nobody claims by the deadline is the vantage being absent, which is a
 // different failure from a vantage that looked and saw nothing.
 func (j *jobRun) askVantage(names []string, deadline time.Time) (map[string]string, error) {
-	task, err := j.p.svc.createProbeTask(j.ctx, j.id, names)
-	if err != nil {
-		return nil, err
-	}
-	j.log("проба допуска поставлена в очередь точке обзора")
-	for {
-		v, err := j.p.svc.probeVerdicts(j.ctx, task)
-		if err != nil {
-			return nil, err
-		}
-		if v != nil {
-			return v, nil
-		}
-		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("%w: ни одна точка обзора не ответила на пробу за %s. пробник запущен?", errNoVerdict, j.p.probeTimeout)
-		}
-		select {
-		case <-j.ctx.Done():
-			return nil, j.ctx.Err()
-		case <-time.After(j.p.probePoll):
-		}
-	}
+	// Every refusal is confirmed by a second point in Russia (vantage_confirm.go).
+	return j.p.svc.askConfirmed(j.ctx, j.id, names, deadline, j.p.probePoll, j.log)
 }
 
 func fingerprint(authorizedKey string) string {

@@ -53,8 +53,23 @@ const (
 	// While one waits no other is queued — with no prober running they would
 	// pile up, and the suspects they carry would be marked asked without
 	// being asked.
+	//
+	// A confirmation waiting for its second point does not hold the routine
+	// reprobes back: with one point left in Russia it would wait for good.
 	pendingReprobe = `
-		SELECT EXISTS (SELECT 1 FROM entry_probe_tasks WHERE kind = $1 AND status = 'queued')`
+		SELECT EXISTS (SELECT 1 FROM entry_probe_tasks WHERE kind = $1 AND status = 'queued' AND not_by IS NULL)`
+
+	// insertBoxConfirmation asks a machine's reprobe again of any point but
+	// the one that failed it ($4).
+	insertBoxConfirmation = `
+		INSERT INTO entry_probe_tasks (relays, kind, params, not_by) VALUES ($1, $2, $3, $4)`
+
+	// staleConfirmations: a confirmation no second point took within the
+	// machine's probe interval is dropped; the next reprobe asks afresh.
+	staleConfirmations = `
+		DELETE FROM entry_probe_tasks
+		WHERE kind = $1 AND status = 'queued' AND not_by IS NOT NULL
+		  AND created_at < now() - make_interval(secs => $2)`
 
 	// reprobeAddressRelay picks the live XHTTP relay whose address the names
 	// are tried against; at random, so one box does not carry every burned
@@ -145,6 +160,9 @@ func (s *Service) reprobeSuspectBoxes(ctx context.Context, c SecondChance) (int,
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, staleConfirmations, TaskBox, c.ProbeEvery.Seconds()); err != nil {
+		return 0, err
+	}
 	var pending bool
 	if err := tx.QueryRow(ctx, pendingReprobe, TaskBox).Scan(&pending); err != nil {
 		return 0, err
@@ -192,7 +210,13 @@ func (s *Service) reprobeSuspectBoxes(ctx context.Context, c SecondChance) (int,
 // applyBoxVerdicts folds a finished machine reprobe into the ledger, in the
 // transaction that finishes the task. Read over the relays the task carried
 // only: a verdict about anything else is not an answer to this task.
-func (s *Service) applyBoxVerdicts(ctx context.Context, tx pgx.Tx, params []byte, relays []string, verdicts map[string]string) error {
+//
+// A failure is two points' word (vantage_confirm.go): one point's failed
+// reading queues the same reprobe for another point in Russia (confirms names
+// the first) and moves nothing yet. The confirmation's failure is the one
+// failed reprobe the ledger counts; its clean reading against the first one's
+// failure is no reading at all.
+func (s *Service) applyBoxVerdicts(ctx context.Context, tx pgx.Tx, params []byte, relays []string, verdicts map[string]string, by, confirms string) error {
 	var p boxTaskParams
 	if err := json.Unmarshal(params, &p); err != nil || p.Box == "" {
 		return fmt.Errorf("entry: box task params: %v", err)
@@ -201,7 +225,19 @@ func (s *Service) applyBoxVerdicts(ctx context.Context, tx pgx.Tx, params []byte
 	if err != nil {
 		return err
 	}
-	status, err := judge(ctx, tx, SuspectBox, p.Box, boxReading(verdicts, relays), policy.Box, true)
+	r := boxReading(verdicts, relays)
+	switch {
+	case r == readFailed && confirms == "":
+		if _, err := tx.Exec(ctx, insertBoxConfirmation, relays, TaskBox, params, by); err != nil {
+			return fmt.Errorf("entry: confirm reprobe of %s: %w", p.Box, err)
+		}
+		applog.Info(ctx, "entry", "suspect machine failed one reprobe, asking a second vantage",
+			applog.F("box", p.Box), applog.F("by", by))
+		return nil
+	case r == readClean && confirms != "":
+		r = readNothing // the two points disagree: no evidence either way
+	}
+	status, err := judge(ctx, tx, SuspectBox, p.Box, r, policy.Box, true)
 	if err != nil {
 		return err
 	}

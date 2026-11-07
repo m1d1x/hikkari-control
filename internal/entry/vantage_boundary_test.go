@@ -303,7 +303,7 @@ func TestAFinishIsRecordedOnlyAsTheClaimersAnswer(t *testing.T) {
 		if (err == nil) != want {
 			t.Fatalf("finish by %s with %v: err = %v, want recorded = %v", by, v, err, want)
 		}
-		got, _ := h.svc.probeVerdicts(ctx, id)
+		got, _, _ := h.svc.probeVerdicts(ctx, id)
 		if want {
 			recorded++
 			if got[r1] != v[r1] || got[r2] != v[r2] || len(got) != 2 {
