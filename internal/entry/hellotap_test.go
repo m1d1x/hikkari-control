@@ -8,9 +8,9 @@ import (
 )
 
 // The hello tap is a box setting (migration 040): on, the box's next install
-// writes EDGE_HELLO_TAP=1 into its Reality relays' env, and UpdateBox runs
-// that install now — drained, the image's build, probed, back in the pool.
-func TestHelloTapReachesTheRelayEnvThroughOneBoxUpdate(t *testing.T) {
+// writes EDGE_HELLO_TAP=1 into its Reality relays' env, and Reconfigure runs
+// that install now on the build the box has — drained, probed, back in the pool.
+func TestHelloTapReachesTheRelayEnvThroughOneReconfigure(t *testing.T) {
 	rh := newRolloutHarness(t)
 	ctx := context.Background()
 	box := rh.boxOnV1()
@@ -34,14 +34,14 @@ func TestHelloTapReachesTheRelayEnvThroughOneBoxUpdate(t *testing.T) {
 	if err := rh.svc.SetHelloTap(ctx, box, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.UpdateBox(ctx, box); err != nil {
+	if err := o.Reconfigure(ctx, box); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	if env := envOf(); !strings.Contains(env, "EDGE_HELLO_TAP=1\n") {
 		t.Fatalf("env after the update:\n%s", env)
 	}
-	if got := rh.recorded(box); got != rh.sha2 {
-		t.Fatalf("the box runs %s, want the image's %s", got, rh.sha2)
+	if got := rh.recorded(box); got != rh.sha1 {
+		t.Fatalf("the box runs %s, want the build it had %s", got, rh.sha1)
 	}
 	for _, s := range rh.statuses(box) {
 		if s != StatusAlive {
@@ -51,7 +51,7 @@ func TestHelloTapReachesTheRelayEnvThroughOneBoxUpdate(t *testing.T) {
 	if err := rh.svc.SetHelloTap(ctx, box, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := o.UpdateBox(ctx, box); err != nil {
+	if err := o.Reconfigure(ctx, box); err != nil {
 		t.Fatalf("update off: %v", err)
 	}
 	if strings.Contains(envOf(), "EDGE_HELLO_TAP") {
@@ -59,5 +59,18 @@ func TestHelloTapReachesTheRelayEnvThroughOneBoxUpdate(t *testing.T) {
 	}
 	if err := rh.svc.SetHelloTap(ctx, "no-such-box", true); !errors.Is(err, ErrNoSuchBox) {
 		t.Fatalf("unknown box: %v", err)
+	}
+}
+
+// The tunnel's location lets a stream-up upload run as long and as large as
+// the stream: nginx's default 1m body cap cut every connection after 1 MiB
+// up on euw1 (06.11-07.11, bench upload 0 and half the media transfers lost).
+func TestTheXhttpFrontLetsTheUploadStreamRun(t *testing.T) {
+	loc := frontScript[strings.Index(frontScript, `location ~ "^$secret`):]
+	loc = loc[:strings.Index(loc, "}")]
+	for _, want := range []string{"client_max_body_size 0;", "client_body_timeout 1h;", "proxy_request_buffering off;"} {
+		if !strings.Contains(loc, want) {
+			t.Errorf("the tunnel location lacks %q:\n%s", want, loc)
+		}
 	}
 }

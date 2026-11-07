@@ -1734,6 +1734,11 @@ server {
     root $webroot;
     index index.html;
     location ~ "^$secret(\$|/)" {
+        # The tunnel's upload is one long POST in stream-up: no size cap
+        # (nginx's 1m default cut every connection after 1 MiB up, 06.11) and
+        # no body timeout shorter than the stream's own.
+        client_max_body_size 0;
+        client_body_timeout 1h;
         proxy_pass http://127.0.0.1:$front;
         proxy_http_version 1.1;
         proxy_buffering off;

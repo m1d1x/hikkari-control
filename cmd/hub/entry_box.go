@@ -266,11 +266,14 @@ func runEntryBox(args []string) {
 			xhttp, args = true, args[:n-1]
 		}
 	}
-	if len(args) == 3 && args[0] == "hello-tap" && (args[2] == "on" || args[2] == "off") {
+	if (len(args) == 3 && args[0] == "hello-tap" && (args[2] == "on" || args[2] == "off")) ||
+		(len(args) == 2 && args[0] == "reconfigure") {
 		// entry-box hello-tap <box> on|off — the box's Reality relays count the
-		// ClientHellos that reach them (edge/hellotap.go), applied now by one
-		// update job on that box: drained, edge from this image with the new
-		// env, admission probe, back in the pool.
+		// ClientHellos that reach them (edge/hellotap.go).
+		// entry-box reconfigure <box> — the box's relays rewritten from what the
+		// hub holds now (env, an XHTTP relay's nginx front).
+		// Both apply it now by one reconfigure job on that box, on the build it
+		// runs: drained, reinstalled, admission probe, back in the pool.
 		if err := cryptobox.Configure(os.Getenv); err != nil {
 			fail(fmt.Errorf("content key: %w", err))
 		}
@@ -281,18 +284,21 @@ func runEntryBox(args []string) {
 		if err != nil {
 			fail(err)
 		}
-		if err := svc.SetHelloTap(ctx, args[1], args[2] == "on"); err != nil {
-			fail(err)
+		box := args[1]
+		if args[0] == "hello-tap" {
+			if err := svc.SetHelloTap(ctx, box, args[2] == "on"); err != nil {
+				fail(err)
+			}
+			fmt.Printf("hello_tap %s = %s\n", box, args[2])
 		}
-		fmt.Printf("hello_tap %s = %s; updating the box\n", args[1], args[2])
-		// The job drains for up to five minutes and probes after the swap:
-		// the shell's 30 s are for the setting, not for this.
+		// The job drains for up to five minutes and probes after: the
+		// shell's 30 s are for the setting, not for this.
 		jctx, jcancel := context.WithTimeout(context.Background(), 40*time.Minute)
 		defer jcancel()
-		if err := entry.NewOrchestrator(svc, newProvisioner(svc)).UpdateBox(jctx, args[1]); err != nil {
-			fail(fmt.Errorf("update %s: %w", args[1], err))
+		if err := entry.NewOrchestrator(svc, newProvisioner(svc)).Reconfigure(jctx, box); err != nil {
+			fail(fmt.Errorf("reconfigure %s: %w", box, err))
 		}
-		fmt.Printf("%s updated\n", args[1])
+		fmt.Printf("%s reconfigured\n", box)
 		os.Exit(0)
 	}
 	if len(args) >= 3 && args[0] == "ssh" {

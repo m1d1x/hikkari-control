@@ -1048,31 +1048,45 @@ func (s *Service) SetHelloTap(ctx context.Context, box string, on bool) error {
 	return nil
 }
 
-// UpdateBox moves one box onto this image's build now, outside a rollout: the
-// operator's way to apply a box setting the relays' env carries (the hello
-// tap) without waiting for a rollout to reach the box. It is a rollout's step
-// 4 on that box alone: drained, swapped, probed, back in the pool, the old
-// build put back if the probe fails.
-func (o *Orchestrator) UpdateBox(ctx context.Context, box string) error {
-	all, err := o.svc.fleet(ctx)
+// Reconfigure rewrites one box's relays from what the hub holds now — their
+// env (box settings such as the hello tap) and an XHTTP relay's nginx front —
+// on the build already on the box: drained, reinstalled, probed, back in the
+// pool. The build stays, so a rollout's canary still judges builds, not a
+// configuration that changed under it.
+func (o *Orchestrator) Reconfigure(ctx context.Context, box string) error {
+	return o.prov.execJob(ctx, JobReconfigure, box, uuid.Nil, func(j *jobRun) error {
+		return j.reconfigure(o)
+	})
+}
+
+func (j *jobRun) reconfigure(o *Orchestrator) error {
+	j.step("login")
+	r, err := j.loginByKey()
 	if err != nil {
 		return err
 	}
-	arch := ""
-	for _, b := range all {
-		if b.name == box {
-			arch = b.arch
+	defer r.Close()
+	relays, err := j.liveRelays()
+	if err != nil {
+		return err
+	}
+	b := boxOpened{r: r, relays: relays}
+	if err := j.drain(o, b, StatusDraining); err != nil {
+		j.back()
+		return err
+	}
+	defer j.back()
+	for _, rel := range relays {
+		j.step("deploy " + rel.name)
+		if err := j.install(r, rel); err != nil {
+			return err
+		}
+		if rel.id.Xhttp != nil {
+			if err := j.installFront(r, rel); err != nil {
+				return fmt.Errorf("nginx-фронт %s: %w", rel.name, err)
+			}
 		}
 	}
-	if arch == "" {
-		return fmt.Errorf("%w: %s (в парке нет или архитектура не известна)", ErrNoSuchBox, box)
-	}
-	for _, build := range o.prov.EdgeBuilds() {
-		if build.Arch == arch {
-			return o.prov.execJob(ctx, JobReconfigure, box, uuid.Nil, func(j *jobRun) error {
-				return j.update(o, build)
-			})
-		}
-	}
-	return fmt.Errorf("в образе хаба нет сборки nekko-edge под %s", arch)
+	j.step("probe")
+	return j.probe(relays)
 }
