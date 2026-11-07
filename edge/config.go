@@ -30,7 +30,16 @@ type Config struct {
 	EchoPort int
 	// LogLevel is Xray's loglevel.
 	LogLevel string
+	// HelloTap puts the hello tap (hellotap.go) on Listen and moves Xray's SNI
+	// router to loopback (TapPort), taking the client's address from a PROXY
+	// v2 header. EDGE_HELLO_TAP=1; off by default, so a box keeps its front
+	// as it was until the hub turns the tap on.
+	HelloTap bool
 }
+
+// TapPort is the loopback port Xray's SNI router listens on behind the tap:
+// the one after the per-cover inbounds.
+func (c Config) TapPort() int { return c.LocalPortBase + len(c.Covers) }
 
 func list(v string) []string {
 	var out []string
@@ -52,6 +61,7 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 		Clients:    list(getenv("EDGE_CLIENTS")),
 		Covers:     list(getenv("EDGE_COVERS")),
 		LogLevel:   getenv("EDGE_LOG_LEVEL"),
+		HelloTap:   getenv("EDGE_HELLO_TAP") == "1",
 	}
 	if c.Listen == "" {
 		c.Listen = "0.0.0.0:443"
@@ -90,6 +100,9 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 	if err == nil && c.EchoPort >= c.LocalPortBase && c.EchoPort < c.LocalPortBase+len(c.Covers) {
 		errs = append(errs, fmt.Errorf("EDGE_ECHO_PORT %d is one of the cover inbounds' ports", c.EchoPort))
 	}
+	if err == nil && c.HelloTap && c.EchoPort == c.TapPort() {
+		errs = append(errs, fmt.Errorf("EDGE_ECHO_PORT %d is the hello tap's loopback port", c.EchoPort))
+	}
 	return c, errors.Join(errs...)
 }
 
@@ -107,7 +120,7 @@ func (c Config) XrayConfig() map[string]any {
 		clients = append(clients, map[string]any{"id": id, "flow": "xtls-rprx-vision"})
 	}
 
-	inbounds := []map[string]any{{
+	router := map[string]any{
 		"tag":      "sni-router",
 		"listen":   listenHost,
 		"port":     port,
@@ -122,7 +135,14 @@ func (c Config) XrayConfig() map[string]any {
 			"destOverride": []string{"tls"},
 			"routeOnly":    true,
 		},
-	}}
+	}
+	if c.HelloTap {
+		// The tap holds the public port and hands every connection on here,
+		// the client's address in a PROXY v2 header.
+		router["listen"], router["port"] = "127.0.0.1", c.TapPort()
+		router["streamSettings"] = map[string]any{"sockopt": map[string]any{"acceptProxyProtocol": true}}
+	}
+	inbounds := []map[string]any{router}
 	outbounds := []map[string]any{
 		// First outbound is Xray's default; make it the drop, so a rule that
 		// fails to match never turns into an open proxy.

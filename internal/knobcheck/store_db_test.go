@@ -214,3 +214,47 @@ func TestDBWireTablesAreGone(t *testing.T) {
 		t.Fatalf("triggers %d %v", n, err)
 	}
 }
+
+// A node's pulse files its hello tap's totals per run; the view sums the runs,
+// names the hashes and counts the one the release's core sends for the
+// node's fingerprint.
+func TestDBEdgeHellosHoldWhatTheNodeGot(t *testing.T) {
+	pool := dbPool(t)
+	ctx := context.Background()
+	seedNode(t, pool, "ams-a", "amsterdam-1-002", "chrome_155")
+	s := NewStore(pool)
+	boot := "00112233445566778899aabbccddeeff"
+	if err := s.RecordHellos(ctx, "ams3-1", boot, map[string]map[string]int64{
+		"www.samsung.com": {"h1121e2b99d2744911": 40, "h1e08906f1ba730b11": 3},
+		"-":               {"unread": 7, "h1ffffffffffffffff": 2},
+		"Bad Cover!":      {"h1121e2b99d2744911": 99},
+		"www.example.com": {"not-an-hk": 5},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The next pulse of the run: totals only grow, a lower one is a late send.
+	if err := s.RecordHellos(ctx, "ams3-1", boot, map[string]map[string]int64{"www.samsung.com": {"h1121e2b99d2744911": 35}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordHellos(ctx, "ams3-1", "ffeeddccbbaa99887766554433221100", map[string]map[string]int64{"www.samsung.com": {"h1121e2b99d2744911": 10}}); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := s.EdgeHellos(ctx, "", time.Now().Add(-time.Hour))
+	if err != nil || len(nodes) != 1 {
+		t.Fatalf("%+v %v", nodes, err)
+	}
+	n := nodes[0]
+	if n.Profile != "amsterdam-1-002" || n.FP != "chrome_155" || n.Expect != "h1121e2b99d2744911" || n.Hit != 50 || n.Total != 62 || n.Core != ReleaseCore {
+		t.Fatalf("%+v", n)
+	}
+	names := map[string]string{}
+	for _, h := range n.Hellos {
+		names[h.HK] = h.Name
+	}
+	if names["h1121e2b99d2744911"] != "fp:chrome_155" || names["h1e08906f1ba730b11"] != "browser:chromium-152" || names["h1ffffffffffffffff"] != "" {
+		t.Fatalf("%v", names)
+	}
+	if err := s.RecordHellos(ctx, "ams3-1", "not hex", map[string]map[string]int64{"-": {"unread": 1}}); err != nil {
+		t.Fatal(err)
+	}
+}

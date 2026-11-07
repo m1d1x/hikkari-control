@@ -317,3 +317,42 @@ func TestAPulseIsAnsweredWithTheRelaysKeys(t *testing.T) {
 		t.Fatalf("filed %+v", keys)
 	}
 }
+
+type edgeHellosFake struct {
+	relay, boot string
+	counts      map[string]map[string]int64
+}
+
+func (f *edgeHellosFake) RecordHellos(_ context.Context, relay, boot string, counts map[string]map[string]int64) error {
+	f.relay, f.boot, f.counts = relay, boot, counts
+	return nil
+}
+
+// The hello tap's counts ride the pulse to the store, once the box's token
+// is taken.
+func TestAPulseFilesTheHelloTapsCounts(t *testing.T) {
+	h := newHarness(t)
+	box, _ := h.box()
+	relay := h.relay(box, KindPersonal)
+	hellos := &edgeHellosFake{}
+	h.svc.SetEdgeHellos(hellos)
+	post := func(token string) int {
+		mux := http.NewServeMux()
+		RegisterPulseRoutes(mux, h.svc, "s")
+		body := `{"relay":"` + relay + `","uptimeS":60,"boot":"00112233445566778899aabbccddeeff","hellos":{"www.samsung.com":{"h1121e2b99d2744911":4}}}`
+		req := httptest.NewRequest("POST", "/api/v1/internal/entry-pulse", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := post("wrong"); code != http.StatusUnauthorized || hellos.counts != nil {
+		t.Fatalf("a refused pulse filed its counts: %d %v", code, hellos.counts)
+	}
+	if code := post(PulseToken("s", box)); code != http.StatusNoContent {
+		t.Fatalf("status %d", code)
+	}
+	if hellos.relay != relay || hellos.boot != "00112233445566778899aabbccddeeff" || hellos.counts["www.samsung.com"]["h1121e2b99d2744911"] != 4 {
+		t.Fatalf("filed %+v", hellos)
+	}
+}

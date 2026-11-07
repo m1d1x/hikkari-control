@@ -45,6 +45,9 @@ type pulseBody struct {
 	// Boot and Keys: per-access-key totals of this edge run (pulse.go).
 	Boot string                  `json:"boot,omitempty"`
 	Keys map[string]pulseKeyBody `json:"keys,omitempty"`
+	// Hellos: the hello tap's counts of this edge run, cover → hk →
+	// connections (edge/hellotap.go).
+	Hellos map[string]map[string]int64 `json:"hellos,omitempty"`
 }
 
 type pulseKeyBody struct {
@@ -90,6 +93,7 @@ func RegisterPulseRoutes(mux *http.ServeMux, svc *Service, token string) {
 			Version:   body.Version,
 			Boot:      body.Boot,
 			Keys:      keyUsage(body.Keys),
+			Hellos:    body.Hellos,
 		})
 		switch {
 		case errors.Is(err, ErrPulseRefused):

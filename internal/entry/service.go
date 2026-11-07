@@ -134,6 +134,9 @@ type Service struct {
 	// relayKeys owns subscribers' access keys (pulse.go); nil leaves relays
 	// on their shared credential.
 	relayKeys RelayKeys
+	// edgeHellos takes the hello tap's counts from the pulse (pulse.go); nil
+	// drops them.
+	edgeHellos EdgeHellos
 	// subscribers sizes the stream pools by subscriptions (subscribers.go).
 	subscribers SubscriberCount
 	// traffic takes the gateway's per-socket byte counts into the dataset

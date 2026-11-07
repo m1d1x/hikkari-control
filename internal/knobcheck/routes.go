@@ -56,6 +56,24 @@ func RegisterOpsRoutes(mux *http.ServeMux, s *Store, resolve Resolver, gate func
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"checks": checks})
 	}))
+	mux.HandleFunc("GET /api/v1/ops/edge-hellos", gate("", func(w http.ResponseWriter, r *http.Request) {
+		span := 24 * time.Hour
+		if v := r.URL.Query().Get("last"); v != "" {
+			d, err := parseSpan(v)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "last: 6h, 24h, 7d"})
+				return
+			}
+			span = d
+		}
+		nodes, err := s.EdgeHellos(r.Context(), r.URL.Query().Get("relay"), time.Now().Add(-span))
+		if err != nil {
+			applog.Error(r.Context(), "knobcheck", "edge hellos failed", applog.F("err", err.Error()))
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes})
+	}))
 }
 
 // parseSpan reads 30m, 6h or 7d.

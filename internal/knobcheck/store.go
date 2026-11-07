@@ -105,9 +105,9 @@ func (s *Store) record(ctx context.Context, runID int64, state string, d Declare
 // nodeKnobs is a node's own knobs for a network, before the relay fills in
 // what the link takes from it.
 type nodeKnobs struct {
-	Known                        bool
+	Known                       bool
 	Proto, FP, SNI, ALPN, Relay string
-	ChangedAt                    time.Time
+	ChangedAt                   time.Time
 }
 
 // node reads what the hub hands out for the node labelled profile to a

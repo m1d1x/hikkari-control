@@ -334,6 +334,18 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 			return "", err
 		}
 		return prettyJSON(data), nil
+	case "edge-hellos":
+		q := url.Values{}
+		for _, k := range []string{"relay", "last"} {
+			if v := args[k]; v != "" {
+				q.Set(k, v)
+			}
+		}
+		data, err := c.request(http.MethodGet, "/api/v1/ops/edge-hellos", q, nil)
+		if err != nil {
+			return "", err
+		}
+		return prettyJSON(data), nil
 	case "knob-check":
 		q := url.Values{}
 		for _, k := range []string{"who", "profile", "last", "limit"} {

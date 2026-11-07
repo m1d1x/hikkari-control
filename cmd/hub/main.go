@@ -353,6 +353,7 @@ func run() error {
 	// for the node and the tester's network; what parts goes to the client
 	// errors (hikkari-client plans/2026-11-07-knob-truth-wire-diagnostics.md).
 	knobChecks := knobcheck.NewStore(pool)
+	svc.SetEdgeHellos(knobChecks)
 	knobcheck.RegisterOpsRoutes(adminMux, knobChecks, func(ctx context.Context, ref string) (string, error) {
 		id, _, err := testerStore.ResolveInstall(ctx, ref)
 		return id, err

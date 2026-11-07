@@ -35,6 +35,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -108,6 +109,11 @@ type edge struct {
 	// credential, and the inbounds that let users through.
 	proto    string
 	userTags []string
+	// tap is a Reality edge's hello tap (hellotap.go), nil when off; it
+	// listens on tapListen and hands connections to tapUpstream.
+	tap         *helloTap
+	tapListen   string
+	tapUpstream string
 }
 
 // load reads the env and builds an Xray config, without starting anything.
@@ -117,6 +123,8 @@ func load() (edge, error) {
 	var front *XhttpConfig
 	var awg *AwgConfig
 	var userTags []string
+	var tap *helloTap
+	var tapListen, tapUpstream string
 	proto := osEnv("EDGE_PROTO")
 	switch proto {
 	case "", protoReality:
@@ -128,6 +136,9 @@ func load() (edge, error) {
 		doc, echo = cfg.XrayConfig(), cfg.EchoPort
 		for _, cover := range cfg.Covers {
 			userTags = append(userTags, realityTag(cover))
+		}
+		if cfg.HelloTap {
+			tap, tapListen, tapUpstream = newHelloTap(cfg.Covers), cfg.Listen, fmt.Sprintf("127.0.0.1:%d", cfg.TapPort())
 		}
 	case protoHysteria:
 		cfg, err := VoiceConfigFromEnv(osEnv)
@@ -160,7 +171,8 @@ func load() (edge, error) {
 	if err != nil {
 		return edge{}, fmt.Errorf("xray config: %w", err)
 	}
-	return edge{xray: xc, echo: echo, front: front, awg: awg, proto: proto, userTags: userTags}, nil
+	return edge{xray: xc, echo: echo, front: front, awg: awg, proto: proto, userTags: userTags,
+		tap: tap, tapListen: tapListen, tapUpstream: tapUpstream}, nil
 }
 
 func run() error {
@@ -192,6 +204,15 @@ func run() error {
 			return fmt.Errorf("front: %w", err)
 		}
 	}
+	// The hello tap takes the public port after Xray: what it hands on must
+	// find the SNI router listening.
+	if e.tap != nil {
+		l, err := net.Listen("tcp", e.tapListen)
+		if err != nil {
+			return fmt.Errorf("hello tap: %w", err)
+		}
+		go e.tap.serve(ctx, l, e.tapUpstream)
+	}
 	// The AmneziaWG device goes up after Xray too: what it carries leaves
 	// through the running instance's router.
 	var awg *awgServer
@@ -218,7 +239,11 @@ func run() error {
 				if err != nil {
 					return err
 				}
-				spawnPulse(ctx, xraySource{counters}, pc, keys)
+				var source pulseSource = xraySource{counters}
+				if e.tap != nil {
+					source = tappedSource{source, e.tap}
+				}
+				spawnPulse(ctx, source, pc, keys)
 			}
 		}
 	}

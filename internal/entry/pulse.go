@@ -93,7 +93,19 @@ type PulseReport struct {
 	// Keys is what each access key carried since the edge started, totals
 	// keyed by the key itself (RelayKeys says whose it is).
 	Keys map[string]KeyUsage
+	// Hellos is what the edge's hello tap counted since the start: cover →
+	// hk → connections (edge/hellotap.go); nil without a tap.
+	Hellos map[string]map[string]int64
 }
+
+// EdgeHellos files the hello tap's counts of one edge run
+// (internal/knobcheck). Declared on the consumer side, like RelayKeys.
+type EdgeHellos interface {
+	RecordHellos(ctx context.Context, relay, boot string, counts map[string]map[string]int64) error
+}
+
+// SetEdgeHellos wires the store of the hello tap's counts; nil drops them.
+func (s *Service) SetEdgeHellos(h EdgeHellos) { s.edgeHellos = h }
 
 // KeyUsage is bytes one access key carried: up from the client, down to it.
 type KeyUsage struct {
@@ -182,6 +194,11 @@ func (s *Service) RecordPulse(ctx context.Context, master, bearer string, p Puls
 		return ErrPulseRefused
 	}
 	proto := src.proto
+	if s.edgeHellos != nil && len(p.Hellos) > 0 && p.Boot != "" {
+		if err := s.edgeHellos.RecordHellos(ctx, p.Relay, p.Boot, p.Hellos); err != nil {
+			return err
+		}
+	}
 	if s.relayKeys != nil && len(p.Keys) > 0 {
 		if err := s.relayKeys.RecordUsage(ctx, p.Relay, p.Boot, p.Keys); err != nil {
 			return err
