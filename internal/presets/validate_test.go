@@ -68,6 +68,8 @@ func TestAGroupTheClientWouldRejectIsRefused(t *testing.T) {
 		"bare folder":          func(g *Group) { g.Rules.Folders = map[string][]string{"windows": {"steam"}} },
 		"empty":                func(g *Group) { g.Rules = Rules{} },
 		"bad id":               func(g *Group) { g.ID = "Steam" },
+		"a browser":            func(g *Group) { g.Rules.Processes = map[string][]string{"windows": {"steam.exe", "Chrome.exe"}} },
+		"a browser on macos":   func(g *Group) { g.Rules.Processes = map[string][]string{"darwin": {"Yandex"}} },
 		"bad icon":             func(g *Group) { g.Icon = "steam.png" },
 		"blank name":           func(g *Group) { g.Name = "  " },
 	} {

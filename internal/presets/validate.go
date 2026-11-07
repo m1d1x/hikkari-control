@@ -105,6 +105,13 @@ func validateService(s Service) error {
 			}
 		}
 	}
+	for platform, entries := range s.Processes {
+		for _, name := range entries {
+			if isBrowser(platform, name) {
+				return fmt.Errorf("%s: %q — браузер; группа называет приложение сервиса, а браузер увёл бы на её сторону весь веб", s.ID, name)
+			}
+		}
+	}
 	n := len(s.Domains) + len(s.IPs)
 	for _, p := range platforms {
 		n += len(s.Processes[p]) + len(s.Folders[p])
@@ -113,6 +120,29 @@ func validateService(s Service) error {
 		return fmt.Errorf("пустая группа %q", s.ID)
 	}
 	return nil
+}
+
+// browserProcesses are general-purpose browsers by the process name a rule
+// matches. A group names its service's own app; a browser is the whole web,
+// and a group past the VPN would take every site it opens there, so every
+// blocked site would stall until the client's auto tunnel proved it silent.
+// The client accepts such a rule, so this check is the hub's alone: stricter
+// than the client is safe, a catalog it passes the client still takes.
+// Migration 044 took them out of the groups saved before. Windows names are
+// matched without case, as the system does.
+var browserProcesses = map[string][]string{
+	"windows": {"chrome.exe", "msedge.exe", "firefox.exe", "browser.exe", "opera.exe", "brave.exe", "vivaldi.exe", "chromium.exe", "iexplore.exe"},
+	"darwin":  {"Google Chrome", "Google Chrome Helper", "Safari", "Firefox", "Microsoft Edge", "Yandex", "Yandex Helper", "Opera", "Brave Browser", "Vivaldi", "Chromium", "Arc"},
+	"linux":   {"google-chrome", "chrome", "chromium", "chromium-browser", "firefox", "yandex-browser", "opera", "brave", "brave-browser", "vivaldi", "microsoft-edge"},
+}
+
+func isBrowser(platform, name string) bool {
+	for _, b := range browserProcesses[platform] {
+		if name == b || (platform == "windows" && strings.EqualFold(name, b)) {
+			return true
+		}
+	}
+	return false
 }
 
 // validateValues mirrors routing.ValidateValues, except that a duplicate is

@@ -321,17 +321,7 @@ const BUNDLED: Catalog = {
 				"178.154.128.0/17",
 				"213.180.192.0/19"
 			],
-			"processes": {
-				"windows": [
-					"browser.exe"
-				],
-				"darwin": [
-					"Yandex"
-				],
-				"linux": [
-					"yandex-browser"
-				]
-			},
+			"processes": {},
 			"defaultModes": [
 				"bypass"
 			]
@@ -1980,17 +1970,7 @@ const BUNDLED: Catalog = {
 				"ggpht.com"
 			],
 			"ips": [],
-			"processes": {
-				"windows": [
-					"chrome.exe"
-				],
-				"darwin": [
-					"Google Chrome"
-				],
-				"linux": [
-					"google-chrome"
-				]
-			},
+			"processes": {},
 			"defaultModes": [
 				"proxy"
 			]
