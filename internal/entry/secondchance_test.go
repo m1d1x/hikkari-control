@@ -55,11 +55,22 @@ func (h *harness) later(kind string, by time.Duration) {
 }
 
 // answerBoxReprobe claims the queued machine reprobe as a vantage would and
-// answers every relay it carries with verdict.
+// answers every relay it carries with verdict. A failed reading sets off a
+// confirmation by a second point (applyBoxVerdicts), which the second test
+// point answers the same way: a failure two points agree on.
 func (h *harness) answerBoxReprobe(box, verdict string) {
 	h.t.Helper()
+	h.answerBoxReprobeAs(testVantage, box, verdict)
+	if boxReading(map[string]string{"r": verdict}, []string{"r"}) == readFailed {
+		h.answerBoxReprobeAs(testVantage2, box, verdict)
+	}
+}
+
+// answerBoxReprobeAs answers the queued machine reprobe as slot.
+func (h *harness) answerBoxReprobeAs(slot, box, verdict string) {
+	h.t.Helper()
 	ctx := context.Background()
-	task, err := h.svc.ClaimProbeTask(ctx, testVantage, TaskBox)
+	task, err := h.svc.ClaimProbeTask(ctx, slot, TaskBox)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -73,7 +84,7 @@ func (h *harness) answerBoxReprobe(box, verdict string) {
 		}
 		v[r.Name] = verdict
 	}
-	if err := h.svc.FinishProbeTask(ctx, task.ID, testVantage, v, nil); err != nil {
+	if err := h.svc.FinishProbeTask(ctx, task.ID, slot, v, nil); err != nil {
 		h.t.Fatalf("finish reprobe: %v", err)
 	}
 }
@@ -236,13 +247,14 @@ func TestASuspectMachineThatKeepsFailingIsHandedBack(t *testing.T) {
 	}
 }
 
-// A machine that never clears in time is written off at the deadline.
+// A machine that never clears in time is written off at the deadline — with
+// a failed reprobe behind it that two points agreed on.
 func TestASuspectMachinePastItsDeadlineIsWrittenOff(t *testing.T) {
 	h, box := suspectBoxHarness(t)
 	ctx := context.Background()
 	c := h.boxChance()
 	if _, err := h.pool.Exec(ctx, `
-		UPDATE entry_suspects SET since = now() - make_interval(secs => $2) - interval '1 hour'
+		UPDATE entry_suspects SET since = now() - make_interval(secs => $2) - interval '1 hour', failed_probes = 1
 		WHERE kind = 'box' AND subject = $1`, box, c.DeadAfter.Seconds()); err != nil {
 		t.Fatal(err)
 	}
@@ -539,5 +551,43 @@ func TestTheCoverRepairsKeepTheLedger(t *testing.T) {
 	}
 	if status, _, _ := h.suspicion(SuspectCover, tesla); status != suspectOpen {
 		t.Fatalf("a cover found dead by add_covers is %s, want suspect", status)
+	}
+}
+
+// Past the deadline with no failed reprobe — the probers saw nothing either
+// way — a machine is not handed back: no evidence is not a verdict.
+func TestASuspectMachineWithNoFailedReprobeOutlivesTheDeadline(t *testing.T) {
+	h, box := suspectBoxHarness(t)
+	ctx := context.Background()
+	c := h.boxChance()
+	if _, err := h.pool.Exec(ctx, `
+		UPDATE entry_suspects SET since = now() - make_interval(secs => $2) - interval '1 hour'
+		WHERE kind = 'box' AND subject = $1`, box, c.DeadAfter.Seconds()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.svc.SecondChancePass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if status, _, _ := h.suspicion(SuspectBox, box); status != "suspect" {
+		t.Fatalf("%s past the deadline with no failed reprobe, want still suspect", status)
+	}
+}
+
+// One point's failed reprobe moves nothing: it is asked again of another
+// point, and the second's clean reading against it is no reading at all.
+func TestOnePointsFailedReprobeIsNotAFailure(t *testing.T) {
+	h, box := suspectBoxHarness(t)
+	c := h.boxChance()
+	h.later(SuspectBox, c.ProbeEvery+time.Hour)
+	if n, err := h.svc.reprobeSuspectBoxes(context.Background(), c); err != nil || n < 1 {
+		t.Fatalf("queued %d machine reprobes (%v), want this one", n, err)
+	}
+	h.answerBoxReprobeAs(testVantage, box, "ip_banned")
+	if _, _, fails := h.suspicion(SuspectBox, box); fails != 0 {
+		t.Fatalf("one point's failure counted: %d failed reprobes", fails)
+	}
+	h.answerBoxReprobeAs(testVantage2, box, "clean")
+	if status, streak, fails := h.suspicion(SuspectBox, box); status != "suspect" || streak != 0 || fails != 0 {
+		t.Fatalf("two points disagreeing read as %s streak=%d fails=%d, want nothing moved", status, streak, fails)
 	}
 }

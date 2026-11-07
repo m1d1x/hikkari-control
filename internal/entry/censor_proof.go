@@ -2,6 +2,7 @@ package entry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -20,7 +21,8 @@ import (
 // address fails for the vantage as well.
 //
 // So the console's and the shell's retire with a censor reason queue a fresh
-// admission probe of the box's live relays and refuse when:
+// admission probe of the box's live relays — a refusal in it confirmed by a
+// second point in Russia (vantage_confirm.go) — and refuse when:
 //   - the vantage sees any of them clean: it is not a ban, whatever the
 //     testers saw;
 //   - the vantage gives no verdict, or none answers: no evidence is not a
@@ -72,35 +74,14 @@ func (s *Service) ProveCensorDeath(ctx context.Context, box, reason string) (map
 	}
 
 	// No job: a task tied to one is claimed only while the job runs, and
-	// this wait is not a job.
-	var task uuid.UUID
-	if err := s.pool.QueryRow(ctx,
-		`INSERT INTO entry_probe_tasks (job_id, relays) VALUES (NULL, $1) RETURNING id`, names,
-	).Scan(&task); err != nil {
-		return nil, fmt.Errorf("entry: probe of %s: %w", box, err)
+	// this wait is not a job. A refusal is confirmed by a second point.
+	verdicts, err := s.askConfirmed(ctx, uuid.Nil, names, time.Now().Add(censorProofTimeout), censorProofPoll, nil)
+	if errors.Is(err, errNoVerdict) {
+		return nil, fmt.Errorf("%w: пробник из РФ не ответил за %s — без его вердикта %s за %s не сдают; сдать без бана: причина rotated или other",
+			ErrRejected, censorProofTimeout, box, reason)
 	}
-	deadline := time.Now().Add(censorProofTimeout)
-	var verdicts map[string]string
-	for {
-		if verdicts, err = s.probeVerdicts(ctx, task); err != nil {
-			return nil, err
-		}
-		if verdicts != nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			// Nobody reads the verdict any more: a vantage must not spend a
-			// round on it later.
-			_, _ = s.pool.Exec(context.WithoutCancel(ctx),
-				`DELETE FROM entry_probe_tasks WHERE id = $1 AND status = 'queued'`, task)
-			return nil, fmt.Errorf("%w: пробник из РФ не ответил за %s — без его вердикта %s за %s не сдают; сдать без бана: причина rotated или other",
-				ErrRejected, censorProofTimeout, box, reason)
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(censorProofPoll):
-		}
+	if err != nil {
+		return nil, err
 	}
 
 	var healthy, refused, blind []string

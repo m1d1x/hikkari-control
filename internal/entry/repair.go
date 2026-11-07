@@ -653,7 +653,7 @@ func (s *Service) noLiveVantage(ctx context.Context, policy DetectionPolicy) (st
 	var live bool
 	now := s.now()
 	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM entry_vantages
-		WHERE status = 'active' AND last_admission_poll_at >= $1 AND last_admission_poll_at <= $2)`,
+		WHERE status = 'active' AND in_russia AND last_admission_poll_at >= $1 AND last_admission_poll_at <= $2)`,
 		now.Add(-policy.VerdictWindow), now.Add(clockSkew)).Scan(&live)
 	if err != nil {
 		return "", fmt.Errorf("entry: admission worker readiness: %w", err)

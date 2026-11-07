@@ -156,12 +156,19 @@ func newProvHarness(t *testing.T) *provHarness {
 	return &provHarness{harness: h, box: b, prov: p}
 }
 
-// vantage answers every admission probe with verdict, once.
+// vantage answers one admission probe with verdict — and, when its answer
+// refuses a relay, the confirmation that refusal sets off, as the second point
+// (vantage_confirm.go): a refusal is two points' word.
 func (ph *provHarness) vantage(verdict string) {
 	go func() {
 		ctx := context.Background()
+		confirming := false
 		for i := 0; i < 200; i++ {
-			task, err := ph.svc.ClaimProbeTask(ctx, testVantage, TaskAdmission)
+			slot := testVantage
+			if confirming {
+				slot = testVantage2
+			}
+			task, err := ph.svc.ClaimProbeTask(ctx, slot, TaskAdmission)
 			if err == nil && task != nil {
 				v := map[string]string{}
 				for _, r := range task.Relays {
@@ -179,8 +186,16 @@ func (ph *provHarness) vantage(verdict string) {
 					}
 					v[r.Name] = verdict
 				}
-				_ = ph.svc.FinishProbeTask(ctx, task.ID, testVantage, v, nil)
-				return
+				_ = ph.svc.FinishProbeTask(ctx, task.ID, slot, v, nil)
+				refused := false
+				for _, verdict := range v {
+					refused = refused || admissionRefusal(verdict)
+				}
+				if confirming || !refused {
+					return
+				}
+				confirming = true
+				continue
 			}
 			time.Sleep(25 * time.Millisecond)
 		}

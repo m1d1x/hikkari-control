@@ -51,8 +51,9 @@ func (s *Service) SetVerdicts(v VerdictSource) { s.verdicts = v }
 const clockSkew = 2 * time.Minute
 
 // readVerdicts reads the probe dataset and reduces it under policy, over the
-// active slots of entry_vantages only. A region the registry does not list as
-// active is nobody the hub knows: its rows are dropped, whatever they say.
+// active slots of entry_vantages inside Russia only. A region the registry
+// does not list as active is nobody the hub knows, and one abroad cannot see
+// a Russian block: their rows are dropped, whatever they say.
 func (s *Service) readVerdicts(ctx context.Context, policy DetectionPolicy) (RelayVerdicts, error) {
 	return s.readVerdictsSince(ctx, policy, s.now().Add(-policy.VerdictWindow))
 }
@@ -64,7 +65,7 @@ func (s *Service) readVerdictsSince(ctx context.Context, policy DetectionPolicy,
 	if err != nil {
 		return nil, err
 	}
-	active, err := s.activeVantageSet(ctx)
+	active, err := s.censorVantageSet(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -135,6 +136,14 @@ func (s *Service) Detect(ctx context.Context) (opened, closed int, err error) {
 				v = "clean"
 			}
 			if v == "" {
+				continue
+			}
+			// The prober's own reading of the relay outranks the clients'
+			// reports: subscribers fail for reasons of their own network,
+			// build or profile (eun16/eun17, 02.11), and a relay the vantage
+			// sees clean is not evicted on their word. Where the vantage has
+			// nothing, or sees a block, the reports stand.
+			if pv := verdicts[n.Relay]; admissionHealthy(pv) && v != "clean" {
 				continue
 			}
 			verdicts[n.Relay] = v

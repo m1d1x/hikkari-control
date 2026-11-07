@@ -351,7 +351,7 @@ func TestScaleUpWaitsForALiveVantage(t *testing.T) {
 	h := newHostHarness(t)
 	h.svc.SetVantages(fakeVantages{})
 	ctx := context.Background()
-	if _, err := h.pool.Exec(ctx, `UPDATE entry_vantages SET last_admission_poll_at = NULL WHERE slot = $1`, testVantage); err != nil {
+	if _, err := h.pool.Exec(ctx, `UPDATE entry_vantages SET last_admission_poll_at = NULL WHERE slot IN ($1, $2)`, testVantage, testVantage2); err != nil {
 		t.Fatal(err)
 	}
 	inc := h.shortOfFleet()

@@ -639,6 +639,26 @@ func (s *Service) activeVantageSet(ctx context.Context) (map[string]bool, error)
 	return out, rows.Err()
 }
 
+// censorVantageSet is the active points inside Russia: the ones whose rows
+// say whether a relay is blocked there (detector, the two-point rule). A point
+// abroad keeps its bench runs and is read nowhere else.
+func (s *Service) censorVantageSet(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.pool.Query(ctx, `SELECT slot FROM entry_vantages WHERE status = 'active' AND in_russia`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var slot string
+		if err := rows.Scan(&slot); err != nil {
+			return nil, err
+		}
+		out[slot] = true
+	}
+	return out, rows.Err()
+}
+
 // ActiveSlots lists the active observation points by slot, sorted: the
 // points the stand queues its runs for (internal/stand).
 func (s *Service) ActiveSlots(ctx context.Context) ([]string, error) {

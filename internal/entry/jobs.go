@@ -40,8 +40,13 @@ const (
 	selectJobLog = `
 		SELECT seq, at, line FROM entry_job_log WHERE job_id = $1 AND seq > $2 ORDER BY seq`
 
+	// A task of no job (uuid.Nil) is written with NULL: one tied to a job is
+	// claimed only while the job runs. not_by names the point a confirmation
+	// may not be answered by.
 	insertProbeTask = `
-		INSERT INTO entry_probe_tasks (job_id, relays) VALUES ($1, $2) RETURNING id`
+		INSERT INTO entry_probe_tasks (job_id, relays, not_by)
+		VALUES (NULLIF($1::uuid, '00000000-0000-0000-0000-000000000000'::uuid), $2, NULLIF($3, ''))
+		RETURNING id`
 	// Oldest first of the kind asked for; SKIP LOCKED so two vantages never
 	// take the same task.
 	//
@@ -53,6 +58,10 @@ const (
 	// one round longer, every time. A task with no job (a manual bench) is
 	// read through the API and is always wanted.
 	//
+	// A confirmation is never answered by the point it confirms, and whether
+	// a relay is banned in Russia is judged only from inside it (in_russia):
+	// a point abroad keeps its bench runs.
+	//
 	// And only by an active slot: `by` comes from the vantage's token, and
 	// the slot is checked here once more so a slot retired between the two
 	// claims nothing.
@@ -62,13 +71,16 @@ const (
 		            WHERE t.status = 'queued' AND t.kind = $2
 		              AND (t.job_id IS NULL OR EXISTS (
 		                  SELECT 1 FROM entry_jobs j WHERE j.id = t.job_id AND j.status = 'running'))
+		              AND (t.not_by IS NULL OR t.not_by <> $1)
+		              AND (t.kind = 'bench' OR EXISTS (
+		                  SELECT 1 FROM entry_vantages r WHERE r.slot = $1 AND r.in_russia))
 		            ORDER BY t.created_at LIMIT 1 FOR UPDATE OF t SKIP LOCKED)
 		  AND EXISTS (SELECT 1 FROM entry_vantages v WHERE v.slot = $1 AND v.status = 'active')
 		RETURNING id, kind, relays, coalesce(params, '{}'::jsonb)`
 	// The task as its claimer left it, locked for the finish. Only the slot
 	// that claimed it may answer it (audit 42-autopilot В2).
 	claimedProbeTask = `
-		SELECT kind, relays, coalesce(params, '{}'::jsonb) FROM entry_probe_tasks
+		SELECT kind, relays, coalesce(params, '{}'::jsonb), coalesce(not_by, '') FROM entry_probe_tasks
 		WHERE id = $1 AND status = 'claimed' AND claimed_by = $2
 		FOR UPDATE`
 	// A bench must come back with its result; an admission probe and the
@@ -76,7 +88,7 @@ const (
 	finishProbeTask = `
 		UPDATE entry_probe_tasks SET status = 'done', verdicts = $2, result = $3, done_at = now()
 		WHERE id = $1 AND status = 'claimed' AND (kind = 'bench') = ($3::jsonb IS NOT NULL)`
-	selectProbeTask = `SELECT status, verdicts FROM entry_probe_tasks WHERE id = $1`
+	selectProbeTask = `SELECT status, verdicts, coalesce(claimed_by, '') FROM entry_probe_tasks WHERE id = $1`
 	// The credentials a prober dials with, for the named relays, in the order
 	// named: a bench's relays are the canary's, then the control's, and a
 	// prober reads the first as the canary.
@@ -489,10 +501,10 @@ func (s *Service) FinishProbeTask(ctx context.Context, id uuid.UUID, by string, 
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var kind string
+	var kind, confirms string
 	var relays []string
 	var params []byte
-	err = tx.QueryRow(ctx, claimedProbeTask, id, by).Scan(&kind, &relays, &params)
+	err = tx.QueryRow(ctx, claimedProbeTask, id, by).Scan(&kind, &relays, &params, &confirms)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("%w: task %s is not claimed by %s", ErrRejected, id, by)
 	}
@@ -515,7 +527,7 @@ func (s *Service) FinishProbeTask(ctx context.Context, id uuid.UUID, by string, 
 			return err
 		}
 	case TaskBox:
-		if err := s.applyBoxVerdicts(ctx, tx, params, relays, verdicts); err != nil {
+		if err := s.applyBoxVerdicts(ctx, tx, params, relays, verdicts, by, confirms); err != nil {
 			return err
 		}
 	}
@@ -528,27 +540,28 @@ func (s *Service) FinishProbeTask(ctx context.Context, id uuid.UUID, by string, 
 	return nil
 }
 
-func (s *Service) createProbeTask(ctx context.Context, job uuid.UUID, relays []string) (uuid.UUID, error) {
+func (s *Service) createProbeTask(ctx context.Context, job uuid.UUID, relays []string, notBy string) (uuid.UUID, error) {
 	var id uuid.UUID
-	err := s.pool.QueryRow(ctx, insertProbeTask, job, relays).Scan(&id)
+	err := s.pool.QueryRow(ctx, insertProbeTask, job, relays, notBy).Scan(&id)
 	return id, err
 }
 
-// probeVerdicts returns the verdicts of a task, or nil while it is not done.
-func (s *Service) probeVerdicts(ctx context.Context, id uuid.UUID) (map[string]string, error) {
-	var status string
+// probeVerdicts returns the verdicts of a task and the point that gave them,
+// or nil while it is not done.
+func (s *Service) probeVerdicts(ctx context.Context, id uuid.UUID) (map[string]string, string, error) {
+	var status, by string
 	var raw []byte
-	if err := s.pool.QueryRow(ctx, selectProbeTask, id).Scan(&status, &raw); err != nil {
-		return nil, err
+	if err := s.pool.QueryRow(ctx, selectProbeTask, id).Scan(&status, &raw, &by); err != nil {
+		return nil, "", err
 	}
 	if status != "done" {
-		return nil, nil
+		return nil, "", nil
 	}
 	var v map[string]string
 	if err := json.Unmarshal(raw, &v); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return v, nil
+	return v, by, nil
 }
 
 func (s *Service) startJob(ctx context.Context, box, adminID string) (uuid.UUID, error) {

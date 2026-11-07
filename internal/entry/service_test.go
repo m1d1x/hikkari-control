@@ -208,10 +208,14 @@ func newHarness(t *testing.T) *harness {
 	h.spendCaps(SpendRegistrar, generousCapCents, generousCapCents)
 	// The observation point every test's vantage speaks as: registered and
 	// active, as only a registered slot is read or may claim (vantages.go).
-	if _, err := pool.Exec(context.Background(), `
-		INSERT INTO entry_vantages (slot, title) VALUES ($1, 'tests')
-		ON CONFLICT (slot) DO UPDATE SET status = 'active', retired_at = NULL, last_admission_poll_at = NULL`, testVantage); err != nil {
-		t.Fatal(err)
+	// A second point in Russia confirms the first one's refusals
+	// (vantage_confirm.go).
+	for _, slot := range []string{testVantage, testVantage2} {
+		if _, err := pool.Exec(context.Background(), `
+			INSERT INTO entry_vantages (slot, title) VALUES ($1, 'tests')
+			ON CONFLICT (slot) DO UPDATE SET status = 'active', retired_at = NULL, last_admission_poll_at = NULL, in_russia = true`, slot); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// The pool is shared by every test of the run: left alive, these relays
 	// would be handed to the next test's accounts. Runs before the pool
@@ -1214,6 +1218,11 @@ func TestAnXhttpBoxServesItsDomainOneRelayAtATime(t *testing.T) {
 
 // testVantage is the slot the tests' vantages claim and answer as.
 const testVantage = "ru-test"
+
+// testVantage2 is the second point in Russia, which confirms the first one's
+// refusals: a refusal is asked again of a point other than the one that gave
+// it.
+const testVantage2 = "ru-test-2"
 
 // A hoster hands a released address to its next order: eun13 came back on
 // eun3's address and the order was refused and its machine deleted, the same

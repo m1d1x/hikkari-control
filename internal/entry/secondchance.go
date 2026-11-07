@@ -225,10 +225,17 @@ const (
 
 	// expireSuspects writes off the suspects of a kind that outlived the
 	// deadline ($2 seconds since the eviction), except the subjects in $4.
+	//
+	// A machine ($5) is written off at the deadline only with at least one
+	// failed reprobe behind it — a failure two points in Russia agreed on
+	// (applyBoxVerdicts). Never cleared for want of any reading is no
+	// evidence: probers that were down for three days must not hand back the
+	// machines they could not look at.
 	expireSuspects = `
 		UPDATE entry_suspects SET status = 'dead', ended_at = now(), outcome = $3
 		WHERE kind = $1 AND status = 'suspect' AND since < now() - make_interval(secs => $2)
 		  AND NOT (subject = ANY($4))
+		  AND (NOT $5 OR failed_probes > 0)
 		RETURNING subject`
 
 	// Returning and dying, as they touch the thing itself. A domain is out of
@@ -445,7 +452,7 @@ func (s *Service) expire(ctx context.Context, kind string, c SecondChance) (int,
 		}
 	}
 	rows, err := tx.Query(ctx, expireSuspects, kind, c.DeadAfter.Seconds(),
-		fmt.Sprintf("не вернулся за %s — списан", c.DeadAfter), spared)
+		fmt.Sprintf("не вернулся за %s — списан", c.DeadAfter), spared, kind == SuspectBox)
 	if err != nil {
 		return 0, err
 	}
