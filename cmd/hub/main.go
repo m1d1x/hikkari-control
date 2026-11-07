@@ -34,6 +34,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/subscription"
 	"github.com/m1d1x/hikkari-control/internal/support"
 	"github.com/m1d1x/hikkari-control/internal/telemetry"
+	"github.com/m1d1x/hikkari-control/internal/wirecheck"
 )
 
 func main() {
@@ -333,6 +334,19 @@ func run() error {
 	relayruns.RegisterOpsRoutes(adminMux, relayRuns, opsGate)
 	relayruns.RegisterAdminRoutes(adminMux, relayRuns, testerAliases(testerStore), adminSecurity)
 	go relayruns.NewIngester(relayRuns, pool).Run(ctx, 2*time.Minute)
+	// The hellos testers' cores really sent, held to the reference of the core
+	// and to the knobs handed out; what parts goes to the client errors
+	// (hikkari-client plans/2026-11-07-knob-truth-wire-diagnostics.md).
+	wire := wirecheck.NewStore(pool)
+	wirecheck.RegisterOpsRoutes(adminMux, wire, func(ctx context.Context, ref string) (string, error) {
+		id, _, err := testerStore.ResolveInstall(ctx, ref)
+		return id, err
+	}, opsGate)
+	var wireErrs telemetry.Sink
+	if store != nil {
+		wireErrs = store // a nil *analytics.Store in the interface would not read as nil
+	}
+	go wirecheck.NewIngester(wire, wireErrs).Run(ctx, 2*time.Minute)
 	// The stand on the hub's schedule: every active observation point runs
 	// every enabled knob over every relay of the fleet, rows into relayRuns.
 	standRuns := stand.NewScheduler(pool, svc, standFleet{subs: subs, fleet: svc}, relayRuns, config.Default().APIURL())
