@@ -290,6 +290,27 @@ func TestMatrixALPNNamesHTTP11(t *testing.T) {
 	}
 }
 
+func TestMatrixModeSetsTheXHTTPMode(t *testing.T) {
+	ob := realityOutbound()
+	ob["transport"] = map[string]any{"type": "xhttp", "mode": "stream-up", "path": "/x"}
+	cfg, params, err := Config(ob, Knobs["mode"], "packet-up")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if params["mode"] != "packet-up" || !strings.Contains(cfg, `"mode":"packet-up"`) || !strings.Contains(cfg, `"path":"/x"`) {
+		t.Fatalf("params %v config %s", params, cfg)
+	}
+	if ob["transport"].(map[string]any)["mode"] != "stream-up" {
+		t.Fatal("the profile's own outbound changed")
+	}
+	if _, _, err := Config(ob, Knobs["mode"], "stream_up"); err == nil {
+		t.Fatal("an unknown mode passed")
+	}
+	if _, _, err := Config(realityOutbound(), Knobs["mode"], "packet-up"); err == nil {
+		t.Fatal("mode set on a profile with no XHTTP")
+	}
+}
+
 func TestMatrixBaseSetsEveryValue(t *testing.T) {
 	ob := realityOutbound()
 	base, err := ApplyBase(ob, "fp=chrome;alpn=http1.1", "sni")
