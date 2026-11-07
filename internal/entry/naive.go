@@ -56,8 +56,19 @@ func (j *jobRun) installNaive(r Remote, rel provRelay) error {
 
 // A local validating cache bounds negative DNS answers too. Reuse an existing
 // unbound instance rather than write overlapping listener declarations.
+//
+// Ubuntu 24.04's package points auto-trust-anchor-file at
+// /var/lib/unbound/root.key but a fresh HostVDS image has no such file, so
+// unbound-checkconf and the service both failed (ams10, 07.11). unbound-anchor,
+// a separate package there, writes it; its exit status 1 means "anchor
+// updated", not an error.
 const naiveResolverScript = `set -eu
-` + aptInstallScript + `apt_install unbound
+` + aptInstallScript + `apt_install unbound unbound-anchor
+if [ ! -s /var/lib/unbound/root.key ]; then
+ install -d -o unbound -g unbound /var/lib/unbound
+ unbound-anchor -a /var/lib/unbound/root.key || [ -s /var/lib/unbound/root.key ]
+ chown unbound:unbound /var/lib/unbound/root.key
+fi
 if ! systemctl is-active --quiet unbound; then
  cat >/etc/unbound/unbound.conf.d/hikkari-naive.conf <<'CONF'
 server:
@@ -72,6 +83,7 @@ forward-zone:
  forward-addr: 9.9.9.9
 CONF
  unbound-checkconf
+ systemctl reset-failed unbound 2>/dev/null || true
  systemctl enable --now unbound
 fi
 printf 'nameserver 127.0.0.1\noptions timeout:2 attempts:2\n' >/etc/resolv.conf
