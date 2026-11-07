@@ -166,8 +166,13 @@ func TestFleetProfilesReadsServedNodesAndTheirLines(t *testing.T) {
 			if p.Slug != slug {
 				continue
 			}
-			if p.Box != box || p.Provider != "vultr" || p.Fingerprint != "firefox_148" || p.Cover != "www.samsung.com" || p.TrafficUsedGB == nil {
+			if p.Box != box || p.Provider != "vultr" || p.Fingerprint != "firefox_148" || p.TrafficUsedGB == nil {
 				t.Fatalf("card = %+v", p)
+			}
+			// The cover comes from the probes, which ClickHouse shows a
+			// moment after the insert: read again until they are there.
+			if p.Cover != "www.samsung.com" {
+				continue
 			}
 			var rtt, avail bool
 			for i, v := range p.RTTMs {

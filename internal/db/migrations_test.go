@@ -98,7 +98,8 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 			name != "hub_access_keys" && name != "hub_key_usage" && name != "hub_plans" &&
 			name != "hub_orders" && name != "hub_mail_outbox" &&
 			!strings.HasPrefix(name, "entry_") && !strings.HasPrefix(name, "census_") && !strings.HasPrefix(name, "relay_") && !strings.HasPrefix(name, "stand_") && !strings.HasPrefix(name, "knob_") && !strings.HasPrefix(name, "admin_") && name != "admins" &&
-			name != "presets" && !strings.HasPrefix(name, "preset_") && !strings.HasPrefix(name, "support_") {
+			name != "presets" && !strings.HasPrefix(name, "preset_") && !strings.HasPrefix(name, "support_") &&
+			!strings.HasPrefix(name, "product_") {
 			t.Errorf("non-control table in baseline: %s", name)
 		}
 	}
