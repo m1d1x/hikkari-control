@@ -179,11 +179,23 @@ const (
 	// is (its streak is not reset by a second eviction: the unique index, and
 	// DO NOTHING), and a dead one never gets another row — death is once.
 	openSuspicion = `
-		INSERT INTO entry_suspects (kind, subject, reason)
-		SELECT $1, $2, $3
+		INSERT INTO entry_suspects (kind, subject, reason, testers)
+		SELECT $1, $2, $3, $4
 		WHERE NOT EXISTS (SELECT 1 FROM entry_suspects
 		                  WHERE kind = $1 AND subject = $2 AND status = 'dead')
 		ON CONFLICT DO NOTHING`
+
+	// suspicionTesters: whether the testers backed an open suspicion.
+	suspicionTesters = `
+		SELECT coalesce(bool_or(testers), false) FROM entry_suspects
+		WHERE kind = $1 AND subject = $2 AND status = 'suspect'`
+
+	// incidentTesters: whether an open incident on the box was backed by the
+	// testers' reports (testerVerdicts marks the evidence).
+	incidentTesters = `
+		SELECT EXISTS (SELECT 1 FROM entry_incidents
+		               WHERE box = $1 AND status IN ('open', 'acting')
+		                 AND evidence->>'testers_block' = 'true')`
 
 	// markDueSuspects takes the suspects of a kind not reprobed for $2
 	// seconds (counted from the eviction for one never asked), the
@@ -343,7 +355,12 @@ func (s *Service) Suspects(ctx context.Context, limit int) ([]Suspect, error) {
 // suspect opens a suspicion inside the caller's transaction, the one that
 // takes the thing out of the pool: the two never disagree.
 func suspect(ctx context.Context, tx pgx.Tx, kind, subject, reason string) error {
-	_, err := tx.Exec(ctx, openSuspicion, kind, subject, reason)
+	return suspectWith(ctx, tx, kind, subject, reason, false)
+}
+
+// suspectWith opens a suspicion and keeps whether the testers backed it.
+func suspectWith(ctx context.Context, tx pgx.Tx, kind, subject, reason string, testers bool) error {
+	_, err := tx.Exec(ctx, openSuspicion, kind, subject, reason, testers)
 	return err
 }
 
@@ -506,6 +523,12 @@ func (s *Service) SecondChanceLoop(ctx context.Context, every time.Duration) {
 // whether it is handed back is the second chance's to say. Returns the relays
 // evicted and how many holders were told.
 func (s *Service) SuspectBox(ctx context.Context, box, reason string) (relays, holders int, err error) {
+	// Whether the testers saw it blocked is read now, while its relays still
+	// carry people: once evicted nobody reports on it (migration 031).
+	testers, err := s.testersSawBox(ctx, box)
+	if err != nil {
+		return 0, 0, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, 0, err
@@ -533,7 +556,7 @@ func (s *Service) SuspectBox(ctx context.Context, box, reason string) (relays, h
 	if err != nil {
 		return 0, 0, err
 	}
-	if err := suspect(ctx, tx, SuspectBox, box, reason); err != nil {
+	if err := suspectWith(ctx, tx, SuspectBox, box, reason, testers); err != nil {
 		return 0, 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -800,4 +823,21 @@ func (s *Service) reprobeSuspectCovers(ctx context.Context, c SecondChance) (int
 		}
 	}
 	return len(hosts), tx.Commit(ctx)
+}
+
+// testersSawBox reports whether the testers' reports see a relay of box
+// blocked now, or backed the incident open on it.
+func (s *Service) testersSawBox(ctx context.Context, box string) (bool, error) {
+	var saw bool
+	if err := s.pool.QueryRow(ctx, incidentTesters, box).Scan(&saw); err != nil {
+		return false, fmt.Errorf("entry: incident testers of %s: %w", box, err)
+	}
+	if saw {
+		return true, nil
+	}
+	_, evidence, err := s.testerVerdicts(ctx)
+	if err != nil {
+		return false, err
+	}
+	return evidence[box][testersBlockKey] == "true", nil
 }

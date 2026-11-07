@@ -126,9 +126,10 @@ func TestAPointAbroadDoesNotJudgeABan(t *testing.T) {
 	}
 }
 
-// With one point in Russia live, its refusal is the verdict: nobody else is
-// there to ask, and the wait does not hang on one.
-func TestTheOnlyPointsRefusalStands(t *testing.T) {
+// With one point in Russia live and no testers' reports, a refusal is one
+// instance: not a verdict (owner, 07.11: two instances, a prober among them).
+// The wait does not hang on points that are not there.
+func TestTheOnlyPointsRefusalAloneIsNotAVerdict(t *testing.T) {
 	ph := newProvHarness(t)
 	ctx := context.Background()
 	box, _ := ph.harness.box()
@@ -151,10 +152,40 @@ func TestTheOnlyPointsRefusalStands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v[relay] != VerdictIPBanned {
-		t.Fatalf("verdict %q, want the only point's %s", v[relay], VerdictIPBanned)
+	if v[relay] != verdictUnconfirmed {
+		t.Fatalf("verdict %q, want %s: one point without the testers is one instance", v[relay], verdictUnconfirmed)
 	}
 	if time.Since(start) > 5*time.Second {
 		t.Fatalf("waited %s for points that are not there", time.Since(start))
+	}
+}
+
+// Two instances: two points in Russia refusing are a verdict.
+func TestTwoPointsRefusingAreAVerdict(t *testing.T) {
+	ph := newProvHarness(t)
+	ctx := context.Background()
+	box, _ := ph.harness.box()
+	relay := ph.relay(box, KindPersonal)
+	ph.admit(relay)
+	ph.livePoints(testVantage, testVantage2)
+
+	go func() {
+		for _, slot := range []string{testVantage, testVantage2} {
+			for j := 0; j < 200; j++ {
+				task, err := ph.svc.ClaimProbeTask(ctx, slot, TaskAdmission)
+				if err == nil && task != nil {
+					_ = ph.svc.FinishProbeTask(ctx, task.ID, slot, map[string]string{relay: VerdictIPBanned}, nil)
+					break
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		}
+	}()
+	v, err := ph.svc.askConfirmed(ctx, uuid.Nil, []string{relay}, time.Now().Add(10*time.Second), 20*time.Millisecond, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v[relay] != VerdictIPBanned {
+		t.Fatalf("verdict %q, want %s from two points", v[relay], VerdictIPBanned)
 	}
 }

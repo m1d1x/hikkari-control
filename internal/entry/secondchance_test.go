@@ -8,6 +8,7 @@ package entry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -605,18 +606,31 @@ func TestOnePointsFailedReprobeIsNotAFailure(t *testing.T) {
 	}
 }
 
-// With one point in Russia, its failed reprobe is the verdict: there is no
-// one else to ask.
-func TestTheOnlyPointsFailedReprobeCounts(t *testing.T) {
-	h, box := suspectBoxHarness(t)
-	c := h.boxChance()
-	h.later(SuspectBox, c.ProbeEvery+time.Hour)
-	if n, err := h.svc.reprobeSuspectBoxes(context.Background(), c); err != nil || n < 1 {
-		t.Fatalf("queued %d machine reprobes (%v), want this one", n, err)
-	}
-	h.livePoints(testVantage)
-	h.answerBoxReprobeAs(testVantage, box, "ip_banned")
-	if _, _, fails := h.suspicion(SuspectBox, box); fails != 1 {
-		t.Fatalf("the only point's failure: %d failed reprobes, want 1", fails)
+// With one point in Russia, its failed reprobe is a failure only with the
+// testers behind it — the ones who saw the machine blocked when it was
+// evicted: two instances, a prober among them.
+func TestTheOnlyPointsFailedReprobeCountsWithTheTesters(t *testing.T) {
+	for _, testers := range []bool{false, true} {
+		t.Run(fmt.Sprintf("testers=%v", testers), func(t *testing.T) {
+			h, box := suspectBoxHarness(t)
+			ctx := context.Background()
+			c := h.boxChance()
+			if _, err := h.pool.Exec(ctx, `UPDATE entry_suspects SET testers = $2 WHERE kind = 'box' AND subject = $1`, box, testers); err != nil {
+				t.Fatal(err)
+			}
+			h.later(SuspectBox, c.ProbeEvery+time.Hour)
+			if n, err := h.svc.reprobeSuspectBoxes(ctx, c); err != nil || n < 1 {
+				t.Fatalf("queued %d machine reprobes (%v), want this one", n, err)
+			}
+			h.livePoints(testVantage)
+			h.answerBoxReprobeAs(testVantage, box, "ip_banned")
+			want := 0
+			if testers {
+				want = 1
+			}
+			if _, _, fails := h.suspicion(SuspectBox, box); fails != want {
+				t.Fatalf("testers=%v: the only point's failure counted %d times, want %d", testers, fails, want)
+			}
+		})
 	}
 }

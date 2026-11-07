@@ -120,6 +120,31 @@ func answerOf(r reading) string {
 	return answerNothing
 }
 
+// boxVerdict is the reading the ledger counts for a machine: the majority of
+// the points that judged, and a failure only with two instances behind it, a
+// prober among them (instances) — two failing points, or one and the testers
+// who saw the machine blocked when it was evicted.
+func boxVerdict(ctx context.Context, tx pgx.Tx, box string, answers map[string]string) (reading, error) {
+	r := majorityReading(answers)
+	if r != readFailed {
+		return r, nil
+	}
+	failed := 0
+	for _, a := range answers {
+		if a == answerFailed {
+			failed++
+		}
+	}
+	var testers bool
+	if err := tx.QueryRow(ctx, suspicionTesters, SuspectBox, box).Scan(&testers); err != nil {
+		return readNothing, fmt.Errorf("entry: suspicion testers of %s: %w", box, err)
+	}
+	if !instances(failed, testers) {
+		return readNothing, nil
+	}
+	return readFailed, nil
+}
+
 // majorityReading is what the points that judged agree on: more failed than
 // clean is a failure, more clean than failed is clean, a tie is no reading.
 func majorityReading(answers map[string]string) reading {
@@ -259,8 +284,9 @@ func (s *Service) reprobeSuspectBoxes(ctx context.Context, c SecondChance) (int,
 // (vantage_confirm.go): one point's failed reading queues the same reprobe for
 // the next point that has not answered (confirms lists those that did), and
 // moves nothing yet. When no live point is left to ask, or ten answered, the
-// majority of those that judged is the one reading the ledger counts; with
-// one point in Russia, its reading is that majority.
+// majority of those that judged is the one reading the ledger counts — a
+// failure only with two instances behind it (boxVerdict): one point in Russia
+// needs the testers who saw the machine blocked.
 func (s *Service) applyBoxVerdicts(ctx context.Context, tx pgx.Tx, params []byte, relays []string, verdicts map[string]string, by string, confirms []string) error {
 	var p boxTaskParams
 	if err := json.Unmarshal(params, &p); err != nil || p.Box == "" {
@@ -297,7 +323,9 @@ func (s *Service) applyBoxVerdicts(ctx context.Context, tx pgx.Tx, params []byte
 				applog.F("box", p.Box), applog.F("answered", strings.Join(asked, ",")))
 			return nil
 		}
-		r = majorityReading(p.Answers)
+		if r, err = boxVerdict(ctx, tx, p.Box, p.Answers); err != nil {
+			return err
+		}
 	}
 	status, err := judge(ctx, tx, SuspectBox, p.Box, r, policy.Box, true)
 	if err != nil {
@@ -373,7 +401,11 @@ func (s *Service) settleStaleConfirmations(ctx context.Context, tx pgx.Tx, c Sec
 		if err := json.Unmarshal(raw, &p); err != nil || p.Box == "" {
 			continue
 		}
-		if _, err := judge(ctx, tx, SuspectBox, p.Box, majorityReading(p.Answers), c, true); err != nil {
+		r, err := boxVerdict(ctx, tx, p.Box, p.Answers)
+		if err != nil {
+			return err
+		}
+		if _, err := judge(ctx, tx, SuspectBox, p.Box, r, c, true); err != nil {
 			return err
 		}
 	}

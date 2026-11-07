@@ -14,12 +14,14 @@ import (
 // 07.11). What a refusal sets off has no way back — a port burned, a fresh
 // machine deleted at the hoster, a box handed back — so a refusal is asked
 // again of the other live points in Russia, one at a time, up to
-// maxConfirmPoints in all, and the majority of those that judged decides:
+// maxConfirmPoints in all, and the majority of those that judged decides —
+// with two instances behind a refusal, a prober among them (owner, 07.11):
 //
-//   - One point is all there is (or the only one that answered in time): its
-//     word decides.
-//   - More refuse than see the relay healthy: the refusal stands, with the
-//     first refusal's words.
+//   - More points refuse than see the relay healthy, and either two points
+//     refuse or the testers' reports see the relay blocked too: the refusal
+//     stands, with the first refusal's words.
+//   - One point refuses and the testers see nothing (a fresh relay nobody
+//     rides yet): one instance, no refusal.
 //   - As many or more see it healthy: the relay reads "unconfirmed" —
 //     neither admitted nor refused. A caller that loops on blind relays asks
 //     again; one that runs out of time ends on errNoVerdict, which no caller
@@ -120,6 +122,10 @@ func (s *Service) askConfirmed(ctx context.Context, job uuid.UUID, names []strin
 		asked = append(asked, byn)
 	}
 
+	testers, _, err := s.testerVerdicts(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for _, n := range refused {
 		var ban, ok int
 		var said []string
@@ -133,10 +139,15 @@ func (s *Service) askConfirmed(ctx context.Context, job uuid.UUID, names []strin
 				ok++
 			}
 		}
-		if ban > ok {
-			continue // the majority refuses: the first refusal's words stand
+		saw := admissionRefusal(testers[n])
+		if ban > ok && instances(ban, saw) {
+			continue // the majority refuses, two instances: the first refusal's words stand
 		}
-		log("%s: %s — большинства за отказ нет", n, strings.Join(said, ", "))
+		if ban > ok {
+			log("%s: %s — отказ один, тестеры блок не видят: двух инстанций нет", n, strings.Join(said, ", "))
+		} else {
+			log("%s: %s — большинства за отказ нет", n, strings.Join(said, ", "))
+		}
 		v[n] = verdictUnconfirmed
 	}
 	return v, nil

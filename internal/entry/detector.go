@@ -61,21 +61,103 @@ func (s *Service) readVerdicts(ctx context.Context, policy DetectionPolicy) (Rel
 // readVerdictsSince is readVerdicts over rows dated `since` or later: what the
 // vantages said after a given moment, and nothing they said before it.
 func (s *Service) readVerdictsSince(ctx context.Context, policy DetectionPolicy, since time.Time) (RelayVerdicts, error) {
+	v, _, err := s.readVerdictsCounted(ctx, policy, since)
+	return v, err
+}
+
+// readVerdictsCounted is readVerdictsSince and, per relay, how many points in
+// Russia saw it blocked.
+func (s *Service) readVerdictsCounted(ctx context.Context, policy DetectionPolicy, since time.Time) (RelayVerdicts, map[string]int, error) {
 	raw, err := s.verdicts.LatestVerdictsByVantage(ctx, since, s.now().Add(clockSkew))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	active, err := s.censorVantageSet(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	known := make(map[string]RelayVerdicts, len(raw))
+	blocks := map[string]int{}
 	for region, rv := range raw {
 		if active[region] {
 			known[region] = rv
+			for relay, v := range rv {
+				if admissionRefusal(v) {
+					blocks[relay]++
+				}
+			}
 		}
 	}
-	return MergeVantageVerdicts(known, policy), nil
+	return MergeVantageVerdicts(known, policy), blocks, nil
+}
+
+// testerVerdicts is what the subscribers' reports (downdetector) say about
+// each relay now, in the probe's words, with the evidence per box. A report
+// older than 15 minutes, older than the node's binding, or not about this
+// node's slug says nothing.
+func (s *Service) testerVerdicts(ctx context.Context) (map[string]string, map[string]map[string]string, error) {
+	out, evidence := map[string]string{}, map[string]map[string]string{}
+	if s.nodeSignals == nil {
+		return out, evidence, nil
+	}
+	nodes, err := s.FleetNodes(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	signals, err := s.nodeSignals.FleetSignals(ctx, nodes, s.now())
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, n := range nodes {
+		sig, ok := signals[n.Relay]
+		if !ok || sig.ID != "n:"+n.Slug || sig.At.Before(n.BoundAt) || sig.At.Before(s.now().Add(-15*time.Minute)) || sig.At.After(s.now().Add(clockSkew)) {
+			continue
+		}
+		v := ""
+		switch sig.Verdict {
+		case "server_down":
+			v = "ip_banned"
+		case "isp_block", "country_block":
+			v = "fingerprint"
+			if n.Proto == ProtoVlessXhttp {
+				v = "domain_blocked"
+			}
+			if n.Proto == ProtoHysteria2 {
+				v = "ip_banned"
+			}
+		case "healthy":
+			v = "clean"
+		}
+		if v == "" {
+			continue
+		}
+		out[n.Relay] = v
+		if evidence[n.Box] == nil {
+			evidence[n.Box] = map[string]string{"source": "downdetector"}
+		}
+		evidence[n.Box][sig.ID] = sig.Verdict
+		if admissionRefusal(v) {
+			evidence[n.Box][testersBlockKey] = "true"
+		}
+	}
+	return out, evidence, nil
+}
+
+// testersBlockKey marks an incident's evidence as backed by the testers: their
+// reports saw a relay of the box blocked (SuspectBox keeps it).
+const testersBlockKey = "testers_block"
+
+// instances is the rule for what has no way back — a machine handed back, a
+// port burned, a fresh machine deleted (owner, 07.11): at least two instances,
+// at least one of them a prober in Russia. The testers' reports are one
+// instance however many testers there are — downdetector already pools them.
+// So one point and the testers, or two points.
+func instances(probers int, testers bool) bool {
+	n := probers
+	if testers {
+		n++
+	}
+	return probers >= 1 && n >= 2
 }
 
 // How far back a verdict is believed is a knob now, not a constant: it lives
@@ -105,53 +187,21 @@ func (s *Service) Detect(ctx context.Context) (opened, closed int, err error) {
 	if verdicts == nil {
 		verdicts = RelayVerdicts{}
 	}
-	nodeEvidence := map[string]map[string]string{}
-	if s.nodeSignals != nil {
-		nodes, err := s.FleetNodes(ctx)
-		if err != nil {
-			return 0, 0, err
+	testers, nodeEvidence, err := s.testerVerdicts(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	// An incident and an eviction can be undone, so here the testers' reports
+	// stand on their own where the points have nothing or tie. Only the
+	// prober's own clean reading outranks them: subscribers fail for reasons
+	// of their own network, build or profile (eun16/eun17, 02.11). What has
+	// no way back — a machine handed back, a port burned, a fresh machine
+	// deleted — needs two instances (instances).
+	for relay, tv := range testers {
+		if pv := verdicts[relay]; admissionHealthy(pv) && tv != "clean" {
+			continue
 		}
-		signals, err := s.nodeSignals.FleetSignals(ctx, nodes, s.now())
-		if err != nil {
-			return 0, 0, err
-		}
-		for _, n := range nodes {
-			sig, ok := signals[n.Relay]
-			if !ok || sig.ID != "n:"+n.Slug || sig.At.Before(n.BoundAt) || sig.At.Before(s.now().Add(-15*time.Minute)) || sig.At.After(s.now().Add(clockSkew)) {
-				continue
-			}
-			v := ""
-			switch sig.Verdict {
-			case "server_down":
-				v = "ip_banned"
-			case "isp_block", "country_block":
-				v = "fingerprint"
-				if n.Proto == ProtoVlessXhttp {
-					v = "domain_blocked"
-				}
-				if n.Proto == ProtoHysteria2 {
-					v = "ip_banned"
-				}
-			case "healthy":
-				v = "clean"
-			}
-			if v == "" {
-				continue
-			}
-			// The prober's own reading of the relay outranks the clients'
-			// reports: subscribers fail for reasons of their own network,
-			// build or profile (eun16/eun17, 02.11), and a relay the vantage
-			// sees clean is not evicted on their word. Where the vantage has
-			// nothing, or sees a block, the reports stand.
-			if pv := verdicts[n.Relay]; admissionHealthy(pv) && v != "clean" {
-				continue
-			}
-			verdicts[n.Relay] = v
-			if nodeEvidence[n.Box] == nil {
-				nodeEvidence[n.Box] = map[string]string{"source": "downdetector"}
-			}
-			nodeEvidence[n.Box][sig.ID] = sig.Verdict
-		}
+		verdicts[relay] = tv
 	}
 
 	relays, err := s.List(ctx)
