@@ -501,6 +501,16 @@ func (o *Orchestrator) canary(ctx context.Context, build EdgeBuild, ro *Rollout)
 		applog.Info(ctx, "entry", "rollout: no healthy box to try the build on yet", applog.F("arch", build.Arch), applog.F("sha", build.SHA[:12]))
 		return nil
 	}
+	// Read once for the whole canary: a knob turned halfway through would
+	// make the pairs incomparable, which is the one thing averaging them is
+	// supposed to fix. The job's time is the provisioning budget plus the
+	// benches themselves: three pairs of five-minute runs are thirty minutes
+	// of benching alone, and a canary cut off by its own deadline is no
+	// verdict on the build.
+	pol, err := o.svc.BenchPolicy(ctx)
+	if err != nil {
+		return err
+	}
 	var verdict error
 	for i, box := range cands {
 		// The control is another healthy box still on the old build, benched
@@ -515,8 +525,8 @@ func (o *Orchestrator) canary(ctx context.Context, build EdgeBuild, ro *Rollout)
 		if _, err := o.svc.pool.Exec(ctx, setRolloutBox, ro.ID, box.name); err != nil {
 			return err
 		}
-		verdict = o.prov.execJob(ctx, JobCanary, box.name, ro.ID, func(j *jobRun) error {
-			return j.canary(o, build, control)
+		verdict = o.prov.execJobFor(ctx, JobCanary, box.name, ro.ID, o.prov.jobTimeout+pol.Benching(), func(j *jobRun) error {
+			return j.canary(o, build, control, pol)
 		})
 		if !errors.Is(verdict, ErrBoxBusy) {
 			break
@@ -526,9 +536,10 @@ func (o *Orchestrator) canary(ctx context.Context, build EdgeBuild, ro *Rollout)
 	case errors.Is(verdict, ErrBoxBusy):
 		return nil // every candidate had a job running; the next start tries again
 	case errors.Is(verdict, ErrBenchBaseline), errors.Is(verdict, ErrBenchUnsteady),
-		errors.Is(verdict, errCanaryInconclusive):
+		errors.Is(verdict, errCanaryInconclusive), errors.Is(verdict, context.DeadlineExceeded):
 		// The old build could not be measured, the path moved under the runs,
-		// or the box broke for reasons of its own: no verdict on this build.
+		// the box broke for reasons of its own, or the job ran out of time
+		// (a vantage slow to take the bench): no verdict on this build.
 		// It stays a canary for next time.
 		_, _ = o.svc.pool.Exec(ctx, setRolloutBox, ro.ID, nil)
 		return verdict
@@ -614,11 +625,17 @@ var errCanaryInconclusive = errors.New("канарейку не удалось �
 // execJob runs body as a job of kind on box, in this goroutine, and returns
 // its verdict; ErrBoxBusy when the box already has a job running.
 func (p *Provisioner) execJob(ctx context.Context, kind, box string, rollout uuid.UUID, body func(*jobRun) error) error {
+	return p.execJobFor(ctx, kind, box, rollout, p.jobTimeout, body)
+}
+
+// execJobFor is execJob with the job's own time limit: a canary's is the
+// provisioning budget plus its benches.
+func (p *Provisioner) execJobFor(ctx context.Context, kind, box string, rollout uuid.UUID, timeout time.Duration, body func(*jobRun) error) error {
 	id, err := p.svc.startJobOf(ctx, kind, box, "", rollout)
 	if err != nil {
 		return err
 	}
-	jctx, cancel := context.WithTimeout(ctx, p.jobTimeout)
+	jctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	j := &jobRun{p: p, ctx: jctx, id: id, box: box}
 	err = body(j)
@@ -684,9 +701,12 @@ func (j *jobRun) drain(o *Orchestrator, b boxOpened, status string) error {
 	return err
 }
 
-// back returns the box's relays to the pool.
+// back returns the box's relays to the pool, on a context of its own: a job
+// that ran out of time must still not leave them out.
 func (j *jobRun) back() {
-	names, err := j.p.svc.Restore(j.ctx, j.box)
+	ctx, cancel := j.cleanupContext()
+	defer cancel()
+	names, err := j.p.svc.Restore(ctx, j.box)
 	if err != nil {
 		j.log("возврат в пул не удался: %v", err)
 		return
@@ -764,7 +784,7 @@ func (o *Orchestrator) pathSteady(ctx context.Context, relay string, from, to ti
 // canary is the canary job (see the file comment, step 2–3). With a control
 // box the two are benched together and the build is judged against it;
 // alone, the path must stay steady around the runs for them to count.
-func (j *jobRun) canary(o *Orchestrator, build EdgeBuild, control string) (err error) {
+func (j *jobRun) canary(o *Orchestrator, build EdgeBuild, control string, pol BenchPolicy) (err error) {
 	b, err := j.open(build)
 	if err != nil {
 		return fmt.Errorf("%w: %v", errCanaryInconclusive, err)
@@ -777,13 +797,6 @@ func (j *jobRun) canary(o *Orchestrator, build EdgeBuild, control string) (err e
 	}
 	lone := control == ""
 	relay := b.relays[0].name
-	// Read once for the whole canary: a knob turned halfway through would
-	// make the pairs incomparable, which is the one thing averaging them is
-	// supposed to fix.
-	pol, err := j.p.svc.BenchPolicy(j.ctx)
-	if err != nil {
-		return fmt.Errorf("%w: %v", errCanaryInconclusive, err)
-	}
 	j.log("канарейка мерит %d пар(ы) по %s, порог приёма %d%%, роста rtt %d%% — всего %s бенча",
 		pol.Pairs, pol.RunDuration, pol.MinThroughputPct(), pol.MaxRTTGrowthPct(), pol.Benching())
 	if lone {
@@ -931,6 +944,13 @@ func (j *jobRun) nextPair(o *Orchestrator, b boxOpened, build EdgeBuild, prior, 
 // place has nothing to roll back to, and no .prev either) — and the relays
 // return to the pool either way.
 func (j *jobRun) settle(b boxOpened, prior string, err *error) {
+	// The job's context may be done by now — its deadline is what cut the
+	// job short — and the old build and the pool must come back regardless.
+	ctx, cancel := j.cleanupContext()
+	defer cancel()
+	jobCtx := j.ctx
+	j.ctx = ctx
+	defer func() { j.ctx = jobCtx }()
 	if *err != nil {
 		switch now := j.edgeOnBox(b.r, b.arch); {
 		case now == prior:

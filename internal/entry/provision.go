@@ -704,6 +704,16 @@ func (p *Provisioner) run(ctx context.Context, id uuid.UUID, box, password strin
 
 // finish closes the job with its verdict. The job's own context may be spent;
 // the verdict still has to land.
+// cleanupTimeout bounds what a job puts back after it stopped — the old build
+// under every relay, the relays in the pool — once its own time is up.
+const cleanupTimeout = 5 * time.Minute
+
+// cleanupContext is a context for putting things back: the job's values
+// without its deadline or cancellation, and a limit of its own.
+func (j *jobRun) cleanupContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(j.ctx), cleanupTimeout)
+}
+
 func (j *jobRun) finish(err error, done string) {
 	if err != nil {
 		j.log("ошибка: %v", err)
@@ -1817,6 +1827,9 @@ func (j *jobRun) swapIn(r Remote, instance, source string, envMap map[string]str
 // survives on the box as nekko-edge.prev, kept by the swap.
 func (j *jobRun) rollback(r Remote, arch string, relays []provRelay) error {
 	if _, err := r.Run(j.ctx, "test -f /usr/local/bin/nekko-edge.prev && cp -p /usr/local/bin/nekko-edge.prev /usr/local/bin/nekko-edge.new", nil); err != nil {
+		if j.ctx.Err() != nil {
+			return fmt.Errorf("откат прерван: %w", err)
+		}
 		return fmt.Errorf("прежнего бинаря на машине нет, откатывать не на что: %w", err)
 	}
 	for _, rel := range relays {

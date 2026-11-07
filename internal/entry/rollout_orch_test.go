@@ -335,6 +335,61 @@ func TestAWorseBuildIsRolledBackAndNeverRetried(t *testing.T) {
 	}
 }
 
+// TestACanaryHasTimeForItsBenches: the canary of 07.11 on euw1 ran three
+// pairs of five-minute benches inside the thirty minutes every job gets, and
+// its own deadline cut the third pair off — twice in one day, the build
+// condemned for the hub's arithmetic. The canary's time now carries its
+// benches on top of the provisioning budget.
+func TestACanaryHasTimeForItsBenches(t *testing.T) {
+	rh := newRolloutHarness(t)
+	other := rh.boxOnV1()
+	canary := rh.boxOnV1()
+	rh.v2.jobTimeout = 50 * time.Millisecond
+	rh.bench = func(string, string) BenchResult {
+		time.Sleep(100 * time.Millisecond) // every bench outlasts the bare budget
+		return goodRun
+	}
+	rh.orchestrator().round(context.Background())
+
+	ro := rh.rolloutOfV2()
+	if ro.Stage == RolloutFailed || ro.Stage == RolloutCanary {
+		t.Fatalf("the canary ran out of time: %+v", ro)
+	}
+	if rh.runsOn(canary) != rh.sha2 || rh.runsOn(other) != rh.sha2 {
+		t.Fatal("the build did not go on")
+	}
+}
+
+// TestACanaryCutShortStillPutsTheOldBuildBack: what the euw1 canary of 07.11
+// could not do. Its context was done when it failed, so the rollback and the
+// return to the pool ran on a dead context: the box kept the new build and its
+// relay stayed out of the pool as testing, with "no previous binary" as the
+// reason. Putting things back has a context of its own.
+func TestACanaryCutShortStillPutsTheOldBuildBack(t *testing.T) {
+	rh := newRolloutHarness(t)
+	rh.boxOnV1()
+	canary := rh.boxOnV1()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rh.bench = func(_, phase string) BenchResult {
+		if phase == BenchAfter {
+			cancel() // the job's context ends while the new build is on
+		}
+		return goodRun
+	}
+	rh.orchestrator().round(ctx)
+
+	if got := rh.runsOn(canary); got != rh.sha1 {
+		t.Fatalf("the canary kept the new build: runs %s…", got[:12])
+	}
+	if st := rh.statuses(canary); st[0] != "alive" {
+		t.Fatalf("the canary's relays are %v, left out of the pool", st)
+	}
+	if ro := rh.rolloutOfV2(); ro.Stage == RolloutFailed {
+		t.Fatalf("a canary cut short condemned the build: %s", ro.Error)
+	}
+}
+
 func TestABaselineThatCannotBeMeasuredIsNoVerdict(t *testing.T) {
 	rh := newRolloutHarness(t)
 	box := rh.boxOnV1()
