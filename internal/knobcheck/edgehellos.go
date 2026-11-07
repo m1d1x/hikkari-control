@@ -39,8 +39,10 @@ var releaseHellos = map[string]string{
 var knownHellos = map[string]string{
 	"h13ba089e2b415f898": "chrome+key_share=classical",
 	"h1e08906f1ba730b11": "browser:chromium-152", // also chrome-headless-shell 157
-	"h1ceb8f61dcdea7494": "browser:chrome-157",
-	"h1734d37d786ff0c72": "browser:firefox-159",
+	// Branded Chrome 157 sends fp:chrome_155's hk; this one is Chrome 157 in
+	// the PqcBandwidthExperiment arm, with server_padding (0x12e0).
+	"h1ceb8f61dcdea7494": "browser:chrome-157+server_padding",
+	"h1734d37d786ff0c72": "browser:firefox-159", // and the fork's firefox_159 (hikkari 0010, not released)
 }
 
 // helloName is what an hk is known as, "" when it is none of ours.
