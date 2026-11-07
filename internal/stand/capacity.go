@@ -50,12 +50,14 @@ func measureCapacity(ctx context.Context, client *http.Client, endpoint, key str
 		resp, err := client.Do(req)
 		if err != nil {
 			cancel()
-			return failure
+			return partial(result, failure)
 		}
 		if resp.StatusCode != http.StatusOK || (resp.ContentLength >= 0 && resp.ContentLength != size) {
 			resp.Body.Close()
 			cancel()
-			return failure
+			// The test service refuses some large requests (403 at 16 MiB from
+			// RU points); a completed smaller round still stands as a lower bound.
+			return partial(result, failure)
 		}
 		started := time.Now()
 		n, readErr := io.Copy(io.Discard, io.LimitReader(resp.Body, size))
@@ -64,7 +66,7 @@ func measureCapacity(ctx context.Context, client *http.Client, endpoint, key str
 		cancel()
 		budget -= n
 		if readErr != nil && !errors.Is(readErr, context.DeadlineExceeded) {
-			return failure
+			return partial(result, failure)
 		}
 		if n < 256<<10 || elapsed.Milliseconds() < 1 {
 			size *= 4
@@ -85,6 +87,15 @@ func measureCapacity(ctx context.Context, client *http.Client, endpoint, key str
 		size *= 4
 	}
 	return result
+}
+
+// partial keeps a completed round when a later, larger round fails.
+func partial(result, failure capacity.Sample) capacity.Sample {
+	if result.Error == "" && result.Mbps > 0 {
+		result.Limited = true
+		return result
+	}
+	return failure
 }
 
 func (r Runner) runCapacity(ctx context.Context, profiles []Profile) Result {

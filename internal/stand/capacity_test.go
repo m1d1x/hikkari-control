@@ -44,6 +44,30 @@ func TestCapacityMeasuresPayloadWithAHardBudget(t *testing.T) {
 	}
 }
 
+func TestCapacityKeepsCompletedRoundWhenALargerOneIsRefused(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n, _ := strconv.Atoi(r.URL.Query().Get("bytes"))
+		if n > 1<<20 {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(n))
+		for block := make([]byte, 64<<10); n > 0; n -= len(block) {
+			w.Write(block)
+			w.(http.Flusher).Flush()
+			time.Sleep(2 * time.Millisecond)
+		}
+	}))
+	defer server.Close()
+	got := measureCapacity(context.Background(), server.Client(), server.URL, strings.Repeat("a", 64))
+	if err := got.Validate(time.Now()); err != nil {
+		t.Fatalf("invalid measurement: %+v %v", got, err)
+	}
+	if got.Error != "" || got.Mbps <= 0 || !got.Limited {
+		t.Fatalf("completed round lost after refusal: %+v", got)
+	}
+}
+
 func TestCapacityRejectsWrongHTTPAndShortBodies(t *testing.T) {
 	for _, status := range []int{200, 503} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
