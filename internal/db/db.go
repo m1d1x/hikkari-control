@@ -132,10 +132,15 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			return fmt.Errorf("create schema_migrations table: %w", err)
 		}
 		// A fresh baseline must never silently coexist with the experimental
-		// messenger schema. Refuse startup; leave the operator's data intact.
+		// messenger schema. Unknown older migrations still refuse startup. Once
+		// our baseline is present, newer migration records are expected during
+		// an application rollback: additive schema updates outlive binaries.
 		var foreign bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations
-			WHERE NOT (filename = ANY($1::text[])))`, filenames).Scan(&foreign); err != nil {
+			WHERE NOT (filename = ANY($1::text[]))
+              AND (filename <= $2 OR NOT EXISTS (
+                SELECT 1 FROM schema_migrations WHERE filename='001_hikkari_baseline.sql'))
+            )`, filenames, filenames[len(filenames)-1]).Scan(&foreign); err != nil {
 			return err
 		}
 		if foreign {

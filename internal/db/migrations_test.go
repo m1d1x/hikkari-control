@@ -139,6 +139,14 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 	}
 	// A previous experimental database is refused, without erasing accounts
 	// or updating migration history to pretend the baseline landed.
+	// Rolling a binary back must not mistake a newer Hikkari migration for
+	// the legacy messenger schema. No schema or data is rolled back here.
+	if _, err := pool.Exec(ctx, `INSERT INTO schema_migrations(filename) VALUES ('999_future_control_plane.sql')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunMigrations(ctx, pool); err != nil {
+		t.Fatalf("rollback rejected a newer Hikkari migration: %v", err)
+	}
 	if _, err := pool.Exec(ctx, `INSERT INTO hub_accounts (name) VALUES ('preserved'); INSERT INTO schema_migrations(filename) VALUES ('001_baseline.sql')`); err != nil {
 		t.Fatal(err)
 	}
