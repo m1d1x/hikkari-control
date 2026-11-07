@@ -157,6 +157,8 @@ func (s *Service) savedHostingPolicy(ctx context.Context, q db.DBTX, h *hostingA
 // it.
 type HostingInstance struct {
 	BoxInstance
+	// Provider is the hoster kind whose listing showed the machine.
+	Provider string `json:"provider"`
 	// Box is the box this instance belongs to, empty when no row names it.
 	Box string `json:"box,omitempty"`
 	// Orphan: the hub is being charged for a machine no box in service uses.
@@ -165,26 +167,76 @@ type HostingInstance struct {
 	// the one thing about the hoster the console cannot work out for itself.
 	Orphan  bool `json:"orphan"`
 	Retired bool `json:"retired,omitempty"`
+	// Released: the hub wrote this machine off as handed back, and the hoster
+	// still lists it — a machine charging outside the budget.
+	Released bool `json:"released,omitempty"`
 }
 
-// HostingInstances lists the account's machines and says which of them the hub
-// has a box for.
+// hostingPlace is one listing the orphan check reads: a hoster kind in one
+// region. An empty region is the active hoster as it is wired.
+type hostingPlace struct {
+	kind   string
+	region string
+	bp     BoxProvider
+}
+
+// hostingPlaces is every listing that can hold a machine of the hub: the
+// active hoster, and each hoster and region a box was ever rented in. An
+// OpenStack client speaks to one region, so the active hoster's listing alone
+// does not show a machine left in another (eun16/eun17 in eu-north2, 02.11),
+// nor one at a hoster that is no longer the first enabled.
+func (s *Service) hostingPlaces(ctx context.Context) ([]hostingPlace, error) {
+	var places []hostingPlace
+	if h, err := s.hoster(); err == nil {
+		places = append(places, hostingPlace{kind: h.kind, bp: h.bp})
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT provider, provider_region FROM entry_boxes
+		WHERE provider_instance_id IS NOT NULL AND provider_instance_id <> ''
+		ORDER BY 1, 2
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("entry: hosting places: %w", err)
+	}
+	type key struct{ kind, region string }
+	keys, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (key, error) {
+		var k key
+		return k, r.Scan(&k.kind, &k.region)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("entry: hosting places: %w", err)
+	}
+	for _, k := range keys {
+		kind, ok := s.providerKind(k.kind)
+		if !ok || kind.Role != RoleHosting {
+			continue // a provider this hub has no client for: nothing to list
+		}
+		bp, err := s.hostingIn(ctx, k.kind, k.region)
+		if err != nil {
+			return nil, fmt.Errorf("хостер %s, регион %s: %w", k.kind, k.region, err)
+		}
+		places = append(places, hostingPlace{kind: k.kind, region: k.region, bp: bp})
+	}
+	if len(places) == 0 {
+		return nil, ErrNoHoster
+	}
+	return places, nil
+}
+
+// HostingInstances lists the machines at every hoster and region the hub rents
+// in and says which of them the hub has a box for.
 //
 // Ours is decided by the instance id in entry_boxes, never by the label: the
 // label is a convenience for the owner's eyes in the hoster's panel, and a
 // machine the owner renamed there must not become invisible to the orphan
 // check.
 func (s *Service) HostingInstances(ctx context.Context) ([]HostingInstance, error) {
-	h, err := s.hoster()
-	if err != nil {
-		return nil, err
-	}
-	list, err := h.bp.Instances(ctx)
+	places, err := s.hostingPlaces(ctx)
 	if err != nil {
 		return nil, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT provider_instance_id, name, retired_at IS NOT NULL
+		SELECT provider, provider_instance_id, name, retired_at IS NOT NULL, released_at IS NOT NULL
 		FROM entry_boxes WHERE provider_instance_id IS NOT NULL
 	`)
 	if err != nil {
@@ -192,27 +244,40 @@ func (s *Service) HostingInstances(ctx context.Context) ([]HostingInstance, erro
 	}
 	defer rows.Close()
 	type owner struct {
-		box     string
-		retired bool
+		box      string
+		retired  bool
+		released bool
 	}
-	byInstance := map[string]owner{}
+	byInstance := map[[2]string]owner{}
 	for rows.Next() {
-		var id string
+		var kind, id string
 		var o owner
-		if err := rows.Scan(&id, &o.box, &o.retired); err != nil {
+		if err := rows.Scan(&kind, &id, &o.box, &o.retired, &o.released); err != nil {
 			return nil, err
 		}
-		byInstance[id] = o
+		byInstance[[2]string{kind, id}] = o
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	out := make([]HostingInstance, 0, len(list))
-	for _, inst := range list {
-		o := byInstance[inst.ID]
-		hi := HostingInstance{BoxInstance: inst, Box: o.box, Retired: o.retired}
-		hi.Orphan = o.box == "" || o.retired
-		out = append(out, hi)
+	out := []HostingInstance{}
+	seen := map[[2]string]bool{}
+	for _, p := range places {
+		list, err := p.bp.Instances(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("хостер %s, регион %s: %w", p.kind, p.region, err)
+		}
+		for _, inst := range list {
+			k := [2]string{p.kind, inst.ID}
+			if seen[k] {
+				continue // a hoster whose listing is not per region shows it twice
+			}
+			seen[k] = true
+			o := byInstance[k]
+			hi := HostingInstance{BoxInstance: inst, Provider: p.kind, Box: o.box, Retired: o.retired, Released: o.released}
+			hi.Orphan = o.box == "" || o.retired
+			out = append(out, hi)
+		}
 	}
 	return out, nil
 }
@@ -676,7 +741,17 @@ func (s *Service) DeleteBoxInstance(ctx context.Context, box string) error {
 	if err != nil {
 		return fmt.Errorf("хостер машины %s: %w", box, err)
 	}
-	if err := bp.Delete(ctx, *instanceID); err != nil && !errors.Is(err, ErrNoSuchInstance) {
+	err = bp.Delete(ctx, *instanceID)
+	switch {
+	case errors.Is(err, ErrNoSuchInstance):
+		// "No such machine" is also what a wrong endpoint, region or account
+		// answers about one that keeps charging: eun16 and eun17 were written
+		// off on a 404 on 02.11 and lived on at HostVDS. The region's own
+		// listing decides; a machine still in it is not handed back.
+		if err := confirmGone(ctx, bp, *instanceID); err != nil {
+			return fmt.Errorf("машина %s (%s, %s): %w", box, provider, region, err)
+		}
+	case err != nil:
 		return fmt.Errorf("удалить инстанс %s: %w", *instanceID, err)
 	}
 	// The charge has stopped: the box leaves the budget (С1). Until this is
@@ -684,6 +759,22 @@ func (s *Service) DeleteBoxInstance(ctx context.Context, box string) error {
 	if _, err := s.pool.Exec(context.WithoutCancel(ctx),
 		`UPDATE entry_boxes SET released_at = now() WHERE name = $1 AND released_at IS NULL`, box); err != nil {
 		return fmt.Errorf("entry: release %s: %w", box, err)
+	}
+	return nil
+}
+
+// confirmGone checks a hoster's "no such machine" against its listing of the
+// same region: the machine is gone only when the list, read whole, does not
+// hold it. A list that cannot be read proves nothing either way.
+func confirmGone(ctx context.Context, bp BoxProvider, id string) error {
+	list, err := bp.Instances(ctx)
+	if err != nil {
+		return fmt.Errorf("хостер ответил «нет машины» на удаление %s, а список региона не прочитан: %w", id, err)
+	}
+	for _, inst := range list {
+		if inst.ID == id {
+			return fmt.Errorf("хостер ответил «нет машины» на удаление %s, а в списке региона она есть (%s, %s) — сдачу не записываю", id, inst.Address, inst.Status)
+		}
 	}
 	return nil
 }
@@ -1495,19 +1586,18 @@ func (s *Service) ReleaseUndeleted(ctx context.Context) (int, error) {
 
 // releaseUndeleted restricts reconciliation to only when a non-nil scope is supplied.
 func (s *Service) releaseUndeleted(ctx context.Context, only []string) (int, error) {
-	h, err := s.hoster()
-	if err != nil {
-		return 0, nil // nothing the hub rents through an API
-	}
 	released := 0
 
-	// Retired boxes the hoster has not let go of.
+	// Retired boxes the hoster has not let go of — at any hoster: the delete
+	// goes to the one the machine was rented from (DeleteBoxInstance), so a
+	// box at a hoster that is no longer the active one is not left charging.
 	rows, err := s.pool.Query(ctx, `
-		SELECT name FROM entry_boxes
-		WHERE retired_at IS NOT NULL AND provider_instance_id IS NOT NULL AND released_at IS NULL
-		  AND provider = $1 AND ($2::text[] IS NULL OR name = ANY($2))
-		ORDER BY retired_at LIMIT 20
-	`, h.kind, only)
+		SELECT b.name FROM entry_boxes b
+		JOIN entry_providers p ON p.kind = b.provider AND p.creds_ct IS NOT NULL
+		WHERE b.retired_at IS NOT NULL AND b.provider_instance_id IS NOT NULL AND b.released_at IS NULL
+		  AND ($1::text[] IS NULL OR b.name = ANY($1))
+		ORDER BY b.retired_at LIMIT 20
+	`, only)
 	if err != nil {
 		return 0, fmt.Errorf("entry: undeleted boxes: %w", err)
 	}
@@ -1522,6 +1612,11 @@ func (s *Service) releaseUndeleted(ctx context.Context, only []string) (int, err
 			continue
 		}
 		released++
+	}
+
+	h, err := s.hoster()
+	if err != nil {
+		return released, nil // no hoster to settle orders with
 	}
 
 	// Orders that may have left a machine behind.

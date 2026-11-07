@@ -51,6 +51,9 @@ type fakeHoster struct {
 	createDelay time.Duration
 	// deleteErr is what Delete answers while set, the instance kept.
 	deleteErr error
+	// notFoundOnDelete: Delete answers "no such machine" about these ids and
+	// keeps them listed — a wrong endpoint, as HostVDS did on 02.11.
+	notFoundOnDelete map[string]bool
 	// onCreate runs inside Create, after the instance exists: how a test
 	// makes something happen between the charge and the box row.
 	onCreate func(BoxOrder)
@@ -207,6 +210,9 @@ func (f *fakeHoster) Delete(_ context.Context, id string) error {
 	defer f.mu.Unlock()
 	if f.deleteErr != nil {
 		return f.deleteErr
+	}
+	if _, ok := f.instances[id]; !ok || f.notFoundOnDelete[id] {
+		return ErrNoSuchInstance
 	}
 	f.deleted = append(f.deleted, id)
 	delete(f.instances, id)
@@ -1421,5 +1427,132 @@ func TestAnInstanceInErrorIsACapacityRefusal(t *testing.T) {
 	}
 	if time.Since(start) > time.Second {
 		t.Fatalf("waited %s for a machine already in ERROR", time.Since(start))
+	}
+}
+
+// A hoster's "no such machine" on a delete is not taken on its word: eun16 and
+// eun17 were written off on a 404 on 02.11 and kept charging at HostVDS. A
+// machine the region still lists stays in the budget and is asked again.
+func TestDeleteOn404KeepsAMachineTheRegionStillLists(t *testing.T) {
+	h := newHostHarness(t)
+	ctx := context.Background()
+
+	ordered, err := h.prov.orderAndRecord(ctx, OrderSpec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.svc.Retire(ctx, ordered, DeathRotated); err != nil {
+		t.Fatal(err)
+	}
+	var id string
+	if err := h.pool.QueryRow(ctx, `SELECT provider_instance_id FROM entry_boxes WHERE name = $1`, ordered).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	released := func() bool {
+		t.Helper()
+		var at *time.Time
+		if err := h.pool.QueryRow(ctx, `SELECT released_at FROM entry_boxes WHERE name = $1`, ordered).Scan(&at); err != nil {
+			t.Fatal(err)
+		}
+		return at != nil
+	}
+
+	h.host.mu.Lock()
+	h.host.notFoundOnDelete = map[string]bool{id: true}
+	h.host.mu.Unlock()
+	if err := h.svc.DeleteBoxInstance(ctx, ordered); err == nil {
+		t.Fatal("a 404 on a machine the region lists was taken as handed back")
+	}
+	if released() {
+		t.Fatal("the charge is recorded as stopped while the machine lives")
+	}
+	if n, err := h.svc.ReleaseUndeleted(ctx); err != nil || n != 0 {
+		t.Fatalf("the background pass let it go: n=%d err=%v", n, err)
+	}
+
+	h.host.mu.Lock()
+	h.host.notFoundOnDelete = nil
+	h.host.mu.Unlock()
+	if n, err := h.svc.ReleaseUndeleted(ctx); err != nil || n != 1 {
+		t.Fatalf("once the delete works the pass hands it back: n=%d err=%v", n, err)
+	}
+	if !released() {
+		t.Fatal("the charge is not recorded as stopped after the delete")
+	}
+}
+
+// A machine the hoster really lost — the 404 and a listing without it agree —
+// is handed back.
+func TestDeleteOn404OfAMachineGoneFromTheListingReleases(t *testing.T) {
+	h := newHostHarness(t)
+	ctx := context.Background()
+
+	ordered, err := h.prov.orderAndRecord(ctx, OrderSpec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.svc.Retire(ctx, ordered, DeathRotated); err != nil {
+		t.Fatal(err)
+	}
+	h.host.mu.Lock()
+	for id := range h.host.instances {
+		delete(h.host.instances, id)
+	}
+	h.host.mu.Unlock()
+	if err := h.svc.DeleteBoxInstance(ctx, ordered); err != nil {
+		t.Fatalf("a machine gone from the listing: %v", err)
+	}
+	var released *time.Time
+	if err := h.pool.QueryRow(ctx, `SELECT released_at FROM entry_boxes WHERE name = $1`, ordered).Scan(&released); err != nil {
+		t.Fatal(err)
+	}
+	if released == nil {
+		t.Fatal("the charge is not recorded as stopped")
+	}
+}
+
+// The orphan check reads every region a box was rented in, not only the active
+// hoster's: an OpenStack client speaks to one region, and a machine written
+// off in another went unseen (eun16/eun17 in eu-north2). One the hub counts as
+// handed back and the hoster still lists says so.
+func TestOrphansAreFoundInEveryRegionTheHubRentedIn(t *testing.T) {
+	h := newHostHarness(t)
+	ctx := context.Background()
+
+	far := newFakeHoster(t)
+	h.conn.byRegion = map[string]*fakeHoster{"r7": far}
+	leaked, err := far.Create(ctx, BoxOrder{Region: "r7", Plan: "small", Hostname: "leak", Label: "nekko-leak"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ordered, err := h.prov.orderAndRecord(ctx, OrderSpec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.svc.Retire(ctx, ordered, DeathRotated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.pool.Exec(ctx, `
+		UPDATE entry_boxes SET provider_region = 'r7', provider_instance_id = $2, released_at = now()
+		WHERE name = $1`, ordered, leaked.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := h.svc.HostingInstances(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got *HostingInstance
+	for i := range list {
+		if list[i].ID == leaked.ID {
+			got = &list[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("the machine in r7 is not listed: %+v", list)
+	}
+	if got.Box != ordered || !got.Orphan || !got.Retired || !got.Released || got.Provider != fakeHostKind {
+		t.Fatalf("the leaked machine reads as %+v", *got)
 	}
 }

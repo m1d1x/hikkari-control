@@ -21,6 +21,9 @@ package main
 //	cmd/server entry-box retire <box> [reason]
 //	                                    # hand a machine back and delete it at
 //	                                    # the hoster that is saved now
+//	cmd/server entry-box instances      # every machine at every hoster and
+//	                                    # region a box was rented in, against
+//	                                    # the hub's record; reads only
 //	cmd/server entry-box provider <kind> off
 //	cmd/server entry-box provider <kind> <region> <plan> [api-url]
 //	                                    # switch a hoster off, or save its
@@ -161,6 +164,44 @@ func runEntryBox(args []string) {
 		}
 		for _, p := range cat.Plans {
 			fmt.Printf("plan %s  %d vCPU  %d MB  %d GB  counted at $%0.2f  regions %v\n", p.ID, p.VCPUs, p.RAMMB, p.DiskGB, float64(p.MonthlyCents)/100, p.Regions)
+		}
+		os.Exit(0)
+	}
+	if len(args) == 1 && args[0] == "instances" {
+		// entry-box instances — the console's orphan check from this shell, at
+		// every hoster and region a box was ever rented in. Reads only. A line
+		// marked LEAK is a machine the hub wrote off as handed back and the
+		// hoster still charges for.
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		svc.SetProviderConnector(entrywire.Providers())
+		list, err := svc.HostingInstances(ctx)
+		if err != nil {
+			fail(err)
+		}
+		for _, i := range list {
+			mark := "ok"
+			switch {
+			case i.Released:
+				mark = "LEAK"
+			case i.Box == "":
+				mark = "ORPHAN"
+			case i.Retired:
+				mark = "RETIRED"
+			}
+			box := i.Box
+			if box == "" {
+				box = "-"
+			}
+			fmt.Printf("%-7s %-10s %-10s %-6s %s %s %s %s\n", mark, i.Provider, i.Region, box, i.ID, i.Address, i.Status, i.Label)
 		}
 		os.Exit(0)
 	}

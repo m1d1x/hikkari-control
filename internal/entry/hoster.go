@@ -81,8 +81,11 @@ type BoxProvider interface {
 	// and re-probes; the hoster's answer alone proves nothing.
 	Reboot(ctx context.Context, id string) error
 
-	// Delete hands the machine back and stops the charge. Deleting one that
-	// is already gone is not an error: the end state is what was asked for.
+	// Delete hands the machine back and stops the charge. A machine the
+	// hoster says it has no such of answers ErrNoSuchInstance, not nil: a
+	// wrong endpoint, region or account says the same about a machine that
+	// keeps charging (eun16/eun17, 02.11), so the caller decides from the
+	// hoster's own listing whether it is really gone.
 	Delete(ctx context.Context, id string) error
 
 	// Account proves the credentials work and reads the money: the credit

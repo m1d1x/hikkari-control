@@ -185,8 +185,9 @@ func TestHetznerHosterAdaptsAllMethods(t *testing.T) {
 	if err := bp.Delete(ctx, "101"); err != nil {
 		t.Errorf("Delete: %v", err)
 	}
-	// Delete already gone is not error
-	if err := bp.Delete(ctx, "404"); err != nil {
+	// Delete of a machine the hoster has no such of says so: the caller
+	// checks the listing before writing it off
+	if err := bp.Delete(ctx, "404"); !errors.Is(err, entry.ErrNoSuchInstance) {
 		t.Errorf("Delete missing: %v", err)
 	}
 	// Instance missing returns ErrNoSuchInstance
@@ -356,7 +357,7 @@ func TestDigitalOceanHosterAdaptsAllMethods(t *testing.T) {
 	if err := bp.Delete(ctx, "202"); err != nil {
 		t.Errorf("Delete: %v", err)
 	}
-	if err := bp.Delete(ctx, "404"); err != nil {
+	if err := bp.Delete(ctx, "404"); !errors.Is(err, entry.ErrNoSuchInstance) {
 		t.Errorf("Delete missing: %v", err)
 	}
 	if _, err := bp.Instance(ctx, "404"); !errors.Is(err, entry.ErrNoSuchInstance) {
@@ -511,7 +512,7 @@ func TestVDSinaHosterAdaptsAllMethods(t *testing.T) {
 	if err := bp.Delete(ctx, "303"); err != nil {
 		t.Errorf("Delete: %v", err)
 	}
-	if err := bp.Delete(ctx, "404"); err != nil {
+	if err := bp.Delete(ctx, "404"); !errors.Is(err, entry.ErrNoSuchInstance) {
 		t.Errorf("Delete missing: %v", err)
 	}
 	if _, err := bp.Instance(ctx, "404"); !errors.Is(err, entry.ErrNoSuchInstance) {
@@ -706,7 +707,7 @@ func TestOpenStackHosterAdaptsAllMethods(t *testing.T) {
 	if err := bp.Delete(ctx, "srv-999"); err != nil {
 		t.Errorf("Delete: %v", err)
 	}
-	if err := bp.Delete(ctx, "404"); err != nil {
+	if err := bp.Delete(ctx, "404"); !errors.Is(err, entry.ErrNoSuchInstance) {
 		t.Errorf("Delete missing: %v", err)
 	}
 	if _, err := bp.Instance(ctx, "404"); !errors.Is(err, entry.ErrNoSuchInstance) {

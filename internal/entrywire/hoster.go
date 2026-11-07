@@ -151,7 +151,9 @@ func (h hoster) Reboot(ctx context.Context, id string) error {
 // Delete treats an instance that is already gone as deleted: the caller asked
 // for an end state, and a machine nobody is being charged for is in it.
 func (h hoster) Delete(ctx context.Context, id string) error {
-	if err := h.c.Delete(ctx, id); err != nil && !errors.Is(err, vultr.ErrNotFound) {
+	if err := h.c.Delete(ctx, id); errors.Is(err, vultr.ErrNotFound) {
+		return entry.ErrNoSuchInstance
+	} else if err != nil {
 		return err
 	}
 	return nil
@@ -260,7 +262,9 @@ func (h hetznerHoster) Reboot(ctx context.Context, id string) error {
 }
 
 func (h hetznerHoster) Delete(ctx context.Context, id string) error {
-	if err := h.c.Delete(ctx, id); err != nil && !errors.Is(err, hetzner.ErrNotFound) {
+	if err := h.c.Delete(ctx, id); errors.Is(err, hetzner.ErrNotFound) {
+		return entry.ErrNoSuchInstance
+	} else if err != nil {
 		return err
 	}
 	return nil
@@ -368,7 +372,9 @@ func (h doHoster) Reboot(ctx context.Context, id string) error {
 }
 
 func (h doHoster) Delete(ctx context.Context, id string) error {
-	if err := h.c.Delete(ctx, id); err != nil && !errors.Is(err, digitalocean.ErrNotFound) {
+	if err := h.c.Delete(ctx, id); errors.Is(err, digitalocean.ErrNotFound) {
+		return entry.ErrNoSuchInstance
+	} else if err != nil {
 		return err
 	}
 	return nil
@@ -489,7 +495,9 @@ func (h vdsinaHoster) Reboot(ctx context.Context, id string) error {
 }
 
 func (h vdsinaHoster) Delete(ctx context.Context, id string) error {
-	if err := h.c.Delete(ctx, id); err != nil && !errors.Is(err, vdsina.ErrNotFound) {
+	if err := h.c.Delete(ctx, id); errors.Is(err, vdsina.ErrNotFound) {
+		return entry.ErrNoSuchInstance
+	} else if err != nil {
 		return err
 	}
 	return nil
@@ -598,7 +606,9 @@ func (h osHoster) Reboot(ctx context.Context, id string) error {
 }
 
 func (h osHoster) Delete(ctx context.Context, id string) error {
-	if err := h.c.Delete(ctx, id); err != nil && !errors.Is(err, openstack.ErrNotFound) {
+	if err := h.c.Delete(ctx, id); errors.Is(err, openstack.ErrNotFound) {
+		return entry.ErrNoSuchInstance
+	} else if err != nil {
 		return err
 	}
 	return nil
@@ -618,4 +628,3 @@ func toBoxInstanceOS(i openstack.Instance) entry.BoxInstance {
 		Plan: i.Plan, Status: i.Status, Tags: i.Tags,
 	}
 }
-

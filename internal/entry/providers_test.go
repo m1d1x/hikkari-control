@@ -15,7 +15,11 @@ import (
 type fakeConnector struct {
 	reg  *fakeRegistrar
 	host *fakeHoster
-	keys []map[string]string // every set of credentials a client was built from
+	// byRegion is a hoster whose client speaks to one region only, as an
+	// OpenStack one does: a client built for a region listed here gets that
+	// region's machines and no other.
+	byRegion map[string]*fakeHoster
+	keys     []map[string]string // every set of credentials a client was built from
 }
 
 const fakeKind = "fakereg"
@@ -43,6 +47,9 @@ func (c *fakeConnector) Hosting(kind string, creds map[string]string) (BoxProvid
 		return nil, ErrUnknownProvider
 	}
 	c.keys = append(c.keys, creds)
+	if h, ok := c.byRegion[creds["region"]]; ok {
+		return h, nil
+	}
 	return c.host, nil
 }
 
