@@ -437,14 +437,25 @@ func (c *Client) Regions(ctx context.Context) ([]Region, error) {
 		if r == "admin" {
 			continue
 		}
-		regions = append(regions, Region{
-			ID:        r,
-			City:      r,
-			Country:   "Cloud",
-			Continent: "OpenStack",
-		})
+		place, known := hostvdsPlaces[r]
+		if !known {
+			// A region nobody has placed yet reads as its own id, with no
+			// country: a made-up one would be written onto the box row.
+			place = Region{City: r}
+		}
+		place.ID = r
+		regions = append(regions, place)
 	}
 	return regions, nil
+}
+
+// hostvdsPlaces is where HostVDS's OpenStack regions stand. Keystone names a
+// region by id alone, so the place is the one the boxes there answer from
+// (ipinfo from the boxes themselves, 07.11): eu-west1 euw1 and awgl1, eu-north2
+// eun16 and eun17. Country is ISO 3166 alpha-2, as the other hosters give it.
+var hostvdsPlaces = map[string]Region{
+	"eu-west1":  {City: "Amsterdam", Country: "NL", Continent: "Europe"},
+	"eu-north2": {City: "Riga", Country: "LV", Continent: "Europe"},
 }
 
 // Plan is an OpenStack flavor.
@@ -482,11 +493,11 @@ func (c *Client) Plans(ctx context.Context) ([]Plan, error) {
 	plans := make([]Plan, 0, len(out.Flavors))
 	for _, f := range out.Flavors {
 		plans = append(plans, Plan{
-			ID:                fmt.Sprint(f.ID),
-			VCPUs:             f.VCPUs,
-			RAMMB:             f.RAM,
-			DiskGB:            f.Disk,
-			BandwidthGB:       10000,
+			ID:          fmt.Sprint(f.ID),
+			VCPUs:       f.VCPUs,
+			RAMMB:       f.RAM,
+			DiskGB:      f.Disk,
+			BandwidthGB: 10000,
 			// OpenStack flavors do not define price in Nova API; estimate monthly cents so budget caps & catalog selection work
 			MonthlyCents:      99 + f.VCPUs*100 + (f.RAM/1024)*50,
 			OverageCentsPerTB: 0,
@@ -964,4 +975,3 @@ func (c *Client) Volumes(ctx context.Context) ([]Volume, error) {
 	}
 	return out.Volumes, nil
 }
-
