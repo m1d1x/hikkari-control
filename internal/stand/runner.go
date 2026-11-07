@@ -54,7 +54,7 @@ func Profiles(ctx context.Context, parser, subURL string) ([]Profile, error) {
 }
 
 // Applies says whether knob is a knob of the profile at all: a fingerprint
-// is chosen only by a TLS profile, a flow only by VLESS. A profile the knob
+// is chosen only by a TLS profile, a flow only by VLESS, a mode only by XHTTP. A profile the knob
 // does not apply to is not measured for it, rather than failing the run.
 func Applies(knob string, ob map[string]any) bool {
 	switch knob {
@@ -65,6 +65,9 @@ func Applies(knob string, ob map[string]any) bool {
 	case "flow":
 		typ, _ := ob["type"].(string)
 		return typ == "vless"
+	case "mode":
+		tr, _ := ob["transport"].(map[string]any)
+		return tr["type"] == "xhttp"
 	}
 	return true
 }

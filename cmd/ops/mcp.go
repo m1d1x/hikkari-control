@@ -47,7 +47,7 @@ var tools = []tool{
 	{mcpName: "matrix", command: "matrix",
 		desc: "Стенд матрицы: профиль подписки, одна ручка конфига и её значения, с nekko-spb (РФ) и hikkari-main (Латвия) на ядре клиента. Каждый раунд: тот же адрес без протокола, затем каждое значение — 1 МБ, 50 соединений разом, 3 после. Сводка и строки датасета NDJSON; строки пишутся в датасет на hub (инструмент relay_runs). Около 25 с на значение за раунд.",
 		args: []toolArg{{"sub", "URL подписки", true}, {"profile", "Метка профиля: amsterdam-1-002", true},
-			{"knob", "Ручка и значения: fp=chrome,firefox,safari; также sni, port, flow, alpn (h2/http/1.1) и burst=3,4,8,50 (сколько запросов разом, не ручка конфига)", true},
+			{"knob", "Ручка и значения: fp=chrome,firefox,safari; также sni, port, flow, alpn (h2/http/1.1), mode у XHTTP (auto, packet-up, stream-up, stream-one) и burst=3,4,8,50 (сколько запросов разом, не ручка конфига)", true},
 			{"base", "Ручки, общие для всех значений, через ;: fp=chrome;alpn=h2. Варьируемой ручки среди них быть не может", false},
 			{"vantage", "spb,lv (по умолчанию обе)", false}, {"rounds", "Раундов на значение, по умолчанию 3", false},
 			{"baseline_path", "Страница сайта-прикрытия для замера без протокола, например /us/ у www.samsung.com; по умолчанию /", false}}},

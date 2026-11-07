@@ -129,6 +129,19 @@ var Knobs = map[string]func(ob map[string]any, v string) error{
 		ob["flow"] = v
 		return nil
 	},
+	"mode": func(ob map[string]any, v string) error {
+		tr, ok := ob["transport"].(map[string]any)
+		if !ok || tr["type"] != "xhttp" {
+			return errors.New("the profile has no XHTTP transport")
+		}
+		switch v {
+		case "auto", "packet-up", "stream-up", "stream-one":
+		default:
+			return fmt.Errorf("mode %q: auto, packet-up, stream-up or stream-one", v)
+		}
+		tr["mode"] = v
+		return nil
+	},
 	"alpn": func(ob map[string]any, v string) error {
 		tls, err := outboundTLS(ob)
 		if err != nil {

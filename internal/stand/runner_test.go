@@ -78,7 +78,12 @@ func TestAppliesKnowsWhichProfileHasTheKnob(t *testing.T) {
 	if Applies("fp", hy2) || Applies("flow", hy2) || !Applies("port", hy2) || !Applies("burst", hy2) {
 		t.Fatal("hysteria2")
 	}
-	if !Applies("fp", realityOutbound()) || !Applies("flow", realityOutbound()) {
+	if !Applies("fp", realityOutbound()) || !Applies("flow", realityOutbound()) || Applies("mode", realityOutbound()) {
 		t.Fatal("reality")
+	}
+	xhttp := realityOutbound()
+	xhttp["transport"] = map[string]any{"type": "xhttp", "mode": "stream-up"}
+	if !Applies("mode", xhttp) {
+		t.Fatal("xhttp")
 	}
 }
