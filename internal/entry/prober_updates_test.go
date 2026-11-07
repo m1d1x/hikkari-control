@@ -555,3 +555,43 @@ func TestStandOnlyProberKeepsRoleAndDoesNotNeedAdmissionPoll(t *testing.T) {
 		}
 	}
 }
+
+func TestAdoptVantageOwnerAgentHandsOverToHubKey(t *testing.T) {
+	ph := newProvHarness(t)
+	ctx := context.Background()
+	slot := "agent-" + uuid.NewString()[:8]
+	if _, err := ph.svc.CreateVantage(ctx, VantageSpec{Slot: slot, Host: "192.0.2.166"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	_, pub, err := ph.svc.HubSSHKey(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := ph.prov.dial
+	// The fake owner's authentication is distinct from the hub key. Only the
+	// fake accepts its password callback; no real password is supplied anywhere.
+	ph.prov.dial = OwnerBootstrapDialer(base, ssh.Password("fake-owner-authorization"), pub)
+	id, err := ph.prov.AdoptVantage(ctx, slot, "192.0.2.166", "root", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j := ph.wait(id); j.Status != "done" {
+		t.Fatalf("owner bootstrap: %+v", j)
+	}
+	ph.box.mu.Lock()
+	ready := ph.box.keyIn && ph.box.passwordOff
+	ph.box.mu.Unlock()
+	if !ready {
+		t.Fatal("hub key or hardening missing")
+	}
+	// The forwarding channel disappears. Adoption and all subsequent updates
+	// must keep working solely through the hub's own key.
+	ph.prov.dial = base
+	id, err = ph.prov.AdoptVantage(ctx, slot, "192.0.2.166", "root", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j := ph.wait(id); j.Status != "done" {
+		t.Fatalf("without owner: %+v", j)
+	}
+}

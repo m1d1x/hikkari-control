@@ -417,7 +417,10 @@ func validateFleetSecrets(getenv func(string) string) error {
 // never reports, so it never learns its subscribers' keys and refuses them
 // all (01.11: an `entry-box` re-run left a Hysteria2 relay answering 404).
 func newProvisioner(svc *entry.Service) *entry.Provisioner {
-	prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+	return newProvisionerWithDialer(svc, entry.SSHDialer)
+}
+func newProvisionerWithDialer(svc *entry.Service, dial entry.Dialer) *entry.Provisioner {
+	prov := entry.NewProvisioner(svc, dial, entry.DefaultArtifactDir)
 	if token := os.Getenv("EDGE_PULSE_TOKEN"); token != "" {
 		prov.SetPulse(config.Default().APIURL()+"/api/v1/internal/entry-pulse", token)
 	}

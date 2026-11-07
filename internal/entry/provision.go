@@ -1039,7 +1039,7 @@ func (j *jobRun) login(acc boxAccess, hubKey ssh.Signer, hubPub, password string
 umask 077
 mkdir -p ~/.ssh
 touch ~/.ssh/authorized_keys
-grep -qxF '`+hubPub+`' ~/.ssh/authorized_keys || printf '%s\n' '`+hubPub+`' >> ~/.ssh/authorized_keys`, nil)
+grep -qxF '`+hubPub+`' ~/.ssh/authorized_keys || printf '\n%s\n' '`+hubPub+`' >> ~/.ssh/authorized_keys`, nil)
 	r.Close()
 	if err != nil {
 		return nil, fmt.Errorf("установка ключа хаба: %w", err)

@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -44,7 +47,20 @@ func runEntryVantageAdopt(args []string) {
 	}
 	ctx, stop := context.WithTimeout(context.Background(), 35*time.Minute)
 	defer stop()
-	id, err := newProvisioner(svc).AdoptVantage(ctx, args[0], args[1], user, password)
+	dial := entry.SSHDialer
+	if socket := os.Getenv("SSH_AUTH_SOCK"); socket != "" {
+		conn, err := net.DialTimeout("unix", socket, 5*time.Second)
+		if err != nil {
+			fail(fmt.Errorf("owner agent: connect: %w", err))
+		}
+		defer conn.Close()
+		_, pub, err := svc.HubSSHKey(ctx)
+		if err != nil {
+			fail(fmt.Errorf("owner agent: hub key: %w", err))
+		}
+		dial = entry.OwnerBootstrapDialer(entry.SSHDialer, ssh.PublicKeysCallback(agent.NewClient(conn).Signers), pub)
+	}
+	id, err := newProvisionerWithDialer(svc, dial).AdoptVantage(ctx, args[0], args[1], user, password)
 	password = ""
 	if err != nil {
 		fail(err)
