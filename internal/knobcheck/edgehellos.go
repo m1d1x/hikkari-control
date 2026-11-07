@@ -38,7 +38,9 @@ var releaseHellos = map[string]string{
 // (hikkari-client testdata/hello/browsers.json).
 var knownHellos = map[string]string{
 	"h13ba089e2b415f898": "chrome+key_share=classical",
-	"h1e08906f1ba730b11": "browser:chromium-152",
+	"h1e08906f1ba730b11": "browser:chromium-152", // also chrome-headless-shell 157
+	"h1ceb8f61dcdea7494": "browser:chrome-157",
+	"h1734d37d786ff0c72": "browser:firefox-159",
 }
 
 // helloName is what an hk is known as, "" when it is none of ours.
