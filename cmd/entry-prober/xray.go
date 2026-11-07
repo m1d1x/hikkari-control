@@ -37,13 +37,15 @@ type edge struct {
 	Mode string `json:"mode,omitempty"`
 
 	// AmneziaWG relay: dialled in this process, not through the engine.
-	Awg *awgEdge `json:"awg,omitempty"`
+	Awg   *awgEdge   `json:"awg,omitempty"`
+	Naive *naiveEdge `json:"naive,omitempty"`
 }
 
 const (
 	protoHysteria = "hysteria2"
 	protoXhttp    = "vless-xhttp"
 	protoAwg      = "amneziawg"
+	protoNaive    = "naive"
 )
 
 // voice reports whether this is a voice relay (Hysteria2).
@@ -78,6 +80,10 @@ func validateEdges(edges []edge) error {
 			return fmt.Errorf("relay %d (%q) is missing a required field", i, e.Name)
 		}
 		switch {
+		case e.Proto == protoNaive:
+			if e.Naive == nil || e.Naive.Host == "" || e.Naive.User == "" || e.Naive.Pass == "" {
+				return fmt.Errorf("naive relay %d is missing credentials", i)
+			}
 		case e.voice():
 			if e.Auth == "" || e.ServerName == "" || e.CertSHA256 == "" || e.EchoPort == 0 || len(e.FinalMask) == 0 {
 				return fmt.Errorf("voice relay %d (%q) is missing a required field", i, e.Name)
@@ -246,7 +252,7 @@ func buildXrayConfig(edges []edge, socksBase int, fingerprint string) ([]byte, m
 	ports := make(map[string]int, len(edges))
 	xudp := map[string]int{}
 	for i, e := range edges {
-		if e.awg() {
+		if e.awg() || e.Proto == protoNaive {
 			continue
 		}
 		port := socksBase + i

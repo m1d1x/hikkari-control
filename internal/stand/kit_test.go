@@ -118,3 +118,77 @@ func TestKitValidateWantsCoreAndParserByHash(t *testing.T) {
 		t.Fatal("a core label with shell in it taken")
 	}
 }
+
+func TestKitKeepsEachCronetWithItsCore(t *testing.T) {
+	ks, srv := newKitServer(t, []byte("core"), []byte("parser"), "sing-box-lx v1")
+	var manifest Kit
+	if err := json.Unmarshal(ks.manifest, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	library := []byte("cronet-one")
+	sum := sha256.Sum256(library)
+	hash := hex.EncodeToString(sum[:])
+	ks.blobs[hash] = library
+	manifest.Files[KitCronet] = KitFile{SHA256: hash, Size: int64(len(library))}
+	ks.manifest, _ = json.Marshal(manifest)
+	dir := t.TempDir()
+	first, err := Fetch(context.Background(), srv.Client(), srv.URL+"/stand/linux-amd64.json", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(first.Core) != filepath.Dir(first.Cronet) {
+		t.Fatal("library is not beside the actual executable")
+	}
+	library = []byte("cronet-two")
+	sum = sha256.Sum256(library)
+	hash = hex.EncodeToString(sum[:])
+	ks.blobs[hash] = library
+	manifest.Files[KitCronet] = KitFile{SHA256: hash, Size: int64(len(library))}
+	ks.manifest, _ = json.Marshal(manifest)
+	second, err := Fetch(context.Background(), srv.Client(), srv.URL+"/stand/linux-amd64.json", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Core == second.Core {
+		t.Fatal("updated library replaced the first core's runtime")
+	}
+	if b, _ := os.ReadFile(first.Cronet); string(b) != "cronet-one" {
+		t.Fatal("old kit's library was overwritten")
+	}
+	if b, _ := os.ReadFile(second.Cronet); string(b) != "cronet-two" {
+		t.Fatal("new library not delivered")
+	}
+}
+
+func TestKitRuntimeFailurePreservesLastManifest(t *testing.T) {
+	ks, srv := newKitServer(t, []byte("old core"), []byte("parser"), "sing-box-lx v1")
+	dir := t.TempDir()
+	url := srv.URL + "/stand/linux-amd64.json"
+	old, err := Fetch(context.Background(), srv.Client(), url, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kit Kit
+	if err := json.Unmarshal(ks.manifest, &kit); err != nil {
+		t.Fatal(err)
+	}
+	library := []byte("new cronet")
+	sum := sha256.Sum256(library)
+	hash := hex.EncodeToString(sum[:])
+	ks.blobs[hash] = library
+	kit.Files[KitCronet] = KitFile{SHA256: hash, Size: int64(len(library))}
+	ks.manifest, _ = json.Marshal(kit)
+	runtimeDir := filepath.Join(dir, "runtime-"+kit.Files[KitCore].SHA256+"-"+hash)
+	if err := os.WriteFile(runtimeDir, []byte("cannot create directory here"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fallback, err := Fetch(context.Background(), srv.Client(), url, dir)
+	if err == nil || fallback.Core != old.Core {
+		t.Fatalf("lost last working kit: %+v %v", fallback, err)
+	}
+	ks.down.Store(true)
+	fallback, err = Fetch(context.Background(), srv.Client(), url, dir)
+	if err == nil || fallback.Core != old.Core {
+		t.Fatalf("replaced last manifest: %+v %v", fallback, err)
+	}
+}

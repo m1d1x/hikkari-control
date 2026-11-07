@@ -119,7 +119,7 @@ func (s *Service) testerVerdicts(ctx context.Context) (map[string]string, map[st
 			v = "ip_banned"
 		case "isp_block", "country_block":
 			v = "fingerprint"
-			if n.Proto == ProtoVlessXhttp {
+			if domainProtocol(n.Proto) {
 				v = "domain_blocked"
 			}
 			if n.Proto == ProtoHysteria2 {

@@ -328,9 +328,10 @@ func runEntryBox(args []string) {
 	}
 	order := len(args) >= 1 && len(args) <= 4 && args[0] == "order"
 	retire := len(args) >= 2 && len(args) <= 3 && args[0] == "retire"
+	naiveAdopt := len(args) == 3 && args[0] == "adopt-naive"
 	provider := len(args) >= 3 && len(args) <= 5 && args[0] == "provider"
-	if !order && !retire && !provider && len(args) != 1 && len(args) != 4 && len(args) != 5 {
-		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain>]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|awg|voice=<region>] [hoster=<kind>] | entry-box catalog <hoster>"))
+	if !naiveAdopt && !order && !retire && !provider && len(args) != 1 && len(args) != 4 && len(args) != 5 {
+		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain>]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|naive|awg|voice=<region>] [hoster=<kind>] | entry-box adopt-naive <box> <domain> | entry-box catalog <hoster>"))
 	}
 	if err := cryptobox.Configure(os.Getenv); err != nil {
 		fail(fmt.Errorf("content key: %w", err))
@@ -394,6 +395,8 @@ func runEntryBox(args []string) {
 
 	var id uuid.UUID
 	switch {
+	case naiveAdopt:
+		id, err = prov.AdoptNaive(ctx, args[1], args[2], "")
 	case order:
 		// "-" keeps the hoster's default, so a protocol can be named alone:
 		// `entry-box order - - xhttp` — what the operator runs when the
@@ -408,6 +411,8 @@ func runEntryBox(args []string) {
 		if len(args) > 3 {
 			switch p := args[3]; {
 			case p == "reality":
+			case p == "naive":
+				spec.Proto = entry.ProtoNaive
 			case p == "xhttp":
 				spec.Proto = entry.ProtoVlessXhttp
 			case p == "awg":
@@ -415,7 +420,7 @@ func runEntryBox(args []string) {
 			case strings.HasPrefix(p, "voice="):
 				spec.Proto, spec.VoiceRegion = entry.ProtoHysteria2, strings.TrimPrefix(p, "voice=")
 			default:
-				fail(fmt.Errorf("protocol %q: reality, xhttp, awg or voice=<region>", p))
+				fail(fmt.Errorf("protocol %q: reality, xhttp, naive, awg or voice=<region>", p))
 			}
 		}
 		var name string

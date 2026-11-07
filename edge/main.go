@@ -67,6 +67,13 @@ func main() {
 			log.Fatalf("nekko-edge: %v", err)
 		}
 	case "check":
+		if osEnv("EDGE_PROTO") == protoNaive {
+			if _, err := naiveFromEnv(osEnv); err != nil {
+				log.Fatalf("nekko-edge: %v", err)
+			}
+			fmt.Println("config OK")
+			return
+		}
 		if osEnv("EDGE_PROTO") == protoCascade {
 			if _, err := CascadeConfigFromEnv(osEnv); err != nil {
 				log.Fatalf("nekko-edge: %v", err)
@@ -176,6 +183,9 @@ func load() (edge, error) {
 }
 
 func run() error {
+	if osEnv("EDGE_PROTO") == protoNaive {
+		return runNaive()
+	}
 	if osEnv("EDGE_PROTO") == protoCascade {
 		return cascade()
 	}

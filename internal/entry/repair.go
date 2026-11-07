@@ -584,7 +584,7 @@ func (m *Mechanic) poolRails(ctx context.Context, inc Incident, playbook string,
 		return "", true, nil
 	}
 	proto, region := splitPool(inc.Pool)
-	if playbook == PlaybookScaleUp && proto == ProtoVlessXhttp {
+	if playbook == PlaybookScaleUp && domainProtocol(proto) {
 		if err := m.svc.xhttpDomainReady(ctx); errors.Is(err, ErrNoRegistrar) {
 			return "", true, nil
 		} else if err != nil {

@@ -650,10 +650,13 @@ fi
 
 // jobRun is one job's state while it runs.
 type jobRun struct {
-	p   *Provisioner
-	ctx context.Context
-	id  uuid.UUID
-	box string
+	naiveAdopt         bool
+	naiveLegacyStopped bool
+	naiveInstance      string
+	p                  *Provisioner
+	ctx                context.Context
+	id                 uuid.UUID
+	box                string
 	// acc is the box as the job found it at login: its protocol decides the
 	// firewall, the listening check, the drain and the relay's env.
 	acc boxAccess
@@ -746,7 +749,7 @@ func (j *jobRun) provision(password string) error {
 	// An XHTTP box needs its domain live before anything is deployed: relays
 	// are minted from the box's sealed domain, and the edge orders its
 	// certificate against it at start (Ф6).
-	if acc.proto == ProtoVlessXhttp {
+	if domainProtocol(acc.proto) {
 		j.step("domain")
 		if err := j.ensureDomain(); err != nil {
 			return err
@@ -764,7 +767,7 @@ func (j *jobRun) provision(password string) error {
 	// another name (the evicted one's replacement) must move its relays to it
 	// first: the front, the certificate and the edge env all read the relay's
 	// domain, and left on the old one they serve a name nobody dials now.
-	if acc.proto == ProtoVlessXhttp {
+	if domainProtocol(acc.proto) {
 		if relays, err = j.moveRelaysToDomain(relays); err != nil {
 			return err
 		}
@@ -803,7 +806,7 @@ func (j *jobRun) provision(password string) error {
 	// healthy fresh box as domain_blocked (01.11). The hub makes the first
 	// handshake itself and waits for the certificate to verify on :443 — now
 	// nginx's — before anyone judges the box.
-	if acc.proto == ProtoVlessXhttp && len(relays) > 0 {
+	if domainProtocol(acc.proto) && len(relays) > 0 {
 		j.step("cert")
 		if err := j.p.certCheck(j.ctx, acc.address, relays[0].id.Port, j.acc.domain); err != nil {
 			return fmt.Errorf("сертификат %s так и не выпустился: %w", j.acc.domain, err)
@@ -878,10 +881,18 @@ func (j *jobRun) moveRelaysToDomain(relays []provRelay) ([]provRelay, error) {
 	}
 	var moved []string
 	for _, rel := range relays {
-		if rel.id.Xhttp == nil || rel.id.Xhttp.Domain == domain {
+		current := ""
+		if rel.id.Xhttp != nil {
+			current = rel.id.Xhttp.Domain
+		} else if rel.id.Naive != nil {
+			current = rel.id.Naive.Host
+		} else {
 			continue
 		}
-		fresh, err := rel.id.withXhttpDomain(domain)
+		if current == domain {
+			continue
+		}
+		fresh, err := rel.id.withDomain(domain)
 		if err != nil {
 			return nil, fmt.Errorf("релей %s: %w", rel.name, err)
 		}
@@ -1412,11 +1423,18 @@ func (j *jobRun) harden(r Remote, relays []provRelay) error {
 	for _, rel := range relays {
 		ports = append(ports, strconv.Itoa(rel.id.Port)+"/"+j.transport())
 	}
-	if j.acc.proto == ProtoVlessXhttp {
+	if domainProtocol(j.acc.proto) {
 		// nginx answers :80 for the ACME HTTP-01 challenge certbot runs, and a
 		// lived-in site answers there too (zovfy's :80 is open). :443 is already
 		// in the relay ports above.
 		ports = append(ports, "80/tcp")
+	}
+	if j.acc.proto == ProtoNaive {
+		for _, rel := range relays {
+			if rel.id.Naive != nil && rel.id.Naive.H3 {
+				ports = append(ports, strconv.Itoa(rel.id.Port)+"/udp")
+			}
+		}
 	}
 	sort.Strings(ports)
 	out, err := r.Run(j.ctx, "bash -s -- "+strings.Join(ports, " "), strings.NewReader(hardenScript))
@@ -1616,6 +1634,11 @@ func (j *jobRun) install(r Remote, rel provRelay) error {
 	// The port the swap waits to see listening is the one the edge binds: an
 	// XHTTP edge binds a loopback front (nginx holds the public port), every
 	// other protocol binds the public port itself.
+	if rel.id.Naive != nil {
+		if err := j.installNaive(r, rel); err != nil {
+			return err
+		}
+	}
 	listen := rel.id.edgeListenPort()
 	if err := j.swapIn(r, rel.name, "entry_relays.identity_ct", envMap, listen, j.transport()); err != nil {
 		return err

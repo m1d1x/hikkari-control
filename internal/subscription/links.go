@@ -26,6 +26,18 @@ func Link(r entry.RelayRecord) (string, error) {
 	host := net.JoinHostPort(r.Address, strconv.Itoa(r.Port))
 	label := "Hikkari " + r.Name
 	switch {
+	case r.Proto == entry.ProtoNaive && r.NaiveParams != nil:
+		p := r.NaiveParams
+		if p.Host == "" || p.User == "" || p.Pass == "" {
+			return "", errNoLink
+		}
+		scheme := "naive+https"
+		if p.H3 {
+			scheme = "naive+quic"
+		}
+		q := url.Values{"sni": {p.Host}}
+		u := url.URL{Scheme: scheme, Host: host, User: url.UserPassword(p.User, p.Pass), RawQuery: q.Encode(), Fragment: label}
+		return u.String(), nil
 	case r.Proto == entry.ProtoVlessRealityVision && r.RealityParams != nil:
 		p := r.RealityParams
 		if len(p.Covers) == 0 {

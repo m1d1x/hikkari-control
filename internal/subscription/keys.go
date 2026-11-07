@@ -65,6 +65,11 @@ func (s *Service) accessKey(ctx context.Context, account uuid.UUID) (accessKey, 
 // withKey puts the account's own credentials into a relay record in place of
 // the relay's shared one.
 func withKey(rec entry.RelayRecord, k accessKey) entry.RelayRecord {
+	if p := rec.NaiveParams; p != nil {
+		c := *p
+		c.User, c.Pass = "hikkari", k.hy2Auth
+		rec.NaiveParams = &c
+	}
 	if p := rec.RealityParams; p != nil {
 		c := *p
 		c.UUID = k.vlessID
@@ -93,6 +98,7 @@ func withKey(rec entry.RelayRecord, k accessKey) entry.RelayRecord {
 const relayKeys = `
 	SELECT CASE $2
 		WHEN 'hysteria2' THEN k.hy2_auth
+ WHEN 'naive' THEN k.hy2_auth
 		WHEN 'amneziawg' THEN k.awg_public || ' ' || host(k.awg_address)
 		ELSE k.vless_id::text END AS key
 	FROM entry_grants g

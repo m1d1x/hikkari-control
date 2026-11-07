@@ -220,7 +220,7 @@ func (s *Service) LinksFor(ctx context.Context, token, engine string) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	return s.links(ctx, account, engine, awgCaps{}, 0)
+	return s.links(ctx, account, engine, awgCaps{}, 0, false)
 }
 
 // featuresHeader is how a client says what it can dial beyond what every client
@@ -283,7 +283,7 @@ func networkOf(h http.Header) uint32 {
 	return uint32(n)
 }
 
-func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, awg awgCaps, asn uint32) ([]string, error) {
+func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, awg awgCaps, asn uint32, naive bool) ([]string, error) {
 	key, err := s.accessKey(ctx, account)
 	if err != nil {
 		return nil, err
@@ -309,6 +309,9 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 			// A record the hub cannot open is the hub's own fault, not the
 			// subscriber's: logged, and the rest of the batch still served.
 			applog.Error(ctx, "subscription", "relay record not opened", applog.F("err", err.Error()))
+			continue
+		}
+		if rec.Proto == entry.ProtoNaive && (!naive || engine == "xray") {
 			continue
 		}
 		render := Link
@@ -402,7 +405,7 @@ func (s *Service) Handler() http.HandlerFunc {
 			terms, err = s.terms(r.Context(), account)
 		}
 		if err == nil {
-			links, err = s.links(r.Context(), account, engine, wantsAwg(r.Header), networkOf(r.Header))
+			links, err = s.links(r.Context(), account, engine, wantsAwg(r.Header), networkOf(r.Header), hasNaiveFeature(r.Header))
 		}
 		if err != nil {
 			applog.Error(r.Context(), "subscription", "batch failed", applog.F("err", err.Error()))
@@ -459,4 +462,13 @@ func (s *Service) Handler() http.HandlerFunc {
 		}
 		_, _ = w.Write([]byte(base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))))
 	}
+}
+
+func hasNaiveFeature(h http.Header) bool {
+	for _, feature := range strings.Split(h.Get(featuresHeader), ",") {
+		if strings.TrimSpace(feature) == "naive" {
+			return true
+		}
+	}
+	return false
 }

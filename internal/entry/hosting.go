@@ -924,7 +924,7 @@ func (p *Provisioner) runOrdered(ctx context.Context, id uuid.UUID, box string) 
 // admission that said ip_banned) leaves the box recorded, because by then the
 // machine is a thing the console can see and act on.
 func (p *Provisioner) orderAndRecord(ctx context.Context, spec OrderSpec) (string, error) {
-	if spec.Proto == ProtoVlessXhttp {
+	if domainProtocol(spec.Proto) {
 		if err := p.svc.xhttpDomainReady(ctx); err != nil {
 			return "", err
 		}

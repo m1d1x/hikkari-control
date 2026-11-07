@@ -206,6 +206,9 @@ func OpenRecord(raw []byte, keys []Key, now time.Time) (RelayRecord, error) {
 	rec := RelayRecord{Name: r.Name, Address: r.Address, Port: r.Port, Proto: r.Proto,
 		IssuedAt: r.IssuedAt, ExpiresAt: r.ExpiresAt}
 	switch r.Proto {
+	case ProtoNaive:
+		rec.NaiveParams = &NaiveParams{}
+		err = json.Unmarshal(payload, rec.NaiveParams)
 	case ProtoVlessRealityVision:
 		rec.RealityParams = &RealityParams{}
 		err = json.Unmarshal(payload, rec.RealityParams)

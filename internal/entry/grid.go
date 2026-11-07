@@ -197,7 +197,7 @@ func (p *Provisioner) Inspect(ctx context.Context, box string, relays []PoolRela
 // coverOf is the SNI the hub dials a relay with: its own cover for a Reality
 // relay, the box's domain for an XHTTP one.
 func (p *Provisioner) coverOf(ctx context.Context, relay string, acc boxAccess) (string, error) {
-	if acc.proto == ProtoVlessXhttp {
+	if domainProtocol(acc.proto) {
 		if acc.domain == "" {
 			return "", fmt.Errorf("%w: у xhttp-машины нет домена", ErrRejected)
 		}

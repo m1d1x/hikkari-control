@@ -119,6 +119,7 @@ export const PROTO: Record<string, { tag: string; tone: string }> = {
 	hysteria2: { tag: 'hysteria', tone: 'hysteria' },
 	'vless-xhttp': { tag: 'xhttp', tone: 'xhttp' },
 	amneziawg: { tag: 'amnezia', tone: 'amnezia' },
+ naive: {tag:'naive',tone:'xhttp'},
 };
 
 // Provisioning (roadmap 42 П6.15): the hub takes a rented machine from the
@@ -213,11 +214,12 @@ export interface NewBoxRequest {
 	domain: string;
 }
 
-export type BoxProto = 'vless-reality-vision' | 'hysteria2' | 'vless-xhttp';
+export type BoxProto = 'vless-reality-vision' | 'hysteria2' | 'vless-xhttp' | 'naive';
 
 /** The protocols a new box can speak, in the order the console offers them. */
 export const BOX_PROTOS: { id: BoxProto; label: string; hint: string }[] = [
 	{ id: 'vless-reality-vision', label: 'reality', hint: 'поток под чужим прикрытием, основной вход' },
+	{id:'naive',label:'naive',hint:'HTTPS'},
 	{ id: 'vless-xhttp', label: 'xhttp', hint: 'поток как обычный сайт на своём домене' },
 	{ id: 'hysteria2', label: 'hysteria', hint: 'голос: датаграммы до sfu одного региона' },
 ];
@@ -1980,6 +1982,7 @@ export function fetchProtocolStats(window: OverviewWindow = '24h'): Promise<Entr
 
 /** What a protocol is called on screen; an unknown one keeps its own name. */
 export const PROTO_LABEL: Record<string, string> = {
+ naive:'naive',
 	'vless-reality-vision': 'vless-reality',
 	'vless-xhttp': 'xhttp',
 	'vless-reality-xhttp': 'xhttp + reality',
@@ -2000,6 +2003,7 @@ export const providerLabel = (kind: string): string => PROVIDER_LABEL[kind.toLow
 
 /** What a protocol is for, said in the console's words. */
 export const PROTO_ROLE: Record<string, string> = {
+ naive:'HTTPS',
 	'vless-reality-vision': 'основной',
 	'vless-xhttp': 'запасной, на домене',
 	'vless-reality-xhttp': 'xhttp под прикрытием reality',

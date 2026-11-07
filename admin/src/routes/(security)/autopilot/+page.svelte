@@ -50,6 +50,7 @@
 	const PROTO_LABEL: Record<string, string> = {
 		'vless-reality-vision': 'reality',
 		'vless-xhttp': 'xhttp',
+ naive:'naive',
 		amneziawg: 'amnezia',
 		hysteria2: 'голос',
 	};
@@ -258,9 +259,9 @@
 			{#each fleet!.warnings as w (w)}<p class="warn-line" role="alert">{w}</p>{/each}
 			{#each pools as p (p.pool)}
 				<Panel title={poolName(p)} sub={poolHint(p)}>
-					<p class="derived">Цель {p.target + p.buffer} машин{p.proto === 'vless-xhttp' ? ` · ${domainHint()}` : ''}</p>
+					<p class="derived">Цель {p.target + p.buffer} машин{(p.proto === 'vless-xhttp' || p.proto === 'naive') ? ` · ${domainHint()}` : ''}</p>
 					{@const chart = charts?.pools.find((c) => c.pool === p.pool)}
-					<AutopilotCharts set={chart} usesDomains={p.proto === 'vless-xhttp'} {moneyMode} />
+					<AutopilotCharts set={chart} usesDomains={(p.proto === 'vless-xhttp' || p.proto === 'naive')} {moneyMode} />
 				</Panel>
 			{/each}
 

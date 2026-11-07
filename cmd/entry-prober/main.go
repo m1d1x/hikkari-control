@@ -372,6 +372,9 @@ func runRound(ctx context.Context, edges []edge, eng *engine, tunnelURL, k2Contr
 // probeEdge runs the three signals against one relay and classifies. K1 uses
 // the relay's cover unless k1SNI overrides it.
 func probeEdge(ctx context.Context, e edge, socksPort int, tunnelURL, k1SNI string, k2 bool, now time.Time, timeout time.Duration) probeResult {
+	if e.Proto == protoNaive {
+		return probeNaiveEdge(ctx, e, tunnelURL, k2, now, timeout)
+	}
 	if e.voice() {
 		return probeVoiceEdge(ctx, e, socksPort, k2, now, timeout)
 	}

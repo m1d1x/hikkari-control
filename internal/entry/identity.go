@@ -50,7 +50,8 @@ type Identity struct {
 	// user, the Reality fields stay empty.
 	Xhttp *XhttpIdentity `json:"xhttp,omitempty"`
 	// Awg is set on an AmneziaWG relay and only there.
-	Awg *AwgIdentity `json:"awg,omitempty"`
+	Awg   *AwgIdentity `json:"awg,omitempty"`
+	Naive *NaiveParams `json:"naive,omitempty"`
 }
 
 // AwgIdentity is the AmneziaWG half of a relay: the device's key, the
@@ -405,6 +406,8 @@ type HysteriaIdentity struct {
 // proto is the protocol this identity speaks.
 func (id Identity) proto() string {
 	switch {
+	case id.Naive != nil:
+		return ProtoNaive
 	case id.Hysteria != nil:
 		return ProtoHysteria2
 	case id.Xhttp != nil:
@@ -426,7 +429,7 @@ func (id Identity) echoPort() int {
 	if id.Hysteria != nil {
 		return id.LocalPortBase
 	}
-	if id.Xhttp != nil || id.Awg != nil {
+	if id.Xhttp != nil || id.Awg != nil || id.Naive != nil {
 		return 0 // no admission echo: streams only, or a tunnel of its own
 	}
 	return id.LocalPortBase + relayLoopbackBlock - 1
@@ -747,6 +750,9 @@ func (id Identity) withXhttpDomain(domain string) (Identity, error) {
 // by systemd and by a shell (the swap script's check), and the two disagree
 // about quotes.
 func (id Identity) EdgeEnv() (map[string]string, error) {
+	if n := id.Naive; n != nil {
+		return map[string]string{"EDGE_PROTO": ProtoNaive, "EDGE_LISTEN": "0.0.0.0:" + strconv.Itoa(id.Port), "EDGE_NAIVE_HOST": n.Host, "EDGE_NAIVE_USER": n.User, "EDGE_NAIVE_PASS": n.Pass, "EDGE_NAIVE_H3": strconv.FormatBool(n.H3)}, nil
+	}
 	if h := id.Hysteria; h != nil {
 		finalmask, err := json.Marshal(xrayFinalmask(h.Masks))
 		if err != nil {
@@ -855,6 +861,10 @@ func xrayFinalmask(masks []Mask) []map[string]any {
 // record is the signed record of this identity on a box at address. region is
 // the box's voice region, "" on a stream box.
 func (id Identity) record(name, address, region string, issuedAt, expiresAt int64) RelayRecord {
+	if n := id.Naive; n != nil {
+		copy := *n
+		return RelayRecord{Name: name, Address: address, Port: id.Port, Proto: ProtoNaive, NaiveParams: &copy, IssuedAt: issuedAt, ExpiresAt: expiresAt}
+	}
 	if h := id.Hysteria; h != nil {
 		return RelayRecord{
 			Name:    name,

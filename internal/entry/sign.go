@@ -30,6 +30,7 @@ const (
 	ProtoHysteria2          = "hysteria2"
 	ProtoVlessXhttp         = "vless-xhttp"
 	ProtoAmneziaWG          = "amneziawg"
+	ProtoNaive              = "naive"
 )
 
 // XHTTP modes (record.rs XhttpMode). StreamUp is the default: the edge
@@ -105,6 +106,7 @@ type RelayRecord struct {
 	HysteriaParams *HysteriaParams
 	XhttpParams    *XhttpParams
 	AwgParams      *AwgParams
+	NaiveParams    *NaiveParams
 	IssuedAt       int64
 	ExpiresAt      int64
 }
@@ -118,6 +120,8 @@ func (r RelayRecord) params() any {
 		return r.HysteriaParams
 	case ProtoVlessXhttp:
 		return r.XhttpParams
+	case ProtoNaive:
+		return r.NaiveParams
 	case ProtoAmneziaWG:
 		return r.AwgParams
 	}
@@ -158,6 +162,9 @@ func (r *RelayRecord) UnmarshalJSON(b []byte) error {
 	}
 	*r = RelayRecord{Name: c.Name, Address: c.Address, Port: c.Port, Proto: c.Proto, IssuedAt: c.IssuedAt, ExpiresAt: c.ExpiresAt}
 	switch c.Proto {
+	case ProtoNaive:
+		r.NaiveParams = &NaiveParams{}
+		return json.Unmarshal(b, r.NaiveParams)
 	case ProtoVlessRealityVision:
 		r.RealityParams = &RealityParams{}
 		return json.Unmarshal(b, r.RealityParams)
@@ -177,7 +184,7 @@ func (r *RelayRecord) UnmarshalJSON(b []byte) error {
 // halves: exactly the half Proto names is set.
 func (r RelayRecord) halves() error {
 	set := 0
-	for _, h := range []bool{r.RealityParams != nil, r.HysteriaParams != nil, r.XhttpParams != nil, r.AwgParams != nil} {
+	for _, h := range []bool{r.RealityParams != nil, r.HysteriaParams != nil, r.XhttpParams != nil, r.AwgParams != nil, r.NaiveParams != nil} {
 		if h {
 			set++
 		}
@@ -295,6 +302,13 @@ func (r RelayRecord) check() error {
 		return err
 	}
 	switch r.Proto {
+	case ProtoNaive:
+		if err := checkRelayDomain(r.NaiveParams.Host); err != nil {
+			return fmt.Errorf("%w: naive domain", ErrMalformed)
+		}
+		if r.NaiveParams.User == "" || len(r.NaiveParams.Pass) < 16 {
+			return fmt.Errorf("%w: naive credentials", ErrMalformed)
+		}
 	case ProtoVlessRealityVision:
 		if len(r.RealityParams.Covers) == 0 {
 			return fmt.Errorf("%w: relay %s has no covers", ErrMalformed, r.Name)

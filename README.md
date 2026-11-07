@@ -61,6 +61,14 @@ docker compose exec hub hub subscriber-revoke alice
 
 Команда выдаёт токен один раз. Подписка: `https://<public-host>/sub/<token>`.
 В БД лежит только SHA-256 токена. По умолчанию выдаются Reality и XHTTP.
+Naive выдаётся клиенту sing-box только с capability `Hikkari-Features: naive`; старые клиенты
+и Xray его не получают. `naive+https` использует Chromium/H2, `naive+quic` — явный H3.
+Каждый подписчик получает собственный ключ: pulse отзывает доступ и активные потоки,
+учёт трафика применяется к тем же квотам подписок. Сервер — штатный edge со встроенным
+Caddy/forwardproxy, HTTPS-сайтом и локальным DNS cache.
+Для переноса записанной лабораторной машины без действующих релеев:
+`hub entry-box adopt-naive <box> <domain>`. Команда выполняет обычные deploy/admit/sign,
+не покупает машину и восстанавливает лабораторный Caddy при неудачном развёртывании.
 Для Hikkari с выбранным движком **Xray** используйте `/sub/<token>?engine=xray`:
 добавляются Hysteria2 с `pinSHA256` сертификата и `finalmask` (весь набор Salamander + Noise).
 Sing-box должен явно отказаться от таких профилей, иначе pin или Noise будут потеряны.

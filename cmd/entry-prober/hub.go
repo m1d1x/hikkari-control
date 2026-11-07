@@ -138,7 +138,7 @@ func startEngine(ctx context.Context, bin string, edges []edge, socksBase int, f
 	// Every SOCKS listener before the first probe, so a slow start is not
 	// misread as every relay being dead.
 	for _, ed := range edges {
-		if ed.awg() {
+		if ed.awg() || ed.Proto == protoNaive {
 			continue // dialled in this process: no door on the engine
 		}
 		if err := waitSocks(ports[ed.Name], 10*time.Second); err != nil {

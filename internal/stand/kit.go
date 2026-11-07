@@ -30,6 +30,7 @@ import (
 const (
 	KitCore   = "sing-box"
 	KitParser = "census-parse"
+	KitCronet = "libcronet.so"
 )
 
 // maxKitFile bounds one blob: the core is about 70 MB.
@@ -63,7 +64,7 @@ func (k Kit) Validate() error {
 	if !reCoreLabel.MatchString(k.Core) {
 		return fmt.Errorf("kit core %q", k.Core)
 	}
-	for _, name := range []string{KitCore, KitParser} {
+	for _, name := range k.fileNames() {
 		f, ok := k.Files[name]
 		if !ok {
 			return fmt.Errorf("kit has no %s", name)
@@ -75,11 +76,20 @@ func (k Kit) Validate() error {
 	return nil
 }
 
+func (k Kit) fileNames() []string {
+	names := []string{KitCore, KitParser}
+	if _, ok := k.Files[KitCronet]; ok {
+		names = append(names, KitCronet)
+	}
+	return names
+}
+
 // Local is a kit on disk, ready to run.
 type Local struct {
 	Core   string // path of the core
 	Parser string // path of census-parse
 	Label  string // the core's name in rows
+	Cronet string // empty for older kits without Naive support
 }
 
 // Fetch brings the kit at manifest into dir and returns it. Blobs already in
@@ -116,17 +126,21 @@ func fetchKit(ctx context.Context, client *http.Client, manifest, dir string) (L
 	if err := kit.Validate(); err != nil {
 		return Local{}, err
 	}
-	for _, name := range []string{KitCore, KitParser} {
+	for _, name := range kit.fileNames() {
 		f := kit.Files[name]
 		blob := base.ResolveReference(&url.URL{Path: "../blobs/" + f.SHA256}).String()
 		if err := fetchBlob(ctx, client, blob, dir, f); err != nil {
 			return Local{}, fmt.Errorf("%s: %w", name, err)
 		}
 	}
+	local, err := localOf(kit, dir)
+	if err != nil {
+		return Local{}, err
+	}
 	if err := writeAtomic(filepath.Join(dir, "kit.json"), raw, 0o600); err != nil {
 		return Local{}, err
 	}
-	return localOf(kit, dir), nil
+	return local, nil
 }
 
 // lastKit is the kit dir last fetched whole.
@@ -142,20 +156,39 @@ func lastKit(dir string) (Local, error) {
 	if err := kit.Validate(); err != nil {
 		return Local{}, err
 	}
-	for _, name := range []string{KitCore, KitParser} {
+	for _, name := range kit.fileNames() {
 		if sum, err := fileSum(filepath.Join(dir, kit.Files[name].SHA256)); err != nil || sum != kit.Files[name].SHA256 {
 			return Local{}, errors.New("the last kit is not whole on disk")
 		}
 	}
-	return localOf(kit, dir), nil
+	return localOf(kit, dir)
 }
 
-func localOf(kit Kit, dir string) Local {
-	return Local{
-		Core:   filepath.Join(dir, kit.Files[KitCore].SHA256),
-		Parser: filepath.Join(dir, kit.Files[KitParser].SHA256),
-		Label:  kit.Core,
+func localOf(kit Kit, dir string) (Local, error) {
+	local := Local{Core: filepath.Join(dir, kit.Files[KitCore].SHA256), Parser: filepath.Join(dir, kit.Files[KitParser].SHA256), Label: kit.Core}
+	cronet, ok := kit.Files[KitCronet]
+	if !ok {
+		return local, nil
 	}
+	// Each pair has its own immutable directory. /proc/self/exe resolves
+	// symlinks, so use hard links: Cronet searches beside the actual executable.
+	runtimeDir := filepath.Join(dir, "runtime-"+kit.Files[KitCore].SHA256+"-"+cronet.SHA256)
+	if err := os.MkdirAll(runtimeDir, 0700); err != nil {
+		return Local{}, err
+	}
+	for _, name := range []string{KitCore, KitCronet} {
+		source := filepath.Join(dir, kit.Files[name].SHA256)
+		target := filepath.Join(runtimeDir, name)
+		if sum, err := fileSum(target); err == nil && sum == kit.Files[name].SHA256 {
+			continue
+		}
+		if err := os.Link(source, target); err != nil {
+			return Local{}, fmt.Errorf("kit runtime %s: %w", name, err)
+		}
+	}
+	local.Core = filepath.Join(runtimeDir, KitCore)
+	local.Cronet = filepath.Join(runtimeDir, KitCronet)
+	return local, nil
 }
 
 // fetchBlob puts the blob at dir/<sha256> unless a whole one is there. The

@@ -324,6 +324,19 @@ func TestTheEdgeBlocksRussianDomainsAndIPsWhileAllowingTheInternet(t *testing.T)
 		const coverName, uuid, sid = "www.cover.example", "00000000-0000-4000-8000-000000000001", "0123456789abcdef"
 
 		edgePort, echoPort, sitePort := freePort(t, "tcp"), freePort(t, "udp"), freePort(t, "tcp")
+		// TCP and UDP have independent port allocators. The configuration
+		// deliberately refuses an echo sharing a numeric cover port.
+		basePort := 0
+		for attempt := 0; attempt < 128; attempt++ {
+			candidate := freePort(t, "tcp")
+			if candidate != echoPort && candidate != edgePort && candidate != sitePort {
+				basePort = candidate
+				break
+			}
+		}
+		if basePort == 0 {
+			t.Fatal("no distinct cover port")
+		}
 		tcpEcho(t, sitePort, "site")
 		c, err := ConfigFromEnv(env(map[string]string{
 			"EDGE_LISTEN":          "127.0.0.1:" + strconv.Itoa(edgePort),
@@ -331,7 +344,7 @@ func TestTheEdgeBlocksRussianDomainsAndIPsWhileAllowingTheInternet(t *testing.T)
 			"EDGE_SHORT_IDS":       sid,
 			"EDGE_CLIENTS":         uuid,
 			"EDGE_COVERS":          coverName,
-			"EDGE_LOCAL_PORT_BASE": strconv.Itoa(freePort(t, "tcp")),
+			"EDGE_LOCAL_PORT_BASE": strconv.Itoa(basePort),
 			"EDGE_ECHO_PORT":       strconv.Itoa(echoPort),
 		}))
 		if err != nil {

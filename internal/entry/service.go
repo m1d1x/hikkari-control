@@ -383,9 +383,9 @@ func (s *Service) CreateBox(ctx context.Context, b BoxSpec) error {
 	b.Region = strings.TrimSpace(b.Region)
 	b.Domain = strings.ToLower(strings.TrimSpace(b.Domain))
 	switch {
-	case b.Proto != ProtoVlessRealityVision && b.Proto != ProtoHysteria2 && b.Proto != ProtoVlessXhttp && b.Proto != ProtoAmneziaWG:
+	case b.Proto != ProtoVlessRealityVision && b.Proto != ProtoHysteria2 && b.Proto != ProtoVlessXhttp && b.Proto != ProtoAmneziaWG && b.Proto != ProtoNaive:
 		return fmt.Errorf("%w: box protocol %q", ErrRejected, b.Proto)
-	case b.Proto != ProtoVlessXhttp && b.Domain != "":
+	case !domainProtocol(b.Proto) && b.Domain != "":
 		return fmt.Errorf("%w: only an XHTTP box has a domain", ErrRejected)
 	case b.Proto == ProtoHysteria2 && !regionRe.MatchString(b.Region):
 		return fmt.Errorf("%w: a voice box needs the region it serves, got %q", ErrRejected, b.Region)
@@ -405,7 +405,7 @@ func (s *Service) CreateBox(ctx context.Context, b BoxSpec) error {
 	// An XHTTP box may start without a domain: the hub assigns one during
 	// provisioning, from the pool or a purchase (Ф6). A domain given by hand is
 	// still checked.
-	if b.Proto == ProtoVlessXhttp && b.Domain != "" {
+	if domainProtocol(b.Proto) && b.Domain != "" {
 		if err := checkRelayDomain(b.Domain); err != nil {
 			return err
 		}
@@ -618,7 +618,7 @@ func (s *Service) AddRelay(ctx context.Context, box, kind string) (string, error
 		used[id.Port] = true
 	}
 	ports := relayPorts
-	if proto == ProtoVlessXhttp {
+	if domainProtocol(proto) {
 		// One relay at a time: the site and its Let's Encrypt validation
 		// (TLS-ALPN-01) live on :443 of the box's one domain. A fresh relay
 		// on the box replaces a dead one, it does not stand beside it.
@@ -647,6 +647,11 @@ func (s *Service) AddRelay(ctx context.Context, box, kind string) (string, error
 	switch proto {
 	case ProtoHysteria2:
 		id, err = newVoiceIdentity(port, base)
+	case ProtoNaive:
+		var domain []byte
+		if domain, err = cryptobox.Decrypt(lb.domainCT); err == nil {
+			id, err = newNaiveIdentity(port, base, string(domain))
+		}
 	case ProtoVlessXhttp:
 		var domain []byte
 		if domain, err = cryptobox.Decrypt(lb.domainCT); err != nil {
@@ -1366,7 +1371,7 @@ func (s *Service) protoSlots(proto string) int {
 	switch proto {
 	case ProtoHysteria2:
 		return VoiceSlotsPerRegion
-	case ProtoAmneziaWG:
+	case ProtoAmneziaWG, ProtoNaive:
 		return AwgSlots
 	}
 	return s.batchSize
