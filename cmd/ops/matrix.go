@@ -353,8 +353,9 @@ func fileSHA256(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// matrixCore is the core users run, built for the vantages: sing-box-lx at the
-// tag the client's CI pins, with the client's patches, cached by both.
+// matrixCore is the core users run, built for the vantages: our fork
+// m1d1x/sing-box-lx at the tag the client's CI pins (its patches are commits
+// there), cached by the tag.
 func matrixCore() (path, label string, err error) {
 	engine, err := clientEngineDir()
 	if err != nil {
@@ -370,37 +371,23 @@ func matrixCore() (path, label string, err error) {
 		return "", "", errors.New("no SING_BOX_LX_TAG in the client's build-windows.yml")
 	}
 	tag := string(m[1])
-	patches, err := filepath.Glob(filepath.Join(repo, "core-patches", "sing-box-lx", "*.patch"))
-	if err != nil {
-		return "", "", err
-	}
-	sort.Strings(patches)
-	h := sha256.New()
-	for _, p := range patches {
-		data, err := os.ReadFile(p)
-		if err != nil {
-			return "", "", err
-		}
-		h.Write(data)
-	}
-	patchSum := hex.EncodeToString(h.Sum(nil))[:8]
-	label = "sing-box-lx " + tag + "+" + patchSum
+	label = "sing-box-lx " + tag
 	cache, err := os.UserCacheDir()
 	if err != nil {
 		return "", "", err
 	}
-	path = filepath.Join(cache, "hikkari", "matrix", "sing-box-"+tag+"-"+patchSum+"-linux-amd64")
+	path = filepath.Join(cache, "hikkari", "matrix", "sing-box-"+tag+"-linux-amd64")
 	if _, err := os.Stat(path); err == nil {
 		return path, label, nil
 	}
-	if err := buildMatrixCore(tag, patches, path); err != nil {
+	if err := buildMatrixCore(tag, path); err != nil {
 		return "", "", err
 	}
 	return path, label, nil
 }
 
 // buildMatrixCore follows the client's CI (build-windows.yml, job sing-box).
-func buildMatrixCore(tag string, patches []string, out string) error {
+func buildMatrixCore(tag string, out string) error {
 	work, err := os.MkdirTemp("", "hikkari-matrix-core-")
 	if err != nil {
 		return err
@@ -420,17 +407,12 @@ func buildMatrixCore(tag string, patches []string, out string) error {
 		}
 		return strings.TrimSpace(stdout.String()), nil
 	}
-	if _, err := run(work, nil, "git", "clone", "-q", "--depth", "1", "--branch", tag, "https://github.com/Leadaxe/sing-box-lx", src); err != nil {
+	if _, err := run(work, nil, "git", "clone", "-q", "--depth", "1", "--branch", tag, "https://github.com/m1d1x/sing-box-lx", src); err != nil {
 		return err
 	}
 	if _, err := run(src, nil, "git", "submodule", "update", "-q", "--init", "--depth", "1",
 		"submodules/gvisor", "submodules/sing-tun", "submodules/utls", "submodules/wireguard-go"); err != nil {
 		return err
-	}
-	for _, p := range patches {
-		if _, err := run(src, nil, "git", "apply", p); err != nil {
-			return err
-		}
 	}
 	tags, err := run(src, nil, "make", "-s", "-f", "Makefile.lx", "lx-print-tags")
 	if err != nil {
