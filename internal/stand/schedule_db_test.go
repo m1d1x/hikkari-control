@@ -67,9 +67,15 @@ func newTestScheduler(pool *pgxpool.Pool, slots fakeSlots, rows Rows) *Scheduler
 	return NewScheduler(pool, slots, fakeFleet{"vless://a@1.2.3.4:443#amsterdam-1-001", "vless://b@1.2.3.4:8443#amsterdam-1-002"}, rows, testAPI+"/")
 }
 
+// standOn switches the stand on or off with fp as its only knob: the tests
+// count the runs of one knob, whatever knobs the migrations seed.
+// TestDBStandQueuesARunForEveryEnabledKnob covers several.
 func standOn(t *testing.T, pool *pgxpool.Pool, on bool) {
 	t.Helper()
 	if _, err := pool.Exec(context.Background(), `UPDATE stand_settings SET enabled = $1`, on); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `UPDATE stand_knobs SET enabled = (knob = 'fp')`); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -89,6 +95,26 @@ func TestDBStandIsOffUntilEnabled(t *testing.T) {
 	s := newTestScheduler(pool, fakeSlots{"ru-spb"}, relayruns.NewStore(pool))
 	if n, err := s.Tick(context.Background()); err != nil || n != 0 {
 		t.Fatalf("queued %d err %v with the stand off", n, err)
+	}
+}
+
+func TestDBStandQueuesARunForEveryEnabledKnob(t *testing.T) {
+	ctx := context.Background()
+	pool := dbPool(t)
+	standOn(t, pool, true)
+	if _, err := pool.Exec(ctx, `UPDATE stand_knobs SET enabled = true WHERE knob IN ('fp', 'mode')`); err != nil {
+		t.Fatal(err)
+	}
+	s := newTestScheduler(pool, fakeSlots{"lv-main", "ru-spb"}, relayruns.NewStore(pool))
+	if n, err := s.Tick(ctx); err != nil || n != 4 {
+		t.Fatalf("queued %d err %v, want fp and mode at each of two points", n, err)
+	}
+	var vals []string
+	if err := pool.QueryRow(ctx, `SELECT vals FROM stand_tasks WHERE knob = 'mode' AND slot = 'ru-spb'`).Scan(&vals); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(vals, ",") != "stream-up,packet-up" {
+		t.Fatalf("mode values %v", vals)
 	}
 }
 
