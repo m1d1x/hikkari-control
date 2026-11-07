@@ -42,3 +42,10 @@ type standFleet struct {
 func (f standFleet) Links(ctx context.Context) ([]string, error) {
 	return f.subs.FleetLinks(ctx, f.fleet)
 }
+
+func (f standFleet) CapacityLinks(ctx context.Context, slot string) ([]string, error) {
+	return f.subs.CapacityFleetLinks(ctx, f.fleet, slot)
+}
+func (f standFleet) PrepareCapacityPeers(ctx context.Context) error {
+	return f.subs.PrepareCapacityPeers(ctx)
+}

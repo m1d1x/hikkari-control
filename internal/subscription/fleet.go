@@ -22,9 +22,12 @@ type Fleet interface {
 // account happened to draw: a relay outside the stand's batch would otherwise
 // go to its first subscriber with knobs nobody has measured.
 //
-// AmneziaWG is left out: its link needs a peer key of an account, and the
-// stand measures TLS profiles.
+// The diagnostic matrix excludes AWG. Capacity tasks use a dedicated peer per slot.
 func (s *Service) FleetLinks(ctx context.Context, fleet Fleet) ([]string, error) {
+	return s.fleetLinks(ctx, fleet, nil)
+}
+
+func (s *Service) fleetLinks(ctx context.Context, fleet Fleet, peer *accessKey) ([]string, error) {
 	records, err := fleet.ServingRecords(ctx)
 	if err != nil {
 		return nil, err
@@ -44,7 +47,14 @@ func (s *Service) FleetLinks(ctx context.Context, fleet Fleet) ([]string, error)
 		render := Link
 		switch rec.Proto {
 		case entry.ProtoAmneziaWG:
-			continue
+			if peer == nil {
+				continue
+			}
+			// Preserve the TLS shared credentials: only replace the AWG peer.
+			params := *rec.AwgParams
+			params.ClientPrivateKey, params.ClientAddress = peer.awgPrivate, peer.awgAddress
+			rec.AwgParams = &params
+			render = AwgLink
 		case entry.ProtoHysteria2:
 			render = SingBoxHysteriaLink
 		}

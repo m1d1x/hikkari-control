@@ -433,27 +433,47 @@ func (s *Scheduler) FleetLinks(ctx context.Context, token string) ([]string, err
 	if len(token) != 64 {
 		return nil, ErrNoSuchLinks
 	}
-	var ok bool
-	err := s.pool.QueryRow(ctx, `
-		SELECT EXISTS (SELECT 1 FROM stand_tasks
-		               WHERE links_token_hash = $1 AND status = 'claimed' AND claimed_at > now() - $2::interval)`,
-		linksTokenHash(token), claimTTL.String()).Scan(&ok)
+	var slot, knob string
+	err := s.pool.QueryRow(ctx, `SELECT slot,knob FROM stand_tasks WHERE links_token_hash=$1 AND status='claimed' AND claimed_at>now()-$2::interval`, linksTokenHash(token), claimTTL.String()).Scan(&slot, &knob)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNoSuchLinks
+	}
 	if err != nil {
 		return nil, fmt.Errorf("stand links: %w", err)
 	}
-	if !ok {
-		return nil, ErrNoSuchLinks
+	if knob == capacity.TaskKind {
+		if fleet, ok := s.fleet.(interface {
+			CapacityLinks(context.Context, string) ([]string, error)
+		}); ok {
+			return fleet.CapacityLinks(ctx, slot)
+		}
 	}
+
 	return s.fleet.Links(ctx)
 }
 
 // queueCapacity does not depend on the diagnostic knob matrix being enabled.
 func (s *Scheduler) queueCapacity(ctx context.Context) (int, error) {
+	var enabled bool
+	if err := s.pool.QueryRow(ctx, `SELECT enabled FROM relay_capacity_settings WHERE id`).Scan(&enabled); err != nil {
+		return 0, err
+	}
+	if !enabled {
+		return 0, nil
+	}
+	managedPeers := false
+	if fleet, ok := s.fleet.(interface{ PrepareCapacityPeers(context.Context) error }); ok {
+		managedPeers = true
+		if err := fleet.PrepareCapacityPeers(ctx); err != nil {
+			return 0, err
+		}
+	}
 	tag, err := s.pool.Exec(ctx, `INSERT INTO stand_tasks(slot,knob,vals,base,rounds,baseline_path)
  SELECT v.slot,'capacity-v1',ARRAY['download'],'',1,'/' FROM entry_vantages v,relay_capacity_settings c
  WHERE c.id AND c.enabled AND v.status='active' AND v.in_russia
+ AND (NOT $1 OR EXISTS(SELECT 1 FROM relay_capacity_awg_peers p WHERE p.slot=v.slot AND p.created_at < now()-interval '1 minute'))
  AND NOT EXISTS(SELECT 1 FROM stand_tasks t WHERE t.slot=v.slot AND t.knob='capacity-v1'
-  AND (t.status IN ('queued','claimed') OR t.created_at>now()-make_interval(mins=>c.interval_minutes)))`)
+  AND (t.status IN ('queued','claimed') OR t.created_at>now()-make_interval(mins=>c.interval_minutes)))`, managedPeers)
 	if err != nil {
 		return 0, err
 	}

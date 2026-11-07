@@ -142,8 +142,12 @@ func (r Runner) runCapacity(ctx context.Context, profiles []Profile) Result {
 }
 
 func (r Runner) measureProfileCapacity(ctx context.Context, p Profile, download bool) capacity.Sample {
+	return r.measureProfileCapacityAt(ctx, p, download, capacityURL, latencyURL)
+}
+
+func (r Runner) measureProfileCapacityAt(ctx context.Context, p Profile, download bool, downloadURL, rttURL string) capacity.Sample {
 	failure := capacity.Sample{Key: p.CapacityKey, MeasuredAt: time.Now().Unix(), Error: "core_unavailable"}
-	cfg, _, err := Config(p.Config, func(map[string]any, string) error { return nil }, "")
+	cfg, _, err := Config(p.Config, func(map[string]any, string) error { return nil }, "", p.Resolver)
 	if err != nil {
 		return failure
 	}
@@ -164,7 +168,7 @@ func (r Runner) measureProfileCapacity(ctx context.Context, p Profile, download 
 	if err := os.WriteFile(path, []byte(strings.ReplaceAll(cfg, "__PORT__", strconv.Itoa(port))), 0600); err != nil {
 		return failure
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(probeCtx, r.Kit.Core, "run", "-c", path)
 	if err := cmd.Start(); err != nil {
@@ -192,13 +196,28 @@ func (r Runner) measureProfileCapacity(ctx context.Context, p Profile, download 
 	transport := &http.Transport{Proxy: http.ProxyURL(proxy), DisableCompression: true, MaxIdleConns: 2}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	rtt := measureLatency(probeCtx, client, latencyURL)
+	// A listening SOCKS port is not an established WireGuard session. Warm
+	// endpoint handshake and tunnel DNS before the three timed HTTP requests.
+	// This is a bounded 204 request, not another capacity download.
+	if p.Config["type"] == "wireguard" {
+		warmCtx, warmCancel := context.WithTimeout(probeCtx, 12*time.Second)
+		req, err := http.NewRequestWithContext(warmCtx, http.MethodGet, rttURL, nil)
+		if err == nil {
+			req.Close = true
+			if response, err := client.Do(req); err == nil {
+				io.Copy(io.Discard, io.LimitReader(response.Body, 1024))
+				response.Body.Close()
+			}
+		}
+		warmCancel()
+	}
+	rtt := measureLatency(probeCtx, client, rttURL)
 	if !download {
 		failure.RTTMS = rtt
 		failure.Error = "control_unavailable"
 		return failure
 	}
-	sample := measureCapacity(probeCtx, client, capacityURL, p.CapacityKey)
+	sample := measureCapacity(probeCtx, client, downloadURL, p.CapacityKey)
 	sample.RTTMS = rtt
 	return sample
 }

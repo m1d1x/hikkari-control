@@ -64,3 +64,51 @@ func TestDBCapacityClaimStoreAndFreshSummary(t *testing.T) {
 		t.Fatal("expired measurements remained visible")
 	}
 }
+
+type capacitySlotFleet struct {
+	slot     string
+	prepared int
+}
+
+func (f *capacitySlotFleet) Links(context.Context) ([]string, error) {
+	return []string{"diagnostic"}, nil
+}
+func (f *capacitySlotFleet) PrepareCapacityPeers(context.Context) error { f.prepared++; return nil }
+func (f *capacitySlotFleet) CapacityLinks(_ context.Context, slot string) ([]string, error) {
+	f.slot = slot
+	return []string{"capacity-for-" + slot}, nil
+}
+
+func TestDBCapacitySlotBindingAndPeerPropagation(t *testing.T) {
+	ctx := context.Background()
+	pool := dbPool(t)
+	if _, err := pool.Exec(ctx, `INSERT INTO entry_vantages(slot,in_russia) VALUES('ru-managed',true); INSERT INTO relay_capacity_awg_peers(slot,private_key,public_key,address) VALUES('ru-managed','private','public','10.66.0.2')`); err != nil {
+		t.Fatal(err)
+	}
+	fleet := &capacitySlotFleet{}
+	scheduler := NewScheduler(pool, fakeSlots{"ru-managed"}, fleet, relayruns.NewStore(pool), testAPI)
+	if n, err := scheduler.Tick(ctx); err != nil || n != 0 || fleet.prepared != 1 {
+		t.Fatalf("new peer was not given propagation time: %d %v", n, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE relay_capacity_awg_peers SET created_at=now()-interval '2 minutes'`); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := scheduler.Tick(ctx); err != nil || n != 1 {
+		t.Fatalf("ready peer not scheduled: %d %v", n, err)
+	}
+	task, err := scheduler.ClaimWithCapacity(ctx, "ru-managed", true)
+	if err != nil || task == nil {
+		t.Fatalf("claim %v", err)
+	}
+	links, err := scheduler.FleetLinks(ctx, linksTokenOf(t, task))
+	if err != nil || len(links) != 1 || links[0] != "capacity-for-ru-managed" || fleet.slot != "ru-managed" {
+		t.Fatalf("task token did not bind peer slot: %v %v", links, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE relay_capacity_settings SET enabled=false`); err != nil {
+		t.Fatal(err)
+	}
+	before := fleet.prepared
+	if _, err := scheduler.Tick(ctx); err != nil || fleet.prepared != before {
+		t.Fatal("disabled measurements still provisioned peers")
+	}
+}

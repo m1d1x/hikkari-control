@@ -119,6 +119,17 @@ func (s *Service) KeysOf(ctx context.Context, relay, proto string) ([]string, er
 	if err != nil {
 		return nil, err
 	}
+	if proto == entry.ProtoAmneziaWG {
+		rows, err := s.pool.Query(ctx, `SELECT p.public_key || ' ' || host(p.address) FROM relay_capacity_awg_peers p JOIN entry_vantages v USING(slot) WHERE v.status='active' AND v.in_russia ORDER BY p.slot`)
+		if err != nil {
+			return nil, err
+		}
+		peers, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, peers...)
+	}
 	if keys == nil {
 		keys = []string{}
 	}

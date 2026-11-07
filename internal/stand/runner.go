@@ -14,6 +14,7 @@ import (
 
 // Profile is one entry of the fleet's links as the client parses it.
 type Profile struct {
+	Resolver    map[string]any `json:"resolver,omitempty"`
 	Node        string         `json:"node,omitempty"`
 	CapacityKey string         `json:"capacityKey"`
 	Label       string         `json:"label"`
@@ -57,6 +58,9 @@ func Profiles(ctx context.Context, parser, subURL string) ([]Profile, error) {
 // is chosen only by a TLS profile, a flow only by VLESS, a mode only by XHTTP. A profile the knob
 // does not apply to is not measured for it, rather than failing the run.
 func Applies(knob string, ob map[string]any) bool {
+	if ob["type"] == "wireguard" || ob["type"] == "awg" {
+		return false
+	}
 	switch knob {
 	case "fp", "sni", "alpn":
 		tls, ok := ob["tls"].(map[string]any)

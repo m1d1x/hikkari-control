@@ -343,7 +343,7 @@ func ApplyBase(ob map[string]any, base, varied string) (string, error) {
 // the knob set, behind a local mixed inbound. Fields that name the client's
 // own config or are set for testers only are dropped, so every value runs what
 // a user runs but for the knob.
-func Config(outbound map[string]any, set func(map[string]any, string) error, value string) (string, map[string]string, error) {
+func Config(outbound map[string]any, set func(map[string]any, string) error, value string, resolvers ...map[string]any) (string, map[string]string, error) {
 	ob, err := clone(outbound)
 	if err != nil {
 		return "", nil, err
@@ -355,12 +355,21 @@ func Config(outbound map[string]any, set func(map[string]any, string) error, val
 	if err := set(ob, value); err != nil {
 		return "", nil, err
 	}
-	cfg, err := json.Marshal(map[string]any{
+	document := map[string]any{
 		"log":       map[string]any{"level": "error"},
 		"inbounds":  []any{map[string]any{"type": "mixed", "listen": "127.0.0.1", "listen_port": "__PORT__"}},
 		"outbounds": []any{ob},
 		"route":     map[string]any{"final": "probe"},
-	})
+	}
+	if ob["type"] == "wireguard" {
+		delete(document, "outbounds")
+		document["endpoints"] = []any{ob}
+		if len(resolvers) != 1 || resolvers[0] == nil {
+			return "", nil, fmt.Errorf("measurement endpoint has no tunnel resolver")
+		}
+		document["dns"] = map[string]any{"servers": []any{resolvers[0]}, "final": resolvers[0]["tag"]}
+	}
+	cfg, err := json.Marshal(document)
 	if err != nil {
 		return "", nil, err
 	}

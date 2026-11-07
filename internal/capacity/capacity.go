@@ -21,6 +21,9 @@ const FreshFor = 90 * time.Minute
 // Key identifies the transport configuration without the subscriber credential
 // or presentation label. Query ordering is canonical on both ends of the contract.
 func Key(link string) string {
+	if strings.HasPrefix(strings.ToLower(link), "vpn://") {
+		return amneziaKey(link)
+	}
 	u, err := url.Parse(link)
 	if err != nil || u.Host == "" {
 		return ""
