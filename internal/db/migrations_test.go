@@ -82,8 +82,9 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 	// The routing presets clients fetch are the control plane's too, and so
 	// are plans, subscribers' access keys and what those keys carried, and
 	// the relay dataset (relay_*) the fleet's knobs are chosen by, the
-	// stand (stand_*) that fills it on schedule, and the check of testers'
-	// configs against the knobs handed out (knob_*).
+	// stand (stand_*) that fills it on schedule, the check of testers'
+	// configs against the knobs handed out (knob_*), and the product metrics
+	// the admin draws as series (product_*).
 	rows, err := pool.Query(ctx, `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`)
 	if err != nil {
 		t.Fatal(err)
