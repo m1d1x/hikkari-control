@@ -18,7 +18,13 @@
 		type SubscriptionDetail,
 		type SubscriptionState,
 	} from '$lib/api/billing';
-	import { fetchTesterInstalls, fetchTesterRelays, type TesterInstall, type TesterRelays } from '$lib/api/support';
+	import {
+		fetchTesterInstalls,
+		fetchTesterRelays,
+		renameTester,
+		type TesterInstall,
+		type TesterRelays,
+	} from '$lib/api/support';
 	import { ago, num, rub } from '$lib/product/format';
 
 	// Subscriptions sold through the landing (internal/billing) and issued by
@@ -52,6 +58,28 @@
 			// the subscriptions below still load; a missing tester list is not an error of theirs
 		}
 	}
+	// Rename in place: the name is how the owner says who to look at
+	// («посмотри у Леши»), and the agent finds the logs by it.
+	let editing = $state<string | null>(null);
+	let draftAlias = $state('');
+
+	function startRename(i: TesterInstall) {
+		editing = i.install_id;
+		draftAlias = i.alias;
+	}
+
+	async function commitRename(i: TesterInstall) {
+		const name = draftAlias.trim();
+		editing = null;
+		if (!name || name === i.alias) return;
+		try {
+			await renameTester(i.install_id, name, i.note);
+			await loadTesters();
+		} catch (e) {
+			error = describeApiError(e);
+		}
+	}
+
 	const alive = (id: string) => rounds[id]?.relays.filter((r) => r.up).length ?? null;
 
 	let overview = $state<Overview | null>(null);
@@ -201,7 +229,6 @@
 		<select class="field" bind:value={testerPlan} disabled={busy}>
 			{#each onSale as p (p.id)}<option value={p.id}>{p.title || p.id}</option>{/each}
 		</select>
-		<span class="dim">подписка со всеми живыми релеями флота; имя подберётся само</span>
 	</div>
 	{#if tester}
 		<div class="line">
@@ -212,42 +239,41 @@
 	{/if}
 </section>
 
-{#if overview}
-	<div class="strip">
-		<span>живых подписок <b>{num(overview.totals.live)}</b></span>
-		<span>оплачено за 30 дней <b>{rub(overview.totals.paid30dCents / 100)}</b></span>
-		<span>заказов <b>{num(overview.totals.paid30dOrders)}</b></span>
-	</div>
-{/if}
-
 <section class="card">
 	<div class="top">
 		<h2>тестеры</h2>
-		<span class="dim">{installs.filter((i) => i.online).length} на связи из {installs.length}</span>
 	</div>
 	{#if installs.length === 0}
 		<p class="empty">ни один тестер ещё не выходил на связь</p>
 	{:else}
-		<table class="rows">
-			<thead>
-				<tr>
-					<th>тестер</th><th>ОС</th><th>версия</th><th>статус</th><th class="r">профили живы</th><th class="r">сигнал</th>
-				</tr>
-			</thead>
+		<table class="rows testers">
 			<tbody>
 				{#each installs as i (i.install_id)}
 					<tr>
 						<td>
-							<div class="mono">{i.alias}</div>
-							<div class="dim mono">{i.install_id}</div>
+							{#if editing === i.install_id}
+								<input
+									class="field rename"
+									bind:value={draftAlias}
+									onblur={() => commitRename(i)}
+									onkeydown={(e) => {
+										if (e.key === 'Enter') e.currentTarget.blur();
+										if (e.key === 'Escape') {
+											draftAlias = i.alias;
+											editing = null;
+										}
+									}}
+									{@attach (el: HTMLInputElement) => el.select()}
+								/>
+							{:else}
+								<i class="status" class:on={i.online}></i><button class="name" title="переименовать" onclick={() => startRename(i)}>{i.alias}</button>
+							{/if}
 						</td>
-						<td class="mono">{i.platform}</td>
-						<td class="mono">{i.version}</td>
-						<td class={i.online ? 'ok' : 'dim'}>{i.online ? 'на связи' : 'молчит'}</td>
-						<td class="r mono">
-							{#if alive(i.install_id) === null}—{:else}{alive(i.install_id)} из {rounds[i.install_id].relays.length}{/if}
+						<td class="mono dim">{i.platform} {i.version}</td>
+						<td class="mono">
+							{#if alive(i.install_id) === null}—{:else}{alive(i.install_id)} из {rounds[i.install_id].relays.length} профилей{/if}
 						</td>
-						<td class="r mono">{ago(new Date(i.last_seen).getTime())}</td>
+						<td class="r mono dim">{ago(new Date(i.last_seen).getTime())}</td>
 					</tr>
 				{/each}
 			</tbody>
@@ -352,7 +378,6 @@
 
 <section class="card">
 	<h2>выдать вручную</h2>
-	<p class="dim">подарок, тестер, компенсация. ссылка показывается здесь, на хабе она хранится зашифрованной</p>
 	<div class="line">
 		<input class="field" placeholder="имя: латиница, цифры, - и _" bind:value={issueName} />
 		<select class="field" bind:value={issuePlan}>
@@ -371,10 +396,6 @@
 {#if overview}
 	<section class="card">
 		<h2>тарифы</h2>
-		<p class="dim">
-			id тарифа = период на лендинге (1m, 6m, 12m). изменения не трогают уже купленные подписки. трафик — скрытый
-			потолок на период против абуза
-		</p>
 		<table class="rows">
 			<thead>
 				<tr>
@@ -473,6 +494,61 @@
 {/if}
 
 <style>
+	.testers {
+		table-layout: fixed;
+	}
+
+	.testers td:nth-child(1) {
+		width: 34%;
+	}
+
+	.testers td:nth-child(2) {
+		width: 26%;
+	}
+
+	.testers td:nth-child(3) {
+		width: 28%;
+	}
+
+	.testers td:nth-child(4) {
+		width: 12%;
+	}
+
+	.name {
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--text);
+		font-family: var(--mono);
+		font-size: inherit;
+		cursor: text;
+		text-align: left;
+	}
+
+	.name:hover {
+		text-decoration: underline dotted;
+		text-underline-offset: 3px;
+	}
+
+	.status {
+		display: inline-block;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		margin-right: 10px;
+		background: var(--text-3);
+		opacity: 0.5;
+	}
+
+	.status.on {
+		background: oklch(0.75 0.18 155);
+		opacity: 1;
+	}
+
+	.rename {
+		width: 160px;
+	}
+
 	.top {
 		display: flex;
 		align-items: center;

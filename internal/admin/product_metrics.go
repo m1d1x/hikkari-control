@@ -45,12 +45,13 @@ type productMetrics struct {
 	BucketSeconds int     `json:"bucketSeconds"`
 	Buckets       []int64 `json:"buckets"`
 
+	Online     metricsOnline     `json:"online"`
 	People     metricsPeople     `json:"people"`
 	Connect    metricsConnect    `json:"connect"`
 	Activation metricsActivation `json:"activation"`
 	Downloads  metricsDownloads  `json:"downloads"`
 	// Platforms and Versions split the window's active installs. An install
-	// that changed version inside the window counts under each version it ran.
+	// counts once, under the version it was last seen on in the window.
 	Platforms []metricsShare `json:"platforms"`
 	Versions  []metricsShare `json:"versions"`
 }
@@ -159,6 +160,7 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 		Window:        win.Name,
 		BucketSeconds: int(win.Step.Seconds()),
 		Buckets:       win.buckets(since),
+		Online:        metricsOnline{Series: make([]*int, win.N)},
 		People: metricsPeople{
 			DAUTimeSeries:        timeSeries{Label: "DAU", Data: []tsPoint{}},
 			WAUTimeSeries:        timeSeries{Label: "WAU", Data: []tsPoint{}},
@@ -172,6 +174,15 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 		Platforms: []metricsShare{},
 		Downloads: metricsDownloads{Platforms: []metricsShare{}},
 		Versions:  []metricsShare{},
+	}
+
+	if h.pool != nil {
+		online, err := h.onlineHistory(ctx, win, since, end)
+		if err != nil {
+			log.Printf("admin: online history: %v", err)
+		} else {
+			out.Online = online
+		}
 	}
 
 	rows, err := h.analytics.Query(ctx, `
@@ -467,13 +478,17 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 // or with fresh only those whose first launch fell in the window. column is
 // one of the literals above, never request input.
 func (h *Handlers) metricsShares(ctx context.Context, column string, fresh bool, since, end time.Time, active uint64, limit int) ([]metricsShare, error) {
-	q := `SELECT ` + column + ` AS k, uniq(install) AS n
+	// One row per install, under the value it ended the window on: an install
+	// that updated inside the window is on its newest version, not on every
+	// version it ever ran. The shares then add up to the installs counted.
+	inner := `SELECT install, argMax(` + column + `, ts) AS k
 		FROM telemetry_events
-		WHERE ts >= ? AND ts < ? AND k != ''`
+		WHERE ts >= ? AND ts < ? AND ` + column + ` != ''`
 	if fresh {
-		q += ` AND name = 'install'`
+		inner += ` AND name = 'install'`
 	}
-	q += ` GROUP BY k ORDER BY n DESC, k`
+	inner += ` GROUP BY install`
+	q := `SELECT k, count() AS n FROM (` + inner + `) GROUP BY k ORDER BY n DESC, k`
 	if limit > 0 {
 		q += ` LIMIT ` + strconv.Itoa(limit)
 	}

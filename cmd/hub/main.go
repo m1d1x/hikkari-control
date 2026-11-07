@@ -308,6 +308,10 @@ func run() error {
 	opsGate := admin.RequireOps(pool)
 	if store != nil {
 		adminHandlers := admin.NewHandlers(pool, store)
+		// The fleet screen's traffic allowance is the plan's, from the
+		// hoster's own catalog.
+		adminHandlers.SetPlanCatalog(svc.ProviderCatalogIn)
+		go adminHandlers.RunOnlineSampler(ctx)
 		admin.RegisterRoutes(adminMux, adminHandlers, adminKeys, pool)
 		admin.RegisterOpsRoutes(adminMux, adminHandlers, opsGate)
 	}

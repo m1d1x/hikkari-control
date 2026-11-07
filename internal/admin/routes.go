@@ -24,6 +24,10 @@ func RegisterRoutes(mux *http.ServeMux, h *Handlers, adminKeys *auth.KeySet, poo
 	// Each protocol and machine: alive, verdicts, traffic, subscribers, cost.
 	// See entry_protocol_stats.go.
 	mux.HandleFunc("GET /api/v1/admin/entry/protocols", adminAuth(h.EntryProtocolStats))
+	// Every profile subscribers are handed now, a card each: protocol,
+	// hoster, cover domain, latency and throughput over the window. See
+	// fleet_profiles.go.
+	mux.HandleFunc("GET /api/v1/admin/fleet/profiles", adminAuth(h.FleetProfiles))
 	// The incidents screen in one request (plan 42 К2): how the autopilot is
 	// doing, how fast it notices and repairs, the queue and the feed. Also
 	// read-only — the buttons on a card are internal/entry's. See

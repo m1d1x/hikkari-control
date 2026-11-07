@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import PageShell from '$components/layout/PageShell.svelte';
-	import ReachChart from '$components/entry/ReachChart.svelte';
 	import TrendChart from '$components/entry/TrendChart.svelte';
 	import {
 		fetchOverview,
@@ -26,11 +25,6 @@
 
 	// A figure the hub cannot compute is named, never defaulted. The screen
 	// says "нет данных" and why, instead of something plausible.
-	/** Megabytes as the per-person strip says them. */
-	function mbLabel(mb: number): string {
-		return mb >= 1024 ? `${(mb / 1024).toFixed(2)} ГБ` : `${mb.toFixed(mb < 10 ? 2 : 0)} МБ`;
-	}
-
 	const missingOf = $derived(new Map((data?.missing ?? []).map((m) => [m.figure, m.why])));
 
 	async function load() {
@@ -50,37 +44,8 @@
 
 	onMount(load);
 
-	/** A delta worth showing, with the direction said rather than implied. */
-	function delta(now: number | null, before: number | null): { text: string; good: boolean } | null {
-		if (now === null || before === null || before === 0) return null;
-		const d = now - before;
-		if (Math.abs(d) < 0.05) return null;
-		return { text: `${d > 0 ? '+' : '−'}${Math.abs(d).toFixed(1)}`, good: d > 0 };
-	}
-
-	function hours(v: number | null): string {
-		if (v === null) return '—';
-		return v < 48 ? `${Math.round(v)} ч` : `${(v / 24).toFixed(1)} дн`;
-	}
-
-	// The last two measured buckets: how the first-try share moved most
-	// recently. Buckets nobody attempted in are skipped, not read as zero.
-	const reachTrend = $derived.by(() => {
-		const measured = (data?.reach.series ?? []).filter((p) => p.firstPct !== null);
-		if (measured.length < 2) return null;
-		const d = (measured[measured.length - 1].firstPct as number) - (measured[measured.length - 2].firstPct as number);
-		if (Math.abs(d) < 0.1) return null;
-		return { text: `${d > 0 ? '+' : '−'}${Math.abs(d).toFixed(1)}`, good: d > 0 };
-	});
-
 	/** Days the window spans; a 24h window is one day. */
 	const windowDays = $derived(window === '24h' ? 1 : window === '30d' ? 30 : 7);
-
-	/** Days as the screen says them: hours under two days. */
-	function life(days: number | null): string {
-		if (days === null) return 'нет данных';
-		return days < 2 ? `${Math.round(days * 24)} ч` : `${days.toFixed(1)} дн`;
-	}
 
 	const C = {
 		user: 'oklch(0.75 0.18 155)',
@@ -89,14 +54,6 @@
 		domains: 'oklch(0.78 0.16 65)',
 		down: 'oklch(0.70 0.16 230)',
 		up: 'oklch(0.72 0.18 310)',
-		raw: 'oklch(0.55 0.02 260)',
-	};
-
-	// The last smoothed value: the figure the headline shows, because a day's
-	// rate over one bought domain swings from three dollars to nothing.
-	const lastOf = (values: (number | null)[]): number | null => {
-		for (let i = values.length - 1; i >= 0; i--) if (values[i] !== null) return values[i];
-		return null;
 	};
 
 	const gb = (v: number) => `${v < 10 ? v.toFixed(2) : v.toFixed(1)} ГБ`;
@@ -148,102 +105,15 @@
 		{:else if !data}
 			<p class="hint">загружаю…</p>
 		{:else}
-			<!-- ======== 1. Доходимость ======== -->
-			<section class="card reach-card">
-				{#if data.reach.attempts === 0}
-					<p class="empty">за окно ни одной попытки от клиентов: доходимость считать не из чего</p>
-					<ReachChart series={data.reach.series} bucketSeconds={data.bucketSeconds} />
-				{:else}
-					<div class="reach">
-						<div class="figure">
-							<div class="big">
-								{data.reach.firstTryPct.toFixed(1)}<span class="unit">%</span>
-								{#if reachTrend}
-									<span class="trend" class:good={reachTrend.good} class:bad={!reachTrend.good}>{reachTrend.text}</span>
-								{/if}
-							</div>
-							<div class="what">с первой попытки</div>
-							<div class="breakdown">
-								<div>
-									<span><i class="sw sw-first"></i>сразу, без перебора</span>
-									<b>{data.reach.firstTryPct.toFixed(1)}%</b>
-								</div>
-								<div>
-									<span><i class="sw sw-retried"></i>со 2-го релея и дальше</span>
-									<b>{data.reach.retriedPct.toFixed(1)}%</b>
-								</div>
-								<div>
-									<span><i class="sw sw-failed"></i>не дошли</span>
-									<b class="bad">{data.reach.failedPct.toFixed(1)}%</b>
-								</div>
-							</div>
-						</div>
-						<div class="chart-wrapper">
-							<ReachChart series={data.reach.series} bucketSeconds={data.bucketSeconds} />
-						</div>
-					</div>
-				{/if}
-			</section>
-
-			<!-- ======== 2. Деньги ======== -->
-			{@const runRateMonthCents = data.money.total.perDayCents * 30}
-			{@const userTrend = lastOf(data.money.series.map((p) => p.trendPerUserMonthCents)) ?? data.money.perUserMonthCents}
+			<!-- ======== 1. Деньги: прогноз на месяц и три линии, период из выбора сверху ======== -->
 			<section class="card money-card">
 				<div class="money-layout">
 					<div class="money-figure">
 						<div class="big">
-							{#if userTrend === null}
-								<span class="nodata">нет данных</span>
-							{:else}
-								{formatCents(userTrend)}<span class="unit">/ чел · мес</span>
-							{/if}
+							{formatCents(data.money.total.perDayCents * 30)}<span class="unit">/ мес</span>
 						</div>
-						<div class="what">
-							<i class="sw sw-user"></i>себестоимость обхода на человека, тренд за 7 дней
-						</div>
-
-						<div class="breakdown">
-							<div>
-								<span><i class="sw sw-total"></i>всего сеть</span>
-								<b>{formatCents(data.money.total.perDayCents)}<small>/день</small></b>
-							</div>
-							<div>
-								<span><i class="sw sw-machines"></i>серверы</span>
-								<b>
-									{#if missingOf.has('money.machines')}
-										<span class="nodata" title={missingOf.get('money.machines')}>нет цены</span>
-									{:else}
-										{formatCents(data.money.machines.perDayCents)}<small>/день</small>
-									{/if}
-								</b>
-							</div>
-							<div>
-								<span><i class="sw sw-domains"></i>домены</span>
-								<b>{formatCents(data.money.domains.perDayCents)}<small>/день</small></b>
-							</div>
-							<div class="total-row">
-								<span class="sub-dim">прогноз на месяц</span>
-								<b>{formatCents(runRateMonthCents)}</b>
-							</div>
-							{#if data.money.monthlyCapCents}
-								<div>
-									<span class="sub-dim">лимит бюджета</span>
-									<b>{formatCents(data.money.monthlyCapCents)}</b>
-								</div>
-							{/if}
-							<div>
-								<span class="sub-dim">активных людей</span>
-								<b>{data.money.activePeople.toLocaleString('ru')}</b>
-							</div>
-							{#if data.money.machinesUnpriced > 0}
-								<div>
-									<span class="sub-dim">машин без цены</span>
-									<b class="bad">{data.money.machinesUnpriced}</b>
-								</div>
-							{/if}
-						</div>
+						<div class="what">прогноз на месяц</div>
 					</div>
-
 					<div class="chart-wrapper">
 						<TrendChart
 							buckets={data.money.series.map((p) => p.bucket)}
@@ -253,25 +123,11 @@
 							series={[
 								{
 									key: 'user',
-									label: 'на человека, тренд 7 дн',
+									label: 'на человека',
 									color: C.user,
 									primary: true,
 									values: data.money.series.map((p) => p.trendPerUserMonthCents),
 									format: (v) => `${formatCents(v)}/мес`,
-								},
-								{
-									key: 'userRaw',
-									label: 'на человека, за период',
-									color: C.raw,
-									values: data.money.series.map((p) => p.perUserMonthCents),
-									format: (v) => `${formatCents(v)}/мес`,
-								},
-								{
-									key: 'total',
-									label: 'всего сеть, тренд 7 дн',
-									color: C.total,
-									values: data.money.series.map((p) => p.trendTotalPerDayCents),
-									format: (v) => `${formatCents(v)}/сут`,
 								},
 								{
 									key: 'machines',
@@ -282,7 +138,7 @@
 								},
 								{
 									key: 'domains',
-									label: 'домены, куплено',
+									label: 'домены',
 									color: C.domains,
 									values: data.money.series.map((p) => p.domainsCents),
 									format: (v) => formatCents(v),
@@ -293,7 +149,7 @@
 				</div>
 			</section>
 
-			<!-- ======== 3. Трафик ======== -->
+			<!-- ======== 2. Трафик: прогноз на месяц и одна диаграмма ======== -->
 			<section class="card traffic-card">
 				{#if data.traffic === null}
 					<TrendChart
@@ -304,56 +160,23 @@
 						empty={missingOf.get('traffic') ?? 'за окно ни один релей не прислал пульс'}
 					/>
 				{:else}
-					{@const perDayGb = data.traffic.gbTotal / windowDays}
-					{@const perPersonTrend =
-						lastOf(data.traffic.series.map((p) => p.trendGbPerPersonDay)) ?? data.traffic.gbPerPersonDay}
 					<div class="traffic-layout">
 						<div class="traffic-figure">
 							<div class="big">
-								{#if perPersonTrend === null}
-									<span class="nodata">нет данных</span>
-								{:else}
-									{(perPersonTrend * 30).toFixed(1)}<span class="unit">ГБ / чел · мес</span>
-								{/if}
+								{((data.traffic.gbTotal / windowDays) * 30).toFixed(0)}<span class="unit">ГБ / мес</span>
 							</div>
-							<div class="what">
-								<i class="sw sw-user"></i>расход трафика на человека, тренд за 7 дней
-							</div>
-
-							<div class="breakdown">
-								<div>
-									<span><i class="sw sw-total"></i>всего сеть</span>
-									<b>{perDayGb.toFixed(2)}<small>ГБ/день</small></b>
-								</div>
-								<div>
-									<span><i class="sw sw-down"></i>к людям (down)</span>
-									<b>{(data.traffic.gbDown / windowDays).toFixed(2)}<small>ГБ/день</small></b>
-								</div>
-								<div>
-									<span><i class="sw sw-up"></i>от людей (up)</span>
-									<b>{(data.traffic.gbUp / windowDays).toFixed(2)}<small>ГБ/день</small></b>
-								</div>
-								<div class="total-row">
-									<span class="sub-dim">прогноз на месяц</span>
-									<b>{(perDayGb * 30).toFixed(0)} <small>ГБ</small></b>
-								</div>
-								<div>
-									<span class="sub-dim">релеев прислали пульс</span>
-									<b>{data.traffic.relaysReporting}</b>
-								</div>
-							</div>
+							<div class="what">прогноз на месяц</div>
 						</div>
-
 						<div class="chart-wrapper">
 							<TrendChart
 								buckets={data.traffic.series.map((p) => p.bucket)}
 								bucketSeconds={data.bucketSeconds}
 								formatAxis={gb}
-								empty="за окно не было людей или трафика: на человека считать не из чего"
+								empty="за окно не было людей или трафика"
 								series={[
 									{
 										key: 'person',
-										label: 'на человека, тренд 7 дн',
+										label: 'на человека',
 										color: C.user,
 										primary: true,
 										values: data.traffic.series.map((p) =>
@@ -362,33 +185,15 @@
 										format: (v) => `${gb(v)}/мес`,
 									},
 									{
-										key: 'personRaw',
-										label: 'на человека, за период',
-										color: C.raw,
-										values: data.traffic.series.map((p) =>
-											p.gbPerPersonDay === null ? null : p.gbPerPersonDay * 30,
-										),
-										format: (v) => `${gb(v)}/мес`,
-									},
-								]}
-							/>
-							<TrendChart
-								buckets={data.traffic.series.map((p) => p.bucket)}
-								bucketSeconds={data.bucketSeconds}
-								formatAxis={gb}
-								empty="релеи пульсуют, но за окно не набралось двух пульсов подряд"
-								series={[
-									{
 										key: 'down',
-										label: 'к людям (down)',
+										label: 'к людям',
 										color: C.down,
-										primary: true,
 										values: data.traffic.series.map((p) => p.gbDown),
 										format: gb,
 									},
 									{
 										key: 'up',
-										label: 'от людей (up)',
+										label: 'от людей',
 										color: C.up,
 										values: data.traffic.series.map((p) => p.gbUp),
 										format: gb,
@@ -398,99 +203,6 @@
 						</div>
 					</div>
 				{/if}
-
-				<!-- Per person, read per account: the message socket only. -->
-				<div class="per-user" title={missingOf.get('traffic.perUser.media') ?? ''}>
-					<span class="pu-title">на человека · сокет сообщений</span>
-					{#if data.trafficPerUser === null}
-						<span class="nodata" title={missingOf.get('traffic.perUser') ?? ''}>нет данных</span>
-					{:else}
-						{@const pu = data.trafficPerUser}
-						<span class="pu-cell">медиана <b>{mbLabel(pu.medianMbDay)}</b><small>/день</small></span>
-						<span class="pu-cell">p90 <b>{mbLabel(pu.p90MbDay)}</b><small>/день</small></span>
-						<span class="pu-cell">
-							обход, медиана
-							{#if pu.viaRelayMedianMbDay === null}
-								<span class="nodata">никто не шёл через релей</span>
-							{:else}
-								<b>{mbLabel(pu.viaRelayMedianMbDay)}</b><small>/день</small>
-							{/if}
-						</span>
-						<span class="pu-cell">через релеи <b>{pu.viaRelayPct.toFixed(1)}%</b><small>байтов</small></span>
-						<span class="pu-cell">людей <b>{pu.people}</b><small>из них через релей {pu.viaRelayPeople}</small></span>
-					{/if}
-				</div>
-			</section>
-
-			<!-- ======== 4. Жизнь ======== -->
-			{@const domainDays = data.survival.domainMedianHours === null ? null : data.survival.domainMedianHours / 24}
-			<section class="card survival-card">
-				<div class="survival-layout">
-					<div class="survival-figure">
-						<div class="big">
-							{#if data.survival.boxMedianDays === null}
-								<span class="nodata">нет данных</span>
-							{:else}
-								{life(data.survival.boxMedianDays)}
-							{/if}
-						</div>
-						<div class="what">
-							<i class="sw sw-box"></i>медиана жизни машины до бана
-						</div>
-
-						<div class="breakdown">
-							<div>
-								<span><i class="sw sw-relay"></i>релеи до блокировки</span>
-								<b>{life(data.survival.relayMedianDays)}</b>
-							</div>
-							<div>
-								<span><i class="sw sw-domain"></i>домены до блокировки</span>
-								<b>{life(domainDays)}</b>
-							</div>
-							<div class="total-row">
-								<span class="sub-dim">сгорело релеев за окно</span>
-								<b class:bad={data.survival.censorDeaths > 0}>{data.survival.censorDeaths}</b>
-							</div>
-							<div>
-								<span class="sub-dim">релеев за всё время</span>
-								<b>{data.survival.relaysEver.toLocaleString('ru')}</b>
-							</div>
-						</div>
-					</div>
-
-					<div class="chart-wrapper">
-						<TrendChart
-							buckets={data.survival.series.map((p) => p.bucket)}
-							bucketSeconds={data.bucketSeconds}
-							formatAxis={(v) => life(v)}
-							empty="за окно цензор ничего не сжёг"
-							series={[
-								{
-									key: 'box',
-									label: 'машины',
-									color: C.machines,
-									primary: true,
-									values: data.survival.series.map((p) => p.boxMedianDays),
-									format: (v) => life(v),
-								},
-								{
-									key: 'relay',
-									label: 'релеи',
-									color: C.up,
-									values: data.survival.series.map((p) => p.relayMedianDays),
-									format: (v) => life(v),
-								},
-								{
-									key: 'domain',
-									label: 'домены',
-									color: C.domains,
-									values: data.survival.series.map((p) => p.domainMedianDays),
-									format: (v) => life(v),
-								},
-							]}
-						/>
-					</div>
-				</div>
 			</section>
 
 			<!-- ======== 5. Протоколы (Full-Width Card) ======== -->

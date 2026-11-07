@@ -4,9 +4,9 @@ import { defineConfig } from 'vite';
 export default defineConfig({
 	plugins: [sveltekit()],
 	server: {
-		port: 5174,
+		port: Number(process.env.ADMIN_DEV_PORT ?? 5174),
 		proxy: {
-			'/api': 'http://127.0.0.1:9445',
+			'/api': process.env.ADMIN_DEV_HUB ?? 'http://127.0.0.1:9445',
 		},
 	},
 });

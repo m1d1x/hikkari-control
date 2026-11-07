@@ -1,10 +1,8 @@
 <script lang="ts">
 	import WinChips from '$components/product/WinChips.svelte';
-	import EChart from '$components/charts/EChart.svelte';
-	import EmptyChart from '$components/charts/EmptyChart.svelte';
-	import type { EChartsOption } from '$lib/utils/echarts';
+	import TrendChart from '$components/entry/TrendChart.svelte';
 	import { fetchProductMetrics, type MetricsShare } from '$lib/api/product';
-	import { num, pct, secs, bucketText } from '$lib/product/format';
+	import { num, pct, secs } from '$lib/product/format';
 	import { Windowed } from '$lib/product/windowed.svelte';
 
 	const m = new Windowed('7d', fetchProductMetrics);
@@ -23,235 +21,33 @@
 	const osColor = (s: MetricsShare) => OS_COLOR[s.key] ?? '#787878';
 	const versionColor = (i: number) => VERSION_COLORS[i % VERSION_COLORS.length] ?? '#787878';
 
-	function makeMetricChart(
-		data: number[],
-		labels: string[],
-		color: string,
-		opts?: { unit?: string },
-	): EChartsOption {
-		return {
-			grid: { left: 36, right: 12, top: 10, bottom: 22 },
-			xAxis: {
-				type: 'category',
-				data: labels,
-				axisLabel: {
-					show: true,
-					fontSize: 10,
-					color: '#787878',
-					interval: Math.max(Math.floor(labels.length / 8) - 1, 0),
-				},
-				axisLine: { lineStyle: { color: '#3a3a3a' } },
-				axisTick: { show: false },
-			},
-			yAxis: {
-				type: 'value',
-				min: 0,
-				axisLabel: { fontSize: 10, color: '#787878' },
-				splitLine: { lineStyle: { color: '#2c2c2c' } },
-			},
-			tooltip: {
-				trigger: 'axis',
-				backgroundColor: '#262626',
-				borderColor: '#3a3a3a',
-				textStyle: { color: '#ededed', fontSize: 12 },
-				formatter: opts?.unit
-					? (params: any) => {
-							const p = Array.isArray(params) ? params[0] : params;
-							return `${p.axisValue}<br/><b>${p.value}${opts.unit}</b>`;
-						}
-					: (params: any) => {
-							const p = Array.isArray(params) ? params[0] : params;
-							return `${p.axisValue}<br/><b>${p.value}</b>`;
-						},
-			},
-			series: [
-				{
-					type: 'line',
-					data,
-					smooth: true,
-					symbol: 'none',
-					lineStyle: { width: 1.5, color },
-					areaStyle: { opacity: 0.1, color },
-				},
-			],
-		};
-	}
+	const C = {
+		green: 'oklch(0.75 0.18 155)',
+		blue: 'oklch(0.70 0.16 230)',
+		violet: 'oklch(0.72 0.18 310)',
+		orange: 'oklch(0.78 0.16 65)',
+	};
 
-	// Audience time series
-	let dauData = $derived(d?.people?.dauTimeSeries?.data ?? []);
-	let dauLabels = $derived(dauData.map((pt) => (pt.timestamp.length > 5 ? pt.timestamp.slice(5) : pt.timestamp)));
-	let dauValues = $derived(dauData.map((pt) => pt.value));
-	let dauChart = $derived(makeMetricChart(dauValues, dauLabels, '#45b97c'));
+	const count = (v: number) => String(Math.round(v));
+	const percent = (v: number) => `${v.toFixed(1)}%`;
 
-	let wauData = $derived(d?.people?.wauTimeSeries?.data ?? []);
-	let wauLabels = $derived(wauData.map((pt) => (pt.timestamp.length > 5 ? pt.timestamp.slice(5) : pt.timestamp)));
-	let wauValues = $derived(wauData.map((pt) => pt.value));
-	let wauChart = $derived(makeMetricChart(wauValues, wauLabels, '#6192d4'));
-
-	let mauData = $derived(d?.people?.mauTimeSeries?.data ?? []);
-	let mauLabels = $derived(mauData.map((pt) => pt.timestamp));
-	let mauValues = $derived(mauData.map((pt) => pt.value));
-	let mauChart = $derived(makeMetricChart(mauValues, mauLabels, '#b07cd8'));
-
-	let stickData = $derived(d?.people?.stickinessTimeSeries?.data ?? []);
-	let stickLabels = $derived(stickData.map((pt) => (pt.timestamp.length > 5 ? pt.timestamp.slice(5) : pt.timestamp)));
-	let stickValues = $derived(stickData.map((pt) => pt.value));
-	let stickinessChart = $derived(makeMetricChart(stickValues, stickLabels, '#e8a838', { unit: '%' }));
-
-	// Activity timeline chart (Active & New over window buckets)
-	let bucketLabels = $derived((d?.buckets ?? []).map((t) => bucketText(t, m.win).axis));
-	let bucketTips = $derived((d?.buckets ?? []).map((t) => bucketText(t, m.win).tip));
-
-	let activityChart = $derived<EChartsOption>({
-		tooltip: {
-			trigger: 'axis',
-			backgroundColor: '#262626',
-			borderColor: '#3a3a3a',
-			textStyle: { color: '#ededed', fontSize: 12 },
-			formatter: (params: any) => {
-				const arr = Array.isArray(params) ? params : [params];
-				if (!arr.length) return '';
-				const idx = arr[0].dataIndex;
-				const header = bucketTips[idx] ?? arr[0].axisValue;
-				let out = `<div style="font-weight:600;margin-bottom:6px;color:#bbb">${header}</div>`;
-				for (const item of arr) {
-					out += `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:140px;margin-top:2px">
-						<span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${item.color};margin-right:6px"></span>${item.seriesName}</span>
-						<b style="font-family:monospace">${item.value}</b>
-					</div>`;
-				}
-				return out;
-			},
-		},
-		legend: {
-			show: true,
-			top: 0,
-			right: 12,
-			textStyle: { color: '#989898', fontSize: 11 },
-			icon: 'circle',
-			itemWidth: 8,
-			itemHeight: 8,
-		},
-		grid: { left: 40, right: 16, top: 32, bottom: 24 },
-		xAxis: {
-			type: 'category',
-			data: bucketLabels,
-			axisLabel: {
-				fontSize: 10,
-				color: '#787878',
-				interval: Math.max(Math.floor(bucketLabels.length / 8) - 1, 0),
-			},
-			axisLine: { lineStyle: { color: '#3a3a3a' } },
-			axisTick: { show: false },
-		},
-		yAxis: {
-			type: 'value',
-			min: 0,
-			axisLabel: { fontSize: 10, color: '#787878' },
-			splitLine: { lineStyle: { color: '#2c2c2c' } },
-		},
-		series: [
-			{
-				name: 'Активные установки',
-				type: 'line',
-				data: d?.people.series.active ?? [],
-				smooth: true,
-				symbol: 'none',
-				lineStyle: { width: 2, color: '#e8457c' },
-				areaStyle: { opacity: 0.1, color: '#e8457c' },
-			},
-			{
-				name: 'Новые установки',
-				type: 'line',
-				data: d?.people.series.fresh ?? [],
-				smooth: true,
-				symbol: 'none',
-				lineStyle: { width: 1.5, color: '#45b97c' },
-				areaStyle: { opacity: 0.08, color: '#45b97c' },
-			},
-		],
+	/** A daily/weekly/monthly series as the chart wants it: ISO buckets and one value each. */
+	const split = (ts?: { data: { timestamp: string; value: number }[] }) => ({
+		buckets: (ts?.data ?? []).map((pt) => pt.timestamp),
+		values: (ts?.data ?? []).map((pt) => pt.value),
 	});
+	const dau = $derived(split(d?.people?.dauTimeSeries));
+	const wau = $derived(split(d?.people?.wauTimeSeries));
+	const mau = $derived(split(d?.people?.mauTimeSeries));
+	const stick = $derived(split(d?.people?.stickinessTimeSeries));
 
-	// Downloads dynamics chart
-	let downloadsChart = $derived<EChartsOption>({
-		tooltip: {
-			trigger: 'axis',
-			backgroundColor: '#262626',
-			borderColor: '#3a3a3a',
-			textStyle: { color: '#ededed', fontSize: 12 },
-			formatter: (params: any) => {
-				const arr = Array.isArray(params) ? params : [params];
-				if (!arr.length) return '';
-				const idx = arr[0].dataIndex;
-				const header = bucketTips[idx] ?? arr[0].axisValue;
-				let out = `<div style="font-weight:600;margin-bottom:6px;color:#bbb">${header}</div>`;
-				for (const item of arr) {
-					out += `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:140px;margin-top:2px">
-						<span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${item.color};margin-right:6px"></span>${item.seriesName}</span>
-						<b style="font-family:monospace">${item.value}</b>
-					</div>`;
-				}
-				return out;
-			},
-		},
-		legend: {
-			show: true,
-			top: 0,
-			right: 12,
-			textStyle: { color: '#989898', fontSize: 11 },
-			icon: 'circle',
-			itemWidth: 8,
-			itemHeight: 8,
-		},
-		grid: { left: 40, right: 16, top: 32, bottom: 24 },
-		xAxis: {
-			type: 'category',
-			data: bucketLabels,
-			axisLabel: {
-				fontSize: 10,
-				color: '#787878',
-				interval: Math.max(Math.floor(bucketLabels.length / 8) - 1, 0),
-			},
-			axisLine: { lineStyle: { color: '#3a3a3a' } },
-			axisTick: { show: false },
-		},
-		yAxis: {
-			type: 'value',
-			min: 0,
-			axisLabel: { fontSize: 10, color: '#787878' },
-			splitLine: { lineStyle: { color: '#2c2c2c' } },
-		},
-		series: [
-			...(d?.downloads?.clicksSeries
-				? [
-						{
-							name: 'Клики «Скачать»',
-							type: 'line' as const,
-							data: d.downloads.clicksSeries,
-							smooth: true,
-							symbol: 'none',
-							lineStyle: { width: 2, color: '#6192d4' },
-							areaStyle: { opacity: 0.1, color: '#6192d4' },
-						},
-					]
-				: []),
-			{
-				name: 'Первые запуски',
-				type: 'line' as const,
-				data: d?.people.series.fresh ?? [],
-				smooth: true,
-				symbol: 'none',
-				lineStyle: { width: 1.5, color: '#b07cd8' },
-				areaStyle: { opacity: 0.08, color: '#b07cd8' },
-			},
-		],
-	});
+	/** The window's own buckets, for the downloads and installs chart. */
+	const winBuckets = $derived((d?.buckets ?? []).map((t) => new Date(t).toISOString()));
 </script>
 
 <div class="head">
 	<div class="head-info">
 		<h1>Метрики продукта</h1>
-		<span class="subtitle">Аудитория, активность туннелей, воронка конверсии и платформы</span>
 	</div>
 	<div class="head-controls">
 		{#if m.loading && d}<span class="dim loading-text">обновление…</span>{/if}
@@ -268,243 +64,168 @@
 	<section class="section-block">
 		<div class="section-header">
 			<h2 class="section-title">Аудитория</h2>
-			<span class="section-desc">Уникальные пользователи за сутки, неделю, месяц и динамика липкости</span>
 		</div>
 		<div class="audience-grid">
 			<div class="chart-card">
 				<div class="card-header">
 					<div>
 						<h3 class="card-title">DAU</h3>
-						<span class="card-hint">за сутки · история 30 дней</span>
 					</div>
 					<span class="card-value mono">{num(d.people.dau)}</span>
 				</div>
-				{#if dauValues.length >= 1}
-					<EChart option={dauChart} height="135px" />
-				{:else}
-					<EmptyChart note="Нет данных" height="135px" />
-				{/if}
+				<TrendChart
+					buckets={dau.buckets}
+					bucketSeconds={86400}
+					formatAxis={count}
+					height={135}
+					series={[{ key: 'dau', label: 'DAU', color: C.green, primary: true, values: dau.values, format: count }]}
+				/>
 			</div>
 
 			<div class="chart-card">
 				<div class="card-header">
 					<div>
 						<h3 class="card-title">WAU</h3>
-						<span class="card-hint">за неделю · история 12 недель</span>
 					</div>
 					<span class="card-value mono">{num(d.people.wau)}</span>
 				</div>
-				{#if wauValues.length >= 1}
-					<EChart option={wauChart} height="135px" />
-				{:else}
-					<EmptyChart note="Нет данных" height="135px" />
-				{/if}
+				<TrendChart
+					buckets={wau.buckets}
+					bucketSeconds={604800}
+					formatAxis={count}
+					height={135}
+					series={[{ key: 'wau', label: 'WAU', color: C.blue, primary: true, values: wau.values, format: count }]}
+				/>
 			</div>
 
 			<div class="chart-card">
 				<div class="card-header">
 					<div>
 						<h3 class="card-title">MAU</h3>
-						<span class="card-hint">за месяц · история 6 месяцев</span>
 					</div>
 					<span class="card-value mono">{num(d.people.mau)}</span>
 				</div>
-				{#if mauValues.length >= 1}
-					<EChart option={mauChart} height="135px" />
-				{:else}
-					<EmptyChart note="Нет данных" height="135px" />
-				{/if}
+				<TrendChart
+					buckets={mau.buckets}
+					bucketSeconds={2592000}
+					formatAxis={count}
+					height={135}
+					series={[{ key: 'mau', label: 'MAU', color: C.violet, primary: true, values: mau.values, format: count }]}
+				/>
 			</div>
 
 			<div class="chart-card">
 				<div class="card-header">
 					<div>
 						<h3 class="card-title">Липкость</h3>
-						<span class="card-hint">DAU / MAU · история 30 дней</span>
 					</div>
 					<span class="card-value mono">{or(d.people.stickiness, pct)}</span>
 				</div>
-				{#if stickValues.length >= 1}
-					<EChart option={stickinessChart} height="135px" />
-				{:else}
-					<EmptyChart note="Нет данных" height="135px" />
-				{/if}
+				<TrendChart
+					buckets={stick.buckets}
+					bucketSeconds={86400}
+					formatAxis={percent}
+					height={135}
+					series={[{ key: 'stick', label: 'Липкость', color: C.orange, primary: true, values: stick.values, format: percent }]}
+				/>
 			</div>
 		</div>
 	</section>
 
-	<!-- 2. Секция активности установок и сессий -->
-	<section class="card content-card">
-		<div class="section-header">
-			<div>
-				<h2 class="section-title">Активность установок</h2>
-				<span class="section-desc">Запуски клиентов и возвращаемость пользователей за окно</span>
+	<!-- 1б. Онлайн и приток: малые карточки того же вида, что DAU -->
+	<div class="mini-grid">
+		<div class="chart-card">
+			<div class="card-header">
+				<h3 class="card-title">Онлайн</h3>
+				<span class="card-value mono">{or(d.online.now, num)}</span>
 			</div>
+			<TrendChart
+				buckets={winBuckets}
+				bucketSeconds={d.bucketSeconds}
+				formatAxis={count}
+				height={135}
+				empty="история копится после обновления hub"
+				series={[{ key: 'online', label: 'Онлайн', color: C.green, primary: true, values: d.online.series, format: count }]}
+			/>
 		</div>
 
-		<!-- 4 плитки ключевых показателей -->
+		<div class="chart-card">
+			<div class="card-header">
+				<h3 class="card-title">Запускали клиент</h3>
+				<span class="card-value mono">{num(d.people.active)}</span>
+			</div>
+			<TrendChart
+				buckets={winBuckets}
+				bucketSeconds={d.bucketSeconds}
+				formatAxis={count}
+				height={135}
+				series={[{ key: 'active', label: 'Запускали клиент', color: C.blue, primary: true, values: d.people.series.active, format: count }]}
+			/>
+		</div>
+
+		<div class="chart-card">
+			<div class="card-header">
+				<h3 class="card-title">Новые установки</h3>
+				<span class="card-value mono">{num(d.people.fresh)}</span>
+			</div>
+			<TrendChart
+				buckets={winBuckets}
+				bucketSeconds={d.bucketSeconds}
+				formatAxis={count}
+				height={135}
+				series={[{ key: 'fresh', label: 'Новые установки', color: C.violet, primary: true, values: d.people.series.fresh, format: count }]}
+			/>
+		</div>
+	</div>
+
+	<!-- 2. Установки: воронка, активность и здоровье соединений в одном месте -->
+	<section class="card content-card">
+		<div class="section-header">
+			<h2 class="section-title">Установки</h2>
+		</div>
+
 		<div class="kpi-grid">
 			<div class="kpi-box">
-				<span class="kpi-label">Активные за период</span>
-				<div class="kpi-main">
-					<span class="kpi-num mono">{num(d.people.active)}</span>
-					<span class="kpi-tag active-tag">запуск клиента</span>
-				</div>
-				<span class="kpi-sub">пользовались VPN в выбранном окне</span>
+				<span class="kpi-label"><i class="ldot" style="background:oklch(0.70 0.16 230)"></i>Кликов «Скачать»</span>
+				<div class="kpi-main"><span class="kpi-num mono">{or(d.downloads.clicks, num)}</span></div>
 			</div>
-
 			<div class="kpi-box">
-				<span class="kpi-label">Новые установки</span>
+				<span class="kpi-label">Установили</span>
 				<div class="kpi-main">
-					<span class="kpi-num mono text-ok">{num(d.people.fresh)}</span>
-					<span class="kpi-tag new-tag">приток</span>
+					<span class="kpi-num mono">{num(d.downloads.installs)}</span>
+					<span class="kpi-side mono">{or(d.downloads.convPct, pct)}</span>
 				</div>
-				<span class="kpi-sub">первый запуск в этом окне</span>
 			</div>
-
 			<div class="kpi-box">
-				<span class="kpi-label">Вернувшиеся</span>
+				<span class="kpi-label">Подняли туннель</span>
 				<div class="kpi-main">
-					<span class="kpi-num mono">{num(d.people.returning)}</span>
-					<span class="kpi-tag returning-tag">удержание</span>
+					<span class="kpi-num mono">{num(d.activation.connected)}<span class="kpi-of"> из {num(d.activation.installs)}</span></span>
+					<span class="kpi-side mono">{or(d.activation.pct, pct)}</span>
 				</div>
-				<span class="kpi-sub">установлены ранее и вернулись</span>
-			</div>
-
-			<div class="kpi-box">
-				<span class="kpi-label">Всего установок</span>
-				<div class="kpi-main">
-					<span class="kpi-num mono">{num(d.people.total)}</span>
-					<span class="kpi-tag total-tag">за всё время</span>
-				</div>
-				<span class="kpi-sub">накопительный итог базы</span>
 			</div>
 		</div>
 
-		<!-- Интерактивный график активности -->
 		<div class="chart-wrapper">
-			<EChart option={activityChart} height="200px" />
+			<TrendChart
+				buckets={winBuckets}
+				bucketSeconds={d.bucketSeconds}
+				formatAxis={count}
+				series={[
+					...(d.downloads.clicksSeries
+						? [
+								{
+									key: 'clicks',
+									label: 'Клики «Скачать»',
+									color: C.blue,
+									primary: true,
+									values: d.downloads.clicksSeries,
+									format: count,
+								},
+							]
+						: []),
+				]}
+			/>
 		</div>
-
-		<!-- Метрики соединения и туннеля -->
-		<div class="health-strip">
-			<div class="health-box">
-				<span class="h-label">Успешность соединений</span>
-				<span class="h-val mono">{or(d.connect.okPct, pct)}</span>
-				<span class="h-sub">из {num(d.connect.attempts)} попыток</span>
-			</div>
-			<div class="health-box">
-				<span class="h-label">Скорость подключения</span>
-				<span class="h-val mono">{or(d.connect.secsP50, secs)}</span>
-				<span class="h-sub">медиана запуска VPN</span>
-			</div>
-			<div class="health-box">
-				<span class="h-label">Время в VPN за сутки</span>
-				<span class="h-val mono">{or(d.connect.tunnelMinutesP50, (v) => `${Math.round(v)} мин`)}</span>
-				<span class="h-sub">медиана на активного юзера</span>
-			</div>
-			<div class="health-box">
-				<span class="h-label">Всего попыток VPN</span>
-				<span class="h-val mono">{num(d.connect.attempts)}</span>
-				<span class="h-sub">запросов к провайдерам</span>
-			</div>
-		</div>
-	</section>
-
-	<!-- 3. Воронка конверсии онбординга: клик -> запуск -> первый туннель -->
-	<section class="card content-card">
-		<div class="section-header">
-			<div>
-				<h2 class="section-title">Воронка конверсии</h2>
-				<span class="section-desc">От клика кнопки «Скачать» на сайте до первого успешного туннеля</span>
-			</div>
-		</div>
-
-		<div class="funnel-container">
-			<!-- Шаг 1 -->
-			<div class="funnel-step">
-				<div class="step-header">
-					<span class="step-badge">Шаг 1</span>
-					<span class="step-name">Клик «Скачать»</span>
-				</div>
-				<div class="step-num mono">{or(d.downloads.clicks, num)}</div>
-				<span class="step-desc">переходов по ссылкам загрузки на сайте</span>
-				{#if d.downloads.clicks === null}
-					<div class="step-alert warning">Ожидание кликов с лендинга</div>
-				{:else}
-					<div class="step-alert success">Телеметрия подключена</div>
-				{/if}
-			</div>
-
-			<div class="funnel-divider">
-				<div class="arrow-icon">→</div>
-			</div>
-
-			<!-- Шаг 2 -->
-			<div class="funnel-step">
-				<div class="step-header">
-					<span class="step-badge">Шаг 2</span>
-					<span class="step-name">Первый запуск</span>
-				</div>
-				<div class="step-num mono">{num(d.downloads.installs)}</div>
-				<span class="step-desc">новых установок клиента</span>
-				<div class="step-kpi">
-					<span class="kpi-pill">Конверсия: <b>{or(d.downloads.convPct, pct)}</b></span>
-				</div>
-			</div>
-
-			<div class="funnel-divider">
-				<div class="arrow-icon">→</div>
-			</div>
-
-			<!-- Шаг 3 -->
-			<div class="funnel-step">
-				<div class="step-header">
-					<span class="step-badge">Шаг 3</span>
-					<span class="step-name">Активация туннеля</span>
-				</div>
-				<div class="step-num mono">
-					{num(d.activation.connected)}
-					<span class="step-sub-num">из {num(d.activation.installs)}</span>
-				</div>
-				<span class="step-desc">успешно подняли первый туннель</span>
-				<div class="step-kpi">
-					<span class="kpi-pill text-ok">Конверсия: <b>{or(d.activation.pct, pct)}</b></span>
-					{#if d.activation.secsP50 !== null}
-						<span class="time-sub">до туннеля: <b>{secs(d.activation.secsP50)}</b> (p50)</span>
-					{/if}
-				</div>
-			</div>
-		</div>
-
-		<!-- График динамики воронки -->
-		{#if d.downloads.clicks !== null || d.downloads.installs > 0}
-			<div class="chart-wrapper mt-16">
-				<EChart option={downloadsChart} height="180px" />
-			</div>
-		{/if}
-
-		<!-- Сплит платформ при скачивании -->
-		{#if d.downloads.platforms.length > 0}
-			<div class="breakdown-section">
-				<span class="breakdown-title">Установки по операционным системам:</span>
-				<div class="bar">
-					{#each d.downloads.platforms as p (p.key)}
-						<i style="width: {p.pct}%; background: {osColor(p)}"></i>
-					{/each}
-				</div>
-				<div class="chips-list">
-					{#each d.downloads.platforms as p (p.key)}
-						<span class="chip-item">
-							<i class="dot" style="background: {osColor(p)}"></i>
-							<span class="chip-name">{p.key}</span>
-							<b>{num(p.installs)}</b>
-							<span class="dim">· {p.pct.toFixed(0)}%</span>
-						</span>
-					{/each}
-				</div>
-			</div>
-		{/if}
 	</section>
 
 	<!-- 4. Секции платформ и версий клиента -->
@@ -513,7 +234,6 @@
 			<div class="section-header">
 				<div>
 					<h2 class="section-title">Операционные системы</h2>
-					<span class="section-desc">Доли ОС среди активных пользователей</span>
 				</div>
 			</div>
 			{#if d.platforms.length === 0}
@@ -545,7 +265,6 @@
 			<div class="section-header">
 				<div>
 					<h2 class="section-title">Версии клиента</h2>
-					<span class="section-desc">Используемые релизы приложения</span>
 				</div>
 			</div>
 			{#if d.versions.length === 0}
@@ -580,6 +299,13 @@
 {/if}
 
 <style>
+	.mini-grid {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 16px;
+		margin-bottom: 24px;
+	}
+
 	/* Header */
 	.head {
 		display: flex;
@@ -704,7 +430,7 @@
 	/* 2. KPI Mini Grid */
 	.kpi-grid {
 		display: grid;
-		grid-template-columns: repeat(4, 1fr);
+		grid-template-columns: repeat(3, 1fr);
 		gap: 14px;
 		margin-bottom: 20px;
 	}
@@ -722,6 +448,25 @@
 	.kpi-label {
 		font-size: 11px;
 		font-weight: 500;
+		color: var(--text-3);
+	}
+
+	.ldot {
+		display: inline-block;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		margin-right: 6px;
+	}
+
+	.kpi-side {
+		font-size: 13px;
+		color: var(--text-3);
+	}
+
+	.kpi-of {
+		font-size: 14px;
+		font-weight: 400;
 		color: var(--text-3);
 	}
 
@@ -786,7 +531,7 @@
 	/* Health Strip */
 	.health-strip {
 		display: grid;
-		grid-template-columns: repeat(4, 1fr);
+		grid-template-columns: repeat(3, 1fr);
 		gap: 16px;
 		margin-top: 16px;
 		padding-top: 16px;
@@ -1041,6 +786,7 @@
 	/* Responsive */
 	@media (max-width: 1024px) {
 		.audience-grid,
+		.mini-grid,
 		.kpi-grid,
 		.health-strip {
 			grid-template-columns: repeat(2, 1fr);
@@ -1067,6 +813,7 @@
 		}
 
 		.audience-grid,
+		.mini-grid,
 		.kpi-grid,
 		.health-strip {
 			grid-template-columns: 1fr;

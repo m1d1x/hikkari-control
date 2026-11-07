@@ -1,4 +1,6 @@
 import { ApiError, del, describeApiError, get, post, put } from './client';
+import { USE_MOCK } from '$lib/config/mock';
+import { mockOverview } from './entryMock';
 
 // The entry pool (roadmap 42 П6.2, П6.15, internal/entry/admin.go). Owner-only
 // on the server. Relays are born, deployed and signed on the hub; addresses and
@@ -1448,9 +1450,9 @@ export interface PressurePoint {
  * prober that died makes the censor look like it stopped pushing.
  */
 export interface PressureVantage {
- proberSha?: string;
- proberPollAt?: string;
- proberUpdateError?: string;
+	proberSha?: string;
+	proberPollAt?: string;
+	proberUpdateError?: string;
 	region: string;
 	title?: string;
 	box?: string;
@@ -1945,6 +1947,7 @@ export function fetchIncidentRepairs(id: string): Promise<{ repairs: IncidentRep
 }
 
 export function fetchOverview(window: OverviewWindow = '7d'): Promise<EntryOverview> {
+	if (USE_MOCK) return Promise.resolve(mockOverview(window));
 	return get(`/api/v1/admin/entry/overview?window=${encodeURIComponent(window)}`);
 }
 
@@ -1997,6 +2000,7 @@ export const PROTO_LABEL: Record<string, string> = {
 /** Hosters are known by their service, not by the API they speak. */
 const PROVIDER_LABEL: Record<string, string> = {
 	openstack: 'HostVDS',
+	vdsina: 'VDSina',
 };
 
 export const providerLabel = (kind: string): string => PROVIDER_LABEL[kind.toLowerCase()] ?? kind;

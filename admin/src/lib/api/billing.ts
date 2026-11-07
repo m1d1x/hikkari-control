@@ -1,4 +1,6 @@
 import { get, post, put } from './client';
+import { USE_MOCK } from '$lib/config/mock';
+import { mockBillingOverview, mockSubscription, mockSubscriptions } from './billingMock';
 
 // Subscriptions, plans and orders (internal/billing/admin.go). All of it is
 // the owner's; revoking asks for a passkey touch (client.ts steps up).
@@ -56,11 +58,11 @@ export interface Overview {
 	totals: { paid30dCents: number; paid30dOrders: number; live: number };
 }
 
-export const fetchBillingOverview = (status = '') =>
-	get<Overview>('/api/v1/admin/billing', { status: status || undefined });
+export const fetchBillingOverview = (status = ''): Promise<Overview> =>
+	USE_MOCK ? Promise.resolve(mockBillingOverview(status)) : get<Overview>('/api/v1/admin/billing', { status: status || undefined });
 
-export const fetchSubscriptions = (q = '') =>
-	get<{ subscriptions: Subscription[] }>('/api/v1/admin/billing/subscriptions', { q: q || undefined }).then(
+export const fetchSubscriptions = (q = ''): Promise<Subscription[]> =>
+	USE_MOCK ? Promise.resolve(mockSubscriptions(q)) : get<{ subscriptions: Subscription[] }>('/api/v1/admin/billing/subscriptions', { q: q || undefined }).then(
 		(r) => r.subscriptions,
 	);
 
@@ -71,8 +73,8 @@ export interface SubscriptionDetail {
 	orders: Order[];
 }
 
-export const fetchSubscription = (name: string) =>
-	get<SubscriptionDetail>(`/api/v1/admin/billing/subscriptions/${encodeURIComponent(name)}`);
+export const fetchSubscription = (name: string): Promise<SubscriptionDetail> =>
+	USE_MOCK ? Promise.resolve(mockSubscription(name)) : get<SubscriptionDetail>(`/api/v1/admin/billing/subscriptions/${encodeURIComponent(name)}`);
 
 export const issueSubscription = (name: string, plan: string) =>
 	post<{ url: string }>('/api/v1/admin/billing/subscriptions', { name, plan });

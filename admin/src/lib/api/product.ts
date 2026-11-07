@@ -1,5 +1,7 @@
 import { get } from './client';
 import type { Win } from '$lib/product/format';
+import { USE_MOCK } from '$lib/config/mock';
+import { mockProductMetrics } from './productMock';
 
 // The product section's screens, counted by the hub from the clients'
 // telemetry (internal/admin/product_metrics.go, product_errors.go). A person
@@ -27,6 +29,8 @@ export interface ProductMetrics {
 	bucketSeconds: number;
 	/** bucket starts, unix ms, oldest first; the last one is still filling */
 	buckets: number[];
+	/** installs on the line: the latest count and the busiest minute of each bucket, null where nothing was sampled */
+	online: { now: number | null; series: (number | null)[] };
 	people: {
 		active: number;
 		fresh: number;
@@ -95,6 +99,7 @@ export interface ProductErrors {
 }
 
 export function fetchProductMetrics(win: Win): Promise<ProductMetrics> {
+	if (USE_MOCK) return Promise.resolve(mockProductMetrics(win));
 	return get('/api/v1/admin/product/metrics', { window: win });
 }
 

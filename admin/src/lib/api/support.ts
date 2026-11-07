@@ -2,6 +2,8 @@
 // account «Hikkari», whether or not a ticket stands behind it. Tickets remain in
 // tickets.ts; their milestones land in these same conversations.
 import { get, getText, patch, post, put } from './client';
+import { USE_MOCK } from '$lib/config/mock';
+import { mockTesterInstalls, mockTesterRelays } from './billingMock';
 import type { AdminConvMessage, TicketStatus } from './tickets';
 
 export type ProductTicketStatus = 'open' | 'answered' | 'closed';
@@ -145,6 +147,7 @@ export interface TesterChunk {
 }
 
 export async function fetchTesterInstalls(): Promise<{ installs: TesterInstall[] }> {
+	if (USE_MOCK) return mockTesterInstalls;
 	return get<{ installs: TesterInstall[] }>('/api/v1/admin/support/tester-logs');
 }
 
@@ -164,6 +167,14 @@ export async function exportTesterLog(install: string, from: number, to: number)
 
 /** Rename an install. The hub takes the alias, its number or the install id in the path. */
 export async function renameTester(install: string, alias: string, note: string): Promise<void> {
+	if (USE_MOCK) {
+		const row = mockTesterInstalls.installs.find((r) => r.install_id === install);
+		if (row) {
+			row.alias = alias;
+			row.note = note;
+		}
+		return;
+	}
 	await put(`/api/v1/admin/support/tester-logs/${encodeURIComponent(install)}/alias`, { alias, note });
 }
 
@@ -218,5 +229,6 @@ export interface TesterRelayScreen {
 
 /** The protocols screen: what testers' clients got from each relay. */
 export async function fetchTesterRelays(window: TesterRelayWindow): Promise<TesterRelayScreen> {
+	if (USE_MOCK) return { ...mockTesterRelays, window };
 	return get<TesterRelayScreen>('/api/v1/admin/support/tester-relays', { window });
 }

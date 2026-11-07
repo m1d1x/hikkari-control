@@ -13,6 +13,9 @@ import (
 type Handlers struct {
 	pool      db.Pool
 	analytics *analytics.Store
+	// quotas reads the hosters' plan allowances for the fleet screen; nil
+	// until SetPlanCatalog (fleet_profiles.go).
+	quotas *planQuotas
 }
 
 func NewHandlers(pool db.Pool, store *analytics.Store) *Handlers {
