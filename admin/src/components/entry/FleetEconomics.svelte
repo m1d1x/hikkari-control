@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { formatCents, type EntryProviderCompare, type ProviderStats } from '$lib/api/entry';
+	import { formatCents, type EntryProviderCompare, type ProviderStats, providerLabel } from '$lib/api/entry';
 
 	// What each hoster's machines cost and carried, from the provider
 	// comparison (internal/admin/entry_providers.go). Every figure here is
@@ -72,7 +72,7 @@
 						<div
 							class="alloc-seg"
 							style="width: {pct}%; background-color: {providerColor(h.provider, i)}"
-							title="{h.provider}: {h.aliveCount} шт ({pct}%)"
+							title="{providerLabel(h.provider)}: {h.aliveCount} шт ({pct}%)"
 						></div>
 					{/if}
 				{/each}
@@ -105,7 +105,7 @@
 							<td class="col-prov">
 								<div class="prov-name-cell">
 									<span class="dot" style="background-color: {providerColor(h.provider, i)}"></span>
-									<span class="pname m">{h.provider}</span>
+									<span class="pname m">{providerLabel(h.provider)}</span>
 								</div>
 							</td>
 							<td class="num m">{h.aliveCount}</td>

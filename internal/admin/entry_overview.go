@@ -31,12 +31,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
+	"github.com/m1d1x/hikkari-control/internal/analytics"
 	"github.com/m1d1x/hikkari-control/internal/entry"
 )
 
@@ -541,8 +544,8 @@ func (h *Handlers) fillProtocols(ctx context.Context, out *entryOverview, since 
 			outcome,
 			relay_name,
 			count()                     AS attempts,
-			quantile(0.5)(rtt_ms)       AS p50,
-			quantile(0.95)(rtt_ms)      AS p95,
+			quantileIf(0.5)(rtt_ms, rtt_ms > 0)       AS p50,
+			quantileIf(0.95)(rtt_ms, rtt_ms > 0)      AS p95,
 			quantile(0.5)(connect_ms)   AS connect_p50
 		FROM entry_reach
 		WHERE ts >= ? AND outcome != 'failed'
@@ -576,12 +579,17 @@ func (h *Handlers) fillProtocols(ctx context.Context, out *entryOverview, since 
 		if outcome == "relay" {
 			var ok bool
 			proto, ok = protoOf[relay]
+			if !ok && strings.HasPrefix(relay, analytics.ProtoRelayPrefix) {
+				// A client's connect event names the protocol it ran, not a relay.
+				proto, ok = strings.TrimPrefix(relay, analytics.ProtoRelayPrefix), true
+			}
 			if !ok {
 				// A relay the pool no longer knows. Its attempts happened, so
 				// they are not dropped — they just cannot be attributed.
 				proto = "unknown"
 			}
 		}
+		p50, p95 = nanZero(p50), nanZero(p95)
 		a := byProto[proto]
 		if a == nil {
 			a = &acc{}
@@ -654,7 +662,7 @@ func (h *Handlers) fillProtocolLatency(
 		SELECT
 			toStartOfInterval(ts, toIntervalHour(?)) AS bucket,
 			count()                                 AS attempts,
-			quantile(0.5)(rtt_ms)                   AS p50
+			quantileIf(0.5)(rtt_ms, rtt_ms > 0)  AS p50
 		FROM entry_reach
 		WHERE ts >= ? AND outcome = 'relay' AND relay_name IN (?)
 		GROUP BY bucket
@@ -664,12 +672,20 @@ func (h *Handlers) fillProtocolLatency(
 		SELECT
 			toStartOfInterval(ts, toIntervalHour(?)) AS bucket,
 			count()                                 AS attempts,
-			quantile(0.5)(rtt_ms)                   AS p50
+			quantileIf(0.5)(rtt_ms, rtt_ms > 0)  AS p50
 		FROM entry_reach
 		WHERE ts >= ? AND outcome = 'direct'
 		GROUP BY bucket
 		ORDER BY bucket
 	`
+
+	// Client connect rows are named by protocol, so a protocol also owns the
+	// name its clients' attempts were written under.
+	for i := range out.Protocols {
+		if p := out.Protocols[i].Proto; p != "direct" && p != "unknown" {
+			relaysOf[p] = append(relaysOf[p], analytics.ProtoRelayPrefix+p)
+		}
+	}
 
 	for i := range out.Protocols {
 		proto := out.Protocols[i].Proto
@@ -701,6 +717,9 @@ func (h *Handlers) fillProtocolLatency(
 			if err := rows.Scan(&at, &attempts, &p50); err != nil {
 				rows.Close()
 				return fmt.Errorf("scan latency %s: %w", proto, err)
+			}
+			if math.IsNaN(p50) {
+				continue // nobody measured a round trip in this bucket
 			}
 			v := round2(p50)
 			measured[at.UTC()] = latencyPoint{
@@ -893,7 +912,7 @@ func (h *Handlers) fillSurvival(ctx context.Context, out *entryOverview, window 
 				ORDER BY EXTRACT(EPOCH FROM (burned_at - assigned_at)) / 3600.0
 			) FILTER (WHERE burned_at < now() - $1::interval AND burned_at >= now() - $1::interval * 2)
 		FROM entry_domains
-		WHERE burned_at IS NOT NULL AND assigned_at IS NOT NULL
+		WHERE status IN ('burned', 'dead') AND burned_at IS NOT NULL AND assigned_at IS NOT NULL
 	`
 	if err := h.pool.QueryRow(ctx, domains, window).
 		Scan(&out.Survival.DomainHours, &out.Survival.DomainHoursBefore); err != nil {
@@ -1097,4 +1116,12 @@ func (h *Handlers) fillIncidents(ctx context.Context, out *entryOverview) error 
 		}
 	}
 	return rows.Err()
+}
+
+// nanZero reads "no round trip measured" as 0, which the screen draws as a dash.
+func nanZero(v float64) float64 {
+	if math.IsNaN(v) {
+		return 0
+	}
+	return v
 }

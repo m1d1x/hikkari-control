@@ -93,7 +93,7 @@ func (s *Service) DomainPoolNow(ctx context.Context) (DomainPoolReading, error) 
 		           WHERE d.domain = x.domain OR right(d.domain, length(x.domain) + 1) = '.' || x.domain)),
 		       count(*) FILTER (WHERE d.status = 'unknown'),
 		       count(*) FILTER (WHERE d.status = 'assigned'),
-		       count(*) FILTER (WHERE d.burned_at >= $1)
+		       count(*) FILTER (WHERE d.status IN ('burned', 'dead') AND d.burned_at >= $1)
 		FROM entry_domains d
 	`, s.now().Add(-fleetLossWindow)).Scan(&r.Free, &r.Unknown, &r.InUse, &r.Burns); err != nil {
 		return DomainPoolReading{}, fmt.Errorf("entry: domain pool: %w", err)

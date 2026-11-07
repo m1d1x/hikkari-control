@@ -960,6 +960,10 @@ export interface MoneyPoint {
 	/** distinct people of the 24 hours ending at the bucket's end */
 	people: number | null;
 	perUserMonthCents: number | null;
+	/** the trailing week's spend as a daily rate, smoothed over purchases */
+	trendTotalPerDayCents: number;
+	/** that rate over the week's people, run out to a month; null when nobody reached */
+	trendPerUserMonthCents: number | null;
 }
 
 /**
@@ -1033,6 +1037,8 @@ export interface TrafficPoint {
 	gbUp: number | null;
 	gbDown: number | null;
 	gbPerPersonDay: number | null;
+	/** the trailing week's traffic per person per day; null without people or traffic */
+	trendGbPerPersonDay: number | null;
 }
 
 /** One incident as the console's right-hand column shows it. */
@@ -1976,15 +1982,29 @@ export function fetchProtocolStats(window: OverviewWindow = '24h'): Promise<Entr
 export const PROTO_LABEL: Record<string, string> = {
 	'vless-reality-vision': 'vless-reality',
 	'vless-xhttp': 'xhttp',
+	'vless-reality-xhttp': 'xhttp + reality',
+	wireguard: 'amnezia',
+	amneziawg: 'amnezia',
 	hysteria2: 'hysteria2',
 	direct: 'direct',
+	other: 'прочие протоколы',
 	unknown: 'прочие релеи',
 };
+
+/** Hosters are known by their service, not by the API they speak. */
+const PROVIDER_LABEL: Record<string, string> = {
+	openstack: 'HostVDS',
+};
+
+export const providerLabel = (kind: string): string => PROVIDER_LABEL[kind.toLowerCase()] ?? kind;
 
 /** What a protocol is for, said in the console's words. */
 export const PROTO_ROLE: Record<string, string> = {
 	'vless-reality-vision': 'основной',
 	'vless-xhttp': 'запасной, на домене',
+	'vless-reality-xhttp': 'xhttp под прикрытием reality',
+	wireguard: 'udp, обфусцированный wireguard',
+	amneziawg: 'udp, обфусцированный wireguard',
 	hysteria2: 'голос',
 	direct: 'без релея',
 	unknown: 'снят с учёта',

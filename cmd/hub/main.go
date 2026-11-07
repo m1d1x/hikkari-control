@@ -20,6 +20,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/analytics"
 	"github.com/m1d1x/hikkari-control/internal/auth"
 	"github.com/m1d1x/hikkari-control/internal/billing"
+	"github.com/m1d1x/hikkari-control/internal/capacity"
 	"github.com/m1d1x/hikkari-control/internal/census"
 	"github.com/m1d1x/hikkari-control/internal/config"
 	"github.com/m1d1x/hikkari-control/internal/cryptobox"
@@ -190,6 +191,7 @@ func run() error {
 	go presetsPublic.Watch(ctx)
 	// Subscribers' links (internal/subscription): their batch of the pool.
 	subs := subscription.New(pool, svc, entry.PinnedKeys())
+	subs.Capacity = capacity.Store{Pool: pool}
 	mux.HandleFunc("GET /sub/{token}", subs.Handler())
 	// Relays learn subscribers' access keys from the answer to their pulse.
 	svc.SetRelayKeys(subs)
@@ -253,6 +255,10 @@ func run() error {
 		entry.RegisterBenchRoutes(mux, svc)
 		svc.SetBenchSink(benchSink{store})
 		svc.SetReachSink(reachSink{store})
+		// Every client's `connect` event is an attempt to reach the service:
+		// store.InsertTelemetry derives the doorway rows from them as batches
+		// arrive. Events that came in before that existed are carried over once.
+		backfillReach(ctx, pool, store)
 		svc.SetPulseSink(pulseSink{store})
 		svc.SetUserTrafficSink(userTrafficSink{store})
 		svc.SetLoadSource(loadSource{store})

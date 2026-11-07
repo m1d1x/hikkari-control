@@ -193,8 +193,8 @@
 										<div class="val">{p.p95Ms ?? '—'}{#if p.p95Ms !== null}<small>мс</small>{/if}</div>
 										<div class="lbl">пинг p95</div>
 									</div>
-									<div><div class="val">{Math.round(p.okPct)}<small>%</small></div><div class="lbl">проверки</div></div>
-									<div><div class="val muted">—</div><div class="lbl">потери</div></div>
+									<div><div class="val">{Math.round(p.okPct)}<small>%</small></div><div class="lbl" title="доля проверок тестеров, на которые релей ответил">доходит</div></div>
+									<div><div class="val">{Math.round(100 - p.okPct)}<small>%</small></div><div class="lbl" title="доля проверок без ответа (пинг через ядро, не потеря пакетов)">без ответа</div></div>
 								</div>
 							</div>
 						{/each}

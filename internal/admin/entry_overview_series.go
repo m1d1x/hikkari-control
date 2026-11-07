@@ -65,6 +65,12 @@ func bucketElapsed(at, now time.Time, bucket time.Duration) time.Duration {
 	return time.Second
 }
 
+// trendSpan is how far back the smoothed lines look. A purchase is an event
+// and a day's rate over it swings from "three dollars" to "nothing" with the
+// calendar, so the trend line spreads every cost and every byte over the
+// trailing week: the figure the owner can plan a month on.
+const trendSpan = 7 * 24 * time.Hour
+
 type reachPoint struct {
 	Bucket   string `json:"bucket"`
 	Attempts int64  `json:"attempts"`
@@ -84,6 +90,13 @@ type moneyPoint struct {
 	// $5, not $120 a day.
 	DomainsCents int64 `json:"domainsCents"`
 	TotalCents   int64 `json:"totalCents"`
+	// TrendTotalPerDayCents is the trailing week's spend as a daily rate: the
+	// rent accrued and the names bought in the week before the bucket's end,
+	// over the days the doorway has existed inside that week.
+	TrendTotalPerDayCents int64 `json:"trendTotalPerDayCents"`
+	// TrendPerUserMonthCents is that rate over the people of the same week,
+	// run out to a month. Null when nobody reached in the week.
+	TrendPerUserMonthCents *int64 `json:"trendPerUserMonthCents"`
 	// People is how many distinct accounts reached in the 24 hours ending at
 	// the bucket's end; PerUserMonthCents is the bucket's rate over them,
 	// run out to a month. Both null when nobody reached.
@@ -100,6 +113,10 @@ type trafficPoint struct {
 	// GBPerPersonDay is the bucket's traffic as a daily rate over the people
 	// of the 24 hours ending at the bucket's end; null when nobody reached.
 	GBPerPersonDay *float64 `json:"gbPerPersonDay"`
+	// TrendGBPerPersonDay is the trailing week's traffic as a daily rate over
+	// the people of the same week; null when nobody reached or nothing was
+	// carried.
+	TrendGBPerPersonDay *float64 `json:"trendGbPerPersonDay"`
 }
 
 // survivalPoint is what the censor burned inside one bucket, and how long it
@@ -119,17 +136,21 @@ func (h *Handlers) fillSeries(ctx context.Context, out *entryOverview, since tim
 	starts := bucketStarts(since, now, bucket)
 	out.BucketSeconds = int(bucket.Seconds())
 
-	people, err := h.peopleTrailingDay(ctx, starts, bucket, now)
+	people, err := h.peopleTrailing(ctx, starts, bucket, now, 24*time.Hour)
 	if err != nil {
 		return fmt.Errorf("people: %w", err)
+	}
+	peopleWeek, err := h.peopleTrailing(ctx, starts, bucket, now, trendSpan)
+	if err != nil {
+		return fmt.Errorf("people (week): %w", err)
 	}
 	if err := h.fillReachSeries(ctx, out, starts, bucket); err != nil {
 		return fmt.Errorf("reach series: %w", err)
 	}
-	if err := h.fillMoneySeries(ctx, out, starts, bucket, now, people); err != nil {
+	if err := h.fillMoneySeries(ctx, out, starts, bucket, now, people, peopleWeek); err != nil {
 		return fmt.Errorf("money series: %w", err)
 	}
-	if err := h.fillTrafficSeries(ctx, out, starts, bucket, now, people); err != nil {
+	if err := h.fillTrafficSeries(ctx, out, starts, bucket, now, people, peopleWeek); err != nil {
 		return fmt.Errorf("traffic series: %w", err)
 	}
 	if err := h.fillSurvivalSeries(ctx, out, starts, bucket); err != nil {
@@ -144,7 +165,7 @@ func (h *Handlers) fillSeries(ctx context.Context, out *entryOverview, since tim
 // A day and not the bucket itself: the per-person figures divide a day's
 // worth of cost or traffic, and the people of one hour are a fraction of the
 // people that hour's cost serves.
-func (h *Handlers) peopleTrailingDay(ctx context.Context, starts []time.Time, bucket time.Duration, now time.Time) (map[time.Time]int64, error) {
+func (h *Handlers) peopleTrailing(ctx context.Context, starts []time.Time, bucket time.Duration, now time.Time, span time.Duration) (map[time.Time]int64, error) {
 	out := map[time.Time]int64{}
 	if len(starts) == 0 {
 		return out, nil
@@ -163,10 +184,10 @@ func (h *Handlers) peopleTrailingDay(ctx context.Context, starts []time.Time, bu
 		ARRAY JOIN CAST(? AS Array(Int64)) AS e
 		WHERE ts >= ?
 		  AND toUnixTimestamp(ts) < e
-		  AND toUnixTimestamp(ts) >= e - 86400
+		  AND toUnixTimestamp(ts) >= e - ?
 		GROUP BY e
 	`
-	rows, err := h.analytics.Query(ctx, q, ends, starts[0].Add(-24*time.Hour))
+	rows, err := h.analytics.Query(ctx, q, ends, starts[0].Add(-span), int64(span.Seconds()))
 	if err != nil {
 		return nil, err
 	}
@@ -248,13 +269,15 @@ func (h *Handlers) fillMoneySeries(
 	starts []time.Time,
 	bucket time.Duration,
 	now time.Time,
-	people map[time.Time]int64,
+	people, peopleWeek map[time.Time]int64,
 ) error {
 	out.Money.Series = []moneyPoint{}
 	if len(starts) == 0 {
 		return nil
 	}
 	since := starts[0]
+	// The trend looks a week behind the first bucket.
+	lookback := since.Add(-trendSpan)
 
 	type rented struct {
 		from, to time.Time
@@ -265,7 +288,7 @@ func (h *Handlers) fillMoneySeries(
 		SELECT created_at, retired_at, monthly_cents
 		FROM entry_boxes
 		WHERE monthly_cents IS NOT NULL AND (retired_at IS NULL OR retired_at >= $1)
-	`, since)
+	`, lookback)
 	if err != nil {
 		return err
 	}
@@ -290,11 +313,16 @@ func (h *Handlers) fillMoneySeries(
 	// Dated by created_at, the same rule fillMoney's month and the buyer's
 	// cap use: the spend is committed from the moment the intent is written.
 	spent := map[time.Time]int64{}
+	type purchase struct {
+		at    time.Time
+		cents int64
+	}
+	var purchases []purchase
 	drows, err := h.pool.Query(ctx, `
 		SELECT created_at, cost_cents
 		FROM entry_domains
 		WHERE source = 'purchased' AND status <> 'failed' AND created_at >= $1
-	`, since)
+	`, lookback)
 	if err != nil {
 		return err
 	}
@@ -305,16 +333,58 @@ func (h *Handlers) fillMoneySeries(
 			drows.Close()
 			return err
 		}
-		spent[at.UTC().Truncate(bucket)] += cents
+		purchases = append(purchases, purchase{at: at.UTC(), cents: cents})
+		if !at.Before(since) {
+			spent[at.UTC().Truncate(bucket)] += cents
+		}
 	}
 	drows.Close()
 	if err := drows.Err(); err != nil {
 		return err
 	}
 
+	// The doorway's first day inside the lookback: before it nothing was
+	// rented or bought, and a week's cost spread over days that did not exist
+	// would understate the rate.
+	var born time.Time
+	for _, b := range boxes {
+		if born.IsZero() || b.from.Before(born) {
+			born = b.from
+		}
+	}
+	for _, pu := range purchases {
+		if born.IsZero() || pu.at.Before(born) {
+			born = pu.at
+		}
+	}
+
+	trend := map[time.Time]moneyPoint{}
 	for _, at := range starts {
 		elapsed := bucketElapsed(at, now, bucket)
 		end := at.Add(elapsed)
+		trendFrom := maxTime(end.Add(-trendSpan), born)
+		if days := end.Sub(trendFrom).Hours() / 24; days > 0 && !born.IsZero() {
+			var week float64
+			for _, b := range boxes {
+				from, to := maxTime(b.from, trendFrom), minTime(b.to, end)
+				if !to.After(from) {
+					continue
+				}
+				week += float64(b.monthly) / float64(daysInMonth(at)) * to.Sub(from).Hours() / 24
+			}
+			for _, pu := range purchases {
+				if !pu.at.Before(trendFrom) && !pu.at.After(end) {
+					week += float64(pu.cents)
+				}
+			}
+			rate := int64(week / days)
+			pt := moneyPoint{TrendTotalPerDayCents: rate}
+			if n, ok := peopleWeek[at]; ok {
+				perUser := rate * 30 / n
+				pt.TrendPerUserMonthCents = &perUser
+			}
+			trend[at] = pt
+		}
 		var accrued float64
 		for _, b := range boxes {
 			from, to := maxTime(b.from, at), minTime(b.to, end)
@@ -330,6 +400,9 @@ func (h *Handlers) fillMoneySeries(
 			DomainsCents:        spent[at],
 		}
 		p.TotalCents = p.MachinesPerDayCents + p.DomainsCents
+		if t, ok := trend[at]; ok {
+			p.TrendTotalPerDayCents, p.TrendPerUserMonthCents = t.TrendTotalPerDayCents, t.TrendPerUserMonthCents
+		}
 		if n, ok := people[at]; ok {
 			perUser := p.TotalCents * 30 / n
 			p.People, p.PerUserMonthCents = &n, &perUser
@@ -365,12 +438,12 @@ func (h *Handlers) fillTrafficSeries(
 	starts []time.Time,
 	bucket time.Duration,
 	now time.Time,
-	people map[time.Time]int64,
+	people, peopleWeek map[time.Time]int64,
 ) error {
 	if out.Traffic == nil || len(starts) == 0 {
 		return nil
 	}
-	rows, err := h.analytics.Query(ctx, relayDeltasQ, int64(bucket/time.Hour), starts[0])
+	rows, err := h.analytics.Query(ctx, relayDeltasQ, int64(bucket/time.Hour), starts[0].Add(-trendSpan))
 	if err != nil {
 		return err
 	}
@@ -389,9 +462,31 @@ func (h *Handlers) fillTrafficSeries(
 		return err
 	}
 	const gb = 1024 * 1024 * 1024
+	// The first bucket anything was carried in: the trend spreads the week's
+	// bytes over the days the relays have actually reported.
+	var first time.Time
+	for at := range by {
+		if first.IsZero() || at.Before(first) {
+			first = at
+		}
+	}
 	out.Traffic.Series = []trafficPoint{}
 	for _, at := range starts {
 		p := trafficPoint{Bucket: at.Format(time.RFC3339)}
+		if n, ok := peopleWeek[at]; ok && !first.IsZero() {
+			end := at.Add(bucketElapsed(at, now, bucket))
+			from := maxTime(end.Add(-trendSpan), first)
+			var bytes uint64
+			for t, c := range by {
+				if t.Add(bucket).After(from) && t.Before(end) {
+					bytes += c.up + c.down
+				}
+			}
+			if days := end.Sub(from).Hours() / 24; days > 0 {
+				v := round2(float64(bytes) / (1024 * 1024 * 1024) / days / float64(n))
+				p.TrendGBPerPersonDay = &v
+			}
+		}
 		if c, ok := by[at]; ok {
 			up, down := round2(float64(c.up)/gb), round2(float64(c.down)/gb)
 			p.GBUp, p.GBDown = &up, &down
@@ -455,7 +550,7 @@ func (h *Handlers) fillSurvivalSeries(ctx context.Context, out *entryOverview, s
 	if err := collect(domains, `
 		SELECT burned_at, EXTRACT(EPOCH FROM (burned_at - assigned_at)) / 86400.0
 		FROM entry_domains
-		WHERE burned_at >= $1 AND assigned_at IS NOT NULL
+		WHERE status IN ('burned', 'dead') AND burned_at >= $1 AND assigned_at IS NOT NULL
 	`, since); err != nil {
 		return err
 	}

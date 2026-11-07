@@ -50,6 +50,7 @@
 	const PROTO_LABEL: Record<string, string> = {
 		'vless-reality-vision': 'reality',
 		'vless-xhttp': 'xhttp',
+		amneziawg: 'amnezia',
 		hysteria2: 'голос',
 	};
 

@@ -6,6 +6,7 @@
 		fetchSubscription,
 		fetchSubscriptions,
 		issueSubscription,
+		issueTesterSubscription,
 		renewSubscription,
 		retirePlan,
 		revokeSubscription,
@@ -17,7 +18,8 @@
 		type SubscriptionDetail,
 		type SubscriptionState,
 	} from '$lib/api/billing';
-	import { num, rub } from '$lib/product/format';
+	import { fetchTesterInstalls, fetchTesterRelays, type TesterInstall, type TesterRelays } from '$lib/api/support';
+	import { ago, num, rub } from '$lib/product/format';
 
 	// Subscriptions sold through the landing (internal/billing) and issued by
 	// hand. Everything here is the owner's; revoking asks for a passkey.
@@ -36,6 +38,22 @@
 	};
 	const GIB = 2 ** 30;
 
+	// Testers are the hub's users today: installs of the client in tester mode,
+	// not subscriptions sold or issued, so they come from the tester stream.
+	let installs = $state<TesterInstall[]>([]);
+	let rounds = $state<Record<string, TesterRelays>>({});
+
+	async function loadTesters() {
+		try {
+			const [list, relays] = await Promise.all([fetchTesterInstalls(), fetchTesterRelays('24h')]);
+			installs = [...list.installs].sort((a, b) => Number(b.online) - Number(a.online) || b.last_seen.localeCompare(a.last_seen));
+			rounds = Object.fromEntries(relays.installs.map((r) => [r.install_id, r]));
+		} catch {
+			// the subscriptions below still load; a missing tester list is not an error of theirs
+		}
+	}
+	const alive = (id: string) => rounds[id]?.relays.filter((r) => r.up).length ?? null;
+
 	let overview = $state<Overview | null>(null);
 	let subs = $state<Subscription[]>([]);
 	let query = $state('');
@@ -51,6 +69,8 @@
 	let issueName = $state('');
 	let issuePlan = $state('');
 	let issued = $state('');
+	let testerPlan = $state('');
+	let tester = $state<{ name: string; url: string } | null>(null);
 
 	let draft = $state<Pick<Plan, 'id' | 'title' | 'days' | 'trafficGiB'> & { price: number }>({
 		id: '',
@@ -68,6 +88,7 @@
 		try {
 			[overview, subs] = await Promise.all([fetchBillingOverview(orderStatus), fetchSubscriptions(query.trim())]);
 			issuePlan ||= onSale[0]?.id ?? '';
+			testerPlan ||= onSale[0]?.id ?? '';
 		} catch (e) {
 			error = describeApiError(e);
 		} finally {
@@ -75,7 +96,10 @@
 		}
 	}
 
-	onMount(load);
+	onMount(() => {
+		load();
+		loadTesters();
+	});
 
 	let searchTimer: ReturnType<typeof setTimeout> | undefined;
 	function search() {
@@ -126,6 +150,12 @@
 		});
 	}
 
+	function issueTester() {
+		act(async () => {
+			tester = await issueTesterSubscription(testerPlan);
+		});
+	}
+
 	function addPlan() {
 		const { id, title, days, trafficGiB, price } = draft;
 		act(async () => {
@@ -163,6 +193,25 @@
 
 {#if error}<p class="bad">{error}</p>{/if}
 
+<section class="card tester">
+	<div class="line">
+		<button class="btn primary" disabled={busy || !testerPlan} onclick={issueTester}>
+			сгенерировать ссылку для тестера
+		</button>
+		<select class="field" bind:value={testerPlan} disabled={busy}>
+			{#each onSale as p (p.id)}<option value={p.id}>{p.title || p.id}</option>{/each}
+		</select>
+		<span class="dim">подписка со всеми живыми релеями флота; имя подберётся само</span>
+	</div>
+	{#if tester}
+		<div class="line">
+			<span class="mono">{tester.name}</span>
+			<code>{tester.url}</code>
+			<button class="btn" onclick={() => copy(tester!.url)}>скопировать</button>
+		</div>
+	{/if}
+</section>
+
 {#if overview}
 	<div class="strip">
 		<span>живых подписок <b>{num(overview.totals.live)}</b></span>
@@ -170,6 +219,41 @@
 		<span>заказов <b>{num(overview.totals.paid30dOrders)}</b></span>
 	</div>
 {/if}
+
+<section class="card">
+	<div class="top">
+		<h2>тестеры</h2>
+		<span class="dim">{installs.filter((i) => i.online).length} на связи из {installs.length}</span>
+	</div>
+	{#if installs.length === 0}
+		<p class="empty">ни один тестер ещё не выходил на связь</p>
+	{:else}
+		<table class="rows">
+			<thead>
+				<tr>
+					<th>тестер</th><th>ОС</th><th>версия</th><th>статус</th><th class="r">профили живы</th><th class="r">сигнал</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each installs as i (i.install_id)}
+					<tr>
+						<td>
+							<div class="mono">{i.alias}</div>
+							<div class="dim mono">{i.install_id}</div>
+						</td>
+						<td class="mono">{i.platform}</td>
+						<td class="mono">{i.version}</td>
+						<td class={i.online ? 'ok' : 'dim'}>{i.online ? 'на связи' : 'молчит'}</td>
+						<td class="r mono">
+							{#if alive(i.install_id) === null}—{:else}{alive(i.install_id)} из {rounds[i.install_id].relays.length}{/if}
+						</td>
+						<td class="r mono">{ago(new Date(i.last_seen).getTime())}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	{/if}
+</section>
 
 <section class="card">
 	<div class="top">
@@ -191,7 +275,9 @@
 				{#each subs as s (s.name)}
 					<tr class="row" onclick={() => toggle(s.name)}>
 						<td>
-							<div class="mono">{s.name}</div>
+							<div class="mono">
+								{s.name}{#if s.tester}<span class="tag">тестер</span>{/if}
+							</div>
 							{#if s.email}<div class="dim">{s.email}</div>{/if}
 						</td>
 						<td class="mono">{s.plan || '—'}</td>
@@ -412,6 +498,16 @@
 		margin-bottom: 16px;
 		font-size: 12px;
 		color: var(--text-2);
+	}
+
+	.tag {
+		margin-left: 8px;
+		padding: 1px 6px;
+		font-family: var(--sans, inherit);
+		font-size: 10px;
+		color: var(--text-2);
+		border: 1px solid var(--border-subtle);
+		border-radius: 4px;
 	}
 
 	.row {

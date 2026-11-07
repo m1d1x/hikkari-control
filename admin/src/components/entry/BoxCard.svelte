@@ -9,8 +9,7 @@
 		CAUSE_LABEL,
 		PLAYBOOK_LABEL,
 		type EntryBoxCard,
-		type OverviewWindow,
-	} from '$lib/api/entry';
+		type OverviewWindow, providerLabel } from '$lib/api/entry';
 
 	/**
 	 * One machine's card (roadmap 42 П9.3): its life, what it cost, and what
@@ -82,7 +81,7 @@
 		<div class="title">
 			<h2>{name}</h2>
 			{#if card}
-				<span class="sub">{card.box.provider} · {card.box.providerRegion || card.box.region || card.box.location}</span>
+				<span class="sub">{providerLabel(card.box.provider)} · {card.box.providerRegion || card.box.region || card.box.location}</span>
 				<ProtoBadge proto={card.box.proto} />
 			{/if}
 		</div>

@@ -73,7 +73,7 @@ func (providers) Kinds() []entry.ProviderKind {
 		},
 	}, {
 		Kind:  kindOpenStack,
-		Title: "OpenStack",
+		Title: "HostVDS (OpenStack)",
 		Role:  entry.RoleHosting,
 		Fields: []entry.CredentialField{
 			{Name: "auth_url", Label: "auth url (https://.../v3)"},

@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"time"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/m1d1x/hikkari-control/internal/analytics"
 	"github.com/m1d1x/hikkari-control/internal/cryptobox"
+	"github.com/m1d1x/hikkari-control/internal/db"
 	"github.com/m1d1x/hikkari-control/internal/entry"
 )
 
@@ -352,4 +354,28 @@ func (v verdictSource) LatestVerdictsByVantage(ctx context.Context, since, until
 		out[region][relay] = verdict
 	}
 	return out, rows.Err()
+}
+
+// backfillReach carries the connect events already stored into the doorway
+// dataset, once: the flag lives beside the relay dataset's cursors, so a
+// restart does not count them twice.
+func backfillReach(ctx context.Context, pool db.Pool, store *analytics.Store) {
+	const flag = "telemetry_reach"
+	var done int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM relay_runs_cursor WHERE name = $1`, flag).Scan(&done); err != nil || done > 0 {
+		if err != nil {
+			log.Printf("reach backfill: flag: %v", err)
+		}
+		return
+	}
+	n, err := store.BackfillReachFromTelemetry(ctx)
+	if err != nil {
+		log.Printf("reach backfill: %v", err)
+		return
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO relay_runs_cursor (name, last_chunk_id, updated_at) VALUES ($1, 0, now()) ON CONFLICT (name) DO NOTHING`, flag); err != nil {
+		log.Printf("reach backfill: mark done: %v", err)
+		return
+	}
+	log.Printf("reach backfill: %d connect events carried over", n)
 }

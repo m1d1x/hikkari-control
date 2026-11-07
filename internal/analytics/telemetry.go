@@ -2,7 +2,11 @@ package analytics
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -120,6 +124,15 @@ func (s *Store) InsertTelemetry(ctx context.Context, events []telemetry.EventRow
 			return fmt.Errorf("send telemetry_events: %w", err)
 		}
 	}
+	// An attempt to connect is an attempt to reach the service. Derived here
+	// and not in the hub's request path: the doorway dataset is one view of
+	// what clients already reported, and its failure must not make the client
+	// resend (and duplicate) a batch the events table already holds.
+	if rows := ReachFromTelemetry(events); len(rows) > 0 {
+		if err := s.InsertEntryReach(ctx, rows); err != nil {
+			log.Printf("analytics: reach from telemetry: %v", err)
+		}
+	}
 	if len(errs) > 0 {
 		batch, err := s.conn.PrepareBatch(ctx,
 			"INSERT INTO telemetry_errors (ts, install, version, channel, os, os_major, arch, code, component, fp, msg, count)")
@@ -149,4 +162,84 @@ func (s *Store) InsertLandingDownload(ctx context.Context, ts time.Time, os, fil
 		return fmt.Errorf("insert landing download: %w", err)
 	}
 	return nil
+}
+
+// ProtoRelayPrefix marks an entry_reach row whose relay_name is not a relay of
+// ours but the protocol a client connected over: a connect event names the
+// protocol, never the machine. The overview reads what follows as the protocol.
+const ProtoRelayPrefix = "proto:"
+
+// ReachAccount is the pseudonym an install is counted under in entry_reach:
+// the doorway console counts people and must not hold a list of who they are.
+func ReachAccount(install string) string {
+	sum := sha256.Sum256([]byte("reach:" + install))
+	return hex.EncodeToString(sum[:16])
+}
+
+// reachProto names a telemetry protocol the way the pool does.
+func reachProto(p string) string {
+	switch p {
+	case "":
+		return "other"
+	case "vless-reality":
+		return "vless-reality-vision"
+	}
+	return p
+}
+
+// ReachFromTelemetry turns the batch's connect events into doorway rows: one
+// event, one attempt, counted for the install that made it. The wait is the
+// event's own seconds; the round trip is not measured by a connect, so it
+// stays zero.
+func ReachFromTelemetry(events []telemetry.EventRow) []EntryReachRecord {
+	var out []EntryReachRecord
+	for _, e := range events {
+		if e.Name != "connect" {
+			continue
+		}
+		var f struct {
+			OK    bool   `json:"ok"`
+			Proto string `json:"proto"`
+			Secs  uint32 `json:"secs"`
+		}
+		if json.Unmarshal([]byte(e.Fields), &f) != nil {
+			continue
+		}
+		r := EntryReachRecord{
+			Timestamp:   e.TS,
+			Account:     ReachAccount(e.Install),
+			Outcome:     "failed",
+			RelaysTried: 1,
+			ConnectMs:   min(f.Secs, 600) * 1000,
+		}
+		if f.OK {
+			r.Outcome, r.RelayName = "relay", ProtoRelayPrefix+reachProto(f.Proto)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// BackfillReachFromTelemetry carries the connect events already stored into
+// entry_reach, with the same derivation as [ReachFromTelemetry]. Returns how
+// many events it read.
+func (s *Store) BackfillReachFromTelemetry(ctx context.Context) (int, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT ts, install, fields FROM telemetry_events WHERE name = 'connect' ORDER BY ts`)
+	if err != nil {
+		return 0, fmt.Errorf("read connect events: %w", err)
+	}
+	defer rows.Close()
+	var events []telemetry.EventRow
+	for rows.Next() {
+		e := telemetry.EventRow{Name: "connect"}
+		if err := rows.Scan(&e.TS, &e.Install, &e.Fields); err != nil {
+			return 0, err
+		}
+		events = append(events, e)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	return len(events), s.InsertEntryReach(ctx, ReachFromTelemetry(events))
 }

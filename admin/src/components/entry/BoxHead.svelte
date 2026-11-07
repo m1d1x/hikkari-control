@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { buildState, type EdgeBuild, type PoolBox, type PoolRelay } from '$lib/api/entry';
+	import { buildState, type EdgeBuild, type PoolBox, type PoolRelay, providerLabel } from '$lib/api/entry';
 
 	interface Props {
 		/** null: the relays no imported box claims. */
@@ -35,7 +35,7 @@
 <div class="head">
 	{#if box}
 		<span class="name mono">{box.name}</span>
-		<span class="provider">{box.provider}</span>
+		<span class="provider">{providerLabel(box.provider)}</span>
 		<span class="meta">{box.location}</span>
 		<span class="meta mono">{box.unreadable ? 'адрес не открылся' : box.address}</span>
 		{#if rent}<span class="meta" class:warn={rentWarn}>{rent}</span>{/if}

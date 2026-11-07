@@ -89,6 +89,14 @@
 		domains: 'oklch(0.78 0.16 65)',
 		down: 'oklch(0.70 0.16 230)',
 		up: 'oklch(0.72 0.18 310)',
+		raw: 'oklch(0.55 0.02 260)',
+	};
+
+	// The last smoothed value: the figure the headline shows, because a day's
+	// rate over one bought domain swings from three dollars to nothing.
+	const lastOf = (values: (number | null)[]): number | null => {
+		for (let i = values.length - 1; i >= 0; i--) if (values[i] !== null) return values[i];
+		return null;
 	};
 
 	const gb = (v: number) => `${v < 10 ? v.toFixed(2) : v.toFixed(1)} ГБ`;
@@ -179,18 +187,19 @@
 
 			<!-- ======== 2. Деньги ======== -->
 			{@const runRateMonthCents = data.money.total.perDayCents * 30}
+			{@const userTrend = lastOf(data.money.series.map((p) => p.trendPerUserMonthCents)) ?? data.money.perUserMonthCents}
 			<section class="card money-card">
 				<div class="money-layout">
 					<div class="money-figure">
 						<div class="big">
-							{#if data.money.perUserMonthCents === null}
+							{#if userTrend === null}
 								<span class="nodata">нет данных</span>
 							{:else}
-								{formatCents(data.money.perUserMonthCents)}<span class="unit">/ чел · мес</span>
+								{formatCents(userTrend)}<span class="unit">/ чел · мес</span>
 							{/if}
 						</div>
 						<div class="what">
-							<i class="sw sw-user"></i>себестоимость обхода на человека
+							<i class="sw sw-user"></i>себестоимость обхода на человека, тренд за 7 дней
 						</div>
 
 						<div class="breakdown">
@@ -244,17 +253,24 @@
 							series={[
 								{
 									key: 'user',
-									label: 'на человека, в месяц',
+									label: 'на человека, тренд 7 дн',
 									color: C.user,
 									primary: true,
+									values: data.money.series.map((p) => p.trendPerUserMonthCents),
+									format: (v) => `${formatCents(v)}/мес`,
+								},
+								{
+									key: 'userRaw',
+									label: 'на человека, за период',
+									color: C.raw,
 									values: data.money.series.map((p) => p.perUserMonthCents),
 									format: (v) => `${formatCents(v)}/мес`,
 								},
 								{
 									key: 'total',
-									label: 'всего сеть',
+									label: 'всего сеть, тренд 7 дн',
 									color: C.total,
-									values: data.money.series.map((p) => p.totalCents),
+									values: data.money.series.map((p) => p.trendTotalPerDayCents),
 									format: (v) => `${formatCents(v)}/сут`,
 								},
 								{
@@ -289,17 +305,19 @@
 					/>
 				{:else}
 					{@const perDayGb = data.traffic.gbTotal / windowDays}
+					{@const perPersonTrend =
+						lastOf(data.traffic.series.map((p) => p.trendGbPerPersonDay)) ?? data.traffic.gbPerPersonDay}
 					<div class="traffic-layout">
 						<div class="traffic-figure">
 							<div class="big">
-								{#if data.traffic.gbPerPersonDay === null}
+								{#if perPersonTrend === null}
 									<span class="nodata">нет данных</span>
 								{:else}
-									{(data.traffic.gbPerPersonDay * 30).toFixed(1)}<span class="unit">ГБ / чел · мес</span>
+									{(perPersonTrend * 30).toFixed(1)}<span class="unit">ГБ / чел · мес</span>
 								{/if}
 							</div>
 							<div class="what">
-								<i class="sw sw-user"></i>расход трафика на человека
+								<i class="sw sw-user"></i>расход трафика на человека, тренд за 7 дней
 							</div>
 
 							<div class="breakdown">
@@ -327,6 +345,33 @@
 						</div>
 
 						<div class="chart-wrapper">
+							<TrendChart
+								buckets={data.traffic.series.map((p) => p.bucket)}
+								bucketSeconds={data.bucketSeconds}
+								formatAxis={gb}
+								empty="за окно не было людей или трафика: на человека считать не из чего"
+								series={[
+									{
+										key: 'person',
+										label: 'на человека, тренд 7 дн',
+										color: C.user,
+										primary: true,
+										values: data.traffic.series.map((p) =>
+											p.trendGbPerPersonDay === null ? null : p.trendGbPerPersonDay * 30,
+										),
+										format: (v) => `${gb(v)}/мес`,
+									},
+									{
+										key: 'personRaw',
+										label: 'на человека, за период',
+										color: C.raw,
+										values: data.traffic.series.map((p) =>
+											p.gbPerPersonDay === null ? null : p.gbPerPersonDay * 30,
+										),
+										format: (v) => `${gb(v)}/мес`,
+									},
+								]}
+							/>
 							<TrendChart
 								buckets={data.traffic.series.map((p) => p.bucket)}
 								bucketSeconds={data.bucketSeconds}

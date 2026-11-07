@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { formatCents, type EntryFleet, type FleetBox, type FleetRelay, type ProviderStats } from '$lib/api/entry';
+	import { formatCents, type EntryFleet, type FleetBox, type FleetRelay, type ProviderStats, providerLabel } from '$lib/api/entry';
 
 	interface Props {
 		fleet: EntryFleet;
@@ -382,7 +382,7 @@
 						onclick={() => (expandedProviders = toggleIn(expandedProviders, g.provider))}
 					>
 						<span class="caret">{open ? '▾' : '▸'}</span>
-						<span class="t-name">{g.provider}</span>
+						<span class="t-name">{providerLabel(g.provider)}</span>
 						<span class="t-meta">машин <b>{g.boxes.length}</b></span>
 						<span class="t-meta">релеев <b>{g.liveRelays}</b></span>
 						<span class="t-meta">держателей <b>{g.holders.toLocaleString('ru-RU')}</b></span>
@@ -693,7 +693,7 @@
 								</div>
 							</td>
 							<td>
-								<span class="provider-pill">{box.provider}</span>
+								<span class="provider-pill">{providerLabel(box.provider)}</span>
 							</td>
 							<td>
 								<span class="badge {protoBadgeClass(box.proto)}">{shortProto(box.proto)}</span>
