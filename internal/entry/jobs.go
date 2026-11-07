@@ -593,6 +593,9 @@ const (
 	// JobProber: nekko-entry-prober deployed and started on the box assigned
 	// to an observation point slot (К3′ / П9.12).
 	JobProber = "prober"
+	// JobReconfigure: a box moved onto the image's build with the env its
+	// settings give (the hello tap, migration 040), outside any rollout.
+	JobReconfigure = "reconfigure"
 )
 
 func (s *Service) startJobOf(ctx context.Context, kind, box, adminID string, rollout uuid.UUID) (uuid.UUID, error) {

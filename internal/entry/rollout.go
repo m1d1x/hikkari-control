@@ -1032,3 +1032,47 @@ func (p *Provisioner) RunOnBox(ctx context.Context, box, cmd string, stdin io.Re
 	applog.Info(ctx, "entry", "operator command on box", applog.F("box", box), applog.F("cmd", cmd))
 	return r.Run(ctx, cmd, stdin)
 }
+
+// SetHelloTap turns the hello tap of a Reality box on or off (migration 040).
+// It takes effect at the box's next install: UpdateBox runs one now.
+func (s *Service) SetHelloTap(ctx context.Context, box string, on bool) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE entry_boxes SET hello_tap = $2
+		WHERE name = $1 AND retired_at IS NULL AND proto = $3`, box, on, ProtoVlessRealityVision)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: %s (живой Reality-машины с таким именем нет)", ErrNoSuchBox, box)
+	}
+	return nil
+}
+
+// UpdateBox moves one box onto this image's build now, outside a rollout: the
+// operator's way to apply a box setting the relays' env carries (the hello
+// tap) without waiting for a rollout to reach the box. It is a rollout's step
+// 4 on that box alone: drained, swapped, probed, back in the pool, the old
+// build put back if the probe fails.
+func (o *Orchestrator) UpdateBox(ctx context.Context, box string) error {
+	all, err := o.svc.fleet(ctx)
+	if err != nil {
+		return err
+	}
+	arch := ""
+	for _, b := range all {
+		if b.name == box {
+			arch = b.arch
+		}
+	}
+	if arch == "" {
+		return fmt.Errorf("%w: %s (в парке нет или архитектура не известна)", ErrNoSuchBox, box)
+	}
+	for _, build := range o.prov.EdgeBuilds() {
+		if build.Arch == arch {
+			return o.prov.execJob(ctx, JobReconfigure, box, uuid.Nil, func(j *jobRun) error {
+				return j.update(o, build)
+			})
+		}
+	}
+	return fmt.Errorf("в образе хаба нет сборки nekko-edge под %s", arch)
+}

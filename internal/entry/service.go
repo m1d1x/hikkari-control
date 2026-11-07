@@ -468,6 +468,8 @@ type boxAccess struct {
 	domain string
 	// retired: the box was handed back; only its wipe may still log in.
 	retired bool
+	// helloTap: the box's Reality relays run the hello tap (migration 040).
+	helloTap bool
 }
 
 // voice reports whether the box is a voice entry (Hysteria2).
@@ -480,7 +482,7 @@ func (a boxAccess) overUDP() bool { return a.voice() || a.proto == ProtoAmneziaW
 func (s *Service) boxAccess(ctx context.Context, box string) (boxAccess, error) {
 	var ct, domainCT []byte
 	var a boxAccess
-	err := s.pool.QueryRow(ctx, selectBoxAccess, box).Scan(&ct, &a.user, &a.hostKey, &a.hostKeyForgotten, &a.proto, &a.region, &a.retired, &domainCT)
+	err := s.pool.QueryRow(ctx, selectBoxAccess, box).Scan(&ct, &a.user, &a.hostKey, &a.hostKeyForgotten, &a.proto, &a.region, &a.retired, &domainCT, &a.helloTap)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return boxAccess{}, fmt.Errorf("%w: %s", ErrNoSuchBox, box)
 	}

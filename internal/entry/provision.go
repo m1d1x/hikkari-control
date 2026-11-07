@@ -1604,6 +1604,12 @@ func (j *jobRun) install(r Remote, rel provRelay) error {
 		envMap["EDGE_PULSE_TOKEN"] = PulseToken(j.p.pulseToken, j.box)
 		envMap["EDGE_RELAY_NAME"] = rel.name
 	}
+	// The hello tap (edge/hellotap.go) is the box's setting, not the
+	// relay's identity: on for a Reality box the owner chose (SetHelloTap).
+	if j.acc.helloTap && rel.id.proto() == ProtoVlessRealityVision {
+		envMap["EDGE_HELLO_TAP"] = "1"
+		j.log("%s: приёмник хелло включён", rel.name)
+	}
 	if j.acc.proto == ProtoVlessXhttp {
 		j.log("%s: сайт на домене релея, туннель под секретным путём", rel.name)
 	}
