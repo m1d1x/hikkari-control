@@ -109,3 +109,29 @@ func TestAFullMachineTakesNobodyNew(t *testing.T) {
 		}
 	}
 }
+
+// A tester's account (all_relays) holds every alive personal relay of the
+// fleet, a full machine included, and takes no room on a machine from others.
+func TestATesterHoldsTheWholeFleet(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	fleet := h.personal(5)
+
+	tester := testAccount(t, h.pool)
+	if _, err := h.pool.Exec(ctx, `UPDATE hub_accounts SET all_relays = true WHERE id = $1`, tester); err != nil {
+		t.Fatal(err)
+	}
+	got := h.batch(tester)
+	if len(got) != len(fleet) {
+		t.Fatalf("tester batch %v, want all of %v", got, fleet)
+	}
+	// a relay added later arrives on the next request
+	more := h.personal(1)
+	if got := h.batch(tester); len(got) != len(fleet)+len(more) {
+		t.Fatalf("tester batch %v after a new relay, want %d", got, len(fleet)+len(more))
+	}
+	// an ordinary account is still just a batch
+	if got := h.batch(testAccount(t, h.pool)); len(got) != 2 {
+		t.Fatalf("ordinary batch %v, want two", got)
+	}
+}

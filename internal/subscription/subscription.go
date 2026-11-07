@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/m1d1x/hikkari-control/internal/applog"
+	"github.com/m1d1x/hikkari-control/internal/capacity"
 	"github.com/m1d1x/hikkari-control/internal/config"
 	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 	"github.com/m1d1x/hikkari-control/internal/db"
@@ -35,11 +36,16 @@ type Batcher interface {
 // Service issues subscriptions and serves them. A subscription is a random
 // token tied to one account of the entry pool; only the token's SHA-256 is
 // stored, so the table gives no working link away.
+type CapacitySource interface {
+	Metrics(context.Context, []string) ([]capacity.Metric, error)
+}
+
 type Service struct {
-	pool  db.Pool
-	batch Batcher
-	keys  []entry.Key
-	now   func() time.Time
+	Capacity CapacitySource
+	pool     db.Pool
+	batch    Batcher
+	keys     []entry.Key
+	now      func() time.Time
 }
 
 func New(pool db.Pool, batch Batcher, keys []entry.Key) *Service {
@@ -57,6 +63,16 @@ var ErrName = errors.New("subscription: account name")
 // Add creates an account for name and a subscription for it on plan's first
 // period, and returns the token — shown once, never stored in the clear.
 func (s *Service) Add(ctx context.Context, name, plan string) (string, error) {
+	return s.add(ctx, name, plan, false)
+}
+
+// AddTester is Add for a tester: the account holds every alive relay of the
+// fleet, not a batch (hub_accounts.all_relays). Issued by hand only.
+func (s *Service) AddTester(ctx context.Context, name, plan string) (string, error) {
+	return s.add(ctx, name, plan, true)
+}
+
+func (s *Service) add(ctx context.Context, name, plan string, allRelays bool) (string, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return "", err
@@ -65,9 +81,14 @@ func (s *Service) Add(ctx context.Context, name, plan string) (string, error) {
 	if _, err := s.plan(ctx, tx, plan, true); err != nil {
 		return "", err
 	}
-	token, _, err := s.AddIn(ctx, tx, name, plan, "")
+	token, account, err := s.AddIn(ctx, tx, name, plan, "")
 	if err != nil {
 		return "", err
+	}
+	if allRelays {
+		if _, err := tx.Exec(ctx, `UPDATE hub_accounts SET all_relays = true WHERE id = $1`, account); err != nil {
+			return "", err
+		}
 	}
 	return token, tx.Commit(ctx)
 }
@@ -386,6 +407,20 @@ func (s *Service) Handler() http.HandlerFunc {
 			applog.Error(r.Context(), "subscription", "batch failed", applog.F("err", err.Error()))
 			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
 			return
+		}
+		if s.Capacity != nil {
+			keys := make([]string, 0, len(links))
+			for _, link := range links {
+				if key := capacity.Key(link); key != "" {
+					keys = append(keys, key)
+				}
+			}
+			metrics, capacityErr := s.Capacity.Metrics(r.Context(), keys)
+			if capacityErr == nil {
+				w.Header().Set(capacity.Header, capacity.Encode(metrics))
+			} else {
+				applog.Error(r.Context(), "capacity", "subscription summary unavailable")
+			}
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")

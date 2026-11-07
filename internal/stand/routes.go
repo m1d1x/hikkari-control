@@ -24,7 +24,7 @@ const maxResultBytes = 2 << 20
 func RegisterProberRoutes(mux *http.ServeMux, s *Scheduler, gate func(http.HandlerFunc) http.HandlerFunc, slotOf func(*http.Request) string) {
 	// The point's oldest queued run, or 204.
 	mux.HandleFunc("POST /api/v1/internal/entry-probes/stand/claim", gate(func(w http.ResponseWriter, r *http.Request) {
-		task, err := s.Claim(r.Context(), slotOf(r))
+		task, err := s.ClaimWithCapacity(r.Context(), slotOf(r), r.Header.Get("Hikkari-Stand-Features") == "capacity-v1")
 		if err != nil {
 			applog.Error(r.Context(), "stand", "claim failed", applog.F("err", err.Error()))
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})

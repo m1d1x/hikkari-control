@@ -35,6 +35,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/m1d1x/hikkari-control/internal/applog"
+	"github.com/m1d1x/hikkari-control/internal/capacity"
 	"github.com/m1d1x/hikkari-control/internal/db"
 	"github.com/m1d1x/hikkari-control/internal/relayruns"
 )
@@ -150,14 +151,18 @@ func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 		interval.String(), claimTTL.String()); err != nil {
 		return 0, fmt.Errorf("expire stand tasks: %w", err)
 	}
+	capacityQueued, err := s.queueCapacity(ctx)
+	if err != nil {
+		return 0, err
+	}
 	if !st.Enabled {
-		return 0, nil // the stand is off
+		return capacityQueued, nil
 	}
 	slots, err := s.slots.ActiveSlots(ctx)
 	if err != nil {
 		return 0, err
 	}
-	queued := 0
+	queued := capacityQueued
 	for _, slot := range slots {
 		tag, err := s.pool.Exec(ctx, `
 			INSERT INTO stand_tasks (slot, knob, vals, base, rounds, baseline_path)
@@ -193,6 +198,9 @@ type Task struct {
 // the fleet's links. A run queued before the stand was switched off is failed
 // here, with the reason, and the next one is tried.
 func (s *Scheduler) Claim(ctx context.Context, slot string) (*Task, error) {
+	return s.ClaimWithCapacity(ctx, slot, false)
+}
+func (s *Scheduler) ClaimWithCapacity(ctx context.Context, slot string, capable bool) (*Task, error) {
 	for {
 		token, err := linksToken()
 		if err != nil {
@@ -201,9 +209,9 @@ func (s *Scheduler) Claim(ctx context.Context, slot string) (*Task, error) {
 		var t Task
 		err = s.pool.QueryRow(ctx, `
 			UPDATE stand_tasks SET status = 'claimed', claimed_at = now(), links_token_hash = $2
-			WHERE id = (SELECT id FROM stand_tasks WHERE slot = $1 AND status = 'queued'
+			WHERE id = (SELECT id FROM stand_tasks WHERE slot = $1 AND status = 'queued' AND (knob <> 'capacity-v1' OR $3)
 			            ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
-			RETURNING id, knob, vals, base, rounds, baseline_path`, slot, linksTokenHash(token)).
+			RETURNING id, knob, vals, base, rounds, baseline_path`, slot, linksTokenHash(token), capable).
 			Scan(&t.ID, &t.Knob, &t.Values, &t.Base, &t.Rounds, &t.BaselinePath)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -212,7 +220,7 @@ func (s *Scheduler) Claim(ctx context.Context, slot string) (*Task, error) {
 			return nil, fmt.Errorf("claim stand task: %w", err)
 		}
 		st, err := s.settings(ctx)
-		if err == nil && !st.Enabled {
+		if err == nil && !st.Enabled && t.Knob != capacity.TaskKind {
 			err = errors.New("стенд выключен: stand_settings.enabled = false")
 		}
 		if err == nil {
@@ -230,16 +238,17 @@ func (s *Scheduler) Claim(ctx context.Context, slot string) (*Task, error) {
 // Result is what a point sends back for a run: its rows, the core it ran,
 // and why it stopped short, if it did.
 type Result struct {
-	Core  string `json:"core"`
-	Rows  []Row  `json:"rows"`
-	Error string `json:"error,omitempty"`
+	Capacity []capacity.Sample `json:"capacity,omitempty"`
+	Core     string            `json:"core"`
+	Rows     []Row             `json:"rows"`
+	Error    string            `json:"error,omitempty"`
 }
 
 // Finish records slot's result for task id: the rows go to the dataset as
 // rows of slot, whatever vantage they name, and the task is done, or failed
 // when the point says why it stopped. It returns how many rows were new.
 func (s *Scheduler) Finish(ctx context.Context, slot string, id uuid.UUID, res Result) (int, error) {
-	if len(res.Rows) > maxTaskRows {
+	if len(res.Rows) > maxTaskRows || len(res.Capacity) > 128 {
 		return 0, fmt.Errorf("%w: %d rows, at most %d", ErrNotAResult, len(res.Rows), maxTaskRows)
 	}
 	var knob string
@@ -249,6 +258,36 @@ func (s *Scheduler) Finish(ctx context.Context, slot string, id uuid.UUID, res R
 	}
 	if err != nil {
 		return 0, fmt.Errorf("stand task: %w", err)
+	}
+	if knob == capacity.TaskKind {
+		if len(res.Rows) > 0 {
+			return 0, fmt.Errorf("%w: diagnostics in capacity task", ErrNotAResult)
+		}
+		for _, sample := range res.Capacity {
+			if err := sample.Validate(time.Now()); err != nil {
+				return 0, fmt.Errorf("%w: %v", ErrNotAResult, err)
+			}
+		}
+		added, err := (capacity.Store{Pool: s.pool}).Save(ctx, slot, res.Capacity, res.Core)
+		if err != nil {
+			return 0, err
+		}
+		state := TaskDone
+		reason := res.Error
+		if reason != "" || len(res.Capacity) == 0 {
+			state = TaskFailed
+			if reason == "" {
+				reason = "no capacity measurements"
+			}
+		}
+		if len(reason) > 2000 {
+			reason = reason[:2000]
+		}
+		_, err = s.pool.Exec(ctx, `UPDATE stand_tasks SET status=$2,error=$3,core=$4,rows_sent=$5,rows_added=$6,finished_at=now(),links_token_hash=NULL WHERE id=$1`, id, state, reason, res.Core, len(res.Capacity), added)
+		return added, err
+	}
+	if len(res.Capacity) > 0 {
+		return 0, fmt.Errorf("%w: capacity in diagnostic task", ErrNotAResult)
 	}
 	rows := make([]Row, len(res.Rows))
 	for i, r := range res.Rows {
@@ -399,4 +438,17 @@ func (s *Scheduler) FleetLinks(ctx context.Context, token string) ([]string, err
 		return nil, ErrNoSuchLinks
 	}
 	return s.fleet.Links(ctx)
+}
+
+// queueCapacity does not depend on the diagnostic knob matrix being enabled.
+func (s *Scheduler) queueCapacity(ctx context.Context) (int, error) {
+	tag, err := s.pool.Exec(ctx, `INSERT INTO stand_tasks(slot,knob,vals,base,rounds,baseline_path)
+ SELECT v.slot,'capacity-v1',ARRAY['download'],'',1,'/' FROM entry_vantages v,relay_capacity_settings c
+ WHERE c.id AND c.enabled AND v.status='active' AND v.in_russia
+ AND NOT EXISTS(SELECT 1 FROM stand_tasks t WHERE t.slot=v.slot AND t.knob='capacity-v1'
+  AND (t.status IN ('queued','claimed') OR t.created_at>now()-make_interval(mins=>c.interval_minutes)))`)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }

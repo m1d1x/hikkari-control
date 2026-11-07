@@ -49,6 +49,9 @@ func (h hubClient) do(ctx context.Context, method, path string, body any, out an
 		return 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+h.token)
+	if path == "/stand/claim" {
+		req.Header.Set("Hikkari-Stand-Features", "capacity-v1")
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

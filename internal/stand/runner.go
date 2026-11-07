@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/m1d1x/hikkari-control/internal/capacity"
 	"os/exec"
 	"strings"
 	"time"
@@ -13,8 +14,9 @@ import (
 
 // Profile is one entry of the fleet's links as the client parses it.
 type Profile struct {
-	Label  string         `json:"label"`
-	Config map[string]any `json:"config"`
+	CapacityKey string         `json:"capacityKey"`
+	Label       string         `json:"label"`
+	Config      map[string]any `json:"config"`
 }
 
 // Profiles runs the kit's parser over the run's link to the fleet's links
@@ -78,6 +80,9 @@ func (r Runner) Run(ctx context.Context, t Task) Result {
 	if err != nil {
 		res.Error = err.Error()
 		return res
+	}
+	if t.Knob == capacity.TaskKind {
+		return r.runCapacity(ctx, profiles)
 	}
 	var errs []string
 	measured := 0

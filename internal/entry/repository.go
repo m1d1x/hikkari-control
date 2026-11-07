@@ -168,7 +168,18 @@ const (
 		  AND NOT EXISTS (SELECT 1 FROM entry_grants g JOIN entry_relays gr ON gr.id = g.relay_id
 		                  WHERE g.account_id = $1 AND g.revoked_at IS NULL AND gr.box = r.box)
 		  AND (SELECT count(DISTINCT g.account_id) FROM entry_grants g JOIN entry_relays gr ON gr.id = g.relay_id
+		       JOIN hub_accounts ha ON ha.id = g.account_id AND NOT ha.all_relays
 		       WHERE g.revoked_at IS NULL AND gr.box = r.box) < $3`
+	// A tester account (hub_accounts.all_relays) holds every alive personal
+	// relay it does not hold yet: no slots, no one-per-machine rule, no
+	// capacity of a machine (and it takes none from others, see above).
+	grantCandidatesAll = `
+		SELECT r.id, r.name, b.proto, coalesce(b.region, ''), b.name
+		FROM entry_relays r JOIN entry_boxes b ON b.name = r.box
+		WHERE r.kind = 'personal' AND r.status = 'alive' AND r.expires_at > $2
+		  AND NOT EXISTS (SELECT 1 FROM entry_grants g
+		                  WHERE g.account_id = $1 AND g.relay_id = r.id AND g.revoked_at IS NULL)`
+	selectAllRelays     = `SELECT all_relays FROM hub_accounts WHERE id = $1`
 	selectAliveEnvelope = `
 		SELECT envelope_ct FROM entry_relays WHERE name = $1 AND status = 'alive'`
 	// The relays a subscriber can be handed (grantCandidates without the
@@ -625,8 +636,14 @@ type candidate struct {
 	box string
 }
 
-func (r *Repository) candidates(ctx context.Context, tx pgx.Tx, account uuid.UUID, now time.Time) ([]candidate, error) {
-	rows, err := tx.Query(ctx, grantCandidates, account, now, SubscribersPerBox)
+func (r *Repository) candidates(ctx context.Context, tx pgx.Tx, account uuid.UUID, now time.Time, all bool) ([]candidate, error) {
+	var rows pgx.Rows
+	var err error
+	if all {
+		rows, err = tx.Query(ctx, grantCandidatesAll, account, now)
+	} else {
+		rows, err = tx.Query(ctx, grantCandidates, account, now, SubscribersPerBox)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -640,6 +657,13 @@ func (r *Repository) candidates(ctx context.Context, tx pgx.Tx, account uuid.UUI
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// allRelays: the account is a tester's and holds the whole fleet.
+func (r *Repository) allRelays(ctx context.Context, tx pgx.Tx, account uuid.UUID) (bool, error) {
+	var all bool
+	err := tx.QueryRow(ctx, selectAllRelays, account).Scan(&all)
+	return all, err
 }
 
 func (r *Repository) accountCreated(ctx context.Context, tx pgx.Tx, account uuid.UUID) (time.Time, error) {

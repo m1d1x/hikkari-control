@@ -1294,11 +1294,19 @@ func (s *Service) serve(ctx context.Context, account uuid.UUID, meta GrantMeta) 
 	// Asked every time, not only when the stream lane is short: a voice
 	// region the account holds nothing of yet shows up only among the
 	// candidates. One read of the alive pool under the batch lock.
-	cands, err := s.repo.candidates(ctx, tx, account, now)
+	all, err := s.repo.allRelays(ctx, tx, account)
 	if err != nil {
 		return nil, err
 	}
-	if picked := s.pick(account, held, cands); len(picked) > 0 {
+	cands, err := s.repo.candidates(ctx, tx, account, now, all)
+	if err != nil {
+		return nil, err
+	}
+	picked := s.pick(account, held, cands)
+	if all {
+		picked = cands
+	}
+	if len(picked) > 0 {
 		triggers, err := s.refillTriggers(ctx, tx, account, picked)
 		if err != nil {
 			return nil, err

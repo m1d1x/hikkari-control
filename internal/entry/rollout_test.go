@@ -192,7 +192,7 @@ func handedOut(t *testing.T, h *harness, relay string) bool {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // read-only
-	cands, err := h.svc.repo.candidates(ctx, tx, testAccount(t, h.pool), time.Now())
+	cands, err := h.svc.repo.candidates(ctx, tx, testAccount(t, h.pool), time.Now(), false)
 	if err != nil {
 		t.Fatal(err)
 	}

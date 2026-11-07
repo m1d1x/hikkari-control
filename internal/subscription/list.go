@@ -38,6 +38,8 @@ type Summary struct {
 	Used int64
 	// Relays are the relays its batch is granted on now.
 	Relays []string
+	// Tester: the account holds the whole fleet (hub_accounts.all_relays).
+	Tester bool
 }
 
 const summaries = `
@@ -54,7 +56,8 @@ const summaries = `
 	         ELSE 'live'
 	       END,
 	       coalesce((SELECT array_agg(r.name ORDER BY r.name) FROM entry_grants g JOIN entry_relays r ON r.id = g.relay_id
-	                 WHERE g.account_id = a.id AND g.revoked_at IS NULL), '{}')
+	                 WHERE g.account_id = a.id AND g.revoked_at IS NULL), '{}'),
+	       a.all_relays
 	FROM hub_subscriptions s
 	JOIN hub_accounts a ON a.id = s.account_id
 	LEFT JOIN usage u ON u.account_id = a.id`
@@ -66,7 +69,7 @@ func scanSummary(r pgx.CollectableRow) (Summary, error) {
 		state            string
 	)
 	err := r.Scan(&v.Account, &v.Name, &v.Email, &v.Plan, &v.CreatedAt, &expires, &revoked,
-		&v.TrafficBytes, &v.Used, &state, &v.Relays)
+		&v.TrafficBytes, &v.Used, &state, &v.Relays, &v.Tester)
 	if expires != nil {
 		v.ExpiresAt = *expires
 	}
@@ -102,10 +105,12 @@ func (s *Service) Get(ctx context.Context, name string) (Summary, error) {
 	return v, err
 }
 
-// CountLive is how many subscriptions are live now.
+// CountLive is how many subscriptions are live now, testers' (all relays) not
+// counted: they take no room on a machine.
 func (s *Service) CountLive(ctx context.Context) (int64, error) {
 	var n int64
-	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM hub_subscriptions s WHERE `+liveTerms).Scan(&n)
+	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM hub_subscriptions s
+		WHERE NOT (SELECT all_relays FROM hub_accounts WHERE id = s.account_id) AND `+liveTerms).Scan(&n)
 	return n, err
 }
 

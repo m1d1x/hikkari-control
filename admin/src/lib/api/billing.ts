@@ -17,6 +17,8 @@ export interface Subscription {
 	trafficBytes: number;
 	usedBytes: number;
 	relays: string[];
+	/** the account holds the whole fleet */
+	tester: boolean;
 }
 
 export interface Plan {
@@ -74,6 +76,10 @@ export const fetchSubscription = (name: string) =>
 
 export const issueSubscription = (name: string, plan: string) =>
 	post<{ url: string }>('/api/v1/admin/billing/subscriptions', { name, plan });
+
+/** A tester's link: the account holds every alive relay of the fleet. The hub picks the name (tst-xxxxxx) unless given. */
+export const issueTesterSubscription = (plan: string, name = '') =>
+	post<{ name: string; url: string }>('/api/v1/admin/billing/subscriptions', { name, plan, tester: true });
 
 export const renewSubscription = (name: string, plan: string) =>
 	post<{ subscription: Subscription }>(`/api/v1/admin/billing/subscriptions/${encodeURIComponent(name)}/renew`, {

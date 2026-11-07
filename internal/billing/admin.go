@@ -6,6 +6,8 @@ package billing
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -61,12 +63,13 @@ type subscriptionJSON struct {
 	TrafficBytes int64      `json:"trafficBytes"`
 	UsedBytes    int64      `json:"usedBytes"`
 	Relays       []string   `json:"relays"`
+	Tester       bool       `json:"tester"`
 }
 
 func toSubscriptionJSON(v subscription.Summary) subscriptionJSON {
 	out := subscriptionJSON{
 		Name: v.Name, Email: v.Email, Plan: v.Plan, State: string(v.State), CreatedAt: v.CreatedAt,
-		TrafficBytes: v.TrafficBytes, UsedBytes: v.Used, Relays: v.Relays,
+		TrafficBytes: v.TrafficBytes, UsedBytes: v.Used, Relays: v.Relays, Tester: v.Tester,
 	}
 	if !v.ExpiresAt.IsZero() {
 		out.ExpiresAt = &v.ExpiresAt
@@ -212,18 +215,34 @@ func (h *Admin) orders(r *http.Request, where, status string, args ...any) ([]or
 // {name, plan}. The link is answered once, as from the CLI.
 func (h *Admin) Issue(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name string `json:"name"`
-		Plan string `json:"plan"`
+		Name   string `json:"name"`
+		Plan   string `json:"plan"`
+		Tester bool   `json:"tester"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	token, err := h.svc.subs.Add(r.Context(), in.Name, in.Plan)
+	var token string
+	var err error
+	if in.Tester {
+		// A tester's link carries the whole fleet. No name asked: a random one.
+		if in.Name == "" {
+			var raw [3]byte
+			if _, err := rand.Read(raw[:]); err != nil {
+				h.failed(w, err)
+				return
+			}
+			in.Name = "tst-" + hex.EncodeToString(raw[:])
+		}
+		token, err = h.svc.subs.AddTester(r.Context(), in.Name, in.Plan)
+	} else {
+		token, err = h.svc.subs.Add(r.Context(), in.Name, in.Plan)
+	}
 	if h.failed(w, err) {
 		return
 	}
-	h.log(r, "subscription.issue", in.Name, map[string]any{"plan": in.Plan})
-	writeJSON(w, http.StatusCreated, map[string]string{"url": subscription.LinkURL(token)})
+	h.log(r, "subscription.issue", in.Name, map[string]any{"plan": in.Plan, "tester": in.Tester})
+	writeJSON(w, http.StatusCreated, map[string]string{"name": in.Name, "url": subscription.LinkURL(token)})
 }
 
 // Renew starts the next period on {plan}, free of charge.
