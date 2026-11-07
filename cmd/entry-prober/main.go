@@ -160,6 +160,15 @@ type config struct {
 }
 
 func main() {
+	if os.Getenv("ENTRY_PROBE_UPDATE_DIR") != "" && os.Getenv("ENTRY_PROBE_UPDATE_CHILD") != "1" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := bootstrap(ctx, updateDir()); err != nil {
+			log.Printf("bootstrap: %v", err)
+		}
+		return
+	}
+
 	// A point outside Russia measures for the stand only: its verdicts on the
 	// pool would be a control's word in the detector, which reads Russia.
 	if envStr("ENTRY_PROBE_ROLE", "all") == "stand" {
@@ -193,6 +202,7 @@ func main() {
 
 	// Admission probes run beside the routine rounds, on their own xray and
 	// ports: a new box must not wait for the next round, nor share its engine.
+	go cfg.serveUpdates(ctx)
 	go cfg.serveTasks(ctx)
 	// Benches of a new relay build (П6.14) on a third xray: minutes long, so
 	// never in the way of the other two.

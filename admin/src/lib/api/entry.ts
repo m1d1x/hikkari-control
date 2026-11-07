@@ -1440,6 +1440,9 @@ export interface PressurePoint {
  * prober that died makes the censor look like it stopped pushing.
  */
 export interface PressureVantage {
+ proberSha?: string;
+ proberPollAt?: string;
+ proberUpdateError?: string;
 	region: string;
 	title?: string;
 	box?: string;

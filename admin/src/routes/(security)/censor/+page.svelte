@@ -648,6 +648,14 @@
 									: 'старый токен сразу перестанет работать, новый покажем один раз'}
 							</p>
 
+       {#if selectedVantage.proberUpdateError}
+        <p class="hint vstale-text">Обновление пробника: {selectedVantage.proberUpdateError}</p>
+       {/if}
+       <p class="hint">
+        {selectedVantage.box ? 'Обновляет хаб по SSH' : 'Машина ещё не передана хабу по SSH'}
+        · Сборка: {selectedVantage.proberSha?.slice(0, 12) || 'не подтверждена'}
+        · Опрос сборки: {selectedVantage.proberPollAt ? new Date(selectedVantage.proberPollAt).toLocaleString('ru-RU') : 'не поступал'}
+       </p>
 							<div class="vkv-grid">
 								<div class="vkv">
 									<span class="vlabel">где стоит</span>

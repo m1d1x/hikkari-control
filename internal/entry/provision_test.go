@@ -149,7 +149,13 @@ func newProvHarness(t *testing.T) *provHarness {
 		t.Fatal(err)
 	}
 	b := &fakeBox{password: "provider-pw-123", hostKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeHostKey"}
-	p := NewProvisioner(h.svc, b.dial, dir)
+	p := NewProvisioner(h.svc, func(ctx context.Context, target sshexec.Target, auth ...ssh.AuthMethod) (Remote, error) {
+		r, err := b.dial(ctx, target, auth...)
+		if err != nil {
+			return nil, err
+		}
+		return newFakeProberRemote(r, h.svc), nil
+	}, dir)
 	p.SetProber("https://api.example.org")
 	p.probeTimeout, p.probePoll = 10*time.Second, 50*time.Millisecond
 	p.certCheck = func(context.Context, string, int, string) error { return nil }
