@@ -34,8 +34,10 @@ const (
 const KnobBaseline = "baseline"
 
 // Knobs are the params a row can carry and a chart can be drawn by. The stand
-// and the tester's config name them the same way.
-var Knobs = []string{"fp", "sni", "port", "flow", "alpn"}
+// and the tester's config name them the same way. mode is XHTTP's, key_share
+// Reality's: knobs of the config that the hub checks against what it handed
+// out (internal/knobcheck).
+var Knobs = []string{"fp", "sni", "port", "flow", "alpn", "mode", "key_share"}
 
 // KnobBurst is the stand's load knob: how many requests the burst opens at
 // once. It is not a knob of the config, so no params carry it; every row has a
@@ -142,6 +144,13 @@ func ParamsOf(ob map[string]any) map[string]string {
 			out["flow"] = f
 		}
 	}
+	if tr, _ := ob["transport"].(map[string]any); tr != nil {
+		if typ, _ := tr["type"].(string); typ == "xhttp" {
+			if m, _ := tr["mode"].(string); m != "" {
+				out["mode"] = m
+			}
+		}
+	}
 	tls, _ := ob["tls"].(map[string]any)
 	if tls == nil {
 		return out
@@ -164,6 +173,11 @@ func ParamsOf(ob map[string]any) map[string]string {
 			}
 		}
 		out["alpn"] = strings.Join(parts, "/")
+	}
+	if r, _ := tls["reality"].(map[string]any); r != nil {
+		if ks, _ := r["key_share"].(string); ks != "" {
+			out["key_share"] = ks
+		}
 	}
 	for k, v := range out {
 		if !reValue.MatchString(v) {

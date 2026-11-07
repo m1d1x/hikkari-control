@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/m1d1x/hikkari-control/internal/db"
+	"github.com/m1d1x/hikkari-control/internal/entry"
 	"github.com/m1d1x/hikkari-control/internal/relayruns"
 	"github.com/m1d1x/hikkari-control/internal/telemetry"
 )
@@ -68,6 +69,21 @@ func seedNode(t *testing.T, pool *pgxpool.Pool, slug, label, fingerprint string)
 		SELECT $1, id, 'vless-reality-vision', 'eu', $2, NULLIF($3, '') FROM entry_relays WHERE name = 'ams3-1'`, slug, label, fingerprint)
 }
 
+// declaredOf is what the ingester declares for a node whose relay record
+// the hub cannot open.
+func declaredOf(ctx context.Context, s *Store, profile string, asn uint32) (Declared, error) {
+	n, err := s.node(ctx, profile, asn)
+	if err != nil || !n.Known {
+		return Declared{}, err
+	}
+	return DeclaredFor(n.Proto, n.FP, n.SNI, n.ALPN, Relay{}, n.ChangedAt), nil
+}
+
+// relays stands in for entry.Service.List: the seeded relay with its covers.
+type relays []entry.PoolRelay
+
+func (r relays) List(context.Context) ([]entry.PoolRelay, error) { return r, nil }
+
 type sink struct {
 	mu   sync.Mutex
 	rows []telemetry.ErrorRow
@@ -90,35 +106,35 @@ func TestDBKnobsAtFollowsEveryChange(t *testing.T) {
 	seedNode(t, pool, "ams-a", "amsterdam-1-002", "")
 	s := NewStore(pool)
 	exec(t, pool, `UPDATE entry_nodes SET knobs_at = now() - interval '1 day'`)
-	d, err := s.declared(ctx, "amsterdam-1-002", 0)
+	d, err := declaredOf(ctx, s, "amsterdam-1-002", 0)
 	if err != nil || !d.Known || d.FP != "chrome" || time.Since(d.ChangedAt) < 23*time.Hour {
 		t.Fatalf("%+v %v", d, err)
 	}
 	// A label change is no knob change.
 	exec(t, pool, `UPDATE entry_nodes SET label = 'amsterdam-1-009'`)
 	exec(t, pool, `UPDATE entry_nodes SET label = 'amsterdam-1-002'`)
-	if d, _ := s.declared(ctx, "amsterdam-1-002", 0); time.Since(d.ChangedAt) < 23*time.Hour {
+	if d, _ := declaredOf(ctx, s, "amsterdam-1-002", 0); time.Since(d.ChangedAt) < 23*time.Hour {
 		t.Fatal("a label change counted as a knob change")
 	}
 	exec(t, pool, `UPDATE entry_nodes SET fingerprint = 'chrome_155'`)
-	if d, _ := s.declared(ctx, "amsterdam-1-002", 0); d.FP != "chrome_155" || time.Since(d.ChangedAt) > time.Minute {
+	if d, _ := declaredOf(ctx, s, "amsterdam-1-002", 0); d.FP != "chrome_155" || time.Since(d.ChangedAt) > time.Minute {
 		t.Fatalf("node change: %+v", d)
 	}
 	exec(t, pool, `UPDATE entry_nodes SET knobs_at = now() - interval '1 day'`)
 	exec(t, pool, `INSERT INTO entry_node_network_knobs (slug, asn, fingerprint, updated_at) VALUES ('ams-a', 12389, 'firefox', now() - interval '1 day')`)
-	d, _ = s.declared(ctx, "amsterdam-1-002", 12389)
+	d, _ = declaredOf(ctx, s, "amsterdam-1-002", 12389)
 	if d.FP != "firefox" || time.Since(d.ChangedAt) > time.Minute {
 		t.Fatalf("network insert: %+v", d) // the trigger stamps the insert, whatever the writer says
 	}
-	if d, _ := s.declared(ctx, "amsterdam-1-002", 3216); d.FP != "chrome_155" {
+	if d, _ := declaredOf(ctx, s, "amsterdam-1-002", 3216); d.FP != "chrome_155" {
 		t.Fatalf("another network: %+v", d)
 	}
 	exec(t, pool, `UPDATE entry_nodes SET knobs_at = now() - interval '1 day'`)
 	exec(t, pool, `DELETE FROM entry_node_network_knobs`)
-	if d, _ := s.declared(ctx, "amsterdam-1-002", 12389); d.FP != "chrome_155" || time.Since(d.ChangedAt) > time.Minute {
+	if d, _ := declaredOf(ctx, s, "amsterdam-1-002", 12389); d.FP != "chrome_155" || time.Since(d.ChangedAt) > time.Minute {
 		t.Fatalf("network delete: %+v", d)
 	}
-	if d, _ := s.declared(ctx, "nobody", 0); d.Known {
+	if d, _ := declaredOf(ctx, s, "nobody", 0); d.Known {
 		t.Fatal("a profile that is no node")
 	}
 }
@@ -145,7 +161,7 @@ func TestDBIngestFindsAndReportsOnce(t *testing.T) {
 
 	s := NewStore(pool)
 	errs := &sink{fail: fmt.Errorf("clickhouse down")}
-	in := NewIngester(s, errs)
+	in := NewIngester(s, relays{{Name: "ams3-1", Covers: []string{"www.samsung.com"}}}, errs)
 	if _, err := in.Once(ctx); err == nil {
 		t.Fatal("a failed send moved on")
 	}

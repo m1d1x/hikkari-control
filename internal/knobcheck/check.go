@@ -14,6 +14,7 @@ package knobcheck
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -39,10 +40,20 @@ type Declared struct {
 	Known bool
 	Proto string
 	FP    string
-	SNI   string // "" when the node names none: the link keeps the relay's first cover
+	SNI   string // "" when it cannot be told: the relay's covers are unreadable
 	ALPN  string // as links write it: h2,http/1.1; "" for none
+	Mode  string // XHTTP: the relay's mode, auto when it sets none; "" when unknown or not XHTTP
 	// ChangedAt is when any of them last changed for this node or network.
 	ChangedAt time.Time
+}
+
+// Relay is what the link takes from the node's relay record: Reality's covers
+// in race order and XHTTP's mode. Readable is false when the hub cannot open
+// the record; the knobs that come from it are then not checked.
+type Relay struct {
+	Readable  bool
+	Covers    []string
+	XhttpMode string
 }
 
 // Settle is how long after a change of the handed-out knobs a client's config
@@ -57,19 +68,37 @@ const (
 	protoXhttp   = "vless-xhttp"
 )
 
-// DeclaredFor fills in what the link carries when the node sets nothing
-// (hikkari-control internal/subscription/links.go): fp=chrome on both,
-// alpn h2,http/1.1 on XHTTP and none on Reality.
-func DeclaredFor(proto, fp, sni, alpn string, changedAt time.Time) Declared {
-	d := Declared{Known: proto == protoReality || proto == protoXhttp, Proto: proto, FP: fp, SNI: sni, ALPN: alpn, ChangedAt: changedAt}
+// DeclaredFor is the link the hub renders for the node
+// (internal/subscription/links.go and namedLink): fp=chrome unless the node
+// names one; on Reality the node's SNI when the relay serves it, else the
+// relay's first cover, and no alpn unless the node names one; on XHTTP
+// alpn h2,http/1.1 unless the node names one, no SNI knob (the name is the
+// relay's certificate) and the relay's mode, which the client reads as auto
+// when the link has none. No link carries key_share: the client must hold none.
+func DeclaredFor(proto, fp, sni, alpn string, relay Relay, changedAt time.Time) Declared {
+	d := Declared{Known: proto == protoReality || proto == protoXhttp, Proto: proto, FP: fp, ALPN: alpn, ChangedAt: changedAt}
 	if d.FP == "" {
 		d.FP = "chrome"
 	}
-	if d.ALPN == "" && proto == protoXhttp {
-		d.ALPN = "h2,http/1.1"
-	}
-	if proto != protoReality {
-		d.SNI = "" // on XHTTP the name is the relay's certificate, no knob
+	switch proto {
+	case protoReality:
+		switch {
+		case !relay.Readable || len(relay.Covers) == 0:
+		case sni != "" && slices.Contains(relay.Covers, sni):
+			d.SNI = sni
+		default:
+			d.SNI = relay.Covers[0]
+		}
+	case protoXhttp:
+		if d.ALPN == "" {
+			d.ALPN = "h2,http/1.1"
+		}
+		if relay.Readable {
+			d.Mode = relay.XhttpMode
+			if d.Mode == "" {
+				d.Mode = "auto"
+			}
+		}
 	}
 	return d
 }
@@ -112,18 +141,30 @@ func Check(profile, network string, params map[string]string, d Declared, at tim
 		if want == got {
 			return
 		}
-		shown := got
+		shown, wanted := got, want
 		if shown == "" {
 			shown = "ничего"
 		}
+		if wanted == "" {
+			wanted = "ничего"
+		}
 		out = append(out, Finding{Code: CodeKnobMismatch, Knob: name, Want: want, Got: got,
-			Msg: fmt.Sprintf("%s: hub выдаёт %s=%s %s, в конфиге клиента %s", tag, name, want, where, shown)})
+			Msg: fmt.Sprintf("%s: hub выдаёт %s=%s %s, в конфиге клиента %s", tag, name, wanted, where, shown)})
 	}
 	knob("fp", d.FP, params["fp"])
 	if d.SNI != "" {
 		knob("sni", d.SNI, params["sni"])
 	}
 	knob("alpn", alpnKey(d.ALPN), alpnKey(params["alpn"]))
+	// A client writes mode for every XHTTP outbound (the parser sets auto when
+	// the link has none), so a round without it is an older client or a config
+	// the hub could not read, not a missing knob.
+	if got, ok := params["mode"]; ok && d.Mode != "" {
+		knob("mode", d.Mode, got)
+	}
+	if d.Proto == protoReality {
+		knob("key_share", "", params["key_share"])
+	}
 	if len(out) > 0 {
 		return StateMismatch, out
 	}

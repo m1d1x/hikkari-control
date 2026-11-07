@@ -864,6 +864,9 @@ func (s *Service) List(ctx context.Context) ([]PoolRelay, error) {
 		if relays[i].Proto == ProtoVlessRealityVision {
 			relays[i].Covers = append([]string(nil), id.Covers...)
 		}
+		if id.Xhttp != nil {
+			relays[i].XhttpMode = id.Xhttp.Mode
+		}
 	}
 	return relays, nil
 }

@@ -354,6 +354,9 @@ type PoolRelay struct {
 	// Covers are the cover sites a Reality relay races, in race order; empty
 	// on the other protocols (see shortOfCovers).
 	Covers []string `json:"covers,omitempty"`
+	// XhttpMode is the mode an XHTTP relay's link hands out; "" on the other
+	// protocols and on a relay that sets none (the client then runs auto).
+	XhttpMode string `json:"xhttpMode,omitempty"`
 	// Unreadable: the server key could not open the identity or the box
 	// address (sealed under a key since rotated away).
 	Unreadable bool `json:"unreadable,omitempty"`

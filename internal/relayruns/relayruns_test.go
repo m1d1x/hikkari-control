@@ -226,3 +226,25 @@ func TestValidate(t *testing.T) {
 		}
 	}
 }
+
+// mode and key_share are config knobs the hub checks against what it handed
+// out (internal/knobcheck): the config and the line name them as the client
+// does (hikkari-client diagnostics/load.go, loadKnobs).
+func TestParamsOfReadsModeAndKeyShare(t *testing.T) {
+	xhttp := map[string]any{"type": "vless", "server_port": float64(443),
+		"tls":       map[string]any{"enabled": true, "server_name": "x.example", "utls": map[string]any{"enabled": true, "fingerprint": "chrome"}},
+		"transport": map[string]any{"type": "xhttp", "mode": "stream-up"}}
+	if p := ParamsOf(xhttp); p["mode"] != "stream-up" || p["key_share"] != "" {
+		t.Fatalf("%v", p)
+	}
+	reality := map[string]any{"type": "vless", "server_port": float64(8443),
+		"tls":       map[string]any{"enabled": true, "reality": map[string]any{"enabled": true, "key_share": "classical"}},
+		"transport": map[string]any{"type": "ws", "mode": "x"}}
+	if p := ParamsOf(reality); p["key_share"] != "classical" || p["mode"] != "" {
+		t.Fatalf("%v", p)
+	}
+	l, ok := parseLoadLine("2026/11/07 12:00:01.000 [diag:load] p-x proto=vless-xhttp fp=chrome mode=stream-up dl=1/1 took=1s end=ok burst=1/1 timeout=0 med=1ms after=1/1 med=1ms")
+	if r := l.row("t-a", time.Now(), "", nil); !ok || r.Params["mode"] != "stream-up" || r.Validate() != nil {
+		t.Fatalf("%v %v", r.Params, r.Validate())
+	}
+}

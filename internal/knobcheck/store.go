@@ -81,6 +81,9 @@ func declaredJSON(d Declared) []byte {
 	if d.SNI != "" {
 		m["sni"] = d.SNI
 	}
+	if d.Mode != "" {
+		m["mode"] = d.Mode
+	}
 	b, _ := json.Marshal(m)
 	return b
 }
@@ -99,24 +102,32 @@ func (s *Store) record(ctx context.Context, runID int64, state string, d Declare
 	return nil
 }
 
-// declared reads what the hub hands out for the node labelled profile to a
-// subscriber of network (0: the node's own values).
-func (s *Store) declared(ctx context.Context, profile string, asn uint32) (Declared, error) {
-	var proto, fp, sni, alpn string
-	var changed time.Time
+// nodeKnobs is a node's own knobs for a network, before the relay fills in
+// what the link takes from it.
+type nodeKnobs struct {
+	Known                        bool
+	Proto, FP, SNI, ALPN, Relay string
+	ChangedAt                    time.Time
+}
+
+// node reads what the hub hands out for the node labelled profile to a
+// subscriber of network (0: the node's own values), and its relay's name.
+func (s *Store) node(ctx context.Context, profile string, asn uint32) (nodeKnobs, error) {
+	n := nodeKnobs{Known: true}
 	err := s.pool.QueryRow(ctx, `
 		SELECT n.proto, coalesce(k.fingerprint, n.fingerprint, ''), coalesce(k.sni, n.sni, ''),
-		       coalesce(k.alpn, n.alpn, ''), greatest(n.knobs_at, coalesce(k.updated_at, n.knobs_at))
+		       coalesce(k.alpn, n.alpn, ''), r.name, greatest(n.knobs_at, coalesce(k.updated_at, n.knobs_at))
 		FROM entry_nodes n
+		JOIN entry_relays r ON r.id = n.relay_id
 		LEFT JOIN entry_node_network_knobs k ON k.slug = n.slug AND k.asn = $2
-		WHERE n.label = $1`, profile, int64(asn)).Scan(&proto, &fp, &sni, &alpn, &changed)
+		WHERE n.label = $1`, profile, int64(asn)).Scan(&n.Proto, &n.FP, &n.SNI, &n.ALPN, &n.Relay, &n.ChangedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Declared{}, nil
+		return nodeKnobs{}, nil
 	}
 	if err != nil {
-		return Declared{}, fmt.Errorf("declared knobs: %w", err)
+		return nodeKnobs{}, fmt.Errorf("declared knobs: %w", err)
 	}
-	return DeclaredFor(proto, fp, sni, alpn, changed), nil
+	return n, nil
 }
 
 // CheckRow is one checked round as the ops view shows it.

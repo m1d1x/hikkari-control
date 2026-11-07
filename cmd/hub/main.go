@@ -361,7 +361,7 @@ func run() error {
 	if store != nil {
 		knobErrs = store // a nil *analytics.Store in the interface would not read as nil
 	}
-	go knobcheck.NewIngester(knobChecks, knobErrs).Run(ctx, 2*time.Minute)
+	go knobcheck.NewIngester(knobChecks, svc, knobErrs).Run(ctx, 2*time.Minute)
 	// The stand on the hub's schedule: every active observation point runs
 	// every enabled knob over every relay of the fleet, rows into relayRuns.
 	standRuns := stand.NewScheduler(pool, svc, standFleet{subs: subs, fleet: svc}, relayRuns, config.Default().APIURL())

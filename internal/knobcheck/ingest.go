@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/m1d1x/hikkari-control/internal/entry"
 	"github.com/m1d1x/hikkari-control/internal/telemetry"
 )
 
@@ -15,14 +16,22 @@ import (
 // go to the client errors (telemetry_errors), where the errors list groups them
 // with everything else that breaks.
 type Ingester struct {
-	store *Store
+	store  *Store
+	relays Relays
 	// errs is the client errors table; nil keeps findings in knob_checks only.
 	errs telemetry.Sink
 }
 
-// NewIngester checks into store; errs may be nil (no ClickHouse).
-func NewIngester(store *Store, errs telemetry.Sink) *Ingester {
-	return &Ingester{store: store, errs: errs}
+// Relays opens the fleet's relay records: the covers and the XHTTP mode a
+// link takes from them (entry.Service.List).
+type Relays interface {
+	List(ctx context.Context) ([]entry.PoolRelay, error)
+}
+
+// NewIngester checks into store, reading relays from relays; errs may be nil
+// (no ClickHouse).
+func NewIngester(store *Store, relays Relays, errs telemetry.Sink) *Ingester {
+	return &Ingester{store: store, relays: relays, errs: errs}
 }
 
 // ComponentKnob is the errors' component of every finding.
@@ -52,6 +61,7 @@ func (in *Ingester) Run(ctx context.Context, every time.Duration) {
 func (in *Ingester) Once(ctx context.Context) (int, error) {
 	total := 0
 	declared := map[string]Declared{}
+	var relays map[string]Relay // opened once a pass, when a round needs it
 	for {
 		rounds, err := in.store.unchecked(ctx, 500)
 		if err != nil || len(rounds) == 0 {
@@ -61,8 +71,17 @@ func (in *Ingester) Once(ctx context.Context) (int, error) {
 			key := r.Profile + "|" + r.Network
 			d, seen := declared[key]
 			if !seen {
-				if d, err = in.store.declared(ctx, r.Profile, asnOf(r.Network)); err != nil {
+				n, err := in.store.node(ctx, r.Profile, asnOf(r.Network))
+				if err != nil {
 					return total, err
+				}
+				if n.Known && relays == nil {
+					if relays, err = in.openRelays(ctx); err != nil {
+						return total, err
+					}
+				}
+				if n.Known {
+					d = DeclaredFor(n.Proto, n.FP, n.SNI, n.ALPN, relays[n.Relay], n.ChangedAt)
 				}
 				declared[key] = d
 			}
@@ -80,6 +99,24 @@ func (in *Ingester) Once(ctx context.Context) (int, error) {
 			total++
 		}
 	}
+}
+
+// openRelays reads every relay record the hub can open.
+func (in *Ingester) openRelays(ctx context.Context) (map[string]Relay, error) {
+	out := map[string]Relay{}
+	if in.relays == nil {
+		return out, nil
+	}
+	list, err := in.relays.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("relay records: %w", err)
+	}
+	for _, r := range list {
+		if !r.Unreadable {
+			out[r.Name] = Relay{Readable: true, Covers: r.Covers, XhttpMode: r.XhttpMode}
+		}
+	}
+	return out, nil
 }
 
 // report sends a round's findings to the client errors, one row per finding,
