@@ -60,9 +60,20 @@ func (h *harness) later(kind string, by time.Duration) {
 // point answers the same way: a failure two points agree on.
 func (h *harness) answerBoxReprobe(box, verdict string) {
 	h.t.Helper()
+	h.livePoints(testVantage, testVantage2)
 	h.answerBoxReprobeAs(testVantage, box, verdict)
 	if boxReading(map[string]string{"r": verdict}, []string{"r"}) == readFailed {
 		h.answerBoxReprobeAs(testVantage2, box, verdict)
+	}
+}
+
+// livePoints marks slots as polling now, and every other point as long gone:
+// the live points in Russia are the ones a confirmation is put to.
+func (h *harness) livePoints(slots ...string) {
+	h.t.Helper()
+	if _, err := h.pool.Exec(context.Background(), `
+		UPDATE entry_vantages SET last_admission_poll_at = CASE WHEN slot = ANY($1) THEN now() ELSE NULL END`, slots); err != nil {
+		h.t.Fatal(err)
 	}
 }
 
@@ -573,8 +584,9 @@ func TestASuspectMachineWithNoFailedReprobeOutlivesTheDeadline(t *testing.T) {
 	}
 }
 
-// One point's failed reprobe moves nothing: it is asked again of another
-// point, and the second's clean reading against it is no reading at all.
+// One point's failed reprobe moves nothing while another point is live: it is
+// asked again of that point, and a clean reading against it is a tie — no
+// reading at all.
 func TestOnePointsFailedReprobeIsNotAFailure(t *testing.T) {
 	h, box := suspectBoxHarness(t)
 	c := h.boxChance()
@@ -582,6 +594,7 @@ func TestOnePointsFailedReprobeIsNotAFailure(t *testing.T) {
 	if n, err := h.svc.reprobeSuspectBoxes(context.Background(), c); err != nil || n < 1 {
 		t.Fatalf("queued %d machine reprobes (%v), want this one", n, err)
 	}
+	h.livePoints(testVantage, testVantage2)
 	h.answerBoxReprobeAs(testVantage, box, "ip_banned")
 	if _, _, fails := h.suspicion(SuspectBox, box); fails != 0 {
 		t.Fatalf("one point's failure counted: %d failed reprobes", fails)
@@ -589,5 +602,21 @@ func TestOnePointsFailedReprobeIsNotAFailure(t *testing.T) {
 	h.answerBoxReprobeAs(testVantage2, box, "clean")
 	if status, streak, fails := h.suspicion(SuspectBox, box); status != "suspect" || streak != 0 || fails != 0 {
 		t.Fatalf("two points disagreeing read as %s streak=%d fails=%d, want nothing moved", status, streak, fails)
+	}
+}
+
+// With one point in Russia, its failed reprobe is the verdict: there is no
+// one else to ask.
+func TestTheOnlyPointsFailedReprobeCounts(t *testing.T) {
+	h, box := suspectBoxHarness(t)
+	c := h.boxChance()
+	h.later(SuspectBox, c.ProbeEvery+time.Hour)
+	if n, err := h.svc.reprobeSuspectBoxes(context.Background(), c); err != nil || n < 1 {
+		t.Fatalf("queued %d machine reprobes (%v), want this one", n, err)
+	}
+	h.livePoints(testVantage)
+	h.answerBoxReprobeAs(testVantage, box, "ip_banned")
+	if _, _, fails := h.suspicion(SuspectBox, box); fails != 1 {
+		t.Fatalf("the only point's failure: %d failed reprobes, want 1", fails)
 	}
 }

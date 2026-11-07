@@ -67,14 +67,15 @@ func TestABanWithoutAVerdictIsRefused(t *testing.T) {
 	}
 }
 
-// One point's refusal is not a verdict: the second point sees the relay clean,
-// and the relay reads unconfirmed — neither admitted nor refused.
+// One point's refusal against another's clean is a tie, not a verdict: the
+// relay reads unconfirmed — neither admitted nor refused.
 func TestARefusalOnePointGivesIsUnconfirmed(t *testing.T) {
 	ph := newProvHarness(t)
 	ctx := context.Background()
 	box, _ := ph.harness.box()
 	relay := ph.relay(box, KindPersonal)
 	ph.admit(relay)
+	ph.livePoints(testVantage, testVantage2)
 
 	go func() {
 		for i, slot := range []string{testVantage, testVantage2} {
@@ -111,7 +112,7 @@ func TestAPointAbroadDoesNotJudgeABan(t *testing.T) {
 	box, _ := ph.harness.box()
 	relay := ph.relay(box, KindPersonal)
 	ph.admit(relay)
-	task, err := ph.svc.createProbeTask(ctx, uuid.Nil, []string{relay}, "")
+	task, err := ph.svc.createProbeTask(ctx, uuid.Nil, []string{relay}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,5 +123,38 @@ func TestAPointAbroadDoesNotJudgeABan(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatalf("the point abroad claimed admission task %s", got.ID)
+	}
+}
+
+// With one point in Russia live, its refusal is the verdict: nobody else is
+// there to ask, and the wait does not hang on one.
+func TestTheOnlyPointsRefusalStands(t *testing.T) {
+	ph := newProvHarness(t)
+	ctx := context.Background()
+	box, _ := ph.harness.box()
+	relay := ph.relay(box, KindPersonal)
+	ph.admit(relay)
+	ph.livePoints(testVantage)
+
+	go func() {
+		for j := 0; j < 200; j++ {
+			task, err := ph.svc.ClaimProbeTask(ctx, testVantage, TaskAdmission)
+			if err == nil && task != nil {
+				_ = ph.svc.FinishProbeTask(ctx, task.ID, testVantage, map[string]string{relay: VerdictIPBanned}, nil)
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+	start := time.Now()
+	v, err := ph.svc.askConfirmed(ctx, uuid.Nil, []string{relay}, time.Now().Add(10*time.Second), 20*time.Millisecond, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v[relay] != VerdictIPBanned {
+		t.Fatalf("verdict %q, want the only point's %s", v[relay], VerdictIPBanned)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("waited %s for points that are not there", time.Since(start))
 	}
 }

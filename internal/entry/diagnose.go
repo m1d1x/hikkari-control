@@ -224,7 +224,10 @@ func DiagnoseBoxWithPolicy(box string, relays []PoolRelay, verdicts RelayVerdict
 //     for a relay is ignored whenever at least one other vantage judged that
 //     relay with a real verdict; only if every judging vantage saw
 //     "network_down" does the relay remain "network_down" (CauseBlind).
-//  2. When policy.RequireTwoVantages is true, a blocking verdict
+//  2. Otherwise the majority of the points that judged decides, one point
+//     alone being that majority; a tie between blocking and healthy is
+//     "unknown", left to the clients' reports (Detect).
+//  3. When policy.RequireTwoVantages is true, a blocking verdict
 //     ("domain_blocked", "fingerprint", "ip_banned") on a relay is accepted
 //     only when at least two distinct vantages reported a blocking verdict for
 //     that relay in the window. If only one vantage saw a block while another
@@ -295,11 +298,16 @@ func MergeVantageVerdicts(byVantage map[string]RelayVerdicts, policy DetectionPo
 			continue
 		}
 
+		// The majority of the points that judged decides; one point alone is
+		// that majority. A tie is no verdict ("unknown"): the clients'
+		// reports decide it (Detect), as they do where no point judged.
 		switch {
-		case len(blocking) > 0:
+		case len(blocking) > len(healthy):
 			out[relay] = pickBlockingVerdict(blocking)
-		case len(healthy) > 0:
+		case len(healthy) > len(blocking):
 			out[relay] = pickHealthyVerdict(healthy)
+		case len(blocking) > 0:
+			out[relay] = "unknown"
 		case len(other) > 0:
 			out[relay] = other[0]
 		}

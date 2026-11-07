@@ -21,8 +21,9 @@ import (
 // address fails for the vantage as well.
 //
 // So the console's and the shell's retire with a censor reason queue a fresh
-// admission probe of the box's live relays — a refusal in it confirmed by a
-// second point in Russia (vantage_confirm.go) — and refuse when:
+// admission probe of the box's live relays — a refusal in it put to every
+// live point in Russia, up to ten, the majority deciding (vantage_confirm.go)
+// — and refuse when:
 //   - the vantage sees any of them clean: it is not a ban, whatever the
 //     testers saw;
 //   - the vantage gives no verdict, or none answers: no evidence is not a
@@ -74,7 +75,7 @@ func (s *Service) ProveCensorDeath(ctx context.Context, box, reason string) (map
 	}
 
 	// No job: a task tied to one is claimed only while the job runs, and
-	// this wait is not a job. A refusal is confirmed by a second point.
+	// this wait is not a job. A refusal is put to the other live points.
 	verdicts, err := s.askConfirmed(ctx, uuid.Nil, names, time.Now().Add(censorProofTimeout), censorProofPoll, nil)
 	if errors.Is(err, errNoVerdict) {
 		return nil, fmt.Errorf("%w: пробник из РФ не ответил за %s — без его вердикта %s за %s не сдают; сдать без бана: причина rotated или other",

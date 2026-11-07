@@ -41,11 +41,11 @@ const (
 		SELECT seq, at, line FROM entry_job_log WHERE job_id = $1 AND seq > $2 ORDER BY seq`
 
 	// A task of no job (uuid.Nil) is written with NULL: one tied to a job is
-	// claimed only while the job runs. not_by names the point a confirmation
-	// may not be answered by.
+	// claimed only while the job runs. not_by names the points a confirmation
+	// may not be answered by: the ones that answered already.
 	insertProbeTask = `
 		INSERT INTO entry_probe_tasks (job_id, relays, not_by)
-		VALUES (NULLIF($1::uuid, '00000000-0000-0000-0000-000000000000'::uuid), $2, NULLIF($3, ''))
+		VALUES (NULLIF($1::uuid, '00000000-0000-0000-0000-000000000000'::uuid), $2, NULLIF($3::text[], '{}'))
 		RETURNING id`
 	// Oldest first of the kind asked for; SKIP LOCKED so two vantages never
 	// take the same task.
@@ -58,7 +58,7 @@ const (
 	// one round longer, every time. A task with no job (a manual bench) is
 	// read through the API and is always wanted.
 	//
-	// A confirmation is never answered by the point it confirms, and whether
+	// A confirmation is never answered by a point that answered already, and whether
 	// a relay is banned in Russia is judged only from inside it (in_russia):
 	// a point abroad keeps its bench runs.
 	//
@@ -71,7 +71,7 @@ const (
 		            WHERE t.status = 'queued' AND t.kind = $2
 		              AND (t.job_id IS NULL OR EXISTS (
 		                  SELECT 1 FROM entry_jobs j WHERE j.id = t.job_id AND j.status = 'running'))
-		              AND (t.not_by IS NULL OR t.not_by <> $1)
+		              AND NOT ($1 = ANY(coalesce(t.not_by, '{}')))
 		              AND (t.kind = 'bench' OR EXISTS (
 		                  SELECT 1 FROM entry_vantages r WHERE r.slot = $1 AND r.in_russia))
 		            ORDER BY t.created_at LIMIT 1 FOR UPDATE OF t SKIP LOCKED)
@@ -80,7 +80,7 @@ const (
 	// The task as its claimer left it, locked for the finish. Only the slot
 	// that claimed it may answer it (audit 42-autopilot В2).
 	claimedProbeTask = `
-		SELECT kind, relays, coalesce(params, '{}'::jsonb), coalesce(not_by, '') FROM entry_probe_tasks
+		SELECT kind, relays, coalesce(params, '{}'::jsonb), coalesce(not_by, '{}') FROM entry_probe_tasks
 		WHERE id = $1 AND status = 'claimed' AND claimed_by = $2
 		FOR UPDATE`
 	// A bench must come back with its result; an admission probe and the
@@ -501,8 +501,8 @@ func (s *Service) FinishProbeTask(ctx context.Context, id uuid.UUID, by string, 
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var kind, confirms string
-	var relays []string
+	var kind string
+	var relays, confirms []string
 	var params []byte
 	err = tx.QueryRow(ctx, claimedProbeTask, id, by).Scan(&kind, &relays, &params, &confirms)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -540,7 +540,10 @@ func (s *Service) FinishProbeTask(ctx context.Context, id uuid.UUID, by string, 
 	return nil
 }
 
-func (s *Service) createProbeTask(ctx context.Context, job uuid.UUID, relays []string, notBy string) (uuid.UUID, error) {
+func (s *Service) createProbeTask(ctx context.Context, job uuid.UUID, relays, notBy []string) (uuid.UUID, error) {
+	if notBy == nil {
+		notBy = []string{}
+	}
 	var id uuid.UUID
 	err := s.pool.QueryRow(ctx, insertProbeTask, job, relays, notBy).Scan(&id)
 	return id, err

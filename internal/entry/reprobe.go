@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -64,12 +66,13 @@ const (
 	insertBoxConfirmation = `
 		INSERT INTO entry_probe_tasks (relays, kind, params, not_by) VALUES ($1, $2, $3, $4)`
 
-	// staleConfirmations: a confirmation no second point took within the
-	// machine's probe interval is dropped; the next reprobe asks afresh.
+	// staleConfirmations: a confirmation no further point took in time. The
+	// points that did answer decide (settleStaleConfirmations).
 	staleConfirmations = `
 		DELETE FROM entry_probe_tasks
 		WHERE kind = $1 AND status = 'queued' AND not_by IS NOT NULL
-		  AND created_at < now() - make_interval(secs => $2)`
+		  AND created_at < now() - make_interval(secs => $2)
+		RETURNING params`
 
 	// reprobeAddressRelay picks the live XHTTP relay whose address the names
 	// are tried against; at random, so one box does not carry every burned
@@ -92,9 +95,50 @@ type domainTaskParams struct {
 	Domains []string `json:"domains"`
 }
 
-// boxTaskParams is a machine reprobe's params: the machine reprobed.
+// boxTaskParams is a machine reprobe's params: the machine reprobed, and on a
+// confirmation what the points asked so far read (slot → failed, clean or
+// nothing).
 type boxTaskParams struct {
-	Box string `json:"box"`
+	Box     string            `json:"box"`
+	Answers map[string]string `json:"answers,omitempty"`
+}
+
+// Readings as a confirmation carries them.
+const (
+	answerFailed  = "failed"
+	answerClean   = "clean"
+	answerNothing = "nothing"
+)
+
+func answerOf(r reading) string {
+	switch r {
+	case readFailed:
+		return answerFailed
+	case readClean:
+		return answerClean
+	}
+	return answerNothing
+}
+
+// majorityReading is what the points that judged agree on: more failed than
+// clean is a failure, more clean than failed is clean, a tie is no reading.
+func majorityReading(answers map[string]string) reading {
+	failed, clean := 0, 0
+	for _, a := range answers {
+		switch a {
+		case answerFailed:
+			failed++
+		case answerClean:
+			clean++
+		}
+	}
+	switch {
+	case failed > clean:
+		return readFailed
+	case clean > failed:
+		return readClean
+	}
+	return readNothing
 }
 
 // ReprobeBurnedDomains queues one reprobe of the burned names due for one,
@@ -160,7 +204,7 @@ func (s *Service) reprobeSuspectBoxes(ctx context.Context, c SecondChance) (int,
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, staleConfirmations, TaskBox, c.ProbeEvery.Seconds()); err != nil {
+	if err := s.settleStaleConfirmations(ctx, tx, c); err != nil {
 		return 0, err
 	}
 	var pending bool
@@ -211,12 +255,13 @@ func (s *Service) reprobeSuspectBoxes(ctx context.Context, c SecondChance) (int,
 // transaction that finishes the task. Read over the relays the task carried
 // only: a verdict about anything else is not an answer to this task.
 //
-// A failure is two points' word (vantage_confirm.go): one point's failed
-// reading queues the same reprobe for another point in Russia (confirms names
-// the first) and moves nothing yet. The confirmation's failure is the one
-// failed reprobe the ledger counts; its clean reading against the first one's
-// failure is no reading at all.
-func (s *Service) applyBoxVerdicts(ctx context.Context, tx pgx.Tx, params []byte, relays []string, verdicts map[string]string, by, confirms string) error {
+// A failure is the word of every live point in Russia, up to ten
+// (vantage_confirm.go): one point's failed reading queues the same reprobe for
+// the next point that has not answered (confirms lists those that did), and
+// moves nothing yet. When no live point is left to ask, or ten answered, the
+// majority of those that judged is the one reading the ledger counts; with
+// one point in Russia, its reading is that majority.
+func (s *Service) applyBoxVerdicts(ctx context.Context, tx pgx.Tx, params []byte, relays []string, verdicts map[string]string, by string, confirms []string) error {
 	var p boxTaskParams
 	if err := json.Unmarshal(params, &p); err != nil || p.Box == "" {
 		return fmt.Errorf("entry: box task params: %v", err)
@@ -226,16 +271,33 @@ func (s *Service) applyBoxVerdicts(ctx context.Context, tx pgx.Tx, params []byte
 		return err
 	}
 	r := boxReading(verdicts, relays)
-	switch {
-	case r == readFailed && confirms == "":
-		if _, err := tx.Exec(ctx, insertBoxConfirmation, relays, TaskBox, params, by); err != nil {
-			return fmt.Errorf("entry: confirm reprobe of %s: %w", p.Box, err)
+	if len(confirms) > 0 || r == readFailed {
+		if p.Answers == nil {
+			p.Answers = map[string]string{}
 		}
-		applog.Info(ctx, "entry", "suspect machine failed one reprobe, asking a second vantage",
-			applog.F("box", p.Box), applog.F("by", by))
-		return nil
-	case r == readClean && confirms != "":
-		r = readNothing // the two points disagree: no evidence either way
+		p.Answers[by] = answerOf(r)
+		asked := make([]string, 0, len(p.Answers))
+		for slot := range p.Answers {
+			asked = append(asked, slot)
+		}
+		sort.Strings(asked)
+		live, err := s.liveCensorSlots(ctx, confirmWindow)
+		if err != nil {
+			return err
+		}
+		if len(asked) < maxConfirmPoints && hasUnasked(live, asked) {
+			next, err := json.Marshal(p)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, insertBoxConfirmation, relays, TaskBox, next, asked); err != nil {
+				return fmt.Errorf("entry: confirm reprobe of %s: %w", p.Box, err)
+			}
+			applog.Info(ctx, "entry", "suspect machine failed a reprobe, asking another vantage",
+				applog.F("box", p.Box), applog.F("answered", strings.Join(asked, ",")))
+			return nil
+		}
+		r = majorityReading(p.Answers)
 	}
 	status, err := judge(ctx, tx, SuspectBox, p.Box, r, policy.Box, true)
 	if err != nil {
@@ -289,6 +351,31 @@ func (s *Service) applyDomainVerdicts(ctx context.Context, tx pgx.Tx, params []b
 		applog.Info(ctx, "entry", "burned domains settled",
 			applog.F("returned", returned), applog.F("dead", dead),
 			applog.F("clean_reprobes", policy.Domain.ReturnClean), applog.F("failed_reprobes", policy.Domain.DeadFails))
+	}
+	return nil
+}
+
+// settleStaleConfirmations takes back the confirmations no further point took
+// within confirmRoundWait and lets the points that answered decide: a point
+// that does not come is not there, and the ones that are there are the
+// majority.
+func (s *Service) settleStaleConfirmations(ctx context.Context, tx pgx.Tx, c SecondChance) error {
+	rows, err := tx.Query(ctx, staleConfirmations, TaskBox, confirmRoundWait.Seconds())
+	if err != nil {
+		return err
+	}
+	raws, err := pgx.CollectRows(rows, pgx.RowTo[[]byte])
+	if err != nil {
+		return err
+	}
+	for _, raw := range raws {
+		var p boxTaskParams
+		if err := json.Unmarshal(raw, &p); err != nil || p.Box == "" {
+			continue
+		}
+		if _, err := judge(ctx, tx, SuspectBox, p.Box, majorityReading(p.Answers), c, true); err != nil {
+			return err
+		}
 	}
 	return nil
 }
