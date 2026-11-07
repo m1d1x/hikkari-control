@@ -1,4 +1,4 @@
-package wirecheck
+package knobcheck
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/m1d1x/hikkari-control/internal/db"
+	"github.com/m1d1x/hikkari-control/internal/relayruns"
 	"github.com/m1d1x/hikkari-control/internal/telemetry"
 )
 
@@ -28,7 +29,7 @@ func dbPool(t *testing.T) *pgxpool.Pool {
 		t.Skipf("cannot reach test DB: %v", err)
 	}
 	t.Cleanup(admin.Close)
-	name := fmt.Sprintf("hikkari_wirecheck_%d", time.Now().UnixNano())
+	name := fmt.Sprintf("hikkari_knobcheck_%d", time.Now().UnixNano())
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
 		t.Fatalf("create scratch database: %v", err)
 	}
@@ -122,85 +123,78 @@ func TestDBKnobsAtFollowsEveryChange(t *testing.T) {
 	}
 }
 
-func TestDBReferenceRefusesWhatTheTableWould(t *testing.T) {
-	s := NewStore(dbPool(t))
-	ctx := context.Background()
-	good := RefRow{Core: "f350f1e6fea7", FP: "chrome", HK: "h1e431ec7444af069a", JA4: "t13d1516h2_8daaf6152771_d8a2da3f94cd", Source: "test"}
-	if err := s.PutReference(ctx, []RefRow{good}); err != nil {
-		t.Fatal(err)
-	}
-	good.HK = "h1121e2b99d2744911"
-	if err := s.PutReference(ctx, []RefRow{good}); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := s.References(ctx, "f350f1e6fea7")
-	if err != nil || len(rows) != 1 || rows[0].HK != "h1121e2b99d2744911" {
-		t.Fatalf("a new recording replaces the old: %+v %v", rows, err)
-	}
-	for _, bad := range []RefRow{
-		{Core: "F350", FP: "chrome", HK: good.HK, JA4: good.JA4, Source: "x"},
-		{Core: good.Core, FP: "Chrome!", HK: good.HK, JA4: good.JA4, Source: "x"},
-		{Core: good.Core, FP: "chrome", HK: "deadbeef", JA4: good.JA4, Source: "x"},
-		{Core: good.Core, FP: "chrome", HK: good.HK, JA4: "t13", Source: "x"},
-	} {
-		if err := s.PutReference(ctx, []RefRow{bad}); err == nil {
-			t.Errorf("stored %+v", bad)
-		}
-	}
-}
-
-// The whole path: a tester's chunk with its wire lines, the reference and the
-// node's knobs, out come the findings, in wire_hellos and in the errors, once.
+// The whole path: a tester's chunk with its load rounds goes through the
+// relay dataset's ingester, then the checker holds each round to the node's
+// knobs; findings land in knob_checks and in the errors, once.
 func TestDBIngestFindsAndReportsOnce(t *testing.T) {
 	pool := dbPool(t)
 	ctx := context.Background()
 	seedNode(t, pool, "ams-a", "amsterdam-1-002", "chrome_155")
 	exec(t, pool, `UPDATE entry_nodes SET knobs_at = now() - interval '1 day'`)
-	s := NewStore(pool)
-	var rows []RefRow
-	for fp, r := range ref {
-		rows = append(rows, RefRow{Core: "f350f1e6fea7", FP: fp, HK: r.HK, JA4: r.JA4, Source: "test"})
+	body := strings.Join([]string{
+		"2026/11/07 12:00:00.000 [diag:reach] self iface=eth isp=AS8402",
+		// The node hands out chrome_155; the config holds chrome.
+		"2026/11/07 12:00:01.000 [diag:load] p-amsterdam-1-002 proto=vless-reality fp=chrome sni=www.samsung.com port=8443 flow=xtls-rprx-vision dl=1048576/1048576 took=1s end=ok burst=50/50 timeout=0 med=1ms after=3/3 med=1ms",
+		// A link the tester imported: nothing to hold it to.
+		"2026/11/07 12:00:02.000 [diag:load] p-imported proto=vless-xhttp fp=edge port=443 flow=none alpn=h2/http/1.1 dl=1048576/1048576 took=1s end=ok burst=50/50 timeout=0 med=1ms after=3/3 med=1ms",
+	}, "\n")
+	exec(t, pool, `INSERT INTO support_tester_log_chunks (install_id, platform, version, lines, body) VALUES ('t-aaaa', 'windows', '1.0.56', 3, $1)`, body)
+	if n, err := relayruns.NewIngester(relayruns.NewStore(pool), pool).Once(ctx); err != nil || n != 2 {
+		t.Fatalf("relay rows: %d %v", n, err)
 	}
-	if err := s.PutReference(ctx, rows); err != nil {
-		t.Fatal(err)
-	}
-	body := strings.Join([]string{"2026/11/07 12:00:00.000 [diag:load] p-amsterdam-1-002 proto=vless-reality dl=1/1", lineChrome, lineGo, lineSkip}, "\n")
-	exec(t, pool, `INSERT INTO support_tester_log_chunks (install_id, platform, version, lines, body) VALUES ('t-aaaa', 'windows', '1.0.54', 4, $1)`, body)
 
+	s := NewStore(pool)
 	errs := &sink{fail: fmt.Errorf("clickhouse down")}
 	in := NewIngester(s, errs)
 	if _, err := in.Once(ctx); err == nil {
 		t.Fatal("a failed send moved on")
 	}
+	if got, _ := s.Checks(ctx, Query{Since: time.Now().Add(-time.Hour)}); len(got) != 0 {
+		t.Fatalf("a round whose findings were not sent is checked: %+v", got)
+	}
 	errs.fail = nil
 	n, err := in.Once(ctx)
-	if err != nil || n != 3 {
+	if err != nil || n != 2 {
 		t.Fatalf("%d %v", n, err)
 	}
-	got := map[string]string{}
-	for _, r := range errs.rows {
-		got[r.Code] = r.Msg
-		if r.Install != "t-aaaa" || r.Component != ComponentWire || r.App.Version != "1.0.54" || r.App.OS != "windows" || len(r.FP) != 16 {
-			t.Fatalf("%+v", r)
-		}
-	}
-	// The node hands out chrome_155; the config holds chrome. The imported
-	// profile without fp sends Go's hello.
-	if len(errs.rows) != 2 || !strings.Contains(got[CodeKnobMismatch], "fp=chrome_155") || got[CodeGoHello] == "" {
+	if len(errs.rows) != 1 {
 		t.Fatalf("%+v", errs.rows)
 	}
-	hellos, err := s.Hellos(ctx, Query{Install: "t-aaaa", Since: time.Now().Add(-time.Hour)})
-	if err != nil || len(hellos) != 3 {
-		t.Fatalf("%d %v", len(hellos), err)
+	r := errs.rows[0]
+	if r.Code != CodeKnobMismatch || r.Install != "t-aaaa" || r.Component != ComponentKnob || r.App.Version != "1.0.56" ||
+		r.App.OS != "windows" || len(r.FP) != 16 || r.Msg != "p-amsterdam-1-002: hub выдаёт fp=chrome_155 для AS8402, в конфиге клиента chrome" {
+		t.Fatalf("%+v", r)
 	}
-	with, _ := s.Hellos(ctx, Query{Since: time.Now().Add(-time.Hour), Findings: true})
-	if len(with) != 2 {
-		t.Fatalf("lines with findings: %d", len(with))
+	all, err := s.Checks(ctx, Query{Install: "t-aaaa", Since: time.Now().Add(-time.Hour)})
+	if err != nil || len(all) != 2 {
+		t.Fatalf("%+v %v", all, err)
+	}
+	states := map[string]string{}
+	for _, c := range all {
+		states[c.Profile] = c.State
+	}
+	if states["amsterdam-1-002"] != StateMismatch || states["imported"] != StateUnknown {
+		t.Fatalf("%v", states)
+	}
+	bad, _ := s.Checks(ctx, Query{Since: time.Now().Add(-time.Hour), Mismatch: true})
+	if len(bad) != 1 || bad[0].Declared["fp"] != "chrome_155" || bad[0].Config["fp"] != "chrome" || bad[0].Network != "AS8402" {
+		t.Fatalf("%+v", bad)
 	}
 
-	// The same chunk read again, as after a crash before the cursor moved.
-	exec(t, pool, `UPDATE relay_runs_cursor SET last_chunk_id = 0 WHERE name = $1`, cursorName)
-	if n, err := in.Once(ctx); err != nil || n != 0 || len(errs.rows) != 2 {
+	// A second pass finds nothing new.
+	if n, err := in.Once(ctx); err != nil || n != 0 || len(errs.rows) != 1 {
 		t.Fatalf("read twice: %d %v %d", n, err, len(errs.rows))
+	}
+}
+
+// The wire tables of 032 are gone, the knobs_at triggers stay.
+func TestDBWireTablesAreGone(t *testing.T) {
+	pool := dbPool(t)
+	var n int
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'wire\_%'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("%d %v", n, err)
+	}
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM pg_trigger WHERE tgname IN ('entry_nodes_knobs_at', 'entry_node_network_knobs_at', 'entry_node_network_knobs_gone')`).Scan(&n); err != nil || n != 3 {
+		t.Fatalf("triggers %d %v", n, err)
 	}
 }

@@ -82,8 +82,8 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 	// The routing presets clients fetch are the control plane's too, and so
 	// are plans, subscribers' access keys and what those keys carried, and
 	// the relay dataset (relay_*) the fleet's knobs are chosen by, the
-	// stand (stand_*) that fills it on schedule, and the check of what
-	// testers' cores sent against those knobs (wire_*).
+	// stand (stand_*) that fills it on schedule, and the check of testers'
+	// configs against the knobs handed out (knob_*).
 	rows, err := pool.Query(ctx, `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`)
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +97,7 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 		if name != "schema_migrations" && name != "hub_accounts" && name != "hub_subscriptions" &&
 			name != "hub_access_keys" && name != "hub_key_usage" && name != "hub_plans" &&
 			name != "hub_orders" && name != "hub_mail_outbox" &&
-			!strings.HasPrefix(name, "entry_") && !strings.HasPrefix(name, "census_") && !strings.HasPrefix(name, "relay_") && !strings.HasPrefix(name, "stand_") && !strings.HasPrefix(name, "wire_") && !strings.HasPrefix(name, "admin_") && name != "admins" &&
+			!strings.HasPrefix(name, "entry_") && !strings.HasPrefix(name, "census_") && !strings.HasPrefix(name, "relay_") && !strings.HasPrefix(name, "stand_") && !strings.HasPrefix(name, "knob_") && !strings.HasPrefix(name, "admin_") && name != "admins" &&
 			name != "presets" && !strings.HasPrefix(name, "preset_") && !strings.HasPrefix(name, "support_") {
 			t.Errorf("non-control table in baseline: %s", name)
 		}
