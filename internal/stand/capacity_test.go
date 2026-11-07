@@ -81,3 +81,30 @@ func TestCapacityRejectsWrongHTTPAndShortBodies(t *testing.T) {
 		}
 	}
 }
+
+func TestLatencyRequiresSuccessfulRoundTrips(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !r.Close {
+			t.Error("latency reused a warm connection")
+		}
+		if calls.Add(1) == 1 {
+			w.WriteHeader(503)
+			return
+		}
+		time.Sleep(8 * time.Millisecond)
+		w.WriteHeader(204)
+	}))
+	defer server.Close()
+	if got := measureLatency(context.Background(), server.Client(), server.URL); got < 8 {
+		t.Fatalf("invalid RTT %d", got)
+	}
+	if calls.Load() != 3 {
+		t.Fatal("missing samples")
+	}
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) }))
+	defer bad.Close()
+	if got := measureLatency(context.Background(), bad.Client(), bad.URL); got != 0 {
+		t.Fatal("failure became ping")
+	}
+}

@@ -42,6 +42,7 @@ type Sample struct {
 	Mbps       float64 `json:"mbps"`
 	Limited    bool    `json:"limited"`
 	Error      string  `json:"error,omitempty"`
+	RTTMS      int     `json:"rttMs,omitempty"`
 }
 
 func (s Sample) Validate(now time.Time) error {
@@ -51,6 +52,9 @@ func (s Sample) Validate(now time.Time) error {
 	}
 	if s.MeasuredAt < now.Add(-2*time.Hour).Unix() || s.MeasuredAt > now.Add(2*time.Minute).Unix() {
 		return fmt.Errorf("invalid capacity time")
+	}
+	if s.RTTMS < 0 || s.RTTMS > 30000 {
+		return fmt.Errorf("invalid latency")
 	}
 	if s.Bytes < 0 || s.Bytes > MaxBytes || s.DurationMS < 0 || s.DurationMS > 30000 || math.IsNaN(s.Mbps) || math.IsInf(s.Mbps, 0) || s.Mbps < 0 {
 		return fmt.Errorf("invalid capacity sample")
@@ -71,6 +75,13 @@ func (s Sample) Validate(now time.Time) error {
 	return nil
 }
 
+// Point is one half-hour aggregate from owned RU observation points.
+type Point struct {
+	Ts    int64   `json:"ts"`
+	RTTMS int     `json:"rttMs,omitempty"`
+	Mbps  float64 `json:"mbps,omitempty"`
+}
+
 type Metric struct {
 	Key        string  `json:"key"`
 	MeasuredAt int64   `json:"measuredAt"`
@@ -78,6 +89,8 @@ type Metric struct {
 	Mbps       float64 `json:"mbps"`
 	Limited    bool    `json:"limited"`
 	Points     int     `json:"points"`
+	RTTMS      int     `json:"rttMs,omitempty"`
+	History    []Point `json:"history,omitempty"`
 }
 
 // Encode bounds the subscription header below the ordinary HTTP header limit.
@@ -85,6 +98,12 @@ func Encode(metrics []Metric) string {
 	if len(metrics) > 24 {
 		metrics = metrics[:24]
 	}
-	data, _ := json.Marshal(metrics)
+	// History belongs in the negotiated response body, never in HTTP headers.
+	compact := make([]Metric, len(metrics))
+	copy(compact, metrics)
+	for i := range compact {
+		compact[i].History = nil
+	}
+	data, _ := json.Marshal(compact)
 	return string(data)
 }

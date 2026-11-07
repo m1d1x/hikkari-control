@@ -14,6 +14,7 @@ import (
 
 // Profile is one entry of the fleet's links as the client parses it.
 type Profile struct {
+	Node        string         `json:"node,omitempty"`
 	CapacityKey string         `json:"capacityKey"`
 	Label       string         `json:"label"`
 	Config      map[string]any `json:"config"`
@@ -39,6 +40,12 @@ func Profiles(ctx context.Context, parser, subURL string) ([]Profile, error) {
 	}
 	kept := out[:0]
 	for _, p := range out {
+		if p.Node != "" && reValue.MatchString(p.Node) {
+			p.Label = p.Node
+		}
+		if !reValue.MatchString(p.Label) && len(p.CapacityKey) == 64 {
+			p.Label = "profile-" + p.CapacityKey[:12]
+		}
 		if p.Config != nil && reValue.MatchString(p.Label) && p.Label != "" {
 			kept = append(kept, p)
 		}
