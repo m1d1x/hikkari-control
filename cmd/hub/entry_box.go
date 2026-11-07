@@ -253,10 +253,14 @@ func runEntryBox(args []string) {
 	if n := len(args); n > 1 && args[0] == "order" && strings.HasPrefix(args[n-1], "hoster=") {
 		namedHoster, args = strings.TrimPrefix(args[n-1], "hoster="), args[:n-1]
 	}
-	region, domain, xhttp := "", "", false
+	region, domain, xhttp, naive := "", "", false, false
 	if n := len(args); n > 4 {
 		last := args[n-1]
 		switch {
+		case last == "naive":
+			// Bare naive: as an ordered Naive box, the hub takes a domain from
+			// its pool during the job.
+			naive, args = true, args[:n-1]
 		case strings.HasPrefix(last, "voice="):
 			region, args = strings.TrimPrefix(last, "voice="), args[:n-1]
 		case strings.HasPrefix(last, "xhttp="):
@@ -331,7 +335,7 @@ func runEntryBox(args []string) {
 	naiveAdopt := len(args) == 3 && args[0] == "adopt-naive"
 	provider := len(args) >= 3 && len(args) <= 5 && args[0] == "provider"
 	if !naiveAdopt && !order && !retire && !provider && len(args) != 1 && len(args) != 4 && len(args) != 5 {
-		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain>]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|naive|awg|voice=<region>] [hoster=<kind>] | entry-box adopt-naive <box> <domain> | entry-box catalog <hoster>"))
+		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain> | naive]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|naive|awg|voice=<region>] [hoster=<kind>] | entry-box adopt-naive <box> <domain> | entry-box catalog <hoster>"))
 	}
 	if err := cryptobox.Configure(os.Getenv); err != nil {
 		fail(fmt.Errorf("content key: %w", err))
@@ -438,6 +442,8 @@ func runEntryBox(args []string) {
 		case xhttp:
 			// domain may be empty: the hub assigns one during the job (Ф6).
 			spec.Proto, spec.Domain = entry.ProtoVlessXhttp, domain
+		case naive:
+			spec.Proto = entry.ProtoNaive
 		}
 		if len(args) == 5 {
 			d, perr := time.Parse(time.DateOnly, args[4])
