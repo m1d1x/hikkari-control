@@ -334,44 +334,29 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 			return "", err
 		}
 		return prettyJSON(data), nil
-	case "wire":
+	case "edge-hellos":
+		q := url.Values{}
+		for _, k := range []string{"relay", "last"} {
+			if v := args[k]; v != "" {
+				q.Set(k, v)
+			}
+		}
+		data, err := c.request(http.MethodGet, "/api/v1/ops/edge-hellos", q, nil)
+		if err != nil {
+			return "", err
+		}
+		return prettyJSON(data), nil
+	case "knob-check":
 		q := url.Values{}
 		for _, k := range []string{"who", "profile", "last", "limit"} {
 			if v := args[k]; v != "" {
 				q.Set(k, v)
 			}
 		}
-		if args["findings"] != "" && args["findings"] != "0" {
-			q.Set("findings", "1")
+		if args["mismatch"] != "" && args["mismatch"] != "0" {
+			q.Set("mismatch", "1")
 		}
-		data, err := c.request(http.MethodGet, "/api/v1/ops/wire", q, nil)
-		if err != nil {
-			return "", err
-		}
-		return prettyJSON(data), nil
-	case "wire-ref":
-		q := url.Values{}
-		if v := args["core"]; v != "" {
-			q.Set("core", v)
-		}
-		data, err := c.request(http.MethodGet, "/api/v1/ops/wire/reference", q, nil)
-		if err != nil {
-			return "", err
-		}
-		return prettyJSON(data), nil
-	case "wire-ref-add":
-		if args["file"] == "" {
-			return "", errors.New("file is required: the reference.json a recording wrote")
-		}
-		raw, err := os.ReadFile(args["file"])
-		if err != nil {
-			return "", err
-		}
-		var body map[string]any
-		if err := json.Unmarshal(raw, &body); err != nil {
-			return "", fmt.Errorf("%s: %w", args["file"], err)
-		}
-		data, err := c.request(http.MethodPost, "/api/v1/ops/wire/reference", nil, body)
+		data, err := c.request(http.MethodGet, "/api/v1/ops/knob-check", q, nil)
 		if err != nil {
 			return "", err
 		}

@@ -1604,6 +1604,12 @@ func (j *jobRun) install(r Remote, rel provRelay) error {
 		envMap["EDGE_PULSE_TOKEN"] = PulseToken(j.p.pulseToken, j.box)
 		envMap["EDGE_RELAY_NAME"] = rel.name
 	}
+	// The hello tap (edge/hellotap.go) is the box's setting, not the
+	// relay's identity: on for a Reality box the owner chose (SetHelloTap).
+	if j.acc.helloTap && rel.id.proto() == ProtoVlessRealityVision {
+		envMap["EDGE_HELLO_TAP"] = "1"
+		j.log("%s: приёмник хелло включён", rel.name)
+	}
 	if j.acc.proto == ProtoVlessXhttp {
 		j.log("%s: сайт на домене релея, туннель под секретным путём", rel.name)
 	}
@@ -1728,6 +1734,11 @@ server {
     root $webroot;
     index index.html;
     location ~ "^$secret(\$|/)" {
+        # The tunnel's upload is one long POST in stream-up: no size cap
+        # (nginx's 1m default cut every connection after 1 MiB up, 06.11) and
+        # no body timeout shorter than the stream's own.
+        client_max_body_size 0;
+        client_body_timeout 1h;
         proxy_pass http://127.0.0.1:$front;
         proxy_http_version 1.1;
         proxy_buffering off;

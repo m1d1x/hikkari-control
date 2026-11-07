@@ -126,6 +126,9 @@ type pulseBody struct {
 	// Boot names this run of the process: per-key totals count from it.
 	Boot string              `json:"boot,omitempty"`
 	Keys map[string]pulseKey `json:"keys,omitempty"`
+	// Hellos are the hello tap's counts since the start: cover → hk →
+	// connections (hellotap.go); absent without a tap.
+	Hellos map[string]map[string]int64 `json:"hellos,omitempty"`
 }
 
 type pulseKey struct {
@@ -192,6 +195,14 @@ func (s xraySource) read() (up, down, conns int64, keys map[string]pulseKey) {
 	return up, down, conns, keyTotals(s.counters)
 }
 
+// tappedSource adds the hello tap's counts to a source's report.
+type tappedSource struct {
+	pulseSource
+	tap *helloTap
+}
+
+func (s tappedSource) hellos() map[string]map[string]int64 { return s.tap.totals() }
+
 type awgSource struct{ server *awgServer }
 
 func (s awgSource) read() (up, down, conns int64, keys map[string]pulseKey) {
@@ -212,7 +223,18 @@ func readPulse(source pulseSource, cfg pulseConfig, started time.Time) pulseBody
 		MemMB:     mem,
 		Version:   cfg.version,
 		Keys:      keys,
+		Hellos:    helloTotals(source),
 	}
+}
+
+// helloTotals is the hello tap's counts, when the source has a tap.
+func helloTotals(source pulseSource) map[string]map[string]int64 {
+	if s, ok := source.(interface {
+		hellos() map[string]map[string]int64
+	}); ok {
+		return s.hellos()
+	}
+	return nil
 }
 
 // newBoot names one run of the process.

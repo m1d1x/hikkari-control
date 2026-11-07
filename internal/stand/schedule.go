@@ -223,6 +223,13 @@ func (s *Scheduler) ClaimWithCapacity(ctx context.Context, slot string, capable 
 		if err == nil && !st.Enabled && t.Knob != capacity.TaskKind {
 			err = errors.New("стенд выключен: stand_settings.enabled = false")
 		}
+		if err == nil && t.Knob == capacity.TaskKind {
+			var enabled bool
+			err = s.pool.QueryRow(ctx, `SELECT enabled FROM relay_capacity_settings WHERE id`).Scan(&enabled)
+			if err == nil && !enabled {
+				err = errors.New("capacity measurements are disabled")
+			}
+		}
 		if err == nil {
 			t.SubURL = s.apiURL + LinksPath + token
 			return &t, nil

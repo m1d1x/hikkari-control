@@ -1032,3 +1032,61 @@ func (p *Provisioner) RunOnBox(ctx context.Context, box, cmd string, stdin io.Re
 	applog.Info(ctx, "entry", "operator command on box", applog.F("box", box), applog.F("cmd", cmd))
 	return r.Run(ctx, cmd, stdin)
 }
+
+// SetHelloTap turns the hello tap of a Reality box on or off (migration 040).
+// It takes effect at the box's next install: UpdateBox runs one now.
+func (s *Service) SetHelloTap(ctx context.Context, box string, on bool) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE entry_boxes SET hello_tap = $2
+		WHERE name = $1 AND retired_at IS NULL AND proto = $3`, box, on, ProtoVlessRealityVision)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: %s (живой Reality-машины с таким именем нет)", ErrNoSuchBox, box)
+	}
+	return nil
+}
+
+// Reconfigure rewrites one box's relays from what the hub holds now — their
+// env (box settings such as the hello tap) and an XHTTP relay's nginx front —
+// on the build already on the box: drained, reinstalled, probed, back in the
+// pool. The build stays, so a rollout's canary still judges builds, not a
+// configuration that changed under it.
+func (o *Orchestrator) Reconfigure(ctx context.Context, box string) error {
+	return o.prov.execJob(ctx, JobReconfigure, box, uuid.Nil, func(j *jobRun) error {
+		return j.reconfigure(o)
+	})
+}
+
+func (j *jobRun) reconfigure(o *Orchestrator) error {
+	j.step("login")
+	r, err := j.loginByKey()
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	relays, err := j.liveRelays()
+	if err != nil {
+		return err
+	}
+	b := boxOpened{r: r, relays: relays}
+	if err := j.drain(o, b, StatusDraining); err != nil {
+		j.back()
+		return err
+	}
+	defer j.back()
+	for _, rel := range relays {
+		j.step("deploy " + rel.name)
+		if err := j.install(r, rel); err != nil {
+			return err
+		}
+		if rel.id.Xhttp != nil {
+			if err := j.installFront(r, rel); err != nil {
+				return fmt.Errorf("nginx-фронт %s: %w", rel.name, err)
+			}
+		}
+	}
+	j.step("probe")
+	return j.probe(relays)
+}

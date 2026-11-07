@@ -32,7 +32,7 @@ const (
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 	selectBoxAccess = `
 		SELECT address_ct, ssh_user, coalesce(host_key, ''), host_key_forgotten_at IS NOT NULL,
-		       proto, coalesce(region, ''), retired_at IS NOT NULL, domain_ct
+		       proto, coalesce(region, ''), retired_at IS NOT NULL, domain_ct, hello_tap
 		FROM entry_boxes WHERE name = $1`
 	// Only the first key sticks: a change is refused at dial time, and
 	// forgetting the key is an operator act (ForgetHostKey), not an overwrite.
@@ -354,6 +354,9 @@ type PoolRelay struct {
 	// Covers are the cover sites a Reality relay races, in race order; empty
 	// on the other protocols (see shortOfCovers).
 	Covers []string `json:"covers,omitempty"`
+	// XhttpMode is the mode an XHTTP relay's link hands out; "" on the other
+	// protocols and on a relay that sets none (the client then runs auto).
+	XhttpMode string `json:"xhttpMode,omitempty"`
 	// Unreadable: the server key could not open the identity or the box
 	// address (sealed under a key since rotated away).
 	Unreadable bool `json:"unreadable,omitempty"`

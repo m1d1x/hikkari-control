@@ -29,11 +29,10 @@ const usage = `usage: ops <command>
                                     one knob of a profile, measured from Russia and outside
   stand [--limit 20]                the hub's scheduled stand: what it measures, its latest runs
   knobs [--profile X] [--days 7]    the knob controller: policy, nodes' values, its journal
-  wire [<who>] [--profile X] [--last 24h] [--findings 1]
-                                    the hellos testers' cores sent, with the hub's findings
-  wire-ref [--core REV]             the hello each fingerprint of a core revision sends
-  wire-ref-add --file reference.json
-                                    store a recording of a core revision's hellos
+  edge-hellos [--relay X] [--last 24h]
+                                    the hellos Reality nodes received, against the release's
+  knob-check [<who>] [--profile X] [--last 24h] [--mismatch 1]
+                                    testers' rounds: knobs handed out vs the config's
   census add <url> --name X         save a paid subscription, list its entries
   census probe [--who 002,005]      TCP count from St Petersburg and testers
   census add-addr --name X --addrs ip:port,ip:port

@@ -134,6 +134,9 @@ type Service struct {
 	// relayKeys owns subscribers' access keys (pulse.go); nil leaves relays
 	// on their shared credential.
 	relayKeys RelayKeys
+	// edgeHellos takes the hello tap's counts from the pulse (pulse.go); nil
+	// drops them.
+	edgeHellos EdgeHellos
 	// subscribers sizes the stream pools by subscriptions (subscribers.go).
 	subscribers SubscriberCount
 	// traffic takes the gateway's per-socket byte counts into the dataset
@@ -465,6 +468,8 @@ type boxAccess struct {
 	domain string
 	// retired: the box was handed back; only its wipe may still log in.
 	retired bool
+	// helloTap: the box's Reality relays run the hello tap (migration 040).
+	helloTap bool
 }
 
 // voice reports whether the box is a voice entry (Hysteria2).
@@ -477,7 +482,7 @@ func (a boxAccess) overUDP() bool { return a.voice() || a.proto == ProtoAmneziaW
 func (s *Service) boxAccess(ctx context.Context, box string) (boxAccess, error) {
 	var ct, domainCT []byte
 	var a boxAccess
-	err := s.pool.QueryRow(ctx, selectBoxAccess, box).Scan(&ct, &a.user, &a.hostKey, &a.hostKeyForgotten, &a.proto, &a.region, &a.retired, &domainCT)
+	err := s.pool.QueryRow(ctx, selectBoxAccess, box).Scan(&ct, &a.user, &a.hostKey, &a.hostKeyForgotten, &a.proto, &a.region, &a.retired, &domainCT, &a.helloTap)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return boxAccess{}, fmt.Errorf("%w: %s", ErrNoSuchBox, box)
 	}
@@ -863,6 +868,9 @@ func (s *Service) List(ctx context.Context) ([]PoolRelay, error) {
 		relays[i].Address, relays[i].Port, relays[i].Proto = addrOf[relays[i].Box], id.Port, id.proto()
 		if relays[i].Proto == ProtoVlessRealityVision {
 			relays[i].Covers = append([]string(nil), id.Covers...)
+		}
+		if id.Xhttp != nil {
+			relays[i].XhttpMode = id.Xhttp.Mode
 		}
 	}
 	return relays, nil

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -408,6 +409,7 @@ func (s *Service) Handler() http.HandlerFunc {
 			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
 			return
 		}
+		var relayMetrics []capacity.Metric
 		if s.Capacity != nil {
 			keys := make([]string, 0, len(links))
 			for _, link := range links {
@@ -415,8 +417,11 @@ func (s *Service) Handler() http.HandlerFunc {
 					keys = append(keys, key)
 				}
 			}
-			metrics, capacityErr := s.Capacity.Metrics(r.Context(), keys)
+			metricContext, cancelMetrics := context.WithTimeout(r.Context(), 250*time.Millisecond)
+			metrics, capacityErr := s.Capacity.Metrics(metricContext, keys)
+			cancelMetrics()
 			if capacityErr == nil {
+				relayMetrics = metrics
 				w.Header().Set(capacity.Header, capacity.Encode(metrics))
 			} else {
 				applog.Error(r.Context(), "capacity", "subscription summary unavailable")
@@ -433,6 +438,25 @@ func (s *Service) Handler() http.HandlerFunc {
 		// Where the subscriber renews: the landing's checkout, told which
 		// subscription to extend in the fragment, which reaches no server.
 		w.Header().Set("Profile-Web-Page-Url", RenewURL(token))
+		if slices.Contains(strings.FieldsFunc(r.Header.Get("Hikkari-Features"), func(r rune) bool { return r == ',' || r == ' ' }), "relay-metrics-v2") {
+			body, err := json.Marshal(struct {
+				Version int               `json:"version"`
+				Links   []string          `json:"links"`
+				Metrics []capacity.Metric `json:"metrics"`
+			}{2, links, relayMetrics})
+			if err == nil {
+				body, err = sealSubscription(token, body)
+			}
+			if err != nil {
+				http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			// No plaintext measurement header on the sealed response.
+			w.Header().Del(capacity.Header)
+			w.Header().Set("Content-Type", metricsContentType)
+			_, _ = w.Write(body)
+			return
+		}
 		_, _ = w.Write([]byte(base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))))
 	}
 }

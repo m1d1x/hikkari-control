@@ -11,12 +11,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/m1d1x/hikkari-control/internal/capacity"
 )
+
+const latencyURL = "https://www.gstatic.com/generate_204"
 
 const capacityURL = "https://speed.cloudflare.com/__down"
 
@@ -50,12 +53,14 @@ func measureCapacity(ctx context.Context, client *http.Client, endpoint, key str
 		resp, err := client.Do(req)
 		if err != nil {
 			cancel()
-			return failure
+			return partial(result, failure)
 		}
 		if resp.StatusCode != http.StatusOK || (resp.ContentLength >= 0 && resp.ContentLength != size) {
 			resp.Body.Close()
 			cancel()
-			return failure
+			// The test service refuses some large requests (403 at 16 MiB from
+			// RU points); a completed smaller round still stands as a lower bound.
+			return partial(result, failure)
 		}
 		started := time.Now()
 		n, readErr := io.Copy(io.Discard, io.LimitReader(resp.Body, size))
@@ -64,7 +69,7 @@ func measureCapacity(ctx context.Context, client *http.Client, endpoint, key str
 		cancel()
 		budget -= n
 		if readErr != nil && !errors.Is(readErr, context.DeadlineExceeded) {
-			return failure
+			return partial(result, failure)
 		}
 		if n < 256<<10 || elapsed.Milliseconds() < 1 {
 			size *= 4
@@ -87,6 +92,15 @@ func measureCapacity(ctx context.Context, client *http.Client, endpoint, key str
 	return result
 }
 
+// partial keeps a completed round when a later, larger round fails.
+func partial(result, failure capacity.Sample) capacity.Sample {
+	if result.Error == "" && result.Mbps > 0 {
+		result.Limited = true
+		return result
+	}
+	return failure
+}
+
 func (r Runner) runCapacity(ctx context.Context, profiles []Profile) Result {
 	result := Result{Core: r.Kit.Label}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
@@ -104,9 +118,14 @@ func (r Runner) runCapacity(ctx context.Context, profiles []Profile) Result {
 			result.Error = "kit parser does not provide capacity-v1 identities"
 			break
 		}
-		sample := capacity.Sample{Key: p.CapacityKey, MeasuredAt: time.Now().Unix(), Error: "control_unavailable"}
+		sample := r.measureProfileCapacity(ctx, p, control.Error == "")
+		if control.Error != "" {
+			sample.Mbps = 0
+			sample.Bytes = 0
+			sample.DurationMS = 0
+			sample.Error = "control_unavailable"
+		}
 		if control.Error == "" {
-			sample = r.measureProfileCapacity(ctx, p)
 			// A near-control rate may be the point's/test service's limit. Do not call
 			// that the relay's maximum, regardless of how large the payload was.
 			if sample.Error == "" && sample.Mbps >= control.Mbps*0.8 {
@@ -122,7 +141,7 @@ func (r Runner) runCapacity(ctx context.Context, profiles []Profile) Result {
 	return result
 }
 
-func (r Runner) measureProfileCapacity(ctx context.Context, p Profile) capacity.Sample {
+func (r Runner) measureProfileCapacity(ctx context.Context, p Profile, download bool) capacity.Sample {
 	failure := capacity.Sample{Key: p.CapacityKey, MeasuredAt: time.Now().Unix(), Error: "core_unavailable"}
 	cfg, _, err := Config(p.Config, func(map[string]any, string) error { return nil }, "")
 	if err != nil {
@@ -172,5 +191,44 @@ func (r Runner) measureProfileCapacity(ctx context.Context, p Profile) capacity.
 	proxy, _ := url.Parse(fmt.Sprintf("socks5h://127.0.0.1:%d", port))
 	transport := &http.Transport{Proxy: http.ProxyURL(proxy), DisableCompression: true, MaxIdleConns: 2}
 	defer transport.CloseIdleConnections()
-	return measureCapacity(probeCtx, &http.Client{Transport: transport}, capacityURL, p.CapacityKey)
+	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	rtt := measureLatency(probeCtx, client, latencyURL)
+	if !download {
+		failure.RTTMS = rtt
+		failure.Error = "control_unavailable"
+		return failure
+	}
+	sample := measureCapacity(probeCtx, client, capacityURL, p.CapacityKey)
+	sample.RTTMS = rtt
+	return sample
+}
+
+// Three fresh connections before load: successful HTTPS round-trip, not a TCP
+// connect and not time-to-first-byte of the download under load.
+func measureLatency(ctx context.Context, client *http.Client, endpoint string) int {
+	samples := []int{}
+	for i := 0; i < 3; i++ {
+		attempt, cancel := context.WithTimeout(ctx, 2*time.Second)
+		req, err := http.NewRequestWithContext(attempt, http.MethodGet, endpoint, nil)
+		if err != nil {
+			cancel()
+			return 0
+		}
+		req.Close = true
+		started := time.Now()
+		resp, err := client.Do(req)
+		if err == nil {
+			_, readErr := io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusNoContent && readErr == nil {
+				samples = append(samples, max(1, int(time.Since(started).Milliseconds())))
+			}
+		}
+		cancel()
+	}
+	if len(samples) < 2 {
+		return 0
+	}
+	sort.Ints(samples)
+	return samples[len(samples)/2]
 }
