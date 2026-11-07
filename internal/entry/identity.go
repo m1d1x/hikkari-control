@@ -311,6 +311,23 @@ func newAwgIdentity(port int, v31 bool) (Identity, error) {
 	return Identity{Port: port, Awg: a}, nil
 }
 
+// withAwgV31 is the identity of an AmneziaWG 2.0 relay brought to 3.1 in
+// place: the port, the device's and the vantage's keys, the junk and the decoy
+// stay; the paddings, headers and 3.1 fields are drawn as for a new 3.1 relay.
+// Subscribers' keys live on the hub's list, not here, and stay too.
+func (id Identity) withAwgV31() (Identity, error) {
+	if id.Awg == nil {
+		return Identity{}, fmt.Errorf("%w: релей говорит %s, не AmneziaWG", ErrRejected, id.proto())
+	}
+	a := *id.Awg
+	if err := newAwgV3(&a); err != nil {
+		return Identity{}, err
+	}
+	out := id
+	out.Awg = &a
+	return out, nil
+}
+
 // newAwgV3 turns a freshly drawn 2.0 relay into a 3.1 one, as the 06.11 stand
 // measured it working from Russia (plans/research/2026-11-06-awg-experiment.md):
 // a header protection key of its own, every S at least the cipher's nonce,

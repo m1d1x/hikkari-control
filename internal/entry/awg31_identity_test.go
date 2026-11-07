@@ -140,3 +140,35 @@ func TestAwgGenerationFromEnv(t *testing.T) {
 		}
 	}
 }
+
+// A 2.0 relay brought to 3.1 keeps what the box and its subscribers already
+// have (port, keys, junk, decoy) and gets every 3.1 field; the original is not
+// touched.
+func TestAwgRelayUpgradesTo31InPlace(t *testing.T) {
+	old, err := newAwgIdentity(31000, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := *old.Awg
+	up, err := old.withAwgV31()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := up.Awg
+	if up.Port != 31000 || a.ServerPrivateKey != before.ServerPrivateKey || a.ProbePrivateKey != before.ProbePrivateKey ||
+		a.Jc != before.Jc || a.Jmin != before.Jmin || a.Jmax != before.Jmax || a.I1 != before.I1 || a.DecoyDomain != before.DecoyDomain {
+		t.Fatalf("kept fields changed: %+v -> %+v", before, *a)
+	}
+	if !a.AwgV3.IsSet() || a.H1 != "1" {
+		t.Fatalf("not 3.1: %+v", *a)
+	}
+	if err := up.record("x1-1", "203.0.113.9", "", 1, 2).check(); err != nil {
+		t.Fatal(err)
+	}
+	if *old.Awg != before {
+		t.Fatal("the 2.0 identity was changed")
+	}
+	if _, err := (Identity{}).withAwgV31(); err == nil {
+		t.Fatal("a Reality relay was upgraded")
+	}
+}

@@ -714,6 +714,14 @@ func (j *jobRun) provision(password string) error {
 			return err
 		}
 	}
+	// With 3.1 on (ENTRY_AWG_GENERATION), a run over an AmneziaWG box brings
+	// its 2.0 relays to 3.1 on the same address and port: a new box is money,
+	// an upgrade in place is not.
+	if acc.proto == ProtoAmneziaWG && j.p.svc.awg31 {
+		if relays, err = j.upgradeAwgRelays(relays); err != nil {
+			return err
+		}
+	}
 
 	j.step("harden")
 	if err := j.harden(r, relays); err != nil {
@@ -775,6 +783,33 @@ func (j *jobRun) provision(password string) error {
 		j.log("предупредить держателей не удалось: %v — они дотянут до следующего фетча", err)
 	}
 	return nil
+}
+
+// upgradeAwgRelays rewrites every AmneziaWG 2.0 relay of the box as 3.1 and
+// returns the relays as they stand after. Its holders carry 2.0 records, which
+// the 3.1 edge no longer answers, so they are told to come back for the
+// re-signed one (the sign step re-signs it), as a moved XHTTP relay's are.
+func (j *jobRun) upgradeAwgRelays(relays []provRelay) ([]provRelay, error) {
+	var upgraded []string
+	for _, rel := range relays {
+		if rel.id.Awg == nil || rel.id.Awg.AwgV3.IsSet() {
+			continue
+		}
+		fresh, err := rel.id.withAwgV31()
+		if err != nil {
+			return nil, fmt.Errorf("релей %s: %w", rel.name, err)
+		}
+		if err := j.p.svc.setRelayIdentity(j.ctx, rel.name, fresh); err != nil {
+			return nil, fmt.Errorf("AmneziaWG 3.1 для %s: %w", rel.name, err)
+		}
+		j.log("%s: релей переведён на AmneziaWG 3.1 (адрес, порт и ключи прежние)", rel.name)
+		upgraded = append(upgraded, rel.name)
+	}
+	if len(upgraded) == 0 {
+		return relays, nil
+	}
+	j.movedRelays = append(j.movedRelays, upgraded...)
+	return j.liveRelays()
 }
 
 // moveRelaysToDomain rewrites the identity of every XHTTP relay whose domain
