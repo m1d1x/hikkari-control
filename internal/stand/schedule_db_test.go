@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/m1d1x/hikkari-control/internal/capacity"
 	"github.com/m1d1x/hikkari-control/internal/db"
 	"github.com/m1d1x/hikkari-control/internal/relayruns"
 )
@@ -180,7 +181,15 @@ func TestDBStandFinishWritesRowsAsThePointsOwn(t *testing.T) {
 		t.Fatalf("finished twice: %v", err)
 	}
 	views, err := s.Recent(ctx, 10)
-	if err != nil || len(views) != 1 || views[0].Status != TaskDone || views[0].RowsAdded != 2 {
+	// The capacity run Tick queues beside the diagnostic one is another test's
+	// subject: this one is about the run the point finished.
+	var diag []TaskView
+	for _, v := range views {
+		if v.Knob != capacity.TaskKind {
+			diag = append(diag, v)
+		}
+	}
+	if err != nil || len(diag) != 1 || diag[0].Status != TaskDone || diag[0].RowsAdded != 2 {
 		t.Fatalf("views %+v err %v", views, err)
 	}
 }

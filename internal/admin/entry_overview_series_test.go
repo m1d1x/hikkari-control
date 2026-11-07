@@ -38,6 +38,12 @@ func TestEntryOverviewSeriesDrawsTheFirstHour(t *testing.T) {
 
 	account := uuid.NewString()[:32]
 	relay := "ovws" + uuid.NewString()[:6] + "-1"
+	// The rows are dated two minutes back and must land in the current hour's
+	// bucket: in an hour's first three minutes they would fall in the last one,
+	// so wait that out rather than fail once an hour.
+	if into := time.Since(time.Now().UTC().Truncate(time.Hour)); into < 3*time.Minute {
+		time.Sleep(3*time.Minute - into)
+	}
 	at := time.Now().UTC().Truncate(time.Second).Add(-2 * time.Minute)
 	if err := store.InsertEntryReach(ctx, []analytics.EntryReachRecord{
 		reachRow(account, "relay", relay, 1, 40, 800, at),
