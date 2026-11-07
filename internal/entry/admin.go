@@ -376,6 +376,11 @@ func (h *AdminHandlers) RetireBox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	box := r.PathValue("name")
+	// A ban is the prober's call, not only the testers' (censor_proof.go).
+	proof, err := h.svc.ProveCensorDeath(r.Context(), box, reason)
+	if h.refused(w, err) {
+		return
+	}
 	relays, holders, err := h.svc.Retire(r.Context(), box, reason)
 	if h.refused(w, err) {
 		return
@@ -395,6 +400,9 @@ func (h *AdminHandlers) RetireBox(w http.ResponseWriter, r *http.Request) {
 	// failed again.
 	out := map[string]any{"relays": relays, "holders": holders}
 	logged := map[string]any{"reason": reason, "relays": relays, "holders": holders}
+	if proof != nil {
+		logged["vantage"] = proof
+	}
 	if err := h.svc.DeleteBoxInstance(r.Context(), box); err == nil {
 		out["instanceDeleted"] = true
 		logged["instance_deleted"] = true

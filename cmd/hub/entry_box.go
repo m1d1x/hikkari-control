@@ -20,7 +20,9 @@ package main
 //	                                    # of entry-box ipv6 may buy
 //	cmd/server entry-box retire <box> [reason]
 //	                                    # hand a machine back and delete it at
-//	                                    # the hoster that is saved now
+//	                                    # its hoster; a ban reason (ip_banned,
+//	                                    # fingerprint, domain_blocked) needs the
+//	                                    # prober from Russia to confirm it first
 //	cmd/server entry-box instances      # every machine at every hoster and
 //	                                    # region a box was rented in, against
 //	                                    # the hub's record; reads only
@@ -438,6 +440,14 @@ func runEntryBox(args []string) {
 // retireBox is the console's handback from this shell. The delete goes to the
 // hoster saved now, so a machine must leave before its hoster is switched off.
 func retireBox(ctx context.Context, svc *entry.Service, box, reason string) error {
+	// A ban is the prober's call, not only the testers' (eun16/eun17, 02.11).
+	proof, err := svc.ProveCensorDeath(ctx, box, reason)
+	if err != nil {
+		return err
+	}
+	if proof != nil {
+		fmt.Printf("vantage: %v\n", proof)
+	}
 	relays, holders, err := svc.Retire(ctx, box, reason)
 	if err != nil {
 		return err

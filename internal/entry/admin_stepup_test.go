@@ -108,6 +108,8 @@ func TestDestructiveBoxActionsNeedAStepUp(t *testing.T) {
 
 	// The touch is what opens them, not a route that no longer works.
 	touched = true
+	// A ban is the prober's call (censor_proof.go): it says banned.
+	h.vantage(VerdictIPBanned)
 	if code, body := do("POST", "/api/v1/admin/entry/boxes/"+box+"/retire",
 		map[string]string{"reason": DeathIPBanned}); code != http.StatusOK ||
 		!bytes.Contains(body, []byte(`"instanceDeleted":true`)) {

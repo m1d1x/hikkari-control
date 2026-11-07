@@ -1124,6 +1124,8 @@ func TestAdminHostingSurface(t *testing.T) {
 	// the disk goes with the instance, and that is what stops the charge.
 	// Behind the step-up (audit 42 С5): there is no way back from it.
 	steppedUp = true
+	// A ban is the prober's call (censor_proof.go): it says banned.
+	h.vantage(VerdictIPBanned)
 	if code, body := do("POST", "/api/v1/admin/entry/boxes/"+ordered.Box+"/retire",
 		map[string]string{"reason": DeathIPBanned}); code != 200 ||
 		!bytes.Contains(body, []byte(`"instanceDeleted":true`)) {
