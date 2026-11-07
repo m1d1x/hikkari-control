@@ -241,7 +241,7 @@ func (h hubClient) downloadProber(ctx context.Context, release proberRelease, de
 
 func (h hubClient) pollUpdate(ctx context.Context, sha string) (proberRelease, error) {
 	var release proberRelease
-	_, err := h.do(ctx, "GET", "/update?"+url.Values{"arch": {runtime.GOARCH}, "sha": {sha}}.Encode(), nil, &release)
+	_, err := h.do(ctx, "GET", "/update?"+url.Values{"arch": {runtime.GOARCH}, "sha": {sha}, "role": {envStr("ENTRY_PROBE_ROLE", "all")}}.Encode(), nil, &release)
 	return release, err
 }
 func (cfg config) serveUpdates(ctx context.Context) {

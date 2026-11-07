@@ -520,3 +520,38 @@ func TestProberBackupResumePreservesOldFilesAndDropsStaleUpload(t *testing.T) {
 		t.Fatal("new lifecycle did not replace stale pending backup")
 	}
 }
+
+func TestStandOnlyProberKeepsRoleAndDoesNotNeedAdmissionPoll(t *testing.T) {
+	ph := newProvHarness(t)
+	ctx := context.Background()
+	v, err := ph.svc.CreateVantage(ctx, VantageSpec{Slot: "stand-" + uuid.NewString()[:8]}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha := ph.prov.proberBuilds["amd64"].SHA
+	if _, err = ph.svc.pool.Exec(ctx, `UPDATE entry_vantages SET in_russia=false,prober_sha=$2,prober_poll_at=now(),last_admission_poll_at=NULL WHERE slot=$1`, v.Slot, sha); err != nil {
+		t.Fatal(err)
+	}
+	env, err := ph.svc.proberEnvironment(ctx, "https://api.hikkari.net", v.Slot, v.Token, "xray")
+	if err != nil || !strings.Contains(env, "ENTRY_PROBE_ROLE=stand\n") {
+		t.Fatalf("stand role lost: %v", err)
+	}
+	j := &jobRun{p: ph.prov, ctx: ctx}
+	if err = j.waitProber(v.Slot, sha, time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	RegisterProberUpdates(mux, ph.svc, ph.prov)
+	for _, role := range []string{"all", "stand"} {
+		req := httptest.NewRequest("GET", "/api/v1/internal/entry-probes/update?arch=amd64&sha="+sha+"&role="+role, nil)
+		req.Header.Set("Authorization", "Bearer "+v.Token)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if role == "stand" && w.Code != 200 {
+			t.Fatalf("stand poll: %d", w.Code)
+		}
+		if role == "all" && w.Code == 200 {
+			t.Fatal("control abroad was allowed to report an admission role")
+		}
+	}
+}

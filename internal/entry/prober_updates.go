@@ -24,8 +24,16 @@ func RegisterProberUpdates(mux *http.ServeMux, s *Service, p *Provisioner) {
 			writeJSON(w, 400, map[string]string{"error": "unsupported arch or sha"})
 			return
 		}
+		role := r.URL.Query().Get("role")
+		if role == "" {
+			role = "all"
+		}
+		if role != "all" && role != "stand" {
+			writeJSON(w, 400, map[string]string{"error": "unsupported role"})
+			return
+		}
 		var standalone bool
-		err := s.pool.QueryRow(r.Context(), `UPDATE entry_vantages SET prober_arch=$2, prober_sha=$3, prober_poll_at=now() WHERE slot=$1 AND status='active' RETURNING box IS NULL`, vantageOf(r), arch, sha).Scan(&standalone)
+		err := s.pool.QueryRow(r.Context(), `UPDATE entry_vantages SET prober_arch=$2, prober_sha=$3, prober_poll_at=now() WHERE slot=$1 AND status='active' AND in_russia=$4 RETURNING box IS NULL`, vantageOf(r), arch, sha, role != "stand").Scan(&standalone)
 		if err != nil {
 			writeJSON(w, 503, map[string]string{"error": "poll unavailable"})
 			return
@@ -117,7 +125,7 @@ func (p *Provisioner) rollProber(ctx context.Context, v Vantage) error {
 	}
 	if strings.TrimSpace(out) == build.SHA {
 		var healthy bool
-		if err = p.svc.pool.QueryRow(ctx, `SELECT COALESCE(prober_sha=$2 AND prober_poll_at > now()-interval '3 minutes' AND last_admission_poll_at > now()-interval '3 minutes',false) FROM entry_vantages WHERE slot=$1`, v.Slot, build.SHA).Scan(&healthy); err != nil {
+		if err = p.svc.pool.QueryRow(ctx, `SELECT COALESCE(prober_sha=$2 AND prober_poll_at > now()-interval '3 minutes' AND (NOT in_russia OR last_admission_poll_at > now()-interval '3 minutes'),false) FROM entry_vantages WHERE slot=$1`, v.Slot, build.SHA).Scan(&healthy); err != nil {
 			return err
 		}
 		if healthy {
@@ -144,14 +152,15 @@ func (p *Provisioner) rollProber(ctx context.Context, v Vantage) error {
 	return p.svc.WaitProberJob(ctx, id)
 }
 
-// waitProber requires both the new executable's self-reported digest and a
-// fresh admission poll. A still-running old prober cannot confirm a rollout.
+// waitProber requires the new executable's self-reported digest and a fresh
+// poll. Russian admission points must also poll for admission work; a stand
+// control abroad never does. The update endpoint verifies the registry role.
 func (j *jobRun) waitProber(slot, sha string, started time.Time) error {
 	ctx, cancel := context.WithTimeout(j.ctx, j.p.probeTimeout)
 	defer cancel()
 	for {
 		var ready bool
-		err := j.p.svc.pool.QueryRow(ctx, `SELECT COALESCE(prober_sha=$2 AND prober_poll_at >= $3 AND last_admission_poll_at >= $3, false) FROM entry_vantages WHERE slot=$1 AND status='active'`, slot, sha, started).Scan(&ready)
+		err := j.p.svc.pool.QueryRow(ctx, `SELECT COALESCE(prober_sha=$2 AND prober_poll_at >= $3 AND (NOT in_russia OR last_admission_poll_at >= $3), false) FROM entry_vantages WHERE slot=$1 AND status='active'`, slot, sha, started).Scan(&ready)
 		if err == nil && ready {
 			return nil
 		}
@@ -327,4 +336,18 @@ func resumeArg(resume bool) string {
 		return "1"
 	}
 	return "0"
+}
+
+// The hub's registry owns the observation role. A control abroad never
+// becomes an admission point merely because its prober was reinstalled.
+func (s *Service) proberEnvironment(ctx context.Context, apiURL, slot, token, xrayBin string) (string, error) {
+	var inRussia bool
+	if err := s.pool.QueryRow(ctx, `SELECT in_russia FROM entry_vantages WHERE slot=$1 AND status='active'`, slot).Scan(&inRussia); err != nil {
+		return "", err
+	}
+	role := "all"
+	if !inRussia {
+		role = "stand"
+	}
+	return proberEnv(apiURL, slot, token, xrayBin) + "ENTRY_PROBE_ROLE=" + role + "\n", nil
 }

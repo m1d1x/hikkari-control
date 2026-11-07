@@ -39,6 +39,7 @@ func runStandOnly() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	log.Printf("entry-prober: stand only, hub=%s kit=%s", cfg.hub.base, cfg.stand.kitURL)
+	go cfg.serveUpdates(ctx)
 	cfg.serveStand(ctx)
 	log.Println("entry-prober: shutdown")
 }

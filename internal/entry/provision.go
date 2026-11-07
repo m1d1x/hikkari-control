@@ -530,9 +530,13 @@ func (j *jobRun) deployProber(slot, token string, resume bool) (deployErr error)
 		return fmt.Errorf("unit-файл пробника: %w", err)
 	}
 
+	env, err := j.p.svc.proberEnvironment(j.ctx, j.p.proberAPIURL, slot, token, xrayBin)
+	if err != nil {
+		return fmt.Errorf("prober role: %w", err)
+	}
 	if _, err := r.Run(j.ctx,
 		"umask 077 && mkdir -p /etc/nekko-entry-prober && cat > /etc/nekko-entry-prober/prober.env.new",
-		strings.NewReader(proberEnv(j.p.proberAPIURL, slot, token, xrayBin)),
+		strings.NewReader(env),
 	); err != nil {
 		return fmt.Errorf("env пробника: %w", err)
 	}
