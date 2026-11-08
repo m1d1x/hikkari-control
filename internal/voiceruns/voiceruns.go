@@ -228,7 +228,7 @@ type Group struct {
 	Network   string  `json:"network"`
 	Mobile    bool    `json:"mobile"`
 	Series    int     `json:"series"`
-	Failed    int     `json:"failed"` // series with an error and nothing measured
+	Failed    int     `json:"failed"` // series that ended in an error: not in the numbers
 	Minutes   float64 `json:"minutes"`
 	LossPct   float64 `json:"loss_pct"`
 	// Gaps60PerMin and Gaps150PerMin are the silences a call hears, a minute.
@@ -268,7 +268,10 @@ func Summarize(rows []Row) []Group {
 		if r.MeasuredAt.After(a.g.Last) {
 			a.g.Last = r.MeasuredAt
 		}
-		if r.Sent == 0 {
+		// A series that ended in an error (the session restarted, the network
+		// went down) measured part of what a call hears, or nothing: counted as
+		// a failure, it does not stand in the numbers for a whole one.
+		if r.Sent == 0 || r.Error != "" {
 			a.g.Failed++
 			continue
 		}

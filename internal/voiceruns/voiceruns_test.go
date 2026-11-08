@@ -80,6 +80,8 @@ func TestSummarizeAppliesTheStopRule(t *testing.T) {
 		{InstallID: "t-1", MeasuredAt: at, Path: "direct", Proto: "vless-reality", Network: "AS1", Sent: 1500, Recv: 1500, GapMax: intp(25)},
 		// A round that could not run.
 		{InstallID: "t-2", MeasuredAt: at, Path: "tun", Proto: "hysteria2", Network: "unknown", Error: "target not resolved"},
+		// A round cut short by a session restart: one request, no reply.
+		{InstallID: "t-1", MeasuredAt: at.Add(-time.Minute), Path: "tun", Proto: "vless-reality", Network: "AS1", Sent: 1, LossRun: 1, Error: "context canceled"},
 	}
 	groups := Summarize(rows)
 	if len(groups) != 3 {
@@ -97,7 +99,7 @@ func TestSummarizeAppliesTheStopRule(t *testing.T) {
 			direct = g
 		}
 	}
-	if tun.Series != 2 || tun.Minutes != 1 || tun.Gaps60PerMin != 6 || tun.Gaps150PerMin != 1 || *tun.GapMaxMs != 220 || tun.Verdict != VerdictAudible {
+	if tun.Series != 3 || tun.Failed != 1 || tun.Minutes != 1 || tun.Gaps60PerMin != 6 || tun.Gaps150PerMin != 1 || *tun.GapMaxMs != 220 || tun.Verdict != VerdictAudible {
 		t.Fatalf("tunnel group: %+v", tun)
 	}
 	if tun.LossPct != 0.03 || *tun.RTTP50Ms != 50 {
