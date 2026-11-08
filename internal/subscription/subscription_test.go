@@ -243,3 +243,20 @@ func TestARecordUnderAnUnknownKeyIsLeftOut(t *testing.T) {
 		t.Fatalf("links %q", links)
 	}
 }
+
+func TestALinkCarriesItsNodesNameAndID(t *testing.T) {
+	link, err := Link(realityRecord())
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(namedLink(link, entry.NodeName{Slug: "abc", Label: "рига-001"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Fragment != "рига-001" || u.Query().Get("hikkari-node") != "n:abc" {
+		t.Fatalf("link %s", u)
+	}
+	if got := namedLink(link, entry.NodeName{}); got != link {
+		t.Fatalf("a relay with no node changed: %s", got)
+	}
+}

@@ -91,6 +91,9 @@ func (s *Service) syncFleetNodes(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := labelFleetNodes(ctx, tx); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -139,19 +142,27 @@ func (s *Service) FleetNodes(ctx context.Context) ([]FleetNode, error) {
 	return nodes, nil
 }
 
-func (s *Service) NodeSlugs(ctx context.Context) (map[string]string, error) {
-	rows, err := s.pool.Query(ctx, `SELECT r.name,n.slug FROM entry_nodes n JOIN entry_relays r ON r.id=n.relay_id WHERE r.status='alive'`)
+// NodeName is a serving relay's logical node as a subscription names it.
+type NodeName struct{ Slug, Label string }
+
+// NodeNames is every serving relay's node, by relay name.
+func (s *Service) NodeNames(ctx context.Context) (map[string]NodeName, error) {
+	if err := s.syncFleetNodes(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT r.name,n.slug,coalesce(n.label,'') FROM entry_nodes n JOIN entry_relays r ON r.id=n.relay_id WHERE r.status='alive'`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]string{}
+	out := map[string]NodeName{}
 	for rows.Next() {
-		var relay, slug string
-		if err := rows.Scan(&relay, &slug); err != nil {
+		var relay string
+		var n NodeName
+		if err := rows.Scan(&relay, &n.Slug, &n.Label); err != nil {
 			return nil, err
 		}
-		out[relay] = slug
+		out[relay] = n
 	}
 	return out, rows.Err()
 }
