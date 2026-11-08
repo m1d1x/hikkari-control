@@ -84,6 +84,20 @@ func (s *Service) ensureAwgKey(ctx context.Context, account uuid.UUID, k *access
 // understood by the clients in people's hands. The payload is Qt's qCompress of
 // a server description holding the .conf text.
 func AwgLink(r entry.RelayRecord) (string, error) {
+	return awgLinkNamed(r, "")
+}
+
+// awgLinkFor renders AWG links that carry the node's name. The name sits in
+// the server description because that is what clients read as the profile's
+// title (Amnezia's own client and ours read description before the link's
+// fragment); the relay's name stays only where a node has no name yet. The
+// description is outside the capacity key (capacity.amneziaKey reads the
+// .conf alone), so naming a link does not part it from its measurements.
+func awgLinkFor(node entry.NodeName) func(entry.RelayRecord) (string, error) {
+	return func(r entry.RelayRecord) (string, error) { return awgLinkNamed(r, node.Label) }
+}
+
+func awgLinkNamed(r entry.RelayRecord, label string) (string, error) {
 	p := r.AwgParams
 	if r.Proto != entry.ProtoAmneziaWG || p == nil {
 		return "", errNoLink
@@ -147,7 +161,7 @@ func AwgLink(r entry.RelayRecord) (string, error) {
 	)
 	conf := strings.Join(lines, "\n")
 	doc, err := json.Marshal(map[string]any{
-		"description":      "Hikkari " + r.Name,
+		"description":      awgDescription(r, label),
 		"hostName":         r.Address,
 		"defaultContainer": "amnezia-awg",
 		"containers": []any{map[string]any{
@@ -170,4 +184,11 @@ func AwgLink(r entry.RelayRecord) (string, error) {
 		return "", err
 	}
 	return "vpn://" + base64.RawURLEncoding.EncodeToString(compressed.Bytes()), nil
+}
+
+func awgDescription(r entry.RelayRecord, label string) string {
+	if label != "" {
+		return label
+	}
+	return "Hikkari " + r.Name
 }

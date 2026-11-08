@@ -54,7 +54,7 @@ func (s *Service) fleetLinks(ctx context.Context, fleet Fleet, peer *accessKey) 
 			params := *rec.AwgParams
 			params.ClientPrivateKey, params.ClientAddress = peer.awgPrivate, peer.awgAddress
 			rec.AwgParams = &params
-			render = AwgLink
+			render = awgLinkFor(nodes[rec.Name])
 		case entry.ProtoHysteria2:
 			render = SingBoxHysteriaLink
 		}

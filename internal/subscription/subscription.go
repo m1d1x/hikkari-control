@@ -325,10 +325,12 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 			if err := s.ensureAwgKey(ctx, account, &key); err != nil {
 				return nil, err
 			}
-			render = AwgLink
+			// Named like every other link: the node's name as its title, its
+			// slug on the link for the downdetector and the capacity metrics.
+			render = awgLinkFor(nodes[rec.Name])
 		}
 		link, err := render(withKey(rec, key))
-		if err == nil && rec.Proto != entry.ProtoAmneziaWG {
+		if err == nil {
 			link = namedLink(link, nodes[rec.Name], coversOf(rec))
 		}
 		if err != nil {
