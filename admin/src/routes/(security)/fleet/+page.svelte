@@ -15,7 +15,7 @@
 	const REFRESH_MS = 60_000;
 	const AVAIL_COLOR = '#d95926';
 	const RTT_COLOR = '#3987e5';
-	const CARRIED_COLOR = '#199e70';
+	const SPEED_COLOR = '#199e70';
 
 	let data = $state<FleetProfiles | null>(null);
 	let loadError = $state<string | null>(null);
@@ -172,17 +172,17 @@
 							bucketSeconds={data.bucketSeconds}
 							series={[
 								{
-									key: 'carried',
-									label: 'прокачано',
-									color: CARRIED_COLOR,
-									values: p.carriedMbps,
+									key: 'speed',
+									label: 'скорость с пробников РФ',
+									color: SPEED_COLOR,
+									values: p.speedMbps,
 									format: formatRate,
 									primary: true,
 								},
 							]}
 							formatAxis={formatRate}
 							height={120}
-							empty="трафика нет за окно"
+							empty="пробники не мерили скорость за окно"
 						/>
 					</section>
 				{/each}

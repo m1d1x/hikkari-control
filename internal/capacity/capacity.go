@@ -37,6 +37,16 @@ func Key(link string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// NodeOf is the logical node a link names (hikkari-node=n:<slug>, put there
+// by the subscription's namedLink); empty when the link names none.
+func NodeOf(link string) string {
+	u, err := url.Parse(link)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(u.Query().Get("hikkari-node"), "n:")
+}
+
 type Sample struct {
 	Key        string  `json:"key"`
 	MeasuredAt int64   `json:"measuredAt"`

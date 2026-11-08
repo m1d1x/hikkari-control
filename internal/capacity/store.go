@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// HistoryKept is how far back relay_capacity_history reaches.
+const HistoryKept = "30 days"
+
 type Store struct{ Pool db.Pool }
 
 // Save is idempotent per point/configuration; old reports cannot replace new ones.
@@ -34,7 +37,9 @@ func (s Store) Save(ctx context.Context, slot string, samples []Sample, core str
 		}
 		n += int(tag.RowsAffected())
 	}
-	_, err := s.Pool.Exec(ctx, `WITH cleaned AS (DELETE FROM relay_capacity WHERE measured_at < now()-interval '24 hours') DELETE FROM relay_capacity_history WHERE measured_at < now()-interval '24 hours'`)
+	// Subscribers are handed the last 24 hours (Metrics); the fleet screen
+	// draws up to 30 days of the same measurements, so history keeps that.
+	_, err := s.Pool.Exec(ctx, `WITH cleaned AS (DELETE FROM relay_capacity WHERE measured_at < now()-interval '24 hours') DELETE FROM relay_capacity_history WHERE measured_at < now()-interval '`+HistoryKept+`'`)
 	return n, err
 }
 

@@ -37,12 +37,13 @@ func TestFoldProfilesLaysFiguresOnBucketsAndKeepsGaps(t *testing.T) {
 		}},
 		rtt:     map[string]map[int64]float64{"a1-1": {t0.Unix(): 300, t0.Add(2 * time.Hour).Unix(): 310}},
 		carried: map[string]map[int64]float64{"a1-1": {t0.Add(time.Hour).Unix(): 4.5}},
+		speed:   map[string]map[int64]float64{"ams-2-node": {t0.Unix(): 340}},
 		covers:  map[string]string{"a1-1": "www.samsung.com", "b1-1": "probed.example"},
 		boxGB:   map[string]float64{"a1": 1500},
 	}
 	got := foldProfiles([]fleetProfile{
 		{Label: "riga-1", Relay: "b1-1", Box: "b1", Proto: "vless-xhttp", Cover: "site.example", boxSince: t0.Add(-time.Hour)},
-		{Label: "ams-2", Relay: "a1-1", Box: "a1", Proto: "vless-reality-vision", boxSince: month.Add(-48 * time.Hour)},
+		{Label: "ams-2", Slug: "ams-2-node", Relay: "a1-1", Box: "a1", Proto: "vless-reality-vision", boxSince: month.Add(-48 * time.Hour)},
 		{Label: "ams-1", Relay: "c1-1", Box: "c1", Proto: "vless-reality-vision"},
 	}, starts, month, f)
 
@@ -55,6 +56,9 @@ func TestFoldProfilesLaysFiguresOnBucketsAndKeepsGaps(t *testing.T) {
 	}
 	if p.CarriedMbps[0] != nil || value(t, p.CarriedMbps, 1) != 4.5 {
 		t.Errorf("carried = %v, want gap, 4.5", p.CarriedMbps)
+	}
+	if value(t, p.SpeedMbps, 0) != 340 || p.SpeedMbps[1] != nil {
+		t.Errorf("speed = %v, want 340 from the node's measurements, then gap", p.SpeedMbps)
 	}
 	if value(t, p.AvailPct, 0) != 75 || p.AvailPct[1] != nil || value(t, p.AvailPct, 2) != 100 {
 		t.Errorf("avail = %v, want 75, gap (nobody judged), 100", p.AvailPct)

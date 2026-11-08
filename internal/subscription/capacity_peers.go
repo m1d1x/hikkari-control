@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/m1d1x/hikkari-control/internal/applog"
+	"github.com/m1d1x/hikkari-control/internal/capacity"
 	"github.com/m1d1x/hikkari-control/internal/entry"
 )
 
@@ -56,7 +58,32 @@ func (s *Service) CapacityFleetLinks(ctx context.Context, fleet Fleet, slot stri
 	if err != nil {
 		return nil, err
 	}
-	return s.fleetLinks(ctx, fleet, &k)
+	links, err := s.fleetLinks(ctx, fleet, &k)
+	if err != nil {
+		return nil, err
+	}
+	// The run's samples come back keyed by configuration only; the pair is
+	// what lets the fleet screen draw them on the node's card. Not having it
+	// costs the screen a line, not the run its links.
+	if err := s.rememberCapacityNodes(ctx, links); err != nil {
+		applog.Error(ctx, "capacity", "node keys not saved", applog.F("err", err.Error()))
+	}
+	return links, nil
+}
+
+// rememberCapacityNodes writes which node each capacity key is of.
+func (s *Service) rememberCapacityNodes(ctx context.Context, links []string) error {
+	for _, link := range links {
+		key, node := capacity.Key(link), capacity.NodeOf(link)
+		if key == "" || node == "" {
+			continue
+		}
+		if _, err := s.pool.Exec(ctx, `INSERT INTO relay_capacity_nodes (config_key, node_slug, seen_at) VALUES ($1, $2, now())
+ ON CONFLICT (config_key) DO UPDATE SET node_slug = excluded.node_slug, seen_at = excluded.seen_at`, key, node); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PrepareCapacityPeers provisions before task claim so the normal edge pulse

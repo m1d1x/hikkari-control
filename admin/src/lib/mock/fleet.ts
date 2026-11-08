@@ -38,6 +38,7 @@ export function mockFleetProfiles(window: FleetWindow): FleetProfiles {
 			trafficSince: month,
 			availPct: wave(n, 97, 3).map((v) => Math.min(100, v)),
 			rttMs: wave(n, 303, 25),
+			speedMbps: wave(n, 340, 60),
 			carriedMbps: wave(n, 3.2, 2.1),
 		},
 		{
@@ -56,6 +57,7 @@ export function mockFleetProfiles(window: FleetWindow): FleetProfiles {
 			trafficSince: month,
 			availPct: wave(n, 99, 1).map((v) => Math.min(100, v)),
 			rttMs: wave(n, 311, 30),
+			speedMbps: wave(n, 210, 50),
 			carriedMbps: wave(n, 1.4, 1.2),
 		},
 		{
@@ -73,6 +75,7 @@ export function mockFleetProfiles(window: FleetWindow): FleetProfiles {
 			trafficSince: ago(0.75),
 			availPct: wave(n, 100, 0),
 			rttMs: wave(n, 31, 4),
+			speedMbps: wave(n, 90, 30),
 			carriedMbps: wave(n, 0.6, 0.5),
 		},
 	];

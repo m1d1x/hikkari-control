@@ -19,9 +19,14 @@ package admin
 //     a verdict that could not judge (network_down, unknown) is not in it.
 //   - rttMs: the median time of the RU probers' check through the relay
 //     (entry_probes.reality_rtt_ms), a check that did not complete left out.
+//   - speedMbps: the download speed the RU probers measured through the
+//     profile (the stand's capacity runs, relay_capacity_history), the
+//     median of the points in a bucket. This is the profile's speed; it is
+//     what subscribers are handed with their links (capacity.Store.Metrics).
 //   - carriedMbps: what the relay passed for subscribers, the busier
 //     direction, counted on the relay itself and sent in its pulses
-//     (analytics.EntryRelayDeltas). Nothing here comes from a device.
+//     (analytics.EntryRelayDeltas). Load, not speed: on an idle relay it is
+//     a fraction of a megabit. Nothing here comes from a device.
 //
 // The traffic line of the card is the box's spend against its plan: bytes in
 // and out of all its relays since the start of the calendar month (UTC), or
@@ -85,6 +90,7 @@ type fleetProfile struct {
 
 	AvailPct    []*float64 `json:"availPct"`
 	RTTMs       []*float64 `json:"rttMs"`
+	SpeedMbps   []*float64 `json:"speedMbps"`
 	CarriedMbps []*float64 `json:"carriedMbps"`
 
 	providerRegion string
@@ -97,8 +103,10 @@ type relayFigures struct {
 	probes  map[string]map[int64]probeCount
 	rtt     map[string]map[int64]float64
 	carried map[string]map[int64]float64
-	covers  map[string]string
-	boxGB   map[string]float64
+	// speed is keyed by node slug, not relay: a measurement names the node.
+	speed  map[string]map[int64]float64
+	covers map[string]string
+	boxGB  map[string]float64
 }
 
 // PlanCatalog reads a hoster's offer in one region: where a plan's traffic
@@ -204,6 +212,11 @@ func (h *Handlers) FleetProfiles(w http.ResponseWriter, r *http.Request) {
 			missingFigure{Figure: "trafficUsedGb", Why: why})
 	} else if figures, err = h.relayFigures(ctx, starts[0], now, bucket, month); err != nil {
 		log.Printf("admin fleet profiles: dataset: %v", err)
+		http.Error(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	if figures.speed, err = h.probedSpeed(ctx, starts[0], bucket); err != nil {
+		log.Printf("admin fleet profiles: speed: %v", err)
 		http.Error(w, "query failed", http.StatusInternalServerError)
 		return
 	}
@@ -415,6 +428,41 @@ func (h *Handlers) relayFigures(ctx context.Context, since, now time.Time, bucke
 	return out, spent.Err()
 }
 
+// probedSpeed is each node's measured download speed per bucket: the median
+// of the successful samples the RU observation points sent in it. A sample
+// joins its node through relay_capacity_nodes; one whose key no capacity run
+// was handed with a node name is left out.
+func (h *Handlers) probedSpeed(ctx context.Context, since time.Time, bucket time.Duration) (map[string]map[int64]float64, error) {
+	out := map[string]map[int64]float64{}
+	rows, err := h.pool.Query(ctx, `
+		SELECT n.node_slug,
+		       floor(extract(epoch FROM c.measured_at) / $2)::bigint * $2 AS bucket,
+		       percentile_cont(0.5) WITHIN GROUP (ORDER BY (c.sample->>'mbps')::float8)
+		FROM relay_capacity_history c
+		JOIN relay_capacity_nodes n ON n.config_key = c.config_key
+		JOIN entry_vantages v ON v.slot = c.slot
+		WHERE v.in_russia AND c.measured_at >= $1
+		  AND coalesce(c.sample->>'error', '') = '' AND (c.sample->>'mbps')::float8 > 0
+		GROUP BY 1, 2`, since, int64(bucket.Seconds()))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var slug string
+		var at int64
+		var mbps float64
+		if err := rows.Scan(&slug, &at, &mbps); err != nil {
+			return nil, err
+		}
+		if out[slug] == nil {
+			out[slug] = map[int64]float64{}
+		}
+		out[slug][at] = mbps
+	}
+	return out, rows.Err()
+}
+
 // carriedMbps is a relay's rate in a bucket: the busier direction's bytes over
 // the seconds they took. The link is full duplex, so the two directions are
 // not added. No measured second is no rate, not zero.
@@ -453,6 +501,7 @@ func foldProfiles(profiles []fleetProfile, starts []time.Time, month time.Time, 
 			}
 		}
 		p.RTTMs = line(f.rtt, p.Relay)
+		p.SpeedMbps = line(f.speed, p.Slug)
 		p.CarriedMbps = line(f.carried, p.Relay)
 		if p.Cover == "" {
 			p.Cover = f.covers[p.Relay]

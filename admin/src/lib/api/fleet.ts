@@ -32,7 +32,9 @@ export interface FleetProfile {
 	availPct: (number | null)[];
 	/** median latency of the RU probers' check through the relay */
 	rttMs: (number | null)[];
-	/** what the relay passed for subscribers, the busier direction, counted on the relay */
+	/** download speed the RU probers measured through the profile, median per bucket */
+	speedMbps: (number | null)[];
+	/** what the relay passed for subscribers, the busier direction: load, not speed */
 	carriedMbps: (number | null)[];
 }
 
