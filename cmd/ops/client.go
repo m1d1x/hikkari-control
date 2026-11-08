@@ -310,6 +310,23 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 		return c.probe(args)
 	case "load":
 		return c.load(args)
+	case "probe-voice":
+		return c.probeVoice(args)
+	case "voice":
+		q := url.Values{}
+		for _, k := range []string{"who", "proto", "last"} {
+			if v := args[k]; v != "" {
+				q.Set(k, v)
+			}
+		}
+		if args["rows"] != "" && args["rows"] != "0" {
+			q.Set("rows", "1")
+		}
+		data, err := c.request(http.MethodGet, "/api/v1/ops/voice", q, nil)
+		if err != nil {
+			return "", err
+		}
+		return prettyJSON(data), nil
 	case "matrix":
 		return c.matrix(args)
 	case "stand":
@@ -594,11 +611,16 @@ func (c *client) waitAndRead(who, path string, asked diagAnswer, source string) 
 
 // waitDone polls a queued command until its client has answered it.
 func (c *client) waitDone(path string, asked diagAnswer) error {
-	deadline := time.Now().Add(diagWait)
+	return c.waitDoneWithin(path, asked, diagWait)
+}
+
+// waitDoneWithin is waitDone for a command that runs longer than a diagnostic.
+func (c *client) waitDoneWithin(path string, asked diagAnswer, wait time.Duration) error {
+	deadline := time.Now().Add(wait)
 	state := asked.State
 	for state != "done" {
 		if state == "expired" || time.Now().After(deadline) {
-			return diagTimeout(asked, state)
+			return diagTimeout(asked, state, wait)
 		}
 		time.Sleep(diagPoll)
 		data, err := c.request(http.MethodGet, path+"/"+url.PathEscape(asked.Nonce), nil, nil)
@@ -734,11 +756,39 @@ func parseProbeTargets(s string) ([]map[string]string, error) {
 	return out, nil
 }
 
-func diagTimeout(a diagAnswer, state string) error {
+func diagTimeout(a diagAnswer, state string, wait time.Duration) error {
 	if state == "delivered" {
-		return fmt.Errorf("%s забрал команду, но не ответил за %s: версия %s могла не уметь %s, или проверка ещё идёт. Логи — tool logs", a.Alias, diagWait, a.Version, a.Kind)
+		return fmt.Errorf("%s забрал команду, но не ответил за %s: версия %s могла не уметь %s, или проверка ещё идёт. Логи — tool logs", a.Alias, wait, a.Version, a.Kind)
 	}
-	return fmt.Errorf("%s не забрал команду за %s (состояние %s): версия %s может быть без heartbeat, или клиент только что закрыли", a.Alias, diagWait, state, a.Version)
+	return fmt.Errorf("%s не забрал команду за %s (состояние %s): версия %s может быть без heartbeat, или клиент только что закрыли", a.Alias, wait, state, a.Version)
+}
+
+// voiceWait bounds probe_voice: up to a minute until the client takes the
+// command, two series of ~31 s, and up to a minute until the batch with its
+// answer ships.
+const voiceWait = 4 * time.Minute
+
+// probeVoice asks a tester for a voice round now: a call's datagrams through
+// the tunnel for 30 s and, on Windows, from the card beside it. The answer is
+// the [diag:voice] lines; the hub keeps them in voice_runs as well.
+func (c *client) probeVoice(args map[string]string) (string, error) {
+	who := args["who"]
+	path, err := installPath(who, "/commands")
+	if err != nil {
+		return "", err
+	}
+	data, err := c.request(http.MethodPost, path, nil, map[string]any{"kind": "probe_voice"})
+	if err != nil {
+		return "", err
+	}
+	var asked diagAnswer
+	if err := json.Unmarshal(data, &asked); err != nil {
+		return "", fmt.Errorf("hub answer: %w", err)
+	}
+	if err := c.waitDoneWithin(path, asked, voiceWait); err != nil {
+		return "", err
+	}
+	return c.readAnswer(who, asked, "diag:voice")
 }
 
 // ciStatus reads GitHub Actions through gh, which already holds the login.

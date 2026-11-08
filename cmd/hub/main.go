@@ -36,6 +36,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/subscription"
 	"github.com/m1d1x/hikkari-control/internal/support"
 	"github.com/m1d1x/hikkari-control/internal/telemetry"
+	"github.com/m1d1x/hikkari-control/internal/voiceruns"
 )
 
 func main() {
@@ -367,6 +368,14 @@ func run() error {
 		knobErrs = store // a nil *analytics.Store in the interface would not read as nil
 	}
 	go knobcheck.NewIngester(knobChecks, svc, knobErrs).Run(ctx, 2*time.Minute)
+	// Testers' voice series: what a call hears through the tunnel and from the
+	// bare network, kept past the log stream's week (internal/voiceruns).
+	voiceRuns := voiceruns.NewStore(pool)
+	voiceruns.RegisterOpsRoutes(adminMux, voiceRuns, func(ctx context.Context, ref string) (string, error) {
+		id, _, err := testerStore.ResolveInstall(ctx, ref)
+		return id, err
+	}, testerAliases(testerStore), opsGate)
+	go voiceruns.NewIngester(voiceRuns, pool).Run(ctx, 2*time.Minute)
 	// The stand on the hub's schedule: every active observation point runs
 	// every enabled knob over every relay of the fleet, rows into relayRuns.
 	standRuns := stand.NewScheduler(pool, svc, standFleet{subs: subs, fleet: svc}, relayRuns, config.Default().APIURL())

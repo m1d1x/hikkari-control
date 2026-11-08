@@ -37,6 +37,10 @@ const (
 	// TesterCommandLoad runs every profile of the install under load now. Its
 	// answer only says the round started: the lines follow as [diag:load].
 	TesterCommandLoad = "load_profiles"
+	// TesterCommandVoice sends a call's datagrams through the tunnel for half a
+	// minute, and on Windows from the card beside it; the answer is the
+	// [diag:voice] lines (internal/voiceruns keeps them).
+	TesterCommandVoice = "probe_voice"
 
 	TesterCommandPending   = "pending"
 	TesterCommandDelivered = "delivered"
@@ -53,6 +57,7 @@ var testerCommandKinds = map[string]bool{
 	TesterCommandSnapshot:  true,
 	TesterCommandProbe:     true,
 	TesterCommandLoad:      true,
+	TesterCommandVoice:     true,
 }
 
 // TesterCommand is what a client receives in the answer to its chunk.

@@ -25,6 +25,9 @@ const usage = `usage: ops <command>
   probe <who> --targets label=ip:port,label=ip:port
                                     TCP flows from the tester's card, past the tunnel
   load <who>                        a [diag:load] round over the tester's profiles now
+  probe-voice <who>                 a call's datagrams through the tunnel now: [diag:voice]
+  voice [--who X] [--proto X] [--last 7d] [--rows 1]
+                                    testers' voice series, grouped, with the verdict
   matrix --sub URL --profile LABEL --knob fp=chrome,firefox [--vantage spb,lv] [--rounds 3]
                                     one knob of a profile, measured from Russia and outside
   stand [--limit 20]                the hub's scheduled stand: what it measures, its latest runs
