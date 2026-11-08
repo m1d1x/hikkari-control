@@ -73,7 +73,7 @@ Hikkari v1 (`hikkari+v1://`, спецификация в `hikkari-protocol/spec/
 `Hikkari-Features: hikkari`. Нода: `hub entry-box order <регион> <план> hikkari`, edge запускается как
 `EDGE_PROTO=hikkari` с `EDGE_HIKKARI_HOST/USER/PASS`.
 Для переноса записанной лабораторной машины без действующих релеев:
-`hub entry-box adopt-naive <box> <domain>`. Команда выполняет обычные deploy/admit/sign,
+`hub entry-box adopt-naive <box> <domain>` (или `adopt-hikkari`). Команда выполняет обычные deploy/admit/sign,
 не покупает машину и восстанавливает лабораторный Caddy при неудачном развёртывании.
 Для Hikkari с выбранным движком **Xray** используйте `/sub/<token>?engine=xray`:
 добавляются Hysteria2 с `pinSHA256` сертификата и `finalmask` (весь набор Salamander + Noise).

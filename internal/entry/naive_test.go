@@ -105,7 +105,7 @@ func TestNaiveAdoptionIsAtomicAndRefusesServingMachines(t *testing.T) {
 	if err = s.CreateBox(ctx, BoxSpec{Name: box, Address: "203.0.113.91", Provider: "test", Location: "eu"}); err != nil {
 		t.Fatal(err)
 	}
-	id, err := s.prepareNaiveAdoption(ctx, box, "node.example.com", "")
+	id, err := s.prepareAdoption(ctx, box, ProtoNaive, "node.example.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestNaiveAdoptionIsAtomicAndRefusesServingMachines(t *testing.T) {
 	if err = pool.QueryRow(ctx, `SELECT proto FROM entry_boxes WHERE name=$1`, box).Scan(&proto); err != nil || proto != ProtoNaive {
 		t.Fatalf("not adopted: %s %v", proto, err)
 	}
-	if _, err = s.prepareNaiveAdoption(ctx, box, "other.example.com", ""); !errors.Is(err, ErrBoxBusy) {
+	if _, err = s.prepareAdoption(ctx, box, ProtoNaive, "other.example.com", ""); !errors.Is(err, ErrBoxBusy) {
 		t.Fatalf("concurrent job accepted: %v", err)
 	}
 	if err = s.finishJob(ctx, id, errors.New("test finishes job")); err != nil {
@@ -122,10 +122,10 @@ func TestNaiveAdoptionIsAtomicAndRefusesServingMachines(t *testing.T) {
 	if _, err = s.AddRelay(ctx, box, KindPersonal); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.prepareNaiveAdoption(ctx, box, "other.example.com", ""); !errors.Is(err, ErrRejected) {
+	if _, err = s.prepareAdoption(ctx, box, ProtoNaive, "other.example.com", ""); !errors.Is(err, ErrRejected) {
 		t.Fatalf("pending identity changed domain: %v", err)
 	}
-	retryID, err := s.prepareNaiveAdoption(ctx, box, "node.example.com", "")
+	retryID, err := s.prepareAdoption(ctx, box, ProtoNaive, "node.example.com", "")
 	if err != nil {
 		t.Fatalf("failed adoption cannot resume: %v", err)
 	}
@@ -135,7 +135,46 @@ func TestNaiveAdoptionIsAtomicAndRefusesServingMachines(t *testing.T) {
 	if _, err = pool.Exec(ctx, `UPDATE entry_relays SET status='alive',envelope_ct=decode('01','hex'),key_id='test',issued_at=now(),expires_at=now()+interval '1 day',signed_at=now() WHERE box=$1`, box); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.prepareNaiveAdoption(ctx, box, "node.example.com", ""); !errors.Is(err, ErrRejected) {
+	if _, err = s.prepareAdoption(ctx, box, ProtoNaive, "node.example.com", ""); !errors.Is(err, ErrRejected) {
 		t.Fatalf("serving relay converted: %v", err)
+	}
+}
+
+func TestHikkariAdoptionClaimsTheBoxAsHikkari(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	s, err := NewService(pool, nil, DefaultBatchSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	box := "hkadopt902"
+	if err = s.CreateBox(ctx, BoxSpec{Name: box, Address: "203.0.113.92", Provider: "test", Location: "eu"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.prepareAdoption(ctx, box, ProtoVlessXhttp, "node.example.com", ""); !errors.Is(err, ErrRejected) {
+		t.Fatalf("adopted as a protocol Caddy does not serve: %v", err)
+	}
+	id, err := s.prepareAdoption(ctx, box, ProtoHikkari, "node.example.com", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var proto string
+	if err = pool.QueryRow(ctx, `SELECT proto FROM entry_boxes WHERE name=$1`, box).Scan(&proto); err != nil || proto != ProtoHikkari {
+		t.Fatalf("not adopted as hikkari: %s %v", proto, err)
+	}
+	if err = s.finishJob(ctx, id, errors.New("test finishes job")); err != nil {
+		t.Fatal(err)
+	}
+	rel, err := s.AddRelay(ctx, box, KindPersonal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var idCT []byte
+	if err = pool.QueryRow(ctx, `SELECT identity_ct FROM entry_relays WHERE name=$1`, rel).Scan(&idCT); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := openIdentity(idCT)
+	if err != nil || opened.proto() != ProtoHikkari || opened.Naive != nil || opened.Hikkari.Host != "node.example.com" {
+		t.Fatalf("relay of an adopted box is not Hikkari: %v", err)
 	}
 }
