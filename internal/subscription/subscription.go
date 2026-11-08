@@ -384,6 +384,8 @@ func namedLink(link string, node entry.NodeName, covers []string) string {
 // one gets the same 404 as a wrong path.
 func (s *Service) Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Add("Vary", "Accept, Hikkari-Features")
 		token := r.PathValue("token")
 		if len(token) < 16 || len(token) > 64 {
 			http.NotFound(w, r)
@@ -403,6 +405,10 @@ func (s *Service) Handler() http.HandlerFunc {
 		var terms Terms
 		if err == nil {
 			terms, err = s.terms(r.Context(), account)
+		}
+		if err == nil && wantsSubscriptionPage(r) {
+			s.servePage(w, r, token)
+			return
 		}
 		if err == nil {
 			links, err = s.links(r.Context(), account, engine, wantsAwg(r.Header), networkOf(r.Header), hasNaiveFeature(r.Header))

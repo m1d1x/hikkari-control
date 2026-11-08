@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,12 +31,6 @@ var moscow = time.FixedZone("MSK", 3*60*60)
 
 func day(t time.Time) string { return t.In(moscow).Format("02.01.2006") }
 
-// openURL is the landing's page that opens a link in the app: mail clients
-// drop hikkari:// hrefs, a web page can offer them.
-func (s *Service) openURL(link string) string {
-	return s.siteURL + "/open#url=" + url.QueryEscape(link)
-}
-
 func planName(p subscription.Plan) string {
 	if p.Title != "" {
 		return p.Title
@@ -56,25 +49,21 @@ func expiresIn(ctx context.Context, tx pgx.Tx, account uuid.UUID) (time.Time, er
 	return *t, nil
 }
 
-func (s *Service) linkLetter(p subscription.Plan, link string, ends time.Time) mailer.Letter {
+func (s *Service) linkLetter(_ subscription.Plan, link string, ends time.Time) mailer.Letter {
 	return mailer.Letter{
-		Title: "ваша подписка hikkari",
-		Lines: []string{
-			fmt.Sprintf("оплата прошла. подписка «%s» действует до %s.", planName(p), day(ends)),
-			"откройте её в hikkari кнопкой ниже или вставьте ссылку вручную: профили → добавить.",
-			"ссылка и есть доступ: сохраните это письмо и не публикуйте её.",
-		},
+		Title:       "подписка готова",
+		Lines:       []string{fmt.Sprintf("действует до %s", day(ends))},
 		Codes:       []string{link},
-		Action:      s.openURL(link),
-		ActionLabel: "открыть в hikkari",
+		Action:      link,
+		ActionLabel: "открыть подписку",
 	}
 }
 
 func renewalLetter(p subscription.Plan, ends time.Time) mailer.Letter {
 	return mailer.Letter{
-		Title: "подписка hikkari продлена",
+		Title: "подписка продлена",
 		Lines: []string{
-			fmt.Sprintf("оплата прошла: «%s» добавлены к подписке. теперь она действует до %s.", planName(p), day(ends)),
+			fmt.Sprintf("подписка продлена по тарифу «%s» и действует до %s.", planName(p), day(ends)),
 			"в hikkari ничего менять не нужно: срок обновится сам в течение пяти минут.",
 		},
 	}
@@ -154,7 +143,7 @@ func (s *Service) Recover(ctx context.Context, email string) error {
 	}
 
 	letter := mailer.Letter{
-		Title: "ваши ссылки hikkari",
+		Title: "ссылки подписок",
 		Lines: []string{"по этому адресу не найдено ни одной подписки hikkari. возможно, её оформляли на другой email."},
 	}
 	if len(subs) > 0 {
@@ -176,9 +165,9 @@ func (s *Service) Recover(ctx context.Context, email string) error {
 				letter.Lines = append(letter.Lines, fmt.Sprintf("подписка %d: %s%s.", len(letter.Codes), state, day(*f.ends)))
 			}
 		}
-		letter.Lines = append(letter.Lines, "добавьте ссылку в hikkari: профили → добавить. если письмо пришло неожиданно, просто удалите его.")
+		letter.Lines = append(letter.Lines, "откройте нужную ссылку: на странице подписки можно открыть её в hikkari или скопировать. если вы не запрашивали письмо, просто удалите его.")
 		if len(letter.Codes) == 1 {
-			letter.Action, letter.ActionLabel = s.openURL(letter.Codes[0]), "открыть в hikkari"
+			letter.Action, letter.ActionLabel = letter.Codes[0], "открыть подписку"
 		}
 	}
 	if err := mailer.Queue(ctx, tx, email, kindRecovery, letter); err != nil {

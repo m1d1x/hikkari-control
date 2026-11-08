@@ -6,5 +6,4 @@
 {{end}}{{if .Action}}
 {{.ActionLabel}}: {{.Action}}
 {{end}}
-письмо отправлено автоматически, отвечать на него не нужно.
 hikkari.net

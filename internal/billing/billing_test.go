@@ -376,7 +376,8 @@ func TestTheBuyerIsWrittenTo(t *testing.T) {
 	link := s.status(p).URL
 	letters := s.mailTo(addr)
 	if len(letters) != 1 || !strings.Contains(letters[0].TextBody, link) ||
-		!strings.Contains(letters[0].HTMLBody, "/open#url=") || letters[0].Subject != "ваша подписка hikkari" {
+		!strings.Contains(letters[0].HTMLBody, `href="`+link+`"`) ||
+		!strings.Contains(letters[0].HTMLBody, "открыть подписку") || letters[0].Subject != "подписка готова" {
 		t.Fatalf("purchase letters %+v", letters)
 	}
 	s.notify(s.ref(p), Paid, 9900)
@@ -387,7 +388,7 @@ func TestTheBuyerIsWrittenTo(t *testing.T) {
 	renewal := s.order(addr, s.token(link))
 	s.notify(s.ref(renewal), Paid, 9900)
 	letters = s.mailTo(addr)
-	if len(letters) != 2 || letters[1].Subject != "подписка hikkari продлена" || strings.Contains(letters[1].TextBody, link) {
+	if len(letters) != 2 || letters[1].Subject != "подписка продлена" || strings.Contains(letters[1].TextBody, link) {
 		t.Fatalf("renewal letter %+v", letters[len(letters)-1])
 	}
 
