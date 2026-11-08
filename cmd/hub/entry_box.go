@@ -261,10 +261,13 @@ func runEntryBox(args []string) {
 	if n := len(args); n > 1 && args[0] == "order" && strings.HasPrefix(args[n-1], "hoster=") {
 		namedHoster, args = strings.TrimPrefix(args[n-1], "hoster="), args[:n-1]
 	}
-	region, domain, xhttp, naive := "", "", false, false
+	region, domain, xhttp, naive, hikkari := "", "", false, false, false
 	if n := len(args); n > 4 {
 		last := args[n-1]
 		switch {
+		case last == "hikkari":
+			// Bare hikkari: Hikkari v1 on a domain from the hub's pool.
+			hikkari, args = true, args[:n-1]
 		case last == "naive":
 			// Bare naive: as an ordered Naive box, the hub takes a domain from
 			// its pool during the job.
@@ -374,7 +377,7 @@ func runEntryBox(args []string) {
 	naiveAdopt := len(args) == 3 && args[0] == "adopt-naive"
 	provider := len(args) >= 3 && len(args) <= 5 && args[0] == "provider"
 	if !naiveAdopt && !order && !retire && !provider && len(args) != 1 && len(args) != 4 && len(args) != 5 {
-		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain> | naive]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|naive|awg|voice=<region>] [hoster=<kind>] | entry-box adopt-naive <box> <domain> | entry-box catalog <hoster>"))
+		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain> | naive | hikkari]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|naive|hikkari|awg|voice=<region>] [hoster=<kind>] | entry-box adopt-naive <box> <domain> | entry-box catalog <hoster>"))
 	}
 	if err := cryptobox.Configure(os.Getenv); err != nil {
 		fail(fmt.Errorf("content key: %w", err))
@@ -454,6 +457,8 @@ func runEntryBox(args []string) {
 		if len(args) > 3 {
 			switch p := args[3]; {
 			case p == "reality":
+			case p == "hikkari":
+				spec.Proto = entry.ProtoHikkari
 			case p == "naive":
 				spec.Proto = entry.ProtoNaive
 			case p == "xhttp":
@@ -463,7 +468,7 @@ func runEntryBox(args []string) {
 			case strings.HasPrefix(p, "voice="):
 				spec.Proto, spec.VoiceRegion = entry.ProtoHysteria2, strings.TrimPrefix(p, "voice=")
 			default:
-				fail(fmt.Errorf("protocol %q: reality, xhttp, naive, awg or voice=<region>", p))
+				fail(fmt.Errorf("protocol %q: reality, xhttp, naive, hikkari, awg or voice=<region>", p))
 			}
 		}
 		var name string
@@ -481,6 +486,8 @@ func runEntryBox(args []string) {
 		case xhttp:
 			// domain may be empty: the hub assigns one during the job (Ф6).
 			spec.Proto, spec.Domain = entry.ProtoVlessXhttp, domain
+		case hikkari:
+			spec.Proto = entry.ProtoHikkari
 		case naive:
 			spec.Proto = entry.ProtoNaive
 		}

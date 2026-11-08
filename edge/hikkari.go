@@ -10,8 +10,8 @@ package main
 //	         an unauthenticated HTTP/3 request gets the same site as tcp/443
 //
 // Both channels admit the same key roster (naiveRuntime.keys), count into the
-// same totals and are revoked together. EDGE_PROTO stays naive: a Hikkari relay
-// is a Naive relay plus EDGE_HIKKARI_UDP=1, so Naive-only links keep working.
+// same totals and are revoked together. EDGE_PROTO=hikkari is its own protocol with
+// its own env (EDGE_HIKKARI_*); it shares the Caddy runtime with EDGE_PROTO=naive.
 
 import (
 	"context"

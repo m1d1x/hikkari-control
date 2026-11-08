@@ -43,6 +43,57 @@ func TestNaiveIdentityRecordAndEnv(t *testing.T) {
 	}
 }
 
+func TestHikkariIdentityRecordAndEnv(t *testing.T) {
+	id, err := newHikkariIdentity(443, 10001, "node.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id.proto() != ProtoHikkari || id.echoPort() != 0 || id.Naive != nil || id.caddyHost() != "node.example.com" {
+		t.Fatal("wrong Hikkari identity")
+	}
+	env, err := id.EdgeEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env["EDGE_PROTO"] != ProtoHikkari || env["EDGE_HIKKARI_PASS"] != id.Hikkari.Pass || env["EDGE_HIKKARI_HOST"] != "node.example.com" {
+		t.Fatal("lost edge credentials")
+	}
+	if _, naive := env["EDGE_NAIVE_PASS"]; naive {
+		t.Fatal("a Hikkari edge got Naive's env")
+	}
+	record := id.record("hk1-1", "203.0.113.1", "", 1, 100)
+	if err := record.check(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded RelayRecord
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Proto != ProtoHikkari || decoded.HikkariParams == nil || decoded.HikkariParams.Pass != id.Hikkari.Pass || decoded.NaiveParams != nil {
+		t.Fatal("lost signed Hikkari parameters")
+	}
+	moved, err := id.withDomain("other.example.com")
+	if err != nil || moved.Hikkari.Host != "other.example.com" || id.Hikkari.Host != "node.example.com" {
+		t.Fatal("domain move")
+	}
+	if !domainProtocol(ProtoHikkari) {
+		t.Fatal("a Hikkari relay lives on a domain")
+	}
+	record.HikkariParams.Host = "127.0.0.1"
+	if record.check() == nil {
+		t.Fatal("accepted an IP as certificate domain")
+	}
+	both := id.record("hk1-1", "203.0.113.1", "", 1, 100)
+	both.NaiveParams = &NaiveParams{Host: "node.example.com", User: "probe", Pass: id.Hikkari.Pass}
+	if both.check() == nil {
+		t.Fatal("accepted a record with two halves")
+	}
+}
+
 func TestNaiveAdoptionIsAtomicAndRefusesServingMachines(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

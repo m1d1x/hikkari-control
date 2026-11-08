@@ -71,3 +71,20 @@ func TestNaiveKeysCountersAndRevocation(t *testing.T) {
 		t.Fatal("revocation discarded usage totals")
 	}
 }
+
+func TestHikkariFromEnv(t *testing.T) {
+	env := map[string]string{"EDGE_PROTO": "hikkari", "EDGE_HIKKARI_HOST": "hk.example.com", "EDGE_HIKKARI_USER": "hikkari", "EDGE_HIKKARI_PASS": "0123456789abcdef0123", "EDGE_NAIVE_HOST": "wrong.example.com"}
+	cfg, err := naiveFromEnv(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.UDP || cfg.Host != "hk.example.com" || cfg.H3 {
+		t.Fatalf("hikkari config: %+v", cfg)
+	}
+	env["EDGE_PROTO"] = "naive"
+	env["EDGE_NAIVE_USER"], env["EDGE_NAIVE_PASS"] = "probe", "0123456789abcdef0123"
+	cfg, err = naiveFromEnv(func(k string) string { return env[k] })
+	if err != nil || cfg.UDP || cfg.Host != "wrong.example.com" {
+		t.Fatalf("naive config: %+v %v", cfg, err)
+	}
+}

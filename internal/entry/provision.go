@@ -791,12 +791,6 @@ func (j *jobRun) provision(password string) error {
 		}
 	}
 
-	if acc.proto == ProtoNaive {
-		if relays, err = j.enableHikkariUDP(relays); err != nil {
-			return err
-		}
-	}
-
 	j.step("harden")
 	if err := j.harden(r, relays); err != nil {
 		return err
@@ -886,29 +880,6 @@ func (j *jobRun) upgradeAwgRelays(relays []provRelay) ([]provRelay, error) {
 	return j.liveRelays()
 }
 
-// enableHikkariUDP turns every Naive relay of the box into a Hikkari v1.01
-// relay (NaiveParams.UDP) and returns the relays as they stand after. Holders
-// are told to come back for the re-signed record, which offers the datagram
-// channel to clients that speak Hikkari.
-func (j *jobRun) enableHikkariUDP(relays []provRelay) ([]provRelay, error) {
-	var turned []string
-	for _, rel := range relays {
-		if rel.id.Naive == nil || rel.id.Naive.UDP {
-			continue
-		}
-		if err := j.p.svc.setRelayIdentity(j.ctx, rel.name, rel.id.withHikkariUDP()); err != nil {
-			return nil, fmt.Errorf("Hikkari UDP для %s: %w", rel.name, err)
-		}
-		j.log("%s: релей Naive переведён на Hikkari v1.01 (UDP-канал на том же порту)", rel.name)
-		turned = append(turned, rel.name)
-	}
-	if len(turned) == 0 {
-		return relays, nil
-	}
-	j.movedRelays = append(j.movedRelays, turned...)
-	return j.liveRelays()
-}
-
 // moveRelaysToDomain rewrites the identity of every XHTTP relay whose domain
 // is not the box's, and returns the relays as they stand after. The records
 // the holders carry name the old domain, so a moved relay's holders are told
@@ -923,8 +894,8 @@ func (j *jobRun) moveRelaysToDomain(relays []provRelay) ([]provRelay, error) {
 		current := ""
 		if rel.id.Xhttp != nil {
 			current = rel.id.Xhttp.Domain
-		} else if rel.id.Naive != nil {
-			current = rel.id.Naive.Host
+		} else if host := rel.id.caddyHost(); host != "" {
+			current = host
 		} else {
 			continue
 		}
@@ -1468,11 +1439,10 @@ func (j *jobRun) harden(r Remote, relays []provRelay) error {
 		// in the relay ports above.
 		ports = append(ports, "80/tcp")
 	}
-	if j.acc.proto == ProtoNaive {
-		for _, rel := range relays {
-			if rel.id.Naive != nil && (rel.id.Naive.H3 || rel.id.Naive.UDP) {
-				ports = append(ports, strconv.Itoa(rel.id.Port)+"/udp")
-			}
+	// QUIC beside the stream port: Naive over HTTP/3, Hikkari's datagram channel.
+	for _, rel := range relays {
+		if (rel.id.Naive != nil && rel.id.Naive.H3) || rel.id.Hikkari != nil {
+			ports = append(ports, strconv.Itoa(rel.id.Port)+"/udp")
 		}
 	}
 	sort.Strings(ports)
@@ -1673,7 +1643,7 @@ func (j *jobRun) install(r Remote, rel provRelay) error {
 	// The port the swap waits to see listening is the one the edge binds: an
 	// XHTTP edge binds a loopback front (nginx holds the public port), every
 	// other protocol binds the public port itself.
-	if rel.id.Naive != nil {
+	if rel.id.caddyHost() != "" {
 		if err := j.installNaive(r, rel); err != nil {
 			return err
 		}

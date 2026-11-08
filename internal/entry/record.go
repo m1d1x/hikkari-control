@@ -209,6 +209,9 @@ func OpenRecord(raw []byte, keys []Key, now time.Time) (RelayRecord, error) {
 	case ProtoNaive:
 		rec.NaiveParams = &NaiveParams{}
 		err = json.Unmarshal(payload, rec.NaiveParams)
+	case ProtoHikkari:
+		rec.HikkariParams = &HikkariParams{}
+		err = json.Unmarshal(payload, rec.HikkariParams)
 	case ProtoVlessRealityVision:
 		rec.RealityParams = &RealityParams{}
 		err = json.Unmarshal(payload, rec.RealityParams)

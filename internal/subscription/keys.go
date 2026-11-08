@@ -70,6 +70,11 @@ func withKey(rec entry.RelayRecord, k accessKey) entry.RelayRecord {
 		c.User, c.Pass = "hikkari", k.hy2Auth
 		rec.NaiveParams = &c
 	}
+	if p := rec.HikkariParams; p != nil {
+		c := *p
+		c.User, c.Pass = "hikkari", k.hy2Auth
+		rec.HikkariParams = &c
+	}
 	if p := rec.RealityParams; p != nil {
 		c := *p
 		c.UUID = k.vlessID
@@ -99,6 +104,7 @@ const relayKeys = `
 	SELECT CASE $2
 		WHEN 'hysteria2' THEN k.hy2_auth
  WHEN 'naive' THEN k.hy2_auth
+ WHEN 'hikkari' THEN k.hy2_auth
 		WHEN 'amneziawg' THEN k.awg_public || ' ' || host(k.awg_address)
 		ELSE k.vless_id::text END AS key
 	FROM entry_grants g

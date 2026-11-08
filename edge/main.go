@@ -69,7 +69,7 @@ func main() {
 			log.Fatalf("nekko-edge: %v", err)
 		}
 	case "check":
-		if osEnv("EDGE_PROTO") == protoNaive {
+		if p := osEnv("EDGE_PROTO"); p == protoNaive || p == protoHikkari {
 			if _, err := naiveFromEnv(osEnv); err != nil {
 				log.Fatalf("nekko-edge: %v", err)
 			}
@@ -192,7 +192,7 @@ func load() (edge, error) {
 }
 
 func run() error {
-	if osEnv("EDGE_PROTO") == protoNaive {
+	if p := osEnv("EDGE_PROTO"); p == protoNaive || p == protoHikkari {
 		return runNaive()
 	}
 	if osEnv("EDGE_PROTO") == protoCascade {

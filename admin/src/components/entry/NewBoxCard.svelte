@@ -42,7 +42,7 @@
 	// Each protocol asks for what it needs and nothing else: a voice box its
 	// region, an xhttp box the domain whose A record points at the address.
 	const protoReady = $derived(
-		proto === 'hysteria2' ? region.trim() !== '' : (proto === 'vless-xhttp' || proto === 'naive') ? domain.trim() !== '' : true,
+		proto === 'hysteria2' ? region.trim() !== '' : (proto === 'vless-xhttp' || proto === 'naive' || proto === 'hikkari') ? domain.trim() !== '' : true,
 	);
 	const ready = $derived(
 		address.trim() !== '' && provider.trim() !== '' && location.trim() !== '' && name !== '' && protoReady,
@@ -65,7 +65,7 @@
 				rentedUntil,
 				proto,
 				region: proto === 'hysteria2' ? region.trim() : '',
-				domain: (proto === 'vless-xhttp' || proto === 'naive') ? domain.trim().toLowerCase() : '',
+				domain: (proto === 'vless-xhttp' || proto === 'naive' || proto === 'hikkari') ? domain.trim().toLowerCase() : '',
 			});
 			// The password has done its job on the server; it does not stay here.
 			password = '';
@@ -115,7 +115,7 @@
 					<span>регион голоса</span>
 					<input bind:value={region} placeholder="ru" class="mono" disabled={busy} />
 				</label>
-			{:else if (proto === 'vless-xhttp' || proto === 'naive')}
+			{:else if (proto === 'vless-xhttp' || proto === 'naive' || proto === 'hikkari')}
 				<label>
 					<span>домен</span>
 					<input bind:value={domain} placeholder="notes.example.xyz" class="mono" disabled={busy} />
@@ -158,7 +158,7 @@
 		</div>
 	</form>
 	<p class="hint">{protoHint}</p>
-	{#if (proto === 'vless-xhttp' || proto === 'naive')}
+	{#if (proto === 'vless-xhttp' || proto === 'naive' || proto === 'hikkari')}
 		<p class="hint">До разворота A-запись домена должна указывать на IP машины.</p>
 	{/if}
 	<p class="hint">

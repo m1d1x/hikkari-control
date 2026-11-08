@@ -283,8 +283,8 @@ func networkOf(h http.Header) uint32 {
 	return uint32(n)
 }
 
-// hikkari: the client's core speaks Hikkari v1.01 (feature "hikkari"); its
-// Naive relays that carry the datagram channel get hikkari+v1:// links.
+// hikkari: the client's core speaks Hikkari v1 (feature "hikkari"); only such a
+// client is given hikkari+v1:// links.
 func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, awg awgCaps, asn uint32, naive, hikkari bool) ([]string, error) {
 	key, err := s.accessKey(ctx, account)
 	if err != nil {
@@ -316,10 +316,10 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 		if rec.Proto == entry.ProtoNaive && (!naive || engine == "xray") {
 			continue
 		}
-		render := Link
-		if rec.Proto == entry.ProtoNaive && hikkari && rec.NaiveParams != nil && rec.NaiveParams.UDP {
-			render = HikkariLink
+		if rec.Proto == entry.ProtoHikkari && (!hikkari || engine == "xray") {
+			continue
 		}
+		render := Link
 		if rec.Proto == entry.ProtoHysteria2 && engine != "xray" {
 			render = SingBoxHysteriaLink
 		}

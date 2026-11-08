@@ -28,18 +28,30 @@ import (
 	_ "github.com/m1d1x/hikkari-protocol/server/naive"
 )
 
-const protoNaive = "naive"
+const (
+	protoNaive = "naive"
+	// protoHikkari is Hikkari v1 (hikkari-protocol/spec/v1.md): the same Caddy
+	// stream channel as Naive plus the datagram channel, always both. It has
+	// its own EDGE_HIKKARI_* names and no switches: a Hikkari relay is not a
+	// Naive relay with a flag.
+	protoHikkari = "hikkari"
+)
 
 type naiveConfig struct {
 	Listen, Host, User, Pass, Root, Storage string
 	H3                                      bool
-	// UDP turns the relay into a Hikkari v1.01 relay (hikkari.go): the
-	// datagram channel on udp/<port> and UDP-over-TCP inside the tunnel.
+	// UDP is set for EDGE_PROTO=hikkari (hikkari.go): the datagram channel on
+	// udp/<port> and UDP-over-TCP inside the tunnel.
 	UDP bool
 }
 
 func naiveFromEnv(get func(string) string) (naiveConfig, error) {
-	n := naiveConfig{Listen: get("EDGE_LISTEN"), Host: get("EDGE_NAIVE_HOST"), User: get("EDGE_NAIVE_USER"), Pass: get("EDGE_NAIVE_PASS"), Root: get("EDGE_NAIVE_ROOT"), Storage: get("STATE_DIRECTORY")}
+	hikkari := get("EDGE_PROTO") == protoHikkari
+	prefix := "EDGE_NAIVE_"
+	if hikkari {
+		prefix = "EDGE_HIKKARI_"
+	}
+	n := naiveConfig{Listen: get("EDGE_LISTEN"), Host: get(prefix + "HOST"), User: get(prefix + "USER"), Pass: get(prefix + "PASS"), Root: get(prefix + "ROOT"), Storage: get("STATE_DIRECTORY"), UDP: hikkari}
 	if n.Storage == "" {
 		n.Storage = "/var/lib/nekko-naive"
 	}
@@ -60,16 +72,10 @@ func naiveFromEnv(get func(string) string) (naiveConfig, error) {
 	if n.User == "" || strings.ContainsAny(n.User, ":\r\n") || len(n.Pass) < 16 || strings.ContainsAny(n.Pass, "\r\n") {
 		return n, errors.New("naive: invalid probe credential")
 	}
-	if value := get("EDGE_NAIVE_H3"); value != "" {
+	if value := get("EDGE_NAIVE_H3"); value != "" && !hikkari {
 		n.H3, err = strconv.ParseBool(value)
 		if err != nil {
 			return n, errors.New("naive: invalid H3 setting")
-		}
-	}
-	if value := get("EDGE_HIKKARI_UDP"); value != "" {
-		n.UDP, err = strconv.ParseBool(value)
-		if err != nil {
-			return n, errors.New("naive: invalid Hikkari UDP setting")
 		}
 	}
 	return n, nil

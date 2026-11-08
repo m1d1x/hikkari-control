@@ -52,6 +52,8 @@ type Identity struct {
 	// Awg is set on an AmneziaWG relay and only there.
 	Awg   *AwgIdentity `json:"awg,omitempty"`
 	Naive *NaiveParams `json:"naive,omitempty"`
+	// Hikkari is set on a Hikkari v1 relay and only there.
+	Hikkari *HikkariParams `json:"hikkari,omitempty"`
 }
 
 // AwgIdentity is the AmneziaWG half of a relay: the device's key, the
@@ -408,6 +410,8 @@ func (id Identity) proto() string {
 	switch {
 	case id.Naive != nil:
 		return ProtoNaive
+	case id.Hikkari != nil:
+		return ProtoHikkari
 	case id.Hysteria != nil:
 		return ProtoHysteria2
 	case id.Xhttp != nil:
@@ -429,7 +433,7 @@ func (id Identity) echoPort() int {
 	if id.Hysteria != nil {
 		return id.LocalPortBase
 	}
-	if id.Xhttp != nil || id.Awg != nil || id.Naive != nil {
+	if id.Xhttp != nil || id.Awg != nil || id.Naive != nil || id.Hikkari != nil {
 		return 0 // no admission echo: streams only, or a tunnel of its own
 	}
 	return id.LocalPortBase + relayLoopbackBlock - 1
@@ -751,7 +755,10 @@ func (id Identity) withXhttpDomain(domain string) (Identity, error) {
 // about quotes.
 func (id Identity) EdgeEnv() (map[string]string, error) {
 	if n := id.Naive; n != nil {
-		return map[string]string{"EDGE_PROTO": ProtoNaive, "EDGE_LISTEN": "0.0.0.0:" + strconv.Itoa(id.Port), "EDGE_NAIVE_HOST": n.Host, "EDGE_NAIVE_USER": n.User, "EDGE_NAIVE_PASS": n.Pass, "EDGE_NAIVE_H3": strconv.FormatBool(n.H3), "EDGE_HIKKARI_UDP": strconv.FormatBool(n.UDP)}, nil
+		return map[string]string{"EDGE_PROTO": ProtoNaive, "EDGE_LISTEN": "0.0.0.0:" + strconv.Itoa(id.Port), "EDGE_NAIVE_HOST": n.Host, "EDGE_NAIVE_USER": n.User, "EDGE_NAIVE_PASS": n.Pass, "EDGE_NAIVE_H3": strconv.FormatBool(n.H3)}, nil
+	}
+	if h := id.Hikkari; h != nil {
+		return map[string]string{"EDGE_PROTO": ProtoHikkari, "EDGE_LISTEN": "0.0.0.0:" + strconv.Itoa(id.Port), "EDGE_HIKKARI_HOST": h.Host, "EDGE_HIKKARI_USER": h.User, "EDGE_HIKKARI_PASS": h.Pass}, nil
 	}
 	if h := id.Hysteria; h != nil {
 		finalmask, err := json.Marshal(xrayFinalmask(h.Masks))
@@ -864,6 +871,10 @@ func (id Identity) record(name, address, region string, issuedAt, expiresAt int6
 	if n := id.Naive; n != nil {
 		copy := *n
 		return RelayRecord{Name: name, Address: address, Port: id.Port, Proto: ProtoNaive, NaiveParams: &copy, IssuedAt: issuedAt, ExpiresAt: expiresAt}
+	}
+	if h := id.Hikkari; h != nil {
+		copy := *h
+		return RelayRecord{Name: name, Address: address, Port: id.Port, Proto: ProtoHikkari, HikkariParams: &copy, IssuedAt: issuedAt, ExpiresAt: expiresAt}
 	}
 	if h := id.Hysteria; h != nil {
 		return RelayRecord{

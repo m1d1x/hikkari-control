@@ -39,6 +39,9 @@ type edge struct {
 	// AmneziaWG relay: dialled in this process, not through the engine.
 	Awg   *awgEdge   `json:"awg,omitempty"`
 	Naive *naiveEdge `json:"naive,omitempty"`
+	// Hikkari is a Hikkari v1 relay's credential; its stream channel is Naive
+	// on the wire, so the probe dials it through Naive (see UnmarshalJSON).
+	Hikkari *naiveEdge `json:"hikkari,omitempty"`
 }
 
 const (
@@ -46,7 +49,29 @@ const (
 	protoXhttp    = "vless-xhttp"
 	protoAwg      = "amneziawg"
 	protoNaive    = "naive"
+	protoHikkari  = "hikkari"
 )
+
+// naive reports whether the relay is dialled through the Naive client core: a
+// Naive relay, and the stream channel of a Hikkari one. Admission does not
+// probe Hikkari's datagram channel (spec/v1.md, "Not in v1").
+func (e edge) naive() bool { return e.Proto == protoNaive || e.Proto == protoHikkari }
+
+// UnmarshalJSON gives a Hikkari relay its credential as the Naive one.
+func (e *edge) UnmarshalJSON(b []byte) error {
+	type plain edge
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	if p.Proto == protoHikkari && p.Naive == nil && p.Hikkari != nil {
+		h := *p.Hikkari
+		h.H3 = false
+		p.Naive = &h
+	}
+	*e = edge(p)
+	return nil
+}
 
 // voice reports whether this is a voice relay (Hysteria2).
 func (e edge) voice() bool { return e.Proto == protoHysteria }
@@ -80,7 +105,7 @@ func validateEdges(edges []edge) error {
 			return fmt.Errorf("relay %d (%q) is missing a required field", i, e.Name)
 		}
 		switch {
-		case e.Proto == protoNaive:
+		case e.naive():
 			if e.Naive == nil || e.Naive.Host == "" || e.Naive.User == "" || e.Naive.Pass == "" {
 				return fmt.Errorf("naive relay %d is missing credentials", i)
 			}
@@ -252,7 +277,7 @@ func buildXrayConfig(edges []edge, socksBase int, fingerprint string) ([]byte, m
 	ports := make(map[string]int, len(edges))
 	xudp := map[string]int{}
 	for i, e := range edges {
-		if e.awg() || e.Proto == protoNaive {
+		if e.awg() || e.naive() {
 			continue
 		}
 		port := socksBase + i

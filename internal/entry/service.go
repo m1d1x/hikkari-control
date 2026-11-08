@@ -383,7 +383,7 @@ func (s *Service) CreateBox(ctx context.Context, b BoxSpec) error {
 	b.Region = strings.TrimSpace(b.Region)
 	b.Domain = strings.ToLower(strings.TrimSpace(b.Domain))
 	switch {
-	case b.Proto != ProtoVlessRealityVision && b.Proto != ProtoHysteria2 && b.Proto != ProtoVlessXhttp && b.Proto != ProtoAmneziaWG && b.Proto != ProtoNaive:
+	case b.Proto != ProtoVlessRealityVision && b.Proto != ProtoHysteria2 && b.Proto != ProtoVlessXhttp && b.Proto != ProtoAmneziaWG && b.Proto != ProtoNaive && b.Proto != ProtoHikkari:
 		return fmt.Errorf("%w: box protocol %q", ErrRejected, b.Proto)
 	case !domainProtocol(b.Proto) && b.Domain != "":
 		return fmt.Errorf("%w: only an XHTTP box has a domain", ErrRejected)
@@ -651,6 +651,11 @@ func (s *Service) AddRelay(ctx context.Context, box, kind string) (string, error
 		var domain []byte
 		if domain, err = cryptobox.Decrypt(lb.domainCT); err == nil {
 			id, err = newNaiveIdentity(port, base, string(domain))
+		}
+	case ProtoHikkari:
+		var domain []byte
+		if domain, err = cryptobox.Decrypt(lb.domainCT); err == nil {
+			id, err = newHikkariIdentity(port, base, string(domain))
 		}
 	case ProtoVlessXhttp:
 		var domain []byte
@@ -1371,7 +1376,7 @@ func (s *Service) protoSlots(proto string) int {
 	switch proto {
 	case ProtoHysteria2:
 		return VoiceSlotsPerRegion
-	case ProtoAmneziaWG, ProtoNaive:
+	case ProtoAmneziaWG, ProtoNaive, ProtoHikkari:
 		return AwgSlots
 	}
 	return s.batchSize

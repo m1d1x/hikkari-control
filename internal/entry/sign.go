@@ -31,6 +31,7 @@ const (
 	ProtoVlessXhttp         = "vless-xhttp"
 	ProtoAmneziaWG          = "amneziawg"
 	ProtoNaive              = "naive"
+	ProtoHikkari            = "hikkari"
 )
 
 // XHTTP modes (record.rs XhttpMode). StreamUp is the default: the edge
@@ -107,6 +108,7 @@ type RelayRecord struct {
 	XhttpParams    *XhttpParams
 	AwgParams      *AwgParams
 	NaiveParams    *NaiveParams
+	HikkariParams  *HikkariParams
 	IssuedAt       int64
 	ExpiresAt      int64
 }
@@ -122,6 +124,8 @@ func (r RelayRecord) params() any {
 		return r.XhttpParams
 	case ProtoNaive:
 		return r.NaiveParams
+	case ProtoHikkari:
+		return r.HikkariParams
 	case ProtoAmneziaWG:
 		return r.AwgParams
 	}
@@ -165,6 +169,9 @@ func (r *RelayRecord) UnmarshalJSON(b []byte) error {
 	case ProtoNaive:
 		r.NaiveParams = &NaiveParams{}
 		return json.Unmarshal(b, r.NaiveParams)
+	case ProtoHikkari:
+		r.HikkariParams = &HikkariParams{}
+		return json.Unmarshal(b, r.HikkariParams)
 	case ProtoVlessRealityVision:
 		r.RealityParams = &RealityParams{}
 		return json.Unmarshal(b, r.RealityParams)
@@ -184,7 +191,7 @@ func (r *RelayRecord) UnmarshalJSON(b []byte) error {
 // halves: exactly the half Proto names is set.
 func (r RelayRecord) halves() error {
 	set := 0
-	for _, h := range []bool{r.RealityParams != nil, r.HysteriaParams != nil, r.XhttpParams != nil, r.AwgParams != nil, r.NaiveParams != nil} {
+	for _, h := range []bool{r.RealityParams != nil, r.HysteriaParams != nil, r.XhttpParams != nil, r.AwgParams != nil, r.NaiveParams != nil, r.HikkariParams != nil} {
 		if h {
 			set++
 		}
@@ -308,6 +315,13 @@ func (r RelayRecord) check() error {
 		}
 		if r.NaiveParams.User == "" || len(r.NaiveParams.Pass) < 16 {
 			return fmt.Errorf("%w: naive credentials", ErrMalformed)
+		}
+	case ProtoHikkari:
+		if err := checkRelayDomain(r.HikkariParams.Host); err != nil {
+			return fmt.Errorf("%w: hikkari domain", ErrMalformed)
+		}
+		if r.HikkariParams.User == "" || len(r.HikkariParams.Pass) < 16 {
+			return fmt.Errorf("%w: hikkari credentials", ErrMalformed)
 		}
 	case ProtoVlessRealityVision:
 		if len(r.RealityParams.Covers) == 0 {

@@ -229,6 +229,8 @@ type ProbeRelay struct {
 	// An AmneziaWG relay: what the vantage dials with.
 	Awg   *AwgParams   `json:"awg,omitempty"`
 	Naive *NaiveParams `json:"naive,omitempty"`
+	// A Hikkari relay: the probe credential of both channels.
+	Hikkari *HikkariParams `json:"hikkari,omitempty"`
 }
 
 // rowsQuerier is what ProbeRelays reads through: the pool, or the claim's
@@ -267,6 +269,9 @@ func probeRelaysIn(ctx context.Context, q rowsQuerier, names []string) ([]ProbeR
 		if id.Naive != nil {
 			n := *id.Naive
 			pr.Naive = &n
+		} else if id.Hikkari != nil {
+			h := *id.Hikkari
+			pr.Hikkari = &h
 		} else if h := id.Hysteria; h != nil {
 			pr.Auth, pr.ServerName, pr.CertSHA256 = h.Auth, h.ServerName, h.CertSHA256
 			pr.FinalMask = xrayFinalmask(h.Masks)

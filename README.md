@@ -66,6 +66,12 @@ Naive выдаётся клиенту sing-box только с capability `Hikka
 Каждый подписчик получает собственный ключ: pulse отзывает доступ и активные потоки,
 учёт трафика применяется к тем же квотам подписок. Сервер — штатный edge со встроенным
 Caddy/forwardproxy, HTTPS-сайтом и локальным DNS cache.
+
+Hikkari v1 (`hikkari+v1://`, спецификация в `hikkari-protocol/spec/v1.md`) это отдельный протокол
+записи релея (`proto=hikkari`, `HikkariParams`), а не Naive с флагом: один ключ и один домен, поток
+(Naive на проводе) на tcp/порт и датаграммы на udp/тот же порт. Ссылку получает только клиент с
+`Hikkari-Features: hikkari`. Нода: `hub entry-box order <регион> <план> hikkari`, edge запускается как
+`EDGE_PROTO=hikkari` с `EDGE_HIKKARI_HOST/USER/PASS`.
 Для переноса записанной лабораторной машины без действующих релеев:
 `hub entry-box adopt-naive <box> <domain>`. Команда выполняет обычные deploy/admit/sign,
 не покупает машину и восстанавливает лабораторный Caddy при неудачном развёртывании.

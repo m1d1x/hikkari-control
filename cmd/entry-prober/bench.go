@@ -198,7 +198,7 @@ func benchBase(tunnelURL string) (string, error) {
 // rollout with a Naive canary failed before its first exchange (08.11).
 func benchDialer(ctx context.Context, e edge, port int, timeout time.Duration) (proxy.ContextDialer, func(), error) {
 	switch {
-	case e.Proto == protoNaive:
+	case e.naive():
 		if e.Naive == nil {
 			return nil, nil, fmt.Errorf("naive: у релея %s нет параметров naive", e.Name)
 		}
