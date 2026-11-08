@@ -63,10 +63,10 @@ func CompareBench(before, after BenchResult, p BenchPolicy) (ok bool, reasons []
 		reasons = append(reasons, "прогон после пустой")
 	}
 	if after.DownMbps < before.DownMbps*p.MinThroughputShare {
-		reasons = append(reasons, fmt.Sprintf("приём %.1f Мбит/с против %.1f до", after.DownMbps, before.DownMbps))
+		reasons = append(reasons, fmt.Sprintf("приём %s против %s до", rate(after.DownMbps), rate(before.DownMbps)))
 	}
 	if after.UpMbps < before.UpMbps*p.MinThroughputShare {
-		reasons = append(reasons, fmt.Sprintf("отдача %.1f Мбит/с против %.1f до", after.UpMbps, before.UpMbps))
+		reasons = append(reasons, fmt.Sprintf("отдача %s против %s до", rate(after.UpMbps), rate(before.UpMbps)))
 	}
 	if after.ChatRTTP50Ms > before.ChatRTTP50Ms*p.MaxRTTGrowth {
 		reasons = append(reasons, fmt.Sprintf("rtt p50 %.0f мс против %.0f до", after.ChatRTTP50Ms, before.ChatRTTP50Ms))
@@ -217,8 +217,8 @@ func benchBrief(r BenchResult) string {
 	if r.Error != "" {
 		return "не состоялся: " + r.Error
 	}
-	return fmt.Sprintf("rtt p50 %.0f мс, приём %.1f Мбит/с, отдача %.1f Мбит/с, голос rtt %.0f мс, обрывов %d",
-		r.ChatRTTP50Ms, r.DownMbps, r.UpMbps, r.VoiceRTTP50Ms, r.Drops)
+	return fmt.Sprintf("rtt p50 %.0f мс, приём %s, отдача %s, голос rtt %.0f мс, обрывов %d",
+		r.ChatRTTP50Ms, rate(r.DownMbps), rate(r.UpMbps), r.VoiceRTTP50Ms, r.Drops)
 }
 
 // BenchRecord is a finished run as the dataset keeps it: the result, and what

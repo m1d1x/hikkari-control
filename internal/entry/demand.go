@@ -182,8 +182,8 @@ func forecastDemand(points []LoadPoint, now time.Time, horizon time.Duration) Po
 				d.ForecastMbps, d.PeakAt = v, h
 			}
 		}
-		d.Why = fmt.Sprintf("истории %.1f дн. — меньше недели: держим самый загруженный час, что был, %.1f Мбит/с",
-			d.HistoryDays, d.ForecastMbps)
+		d.Why = fmt.Sprintf("истории %.1f дн. — меньше недели: держим самый загруженный час, что был, %s",
+			d.HistoryDays, rate(d.ForecastMbps))
 		return d
 	}
 
@@ -208,11 +208,11 @@ func forecastDemand(points []LoadPoint, now time.Time, horizon time.Duration) Po
 				d.ForecastMbps, d.PeakAt = v, h
 			}
 		}
-		d.Why = fmt.Sprintf("тех же часов прошлых недель не мерили — держим пик последних суток, %.1f Мбит/с", d.ForecastMbps)
+		d.Why = fmt.Sprintf("тех же часов прошлых недель не мерили — держим пик последних суток, %s", rate(d.ForecastMbps))
 		return d
 	}
-	d.Why = fmt.Sprintf("по тем же часам прошлых недель и росту %+.1f Мбит/с в сутки: к %s ждём %.1f Мбит/с (сейчас %.1f)",
-		d.SlopeMbpsPerDay, d.PeakAt.Format("02.01 15:04"), d.ForecastMbps, d.NowMbps)
+	d.Why = fmt.Sprintf("по тем же часам прошлых недель и росту %s в сутки: к %s ждём %s (сейчас %s)",
+		rateDelta(d.SlopeMbpsPerDay), d.PeakAt.Format("02.01 15:04"), rate(d.ForecastMbps), rate(d.NowMbps))
 	return d
 }
 

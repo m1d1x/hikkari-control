@@ -102,20 +102,20 @@ func loadTarget(sz PoolSizing, live int) (target, keep int, why string) {
 		// particular health probes must not buy more boxes just because their
 		// aggregate traffic exceeds one lightly used box's historical median.
 		n, k := hold, hold
-		why := fmt.Sprintf("видели минимум %.3f Мбит/с, предел мощности не измерен — держим %d, по нижней границе парк не наращиваем", c.Mbps, hold)
+		why := fmt.Sprintf("видели минимум %s, предел мощности не измерен — держим %d, по нижней границе парк не наращиваем", rate(c.Mbps), hold)
 		if q, qwhy := quotaFloor(d, sz.Plan); qwhy != "" {
 			n, k = max(n, q), max(k, q)
 			why += "; " + qwhy
 		}
 		return n, k, why
 	case c == nil || c.Mbps <= 0:
-		return hold, hold, fmt.Sprintf("ёмкость машины не мерена — спрос %.1f Мбит/с делить не на что, держим что есть: %d",
-			d.ForecastMbps, hold)
+		return hold, hold, fmt.Sprintf("ёмкость машины не мерена — спрос %s делить не на что, держим что есть: %d",
+			rate(d.ForecastMbps), hold)
 	}
 	n := max(1, int(math.Ceil(d.ForecastMbps/(c.Mbps*fleetHeadroom))))
 	k := max(n, int(math.Ceil(d.ForecastMbps/(c.Mbps*fleetShrinkHeadroom))))
-	why = fmt.Sprintf("спрос %.1f Мбит/с к %s, машина держит %.0f (%s), по %.0f%% — нужно %d, сдавать ниже %.0f%% — держим до %d",
-		d.ForecastMbps, d.PeakAt.Format("02.01 15:04"), c.Mbps, c.Source, fleetHeadroom*100, n, fleetShrinkHeadroom*100, k)
+	why = fmt.Sprintf("спрос %s к %s, машина держит %s (%s), по %.0f%% — нужно %d, сдавать ниже %.0f%% — держим до %d",
+		rate(d.ForecastMbps), d.PeakAt.Format("02.01 15:04"), rate(c.Mbps), c.Source, fleetHeadroom*100, n, fleetShrinkHeadroom*100, k)
 	if q, qwhy := quotaFloor(d, sz.Plan); qwhy != "" {
 		why += "; " + qwhy
 		n, k = max(n, q), max(k, q)

@@ -4,6 +4,7 @@ import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { compile } from 'svelte/compiler';
 import { Window } from 'happy-dom';
+import ts from 'typescript';
 
 const window = new Window();
 for (const key of [
@@ -52,11 +53,16 @@ const stub = compile(
 	{ filename: 'EChart.svelte', generate: 'client' },
 ).js.code;
 await writeFile(`${dir}/EChart.mjs`, stub);
+const rateSource = await readFile(new URL('../src/lib/utils/rate.ts', import.meta.url), 'utf8');
+await writeFile(
+	`${dir}/rate.mjs`,
+	ts.transpileModule(rateSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } })
+		.outputText,
+);
 for (const name of ['AutopilotCharts', 'ui/TimeSeries']) {
-	const code = (await readFile(new URL(`../src/components/entry/${name}.svelte`, import.meta.url), 'utf8')).replace(
-		"'$components/charts/EChart.svelte'",
-		"'./EChart.mjs'",
-	);
+	const code = (await readFile(new URL(`../src/components/entry/${name}.svelte`, import.meta.url), 'utf8'))
+		.replace("'$components/charts/EChart.svelte'", "'./EChart.mjs'")
+		.replace("'$lib/utils/rate'", "'./rate.mjs'");
 	await writeFile(
 		`${dir}/${name.replace('/', '-')}.mjs`,
 		compile(code, { filename: `${name}.svelte`, generate: 'client' }).js.code,

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { formatRate } from '$lib/utils/rate';
 	import { onDestroy, onMount } from 'svelte';
 	import PageShell from '$components/layout/PageShell.svelte';
 	import ProtoBadge from '$components/entry/ProtoBadge.svelte';
@@ -48,7 +49,6 @@
 
 	const pct = (v: number) => `${v.toLocaleString('ru', { maximumFractionDigits: 1 })}%`;
 	const ms = (v: number) => `${Math.round(v)} мс`;
-	const mbps = (v: number) => `${v.toLocaleString('ru', { maximumFractionDigits: v < 10 ? 2 : 0 })} Мбит/с`;
 
 	/** Gigabytes said in the unit that reads best: 1,2 ТБ, 340 ГБ. */
 	function size(gb: number): string {
@@ -176,11 +176,11 @@
 									label: 'прокачано',
 									color: CARRIED_COLOR,
 									values: p.carriedMbps,
-									format: mbps,
+									format: formatRate,
 									primary: true,
 								},
 							]}
-							formatAxis={mbps}
+							formatAxis={formatRate}
 							height={120}
 							empty="трафика нет за окно"
 						/>

@@ -48,15 +48,58 @@ var nodeCities = map[string]string{
 	"yerevan":          "ереван",
 }
 
-// nodeCity is the city part of a node's label. A place missing from nodeCities
-// still gets a name of its own rather than none, in the hoster's spelling.
+// nodeCountries stands in when a hoster names only the country (u1:
+// "Netherlands, NL"): still in Russian, so a subscriber's list never mixes
+// alphabets.
+var nodeCountries = map[string]string{
+	"armenia":        "армения",
+	"austria":        "австрия",
+	"bulgaria":       "болгария",
+	"czechia":        "чехия",
+	"estonia":        "эстония",
+	"finland":        "финляндия",
+	"france":         "франция",
+	"germany":        "германия",
+	"italy":          "италия",
+	"japan":          "япония",
+	"kazakhstan":     "казахстан",
+	"latvia":         "латвия",
+	"lithuania":      "литва",
+	"moldova":        "молдова",
+	"netherlands":    "нидерланды",
+	"poland":         "польша",
+	"romania":        "румыния",
+	"russia":         "россия",
+	"serbia":         "сербия",
+	"spain":          "испания",
+	"sweden":         "швеция",
+	"switzerland":    "швейцария",
+	"turkey":         "турция",
+	"united kingdom": "великобритания",
+	"united states":  "сша",
+	"usa":            "сша",
+}
+
+// placeKey is a hoster's place name as the tables key it: lowercased, with a
+// datacenter number dropped — VDSina's "Amsterdam 1" is Amsterdam.
+func placeKey(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return strings.TrimSpace(strings.TrimRightFunc(s, func(r rune) bool { return r == ' ' || r == '-' || (r >= '0' && r <= '9') }))
+}
+
+// nodeCity is the city part of a node's label, in Russian. A place missing
+// from both tables still gets a name of its own rather than none, in the
+// hoster's spelling — add it to nodeCities when one shows up.
 func nodeCity(providerRegion, location string) string {
-	place := strings.ToLower(strings.TrimSpace(strings.SplitN(location, ",", 2)[0]))
+	place := placeKey(strings.SplitN(location, ",", 2)[0])
 	region := strings.ToLower(strings.TrimSpace(providerRegion))
 	for _, key := range []string{region, place} {
 		if city, ok := nodeCities[key]; ok {
 			return city
 		}
+	}
+	if country, ok := nodeCountries[place]; ok {
+		return country
 	}
 	if place != "" {
 		return strings.ReplaceAll(place, " ", "-")

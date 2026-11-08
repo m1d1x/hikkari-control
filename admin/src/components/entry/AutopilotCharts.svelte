@@ -1,6 +1,7 @@
 <script lang="ts">
 	import EChart from '$components/charts/EChart.svelte';
 	import type { EChartsOption } from '$lib/utils/echarts';
+	import { formatRate } from '$lib/utils/rate';
 	import type { ChartSet, ChartLine, SpendReading } from '$lib/api/entry';
 	interface Props {
 		set?: ChartSet;
@@ -9,6 +10,8 @@
 		spend?: SpendReading[];
 	}
 	let { set: reading, moneyMode, spend = [], usesDomains = false }: Props = $props();
+	// The load chart's unit follows its size (кбит/с, Мбит/с), so it is a marker, not a label.
+	const RATE = 'rate';
 	const emptyLine: ChartLine = { history: [], forecast: [] };
 	const set: ChartSet = $derived(
 		reading ?? {
@@ -28,7 +31,8 @@
 		return {
 			tooltip: {
 				trigger: 'axis',
-				valueFormatter: (v: unknown) => `${Number(v).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ${unit}`,
+				valueFormatter: (v: unknown) =>
+					unit === RATE ? formatRate(Number(v)) : `${Number(v).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ${unit}`,
 			},
 			legend: { data: ['история', 'прогноз'], textStyle: { color: '#9ca3af' } },
 			grid: { left: 8, right: 18, top: 32, bottom: 24, containLabel: true },
@@ -42,14 +46,14 @@
 				type: 'value',
 				min: 0,
 				minInterval: unit === 'шт' ? 1 : undefined,
-				axisLabel: { color: '#9ca3af' },
+				axisLabel: { color: '#9ca3af', ...(unit === RATE ? { formatter: (v: number) => formatRate(v) } : {}) },
 				splitLine: { lineStyle: { color: '#27272a' } },
 			},
 			series: [
 				{
 					name: 'история',
 					type: 'line',
-					step: unit === 'Мбит/с' ? false : 'end',
+					step: unit === RATE ? false : 'end',
 					showSymbol: false,
 					data: data(line.history),
 					lineStyle: { color, width: 2 },
@@ -77,7 +81,7 @@
 		} as EChartsOption;
 	}
 	const charts = $derived([
-		{ title: 'Суммарная нагрузка', line: set.loadMbps, unit: 'Мбит/с', color: '#06b6d4', cap: undefined },
+		{ title: 'Суммарная нагрузка', line: set.loadMbps, unit: RATE, color: '#06b6d4', cap: undefined },
 		{
 			title: moneyMode ? 'Аренда машин' : 'Машины',
 			line: moneyMode ? set.machinesCentsPerDay : set.machines,
@@ -102,7 +106,7 @@
 <div class="charts">
 	{#each charts as chart, i (i)}
 		<div class="chart">
-			<h3>{chart.title} <span>{chart.unit}</span></h3>
+			<h3>{chart.title} {#if chart.unit !== RATE}<span>{chart.unit}</span>{/if}</h3>
 			{#key moneyMode}
 				<EChart option={option(chart.line, chart.unit, chart.color, chart.cap)} height="210px" />
 			{/key}

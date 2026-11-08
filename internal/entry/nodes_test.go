@@ -120,6 +120,9 @@ func TestNodeLabelReadsCityAndNumber(t *testing.T) {
 	for _, tc := range []struct{ region, location, want string }{
 		{"eu-north2", "eu-north2, Cloud", "рига"},
 		{"ams3", "Amsterdam, NL", "амстердам"},
+		{"4", "Amsterdam 1, nl", "амстердам"},
+		{"", "Netherlands, NL", "нидерланды"},
+		{"", "Saint Petersburg 2", "петербург"},
 		{"xx1", "Reykjavik, IS", "reykjavik"},
 		{"xx1", "", "xx1"},
 		{"", "", "узел"},
