@@ -139,8 +139,13 @@ func classifyVoice(p voiceProbe, k2 bool) string {
 // The door is a fact about the relay and it stays recorded — as the pair of
 // numbers it is, in xudp_got/xudp_sent, where a reader can ask about the door
 // without asking about the stream.
-func withXUDP(r probeResult, p voiceProbe) probeResult {
-	door := "xudp " + strconv.Itoa(p.got) + "/" + strconv.Itoa(p.sent)
+func withXUDP(r probeResult, p voiceProbe) probeResult { return withDoor(r, "xudp", p) }
+
+// withDoor is withXUDP for any datagram door of a stream relay: XUDP inside
+// Reality, or a Hikkari relay's datagram channel (datagram.go). The label
+// names the door in the detail; the counts share the xudp columns.
+func withDoor(r probeResult, label string, p voiceProbe) probeResult {
+	door := label + " " + strconv.Itoa(p.got) + "/" + strconv.Itoa(p.sent)
 	// Added to the detail, never written over it. The stream probe's own
 	// detail is the only place a row says WHY it was called what it was
 	// called, and overwriting it is what kept the broken K3 of П9.7 invisible:

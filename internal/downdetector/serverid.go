@@ -29,6 +29,8 @@ var clientProtos = map[string]string{
 	"vless-xhttp":          "vless-xhttp",
 	"hysteria2":            "hysteria2",
 	"amneziawg":            "wireguard",
+	"naive":                "naive",
+	"hikkari":              "hikkari",
 }
 
 // FleetClientID is the id clients report one of our nodes under: the hash of

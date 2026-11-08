@@ -74,6 +74,9 @@ func probeNaiveEdge(ctx context.Context, e edge, target string, k2 bool, now tim
 	if !e.Naive.H3 {
 		res.RawTCP = b2u8(probeRawTCP(net.JoinHostPort(e.Address, strconv.Itoa(e.Port)), timeout))
 	}
+	if e.Proto == protoHikkari {
+		res = probeDatagram(ctx, kit.Core, e, res, timeout)
+	}
 	return res
 }
 

@@ -74,6 +74,12 @@ func TestRunnerSaysWhyAndKeepsTheLinkOut(t *testing.T) {
 }
 
 func TestAppliesKnowsWhichProfileHasTheKnob(t *testing.T) {
+	for _, typ := range []string{"naive", "hikkari"} {
+		ob := map[string]any{"type": typ, "tls": map[string]any{"enabled": true, "server_name": "a.example"}}
+		if Applies("fp", ob) || Applies("alpn", ob) || !Applies("sni", ob) || !Applies("port", ob) || !Applies("burst", ob) {
+			t.Fatalf("%s: Chromium's TLS takes neither fp nor alpn; sni, port and burst apply", typ)
+		}
+	}
 	hy2 := map[string]any{"type": "hysteria2"}
 	if Applies("fp", hy2) || Applies("flow", hy2) || !Applies("port", hy2) || !Applies("burst", hy2) {
 		t.Fatal("hysteria2")

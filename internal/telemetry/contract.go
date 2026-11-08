@@ -16,7 +16,7 @@ import (
 
 var (
 	engines   = set("singbox", "xray")
-	protos    = set("vless-reality", "vless-xhttp", "vmess", "trojan", "shadowsocks", "hysteria2", "other")
+	protos    = set("vless-reality", "vless-xhttp", "vmess", "trojan", "shadowsocks", "hysteria2", "naive", "hikkari", "other")
 	oses      = set("windows", "macos", "linux", "android", "ios")
 	channels  = set("stable", "beta", "dev")
 	countBkts = set("0", "1", "2-5", "6+", "2-10", "11+", "2+")

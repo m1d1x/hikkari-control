@@ -62,7 +62,17 @@ func Applies(knob string, ob map[string]any) bool {
 		return false
 	}
 	switch knob {
-	case "fp", "sni", "alpn":
+	case "fp", "alpn":
+		// Naive's TLS is Chromium's own (cronet): no uTLS fingerprint and no
+		// ALPN to choose, and the core refuses either. Hikkari's stream
+		// channel is Naive.
+		if t, _ := ob["type"].(string); t == "naive" || t == "hikkari" {
+			return false
+		}
+		tls, ok := ob["tls"].(map[string]any)
+		on, _ := tls["enabled"].(bool)
+		return ok && on
+	case "sni":
 		tls, ok := ob["tls"].(map[string]any)
 		on, _ := tls["enabled"].(bool)
 		return ok && on
