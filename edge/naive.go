@@ -1,6 +1,7 @@
 package main
 
-// Naive keeps upstream Caddy/forwardproxy responsible for the wire protocol.
+// Naive keeps the wire protocol in hikkari-protocol/server/naive (the
+// forwardproxy Caddy handler with Naive padding, carried into that repo).
 // This middleware owns only the same grants and usage totals as keys.go.
 import (
 	"context"
@@ -23,7 +24,8 @@ import (
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	_ "github.com/caddyserver/caddy/v2/modules/standard"
-	_ "github.com/caddyserver/forwardproxy"
+	hkserver "github.com/m1d1x/hikkari-protocol/server"
+	_ "github.com/m1d1x/hikkari-protocol/server/naive"
 )
 
 const protoNaive = "naive"
@@ -102,7 +104,7 @@ func (n naiveConfig) document() ([]byte, error) {
 				"listen": []string{n.Listen}, "protocols": protocols, "tls_connection_policies": []any{map[string]any{}},
 				"routes": []any{map[string]any{"handle": []any{
 					map[string]any{"handler": "hikkari_naive"},
-					map[string]any{"handler": "forward_proxy", "hide_ip": true, "hide_via": true, "probe_resistance": map[string]any{}, "auth_credentials": [][]byte{credential}, "acl": []any{map[string]any{"subjects": deny, "allow": false}}},
+					map[string]any{"handler": "hikkari_proxy", "hide_ip": true, "hide_via": true, "probe_resistance": map[string]any{}, "auth_credentials": [][]byte{credential}, "acl": []any{map[string]any{"subjects": deny, "allow": false}}},
 					map[string]any{"handler": "file_server", "root": n.Root},
 				}}},
 			}}},
@@ -126,8 +128,8 @@ type naiveRuntime struct {
 	total    naiveCount
 	// onKeys, when set, receives every new roster (the datagram channel).
 	onKeys func([]string)
-	// uotFlows and datagramFlows count UDP associations per Hikkari channel.
-	uotFlows, datagramFlows atomic.Int64
+	// uotFlows counts UDP associations over the Naive channel.
+	uotFlows atomic.Int64
 }
 
 func newNaiveRuntime(cfg naiveConfig) *naiveRuntime {
@@ -256,7 +258,7 @@ func (g *naiveGate) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	n.sessions[id] = naiveSession{key, cancel}
 	n.mu.Unlock()
 	defer func() { cancel(); n.mu.Lock(); delete(n.sessions, id); n.mu.Unlock() }()
-	if n.cfg.UDP && isUoTHost(r.Host) {
+	if n.cfg.UDP && hkserver.IsUoTHost(r.Host) {
 		ctx = n.withUoT(ctx, r.Host)
 	}
 	r = r.Clone(ctx)

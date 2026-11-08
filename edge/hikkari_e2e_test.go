@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
+	hkserver "github.com/m1d1x/hikkari-protocol/server"
 )
 
 // Hikkari v1.01 end to end with the real client core (HIKKARI_TEST_CORE, a
@@ -35,7 +36,7 @@ func TestHikkariRealCoreTwoChannels(t *testing.T) {
 	if binary == "" {
 		t.Skip("HIKKARI_TEST_CORE not set")
 	}
-	exitPolicy = func() *egress { return &egress{} }
+	exitPolicy = hkserver.NewPolicyExit(nil, nil, nil)
 	key := "0123456789abcdef0123456789abcdef"
 	certPEM, keyPEM := hikkariTestCert(t, "hk.example")
 
@@ -114,7 +115,7 @@ func TestHikkariRealCoreTwoChannels(t *testing.T) {
 		{"datagram unreachable", map[string]any{"server_port": deadPort, "connect_timeout": "1s"}, "uot"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			uotBefore, dgBefore := n.uotFlows.Load(), n.datagramFlows.Load()
+			uotBefore, dgBefore := n.uotFlows.Load(), udp.Flows()
 			outbound := map[string]any{"type": "hikkari", "tag": "proxy", "server": "127.0.0.1", "server_port": atoi(port), "password": key,
 				"tls": map[string]any{"enabled": true, "server_name": "hk.example", "certificate": []string{certPEM}}}
 			if tc.udp != nil {
@@ -139,7 +140,7 @@ func TestHikkariRealCoreTwoChannels(t *testing.T) {
 			if got < sent*9/10 {
 				t.Fatalf("udp: %d of %d answered", got, sent)
 			}
-			uot, dg := n.uotFlows.Load()-uotBefore, n.datagramFlows.Load()-dgBefore
+			uot, dg := n.uotFlows.Load()-uotBefore, udp.Flows()-dgBefore
 			switch tc.channel {
 			case "datagram":
 				if dg == 0 || uot != 0 {
