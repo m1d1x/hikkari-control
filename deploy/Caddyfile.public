@@ -1,0 +1,62 @@
+# Update channel: static, signed files (manifest signature is the trust,
+# TLS is transport). Nothing here may depend on any other service.
+update.hikkari.net {
+	root * /srv/hikkari/update
+	file_server
+	# The probe and the manifest change in place: never cache them.
+	@mutable path */latest.json */manifest.json /download/hikkari.pkg /download/hikkari-setup.exe /download/latest-*.json
+	header @mutable Cache-Control "no-cache"
+	# Public release metadata is read by the landing across origins.
+	@releaseMetadata path /download/latest-*.json
+	header @releaseMetadata Access-Control-Allow-Origin "*"
+	# Blobs are content-addressed: their name is their content.
+	header /blobs/* Cache-Control "public, max-age=31536000, immutable"
+	log {
+		output file /var/log/caddy/update.log {
+			roll_size 20MiB
+			roll_keep 5
+		}
+	}
+}
+
+# Landing and checkout pages.
+www.hikkari.net {
+	redir https://hikkari.net{uri} permanent
+}
+
+hikkari.net {
+	root * /srv/hikkari/site
+	encode zstd gzip
+	try_files {path} {path}.html {path}/index.html
+	file_server
+	header /_app/immutable/* Cache-Control "public, max-age=31536000, immutable"
+	log {
+		output discard
+	}
+}
+
+# Hikkari control hub, public half only: /sub, probers, relay pulse.
+# The compose stack listens on loopback; the operator panel is never routed
+# here (scripts/admin.sh tunnels to 127.0.0.1:9443). No access log: request
+# addresses are user IPs.
+api.hikkari.net {
+	reverse_proxy 127.0.0.1:9080 {
+		header_up -X-Forwarded-For
+		header_up -X-Real-IP
+	}
+	log {
+		output discard
+	}
+}
+
+sub.hikkari.net {
+	@notsub not path /sub/*
+	respond @notsub 404
+	reverse_proxy 127.0.0.1:9080 {
+		header_up -X-Forwarded-For
+		header_up -X-Real-IP
+	}
+	log {
+		output discard
+	}
+}
