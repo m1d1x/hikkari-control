@@ -22,6 +22,7 @@ import (
 	"golang.org/x/net/proxy"
 
 	"github.com/m1d1x/hikkari-control/internal/entrybench"
+	"github.com/m1d1x/hikkari-control/internal/stand"
 )
 
 // Benches of a relay build (roadmap 42 П6.14 Ф3). The hub queues one before
@@ -120,10 +121,22 @@ func (cfg config) bench(ctx context.Context, task *probeTask) {
 			res.Error = berr.Error()
 		} else {
 			targets := make([]benchTarget, len(task.Relays))
+			var stops []func()
 			for i, r := range task.Relays {
-				targets[i] = benchTarget{base: base, token: cfg.hub.token, dialer: socksDialer(eng.ports[r.Name], cfg.timeout)}
+				dialer, stop, derr := benchDialer(ctx, r, eng.ports[r.Name], cfg.timeout)
+				if stop != nil {
+					stops = append(stops, stop)
+				}
+				if derr != nil {
+					targets[i] = benchTarget{base: base, token: cfg.hub.token, dialer: failDialer{derr}}
+					continue
+				}
+				targets[i] = benchTarget{base: base, token: cfg.hub.token, dialer: dialer}
 			}
 			res = runBenches(ctx, targets, d, messengerShape)
+			for _, stop := range stops {
+				stop()
+			}
 		}
 		eng.stop()
 	}
@@ -176,6 +189,44 @@ func benchBase(tunnelURL string) (string, error) {
 		return "", fmt.Errorf("ENTRY_PROBE_TUNNEL_URL %q names no host", tunnelURL)
 	}
 	return u.Scheme + "://" + u.Host + entrybench.Base, nil
+}
+
+// benchDialer is how a bench reaches the hub through one relay. Xray relays
+// have a SOCKS door on the shared engine; a Naive relay has none there (the
+// engine skips it), so it gets the client core with its own mixed inbound, as
+// admission probes it. Without this the bench dialled 127.0.0.1:0 and every
+// rollout with a Naive canary failed before its first exchange (08.11).
+func benchDialer(ctx context.Context, e edge, port int, timeout time.Duration) (proxy.ContextDialer, func(), error) {
+	switch {
+	case e.Proto == protoNaive:
+		if e.Naive == nil {
+			return nil, nil, fmt.Errorf("naive: у релея %s нет параметров naive", e.Name)
+		}
+		cfg := standFromEnv()
+		fetchCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		kit, _ := stand.Fetch(fetchCtx, cfg.download, cfg.kitURL, cfg.dir)
+		cancel()
+		if kit.Core == "" || kit.Cronet == "" {
+			return nil, nil, fmt.Errorf("naive: нет ядра клиента с Cronet")
+		}
+		p, stop, err := startNaiveProxy(ctx, kit.Core, e)
+		if err != nil {
+			return nil, nil, fmt.Errorf("naive: клиент не поднялся: %w", err)
+		}
+		return socksDialer(p, timeout), stop, nil
+	case e.awg():
+		return nil, nil, fmt.Errorf("бенч через AWG не поддержан")
+	case port == 0:
+		return nil, nil, fmt.Errorf("у релея %s нет SOCKS-порта в движке", e.Name)
+	}
+	return socksDialer(port, timeout), nil, nil
+}
+
+// failDialer makes a target that cannot be reached fail with its reason.
+type failDialer struct{ err error }
+
+func (f failDialer) DialContext(context.Context, string, string) (net.Conn, error) {
+	return nil, f.err
 }
 
 func socksDialer(port int, timeout time.Duration) proxy.ContextDialer {

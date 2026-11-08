@@ -78,27 +78,39 @@ func probeNaiveEdge(ctx context.Context, e edge, target string, k2 bool, now tim
 }
 
 func startNaiveClient(ctx context.Context, binary string, e edge, timeout time.Duration) (*http.Client, func(), error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	port, stop, err := startNaiveProxy(ctx, binary, e)
 	if err != nil {
 		return nil, nil, err
+	}
+	proxy, _ := url.Parse("http://127.0.0.1:" + strconv.Itoa(port))
+	transport := &http.Transport{Proxy: http.ProxyURL(proxy)}
+	return &http.Client{Timeout: timeout, Transport: transport}, func() { transport.CloseIdleConnections(); stop() }, nil
+}
+
+// startNaiveProxy runs the client core with one naive outbound behind a local
+// mixed inbound (HTTP and SOCKS5 on one port) and returns that port.
+func startNaiveProxy(ctx context.Context, binary string, e edge) (int, func(), error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, nil, err
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	listener.Close()
 	dir, err := os.MkdirTemp("", "hikkari-naive-probe-")
 	if err != nil {
-		return nil, nil, err
+		return 0, nil, err
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	config := map[string]any{"log": map[string]any{"disabled": true}, "inbounds": []any{map[string]any{"type": "mixed", "listen": "127.0.0.1", "listen_port": port}}, "outbounds": []any{map[string]any{"type": "naive", "tag": "probe", "server": e.Address, "server_port": e.Port, "username": e.Naive.User, "password": e.Naive.Pass, "quic": e.Naive.H3, "tls": map[string]any{"enabled": true, "server_name": e.Naive.Host}}}, "route": map[string]any{"final": "probe"}}
 	raw, err := json.Marshal(config)
 	if err != nil {
 		cleanup()
-		return nil, nil, err
+		return 0, nil, err
 	}
 	path := filepath.Join(dir, "config.json")
 	if err = os.WriteFile(path, raw, 0600); err != nil {
 		cleanup()
-		return nil, nil, err
+		return 0, nil, err
 	}
 	processCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(processCtx, binary, "run", "-c", path)
@@ -106,7 +118,7 @@ func startNaiveClient(ctx context.Context, binary string, e edge, timeout time.D
 	if err = cmd.Start(); err != nil {
 		cancel()
 		cleanup()
-		return nil, nil, fmt.Errorf("client start failed")
+		return 0, nil, fmt.Errorf("client start failed")
 	}
 	stop := func() { cancel(); _ = cmd.Wait(); cleanup() }
 	ready := false
@@ -122,9 +134,7 @@ func startNaiveClient(ctx context.Context, binary string, e edge, timeout time.D
 	}
 	if !ready {
 		stop()
-		return nil, nil, fmt.Errorf("client not ready")
+		return 0, nil, fmt.Errorf("client not ready")
 	}
-	proxy, _ := url.Parse("http://127.0.0.1:" + strconv.Itoa(port))
-	transport := &http.Transport{Proxy: http.ProxyURL(proxy)}
-	return &http.Client{Timeout: timeout, Transport: transport}, func() { transport.CloseIdleConnections(); stop() }, nil
+	return port, stop, nil
 }

@@ -197,3 +197,21 @@ func TestACanaryAndItsControlAreBenchedAtOnce(t *testing.T) {
 		t.Fatal("a lone bench carries a control")
 	}
 }
+
+// A relay without a door on the shared engine must not be dialled at
+// 127.0.0.1:0: the bench names why it cannot reach it (08.11, unl1-1).
+func TestBenchDialerRefusesMissingDoor(t *testing.T) {
+	for _, e := range []edge{
+		{Name: "x-1", Proto: protoNaive},
+		{Name: "a-1", Proto: protoAwg},
+		{Name: "r-1"},
+	} {
+		d, stop, err := benchDialer(context.Background(), e, 0, time.Second)
+		if err == nil || d != nil || stop != nil {
+			t.Fatalf("%s: dialer=%v stop=%v err=%v, want a refusal", e.Name, d, stop != nil, err)
+		}
+	}
+	if _, _, err := benchDialer(context.Background(), edge{Name: "r-1"}, 20999, time.Second); err != nil {
+		t.Fatalf("xray relay with a port: %v", err)
+	}
+}
