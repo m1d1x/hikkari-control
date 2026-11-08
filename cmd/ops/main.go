@@ -25,6 +25,7 @@ const usage = `usage: ops <command>
   probe <who> --targets label=ip:port,label=ip:port
                                     TCP flows from the tester's card, past the tunnel
   load <who>                        a [diag:load] round over the tester's profiles now
+  provoke <who> --targets label=ip:port,...  опыт 0: stimuli ТСПУ cuts, to up to 3 provoke boxes
   probe-voice <who>                 a call's datagrams through the tunnel now: [diag:voice]
   voice [--who X] [--proto X] [--last 7d] [--rows 1]
                                     testers' voice series, grouped, with the verdict

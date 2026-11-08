@@ -4,7 +4,7 @@ import "testing"
 
 func TestValidateProbeTargets(t *testing.T) {
 	good := []ProbeTarget{{"ams7-443", "89.124.99.31:443"}}
-	if err := validateProbeTargets(good); err != nil {
+	if err := validateProbeTargets(TesterCommandProbe, good, MaxProbeTargets); err != nil {
 		t.Fatal(err)
 	}
 	for name, bad := range map[string][]ProbeTarget{
@@ -20,9 +20,29 @@ func TestValidateProbeTargets(t *testing.T) {
 		"label":    {{"A B", "1.2.3.4:443"}},
 		"too many": make([]ProbeTarget, MaxProbeTargets+1),
 	} {
-		if err := validateProbeTargets(bad); err == nil {
+		if err := validateProbeTargets(TesterCommandProbe, bad, MaxProbeTargets); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+func TestProvokeCarriesAtMostThreeTargets(t *testing.T) {
+	three := []ProbeTarget{{"ru", "1.2.3.4:443"}, {"ams3", "1.2.3.5:443"}, {"eu", "1.2.3.6:443"}}
+	p, err := commandParams(TesterCommandProvoke, three)
+	if err != nil || len(p) == 0 {
+		t.Fatalf("three boxes: %s, %v", p, err)
+	}
+	if _, err := commandParams(TesterCommandProvoke, append(three, ProbeTarget{"x", "1.2.3.7:443"})); err == nil {
+		t.Fatal("four boxes accepted")
+	}
+	if _, err := commandParams(TesterCommandProvoke, nil); err == nil {
+		t.Fatal("no boxes accepted")
+	}
+	if _, err := commandParams(TesterCommandProvoke, []ProbeTarget{{"ru", "10.0.0.1:443"}}); err == nil {
+		t.Fatal("a private box accepted")
+	}
+	if !testerCommandKinds[TesterCommandProvoke] {
+		t.Fatal("provoke_targets is not on the whitelist")
 	}
 }
 

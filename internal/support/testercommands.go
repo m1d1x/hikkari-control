@@ -6,8 +6,8 @@ package support
 // minute. The result comes back as ordinary log lines, source
 // «doctor nonce=…», with the nonce acknowledged in the chunk that carries the
 // last of them. A command runs no code: kind is a word from a list both sides
-// hold. Only probe_targets carries data, addresses to open a TCP connection to,
-// and both sides check them (probetargets.go).
+// hold. Only probe_targets and provoke_targets carry data, addresses to open a
+// connection to, and both sides check them (probetargets.go).
 
 import (
 	"bytes"
@@ -41,6 +41,11 @@ const (
 	// minute, and on Windows from the card beside it; the answer is the
 	// [diag:voice] lines (internal/voiceruns keeps them).
 	TesterCommandVoice = "probe_voice"
+	// TesterCommandProvoke sends stimuli ТСПУ is known to cut (blocked SNIs, a
+	// long flow, a burst of source ports, datagram streams) from the card to
+	// provoke boxes (edge EDGE_PROTO=provoke) and asks each what reached it:
+	// опыт 0 of the РФ-каскад. Up to MaxProvokeTargets boxes, run at once.
+	TesterCommandProvoke = "provoke_targets"
 
 	TesterCommandPending   = "pending"
 	TesterCommandDelivered = "delivered"
@@ -58,6 +63,7 @@ var testerCommandKinds = map[string]bool{
 	TesterCommandProbe:     true,
 	TesterCommandLoad:      true,
 	TesterCommandVoice:     true,
+	TesterCommandProvoke:   true,
 }
 
 // TesterCommand is what a client receives in the answer to its chunk.

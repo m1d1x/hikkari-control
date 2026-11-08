@@ -265,7 +265,7 @@ func (c *client) request(method, path string, query url.Values, body any) ([]byt
 				msg = e.Error
 			}
 			if resp.StatusCode == http.StatusUnauthorized {
-				msg += " — токен отозван или выпущен на другом хабе"
+				msg += " (токен отозван или выпущен на другом хабе)"
 			}
 			return nil, &apiError{status: resp.StatusCode, msg: fmt.Sprintf("hub %d: %s", resp.StatusCode, msg)}
 		}
@@ -308,6 +308,8 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 		return c.diag(args)
 	case "probe":
 		return c.probe(args)
+	case "provoke":
+		return c.provoke(args)
 	case "load":
 		return c.load(args)
 	case "probe-voice":
@@ -742,6 +744,37 @@ func (c *client) probe(args map[string]string) (string, error) {
 	return c.askAndRead(args["who"], map[string]any{"kind": "probe_targets", "targets": targets}, "probe")
 }
 
+// provokeWait bounds provoke_targets: up to a minute until the client takes the
+// command, its two minutes of stimuli, and the batch that ships the answer.
+const provokeWait = 4 * time.Minute
+
+// provoke asks a tester to send the опыт 0 stimuli from its physical card to up
+// to three provoke boxes (edge EDGE_PROTO=provoke) at once, and prints what the
+// client saw beside what each box says reached it.
+func (c *client) provoke(args map[string]string) (string, error) {
+	targets, err := parseProbeTargets(args["targets"])
+	if err != nil {
+		return "", err
+	}
+	who := args["who"]
+	path, err := installPath(who, "/commands")
+	if err != nil {
+		return "", err
+	}
+	data, err := c.request(http.MethodPost, path, nil, map[string]any{"kind": "provoke_targets", "targets": targets})
+	if err != nil {
+		return "", err
+	}
+	var asked diagAnswer
+	if err := json.Unmarshal(data, &asked); err != nil {
+		return "", fmt.Errorf("hub answer: %w", err)
+	}
+	if err := c.waitDoneWithin(path, asked, provokeWait); err != nil {
+		return "", err
+	}
+	return c.readAnswer(who, asked, "provoke")
+}
+
 // parseProbeTargets reads label=ip:port,label=ip:port. The hub checks the
 // values; this only splits them.
 func parseProbeTargets(s string) ([]map[string]string, error) {
@@ -758,7 +791,7 @@ func parseProbeTargets(s string) ([]map[string]string, error) {
 
 func diagTimeout(a diagAnswer, state string, wait time.Duration) error {
 	if state == "delivered" {
-		return fmt.Errorf("%s забрал команду, но не ответил за %s: версия %s могла не уметь %s, или проверка ещё идёт. Логи — tool logs", a.Alias, wait, a.Version, a.Kind)
+		return fmt.Errorf("%s забрал команду, но не ответил за %s: версия %s могла не уметь %s, или проверка ещё идёт. Логи: tool logs", a.Alias, wait, a.Version, a.Kind)
 	}
 	return fmt.Errorf("%s не забрал команду за %s (состояние %s): версия %s может быть без heartbeat, или клиент только что закрыли", a.Alias, wait, state, a.Version)
 }

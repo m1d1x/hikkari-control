@@ -32,6 +32,13 @@ package main
 //	                                    # account with the token from stdin
 //	cmd/server entry-box hub-key        # the hub's ssh public key, for a
 //	                                    # provider's panel (no password then)
+//	cmd/server entry-box provoke <box> [port]
+//	                                    # stand up or update the опыт 0
+//	                                    # provoke receiver on a recorded box
+//	                                    # (internal/entry/provoke.go), 2053 by
+//	                                    # default; checks it from the hub
+//	cmd/server entry-box provoke-off <box>
+//	                                    # take the receiver off the box
 //	cmd/server entry-box record <relay> # an alive relay's signed record, as a
 //	                                    # client gets it (the live voice harness)
 //
@@ -54,6 +61,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -303,6 +311,37 @@ func runEntryBox(args []string) {
 			fail(fmt.Errorf("reconfigure %s: %w", box, err))
 		}
 		fmt.Printf("%s reconfigured\n", box)
+		os.Exit(0)
+	}
+	if len(args) >= 2 && len(args) <= 3 && (args[0] == "provoke" || args[0] == "provoke-off") {
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+		if args[0] == "provoke-off" {
+			if len(args) != 2 {
+				fail(fmt.Errorf("usage: cmd/server entry-box provoke-off <box>"))
+			}
+			err = prov.StopProvoke(ctx, args[1])
+		} else {
+			port := entry.DefaultProvokePort
+			if len(args) == 3 {
+				if port, err = strconv.Atoi(args[2]); err != nil {
+					fail(fmt.Errorf("port %q", args[2]))
+				}
+			}
+			err = prov.StandProvoke(ctx, args[1], port)
+		}
+		if err != nil {
+			fail(err)
+		}
 		os.Exit(0)
 	}
 	if len(args) >= 3 && args[0] == "ssh" {
