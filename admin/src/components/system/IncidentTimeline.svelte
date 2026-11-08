@@ -70,9 +70,9 @@
 						<div class="meta">
 							{formatRelativeTime(incident.startedAt)}
 							{#if incident.resolvedAt}
-								— resolved
+								· resolved
 							{:else}
-								— ongoing
+								· ongoing
 							{/if}
 						</div>
 					</div>

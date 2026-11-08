@@ -28,7 +28,7 @@ func wireEntryDomains(ctx context.Context, svc *entry.Service, prov *entry.Provi
 	svc.SetDomainReplacer(mech)
 	svc.SetProviderConnector(entrywire.Providers())
 	if err := svc.LoadProviders(ctx); err != nil {
-		log.Printf("entry: load provider accounts: %v — domain pool only, no purchases", err)
+		log.Printf("entry: load provider accounts: %v; domain pool only, no purchases", err)
 	}
 	// The money the console shows is the hub's own reading, refreshed by the
 	// hub: nobody presses "check" for the autopilot.

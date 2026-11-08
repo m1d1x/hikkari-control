@@ -200,7 +200,7 @@
 	}
 
 	const date = (s: string | null) =>
-		s ? new Date(s).toLocaleDateString('ru', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—';
+		s ? new Date(s).toLocaleDateString('ru', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '-';
 	const gb = (bytes: number) => num(bytes / GIB);
 	const daysLeft = (s: string | null) => (s ? Math.ceil((new Date(s).getTime() - Date.now()) / 86_400_000) : null);
 	const copy = (text: string) => navigator.clipboard.writeText(text);
@@ -271,7 +271,7 @@
 						</td>
 						<td class="mono dim">{i.platform} {i.version}</td>
 						<td class="mono">
-							{#if alive(i.install_id) === null}—{:else}{alive(i.install_id)} из {rounds[i.install_id].relays.length} профилей{/if}
+							{#if alive(i.install_id) === null}-{:else}{alive(i.install_id)} из {rounds[i.install_id].relays.length} профилей{/if}
 						</td>
 						<td class="r mono dim">{ago(new Date(i.last_seen).getTime())}</td>
 					</tr>
@@ -306,7 +306,7 @@
 							</div>
 							{#if s.email}<div class="dim">{s.email}</div>{/if}
 						</td>
-						<td class="mono">{s.plan || '—'}</td>
+						<td class="mono">{s.plan || '-'}</td>
 						<td class={STATE[s.state].cls}>{STATE[s.state].label}</td>
 						<td class="r mono">
 							{date(s.expiresAt)}
@@ -482,7 +482,7 @@
 							<td class="mono">{new Date(o.createdAt).toLocaleString('ru')}</td>
 							<td>{o.email}</td>
 							<td>{o.renewal ? 'продление' : 'покупка'} · <span class="mono">{o.plan}</span></td>
-							<td class="mono">{o.account || '—'}</td>
+							<td class="mono">{o.account || '-'}</td>
 							<td class="r mono">{rub(o.amountCents / 100)}</td>
 							<td class={ORDER[o.status].cls}>{ORDER[o.status].label}</td>
 						</tr>

@@ -54,12 +54,12 @@
 	});
 
 	function shortSha(sha: string | undefined): string {
-		if (!sha) return '—';
+		if (!sha) return '-';
 		return sha.length > 7 ? sha.slice(0, 7) : sha;
 	}
 
 	function shortTag(tag: string | undefined): string {
-		if (!tag) return '—';
+		if (!tag) return '-';
 		// Drop registry prefix for readability: ghcr.io/m1d1x/hikkari:foo → :foo
 		const colon = tag.lastIndexOf(':');
 		return colon === -1 ? tag : tag.slice(colon + 1);
@@ -145,7 +145,7 @@
 			</div>
 			<div class="meta-item">
 				<span class="meta-key">Uptime</span>
-				<span class="meta-val mono">{primary.uptimeSeconds ? formatUptimeSeconds(primary.uptimeSeconds) : '—'}</span>
+				<span class="meta-val mono">{primary.uptimeSeconds ? formatUptimeSeconds(primary.uptimeSeconds) : '-'}</span>
 			</div>
 			<div class="meta-item">
 				<span class="meta-key">Last switch</span>

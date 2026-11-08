@@ -151,7 +151,7 @@
 	<span class="time">{formatTime(log.ts)}</span>
 	<span class="level level-{log.level}">{log.level}</span>
 	<span class="source">{log.source}</span>
-	<span class="cat">{log.cat || '—'}</span>
+	<span class="cat">{log.cat || '-'}</span>
 	<span class="user" title={log.userId}>
 		{#if isSystem}
 			<span class="system-badge" title="System-level event, not attributed to a user">system</span>
@@ -211,7 +211,7 @@
 				{:else}
 					<div class="waterfall">
 						{#each waterfallRows as r (r.spanId)}
-							<div class="wf-row" title={`${r.name} — ${r.durationMs}ms`}>
+							<div class="wf-row" title={`${r.name}: ${r.durationMs}ms`}>
 								<div class="wf-name" style="padding-left: {r.depth * 12}px">
 									<span class="wf-depth">{r.depth > 0 ? '└' : ''}</span>
 									<span class="wf-span-name">{r.name}</span>

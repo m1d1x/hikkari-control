@@ -14,7 +14,7 @@
 
 	function asText(): string {
 		const stamp = new Date().toISOString().slice(0, 10);
-		return `hikkari admin — коды восстановления (${stamp})\nкаждый код работает один раз\n\n${codes.join('\n')}\n`;
+		return `hikkari admin: коды восстановления (${stamp})\nкаждый код работает один раз\n\n${codes.join('\n')}\n`;
 	}
 
 	async function copy() {

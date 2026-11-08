@@ -332,7 +332,7 @@ func (j *jobRun) rotateReality() (int, error) {
 	// between a client reconnecting in seconds and one waiting out its
 	// record's lifetime (П6.11).
 	if err := svc.nudgeHolders(j.ctx, relayNames(relays)); err != nil {
-		j.log("предупредить держателей не удалось: %v — они дотянут до следующего фетча", err)
+		j.log("предупредить держателей не удалось: %v; они дотянут до следующего фетча", err)
 	}
 	return len(relays), nil
 }
@@ -854,7 +854,7 @@ func (j *jobRun) provision(password string) error {
 	// difference between a client reconnecting in seconds and one waiting out
 	// its record's lifetime (П6.11).
 	if err := svc.nudgeHolders(j.ctx, j.movedRelays); err != nil {
-		j.log("предупредить держателей не удалось: %v — они дотянут до следующего фетча", err)
+		j.log("предупредить держателей не удалось: %v; они дотянут до следующего фетча", err)
 	}
 	return nil
 }
@@ -2003,7 +2003,7 @@ func (j *jobRun) probe(relays []provRelay) error {
 			return fmt.Errorf("%w: точка обзора так и не смогла судить за %s: %s. это отсутствие улик, а не приговор адресу",
 				errNoVerdict, j.p.probeTimeout, strings.Join(blind, ", "))
 		}
-		j.log("улик пока нет (%s) — спрашиваю точку обзора заново", strings.Join(blind, ", "))
+		j.log("улик пока нет (%s), спрашиваю точку обзора заново", strings.Join(blind, ", "))
 		select {
 		case <-j.ctx.Done():
 			return j.ctx.Err()

@@ -112,13 +112,13 @@ func (s *Service) DomainPoolNow(ctx context.Context) (DomainPoolReading, error) 
 		r.Target = max(r.Target, 1)
 	}
 	r.Need = r.Target - r.Free
-	parts := fmt.Sprintf("на подходе машин XHTTP %d, сгорело за %d дней %d — запас на сутки %d",
+	parts := fmt.Sprintf("на подходе машин XHTTP %d, сгорело за %d дней %d; запас на сутки %d",
 		r.Incoming, int(fleetLossWindow.Hours()/24), r.Burns, r.Buffer)
 	switch {
 	case r.Target == 0:
-		r.Why = "пул XHTTP не держит машин — домены не нужны"
+		r.Why = "пул XHTTP не держит машин, домены не нужны"
 	case r.Need > 0:
-		r.Why = fmt.Sprintf("свободных %d из %d (%s) — нужно ещё %d", r.Free, r.Target, parts, r.Need)
+		r.Why = fmt.Sprintf("свободных %d из %d (%s), нужно ещё %d", r.Free, r.Target, parts, r.Need)
 	default:
 		r.Why = fmt.Sprintf("свободных %d при цели %d (%s)", r.Free, r.Target, parts)
 	}
@@ -134,7 +134,7 @@ func (s *Service) detectDomainPool(ctx context.Context) (opened, closed int, err
 	}
 	if r.Need > 0 {
 		inc, err := s.openPool(ctx, DomainPool, CauseShortOfDomains,
-			fmt.Sprintf("в пуле доменов свободных %d из %d — нужен ещё один", r.Free, r.Target),
+			fmt.Sprintf("в пуле доменов свободных %d из %d, нужен ещё один", r.Free, r.Target),
 			map[string]string{"free": strconv.Itoa(r.Free), "target": strconv.Itoa(r.Target)})
 		if err != nil {
 			return 0, 0, err
@@ -176,11 +176,11 @@ func (m *Mechanic) buyDomainForPool(ctx context.Context, inc Incident) (repairRe
 		return repairResult{}, err
 	}
 	if r.Need <= 0 {
-		return repairResult{outcome: fmt.Sprintf("пул доменов уже добран (%s) — не покупали", r.Why)}, nil
+		return repairResult{outcome: fmt.Sprintf("пул доменов уже добран (%s), не покупали", r.Why)}, nil
 	}
 	b := m.svc.currentBuyer()
 	if b.reg == nil {
-		return repairResult{}, fmt.Errorf("%w: регистратора нет — покупать не через кого", ErrRejected)
+		return repairResult{}, fmt.Errorf("%w: регистратора нет, покупать не через кого", ErrRejected)
 	}
 	name, err := m.svc.buyDomain(ctx, b, "", "")
 	if err != nil {
@@ -218,7 +218,7 @@ func (s *Service) xhttpDomainReady(ctx context.Context) error {
 		return err
 	}
 	if r.Free <= 0 {
-		return fmt.Errorf("%w: для XHTTP нет свободного домена — добавь готовый домен или подключи регистратора", ErrNoRegistrar)
+		return fmt.Errorf("%w: для XHTTP нет свободного домена: добавь готовый домен или подключи регистратора", ErrNoRegistrar)
 	}
 	return nil
 }

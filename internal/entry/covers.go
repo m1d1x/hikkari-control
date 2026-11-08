@@ -254,7 +254,7 @@ func (j *jobRun) restoreCovers() (int, []string, error) {
 			}
 		}
 		return 0, nil, fmt.Errorf(
-			"%w: недостающие прикрытия (%s) всё ещё мертвы — пул проверенных прикрытий надо расширять, это решение человека",
+			"%w: недостающие прикрытия (%s) всё ещё мертвы: пул проверенных прикрытий надо расширять, это решение человека",
 			ErrRejected, strings.Join(dead, ", "))
 	}
 	changed, err := j.redeployCovers(r, fresh)

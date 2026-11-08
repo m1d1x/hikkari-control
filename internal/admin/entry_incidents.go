@@ -505,7 +505,7 @@ func (h *Handlers) fillTimeToNotice(ctx context.Context, out *entryIncidents, si
 	relayBox, err := h.relayBoxes(ctx)
 	if err != nil {
 		log.Printf("admin entry incidents: relay→box: %v", err)
-		return "не удалось прочитать, какой релей на какой машине — без этого провал пробы не привязать к инциденту"
+		return "не удалось прочитать, какой релей на какой машине; без этого провал пробы не привязать к инциденту"
 	}
 	if len(relayBox) == 0 {
 		return "в пуле нет релеев: привязать провал пробы к машине нечем"
@@ -558,7 +558,7 @@ func (h *Handlers) fillTimeToNotice(ctx context.Context, out *entryIncidents, si
 		return "поток проб оборвался на середине: «до обнаружения» считать не на чем"
 	}
 	if len(starts) == 0 {
-		return "за окно в пробах нет ни одного начала провала — считать «до обнаружения» нечего"
+		return "за окно в пробах нет ни одного начала провала, считать «до обнаружения» нечего"
 	}
 
 	lags := []float64{}
@@ -580,7 +580,7 @@ func (h *Handlers) fillTimeToNotice(ctx context.Context, out *entryIncidents, si
 		lags = append(lags, opened.Sub(first).Seconds())
 	}
 	if len(lags) == 0 {
-		return "ни у одного инцидента окна в пробах нет начала провала в пределах получаса до него — привязать нечего"
+		return "ни у одного инцидента окна в пробах нет начала провала в пределах получаса до него, привязать нечего"
 	}
 	out.Stages.ToNoticeSec, out.Stages.NoticeSamples = roundPtr(median(lags)), len(lags)
 	return ""

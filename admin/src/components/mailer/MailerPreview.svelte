@@ -39,7 +39,7 @@
 
 	<div class="subject-bar">
 		<span class="subject-label">Subject:</span>
-		<span class="subject-value">{subject || '—'}</span>
+		<span class="subject-value">{subject || '-'}</span>
 	</div>
 
 	{#if error}
@@ -49,11 +49,11 @@
 	{:else if view === 'html'}
 		<iframe
 			title="Email HTML preview"
-			srcdoc={htmlBody || '<div style="font-family:sans-serif;color:#999;padding:32px;text-align:center;">HTML-версия пуста — заполните поля или выберите шаблон с HTML-частью.</div>'}
+			srcdoc={htmlBody || '<div style="font-family:sans-serif;color:#999;padding:32px;text-align:center;">HTML-версия пуста: заполните поля или выберите шаблон с HTML-частью.</div>'}
 			sandbox=""
 		></iframe>
 	{:else}
-		<pre class="plain">{textBody || '— пусто —'}</pre>
+		<pre class="plain">{textBody || 'пусто'}</pre>
 	{/if}
 
 	{#if loading}

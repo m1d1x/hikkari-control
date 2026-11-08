@@ -100,7 +100,7 @@
 
 	function segmentTooltip(b: ProbeBucket): string {
 		const flap = b.error_count > 0 ? `, ${b.error_count} fail` : '';
-		return `${formatTime(b.ts)} — ${b.status.toUpperCase()} · ${b.latency_ms}ms${flap}`;
+		return `${formatTime(b.ts)} · ${b.status.toUpperCase()} · ${b.latency_ms}ms${flap}`;
 	}
 
 	let option: EChartsOption = $derived.by(() => {

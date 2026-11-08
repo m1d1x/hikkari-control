@@ -94,7 +94,7 @@
 {#if userId && isUuid(userId)}
 	<div class="boost-box">
 		{#if status.active}
-			<span class="status-on" title="Активен boost — debug/trace логи попадают в CH несмотря на sampling">
+			<span class="status-on" title="Активен boost: debug/trace логи попадают в CH несмотря на sampling">
 				● Boost active until {formatExpires(status.expiresAt)}
 			</span>
 			<button class="btn btn-cancel" onclick={cancel} disabled={loading} title="Отменить boost">

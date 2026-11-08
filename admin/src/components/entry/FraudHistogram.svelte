@@ -93,7 +93,7 @@
 		{/each}
 		{#if scored === 0}
 			<text x={W / 2} y={height / 2} text-anchor="middle" fill="oklch(0.42 0 0)" font-size="13">
-				за окно ни одной оценки — показывать нечего
+				за окно ни одной оценки, показывать нечего
 			</text>
 		{/if}
 	</svg>

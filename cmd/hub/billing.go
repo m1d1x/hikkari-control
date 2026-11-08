@@ -19,7 +19,7 @@ import (
 func billingProvider(getenv func(string) string) (billing.Provider, error) {
 	switch name := getenv("BILLING_PROVIDER"); name {
 	case "":
-		log.Println("billing: BILLING_PROVIDER not set — subscriptions are not sold")
+		log.Println("billing: BILLING_PROVIDER not set: subscriptions are not sold")
 		return nil, nil
 	case "sandbox":
 		secret := []byte(getenv("BILLING_SANDBOX_SECRET"))
@@ -29,7 +29,7 @@ func billingProvider(getenv func(string) string) (billing.Provider, error) {
 				return nil, err
 			}
 		}
-		log.Println("billing: SANDBOX provider — test payments, no money moves")
+		log.Println("billing: SANDBOX provider: test payments, no money moves")
 		return billing.NewSandbox(config.Default().APIURL(), secret), nil
 	default:
 		return nil, fmt.Errorf("BILLING_PROVIDER %q: unknown provider", name)

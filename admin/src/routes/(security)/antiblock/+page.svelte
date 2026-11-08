@@ -266,13 +266,13 @@
 								<div class="proto-metrics">
 									<div class="m-cell">
 										<div class="m-val">
-											{p.p50Ms > 0 ? p.p50Ms.toFixed(0) : '—'}<small>мс</small>
+											{p.p50Ms > 0 ? p.p50Ms.toFixed(0) : '-'}<small>мс</small>
 										</div>
 										<div class="m-lbl">пинг p50</div>
 									</div>
 									<div class="m-cell">
 										<div class="m-val">
-											{p.p95Ms > 0 ? p.p95Ms.toFixed(0) : '—'}<small>мс</small>
+											{p.p95Ms > 0 ? p.p95Ms.toFixed(0) : '-'}<small>мс</small>
 										</div>
 										<div class="m-lbl">пинг p95</div>
 									</div>
@@ -283,7 +283,7 @@
 										<div class="m-lbl">подключение</div>
 									</div>
 									<div class="m-cell">
-										<div class="m-val muted">—</div>
+										<div class="m-val muted">-</div>
 										<div class="m-lbl">потери</div>
 									</div>
 								</div>

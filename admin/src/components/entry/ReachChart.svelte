@@ -251,7 +251,7 @@
 		{/each}
 	</div>
 </div>
-{#if !measured}<p class="empty">за окно ни одной попытки — доли пока не измерены</p>{/if}
+{#if !measured}<p class="empty">за окно ни одной попытки: доли пока не измерены</p>{/if}
 
 <style>
 	.reach-chart-container {

@@ -182,7 +182,7 @@ func forecastDemand(points []LoadPoint, now time.Time, horizon time.Duration) Po
 				d.ForecastMbps, d.PeakAt = v, h
 			}
 		}
-		d.Why = fmt.Sprintf("истории %.1f дн. — меньше недели: держим самый загруженный час, что был, %s",
+		d.Why = fmt.Sprintf("истории %.1f дн., это меньше недели: держим самый загруженный час, что был, %s",
 			d.HistoryDays, rate(d.ForecastMbps))
 		return d
 	}
@@ -208,7 +208,7 @@ func forecastDemand(points []LoadPoint, now time.Time, horizon time.Duration) Po
 				d.ForecastMbps, d.PeakAt = v, h
 			}
 		}
-		d.Why = fmt.Sprintf("тех же часов прошлых недель не мерили — держим пик последних суток, %s", rate(d.ForecastMbps))
+		d.Why = fmt.Sprintf("тех же часов прошлых недель не мерили: держим пик последних суток, %s", rate(d.ForecastMbps))
 		return d
 	}
 	d.Why = fmt.Sprintf("по тем же часам прошлых недель и росту %s в сутки: к %s ждём %s (сейчас %s)",
@@ -369,7 +369,7 @@ func (s *Service) poolDemands(ctx context.Context, horizons map[string]time.Dura
 		d.Silent = silent[pool]
 		d.Complete = len(d.Silent) == 0
 		if !d.Complete {
-			d.Why += fmt.Sprintf("; молчат %d живых релеев — цифры занижены", len(d.Silent))
+			d.Why += fmt.Sprintf("; молчат %d живых релеев, цифры занижены", len(d.Silent))
 		}
 		out[pool] = d
 	}

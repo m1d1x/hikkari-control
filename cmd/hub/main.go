@@ -108,7 +108,7 @@ func run() error {
 	}
 	db.RequireSecureDSNOrFatal("cmd/hub", dbURL)
 	if err := cryptobox.Configure(os.Getenv); err != nil {
-		return fmt.Errorf("cryptobox: %w — run 'hub keygen' to generate a key", err)
+		return fmt.Errorf("cryptobox: %w; run 'hub keygen' to generate a key", err)
 	}
 	pool, err := db.Connect(ctx, dbURL)
 	if err != nil {
@@ -138,7 +138,7 @@ func run() error {
 			return fmt.Errorf("clickhouse migrations: %w", err)
 		}
 	} else {
-		log.Println("WARNING: CLICKHOUSE_DSN not set — probes, pulse and the autopilot are disabled")
+		log.Println("WARNING: CLICKHOUSE_DSN not set: probes, pulse and the autopilot are disabled")
 	}
 
 	// ── The fleet ─────────────────────────────────────────
@@ -147,7 +147,7 @@ func run() error {
 		return fmt.Errorf("entry pool: %w", err)
 	}
 	if signer == nil {
-		log.Printf("entry pool: %s not set — relays cannot be admitted or re-signed", entry.SigningKeyEnv)
+		log.Printf("entry pool: %s not set, relays cannot be admitted or re-signed", entry.SigningKeyEnv)
 	}
 	svc, err := entry.NewService(pool, signer, entry.DefaultBatchSize)
 	if err != nil {

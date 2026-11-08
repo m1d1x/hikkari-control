@@ -40,7 +40,7 @@ func RegisterOpsRoutes(mux *http.ServeMux, s *Store,
 				writeJSON(w, http.StatusNotFound, map[string]string{"error": "install not found"})
 				return
 			case errors.Is(err, support.ErrAmbiguousInstall):
-				writeJSON(w, http.StatusConflict, map[string]string{"error": "reference matches several installs — be more specific"})
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "reference matches several installs, be more specific"})
 				return
 			case err != nil:
 				applog.Error(r.Context(), "voiceruns", "resolve failed", applog.F("err", err.Error()))

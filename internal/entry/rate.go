@@ -23,7 +23,7 @@ func rateDelta(mbps float64) string {
 
 func rateSigned(mbps float64, sign bool) string {
 	if math.IsNaN(mbps) || math.IsInf(mbps, 0) {
-		return "— Мбит/с"
+		return "- Мбит/с"
 	}
 	v, unit := math.Abs(mbps), "Мбит/с"
 	switch {

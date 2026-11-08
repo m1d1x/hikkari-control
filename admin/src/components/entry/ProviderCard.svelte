@@ -339,7 +339,7 @@
 				<div class="pcell">
 					<span class="label">баланс</span>
 					<div class="value m" class:win-bad={balanceCents !== null && balanceCents < 500}>
-						{balanceCents !== null ? formatCents(balanceCents) : account.configured ? '—' : 'нет данных'}
+						{balanceCents !== null ? formatCents(balanceCents) : account.configured ? '-' : 'нет данных'}
 					</div>
 					<span class="sub">
 						{#if providerLimitCents !== null && providerLimitCents > 0}
@@ -370,7 +370,7 @@
 						{#if costPerTbDollars !== null}
 							${costPerTbDollars.toFixed(2)}
 						{:else}
-							—
+							-
 						{/if}
 					</div>
 					<span class="sub">
@@ -385,7 +385,7 @@
 				<div class="pcell">
 					<span class="label">баланс</span>
 					<div class="value m" class:win-bad={balanceCents !== null && balanceCents < 500}>
-						{balanceCents !== null ? formatCents(balanceCents) : account.configured ? '—' : 'нет данных'}
+						{balanceCents !== null ? formatCents(balanceCents) : account.configured ? '-' : 'нет данных'}
 					</div>
 					<span class="sub">
 						{#if providerLimitCents !== null && providerLimitCents > 0}
@@ -398,14 +398,14 @@
 
 				<div class="pcell">
 					<span class="label">расход в месяц</span>
-					<div class="value m">{domainSpend ? formatCents(domainSpend.monthCents) : '—'}</div>
-					<span class="sub">из {domainSpend ? formatCents(domainSpend.monthlyCapCents) : '—'} на все домены</span>
+					<div class="value m">{domainSpend ? formatCents(domainSpend.monthCents) : '-'}</div>
+					<span class="sub">из {domainSpend ? formatCents(domainSpend.monthlyCapCents) : '-'} на все домены</span>
 				</div>
 
 				<div class="pcell">
 					<span class="label">расход сегодня</span>
-					<div class="value m">{domainSpend ? formatCents(domainSpend.dayCents) : '—'}</div>
-					<span class="sub">из {domainSpend ? formatCents(domainSpend.dailyCapCents) : '—'} в день</span>
+					<div class="value m">{domainSpend ? formatCents(domainSpend.dayCents) : '-'}</div>
+					<span class="sub">из {domainSpend ? formatCents(domainSpend.dailyCapCents) : '-'} в день</span>
 				</div>
 
 				<div class="pcell">
@@ -424,7 +424,7 @@
 				<div class="chart-head">
 					<span class="ch-label">баны адресов за 30 дней</span>
 					<span class="ch-val m" class:bad={(stats?.bansWindow ?? 0) > 0}>
-						{stats?.bansWindow ?? '—'}
+						{stats?.bansWindow ?? '-'}
 						{stats?.bansWindow === 1
 							? 'бан'
 							: (stats?.bansWindow ?? 0) >= 2 && (stats?.bansWindow ?? 0) <= 4

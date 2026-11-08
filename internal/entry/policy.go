@@ -208,12 +208,12 @@ func (s *Service) SetVantages(v VantageCounter) { s.vantages = v }
 func (s *Service) SaveDetectionPolicy(ctx context.Context, patch DetectionPolicyPatch, actor string) (DetectionPolicy, error) {
 	if patch.IgnoreNetworkDown != nil && !*patch.IgnoreNetworkDown {
 		return DetectionPolicy{}, fmt.Errorf(
-			"%w: пробник без сети не судит машину — выключатель заперт, иначе наша же авария сдаёт живые машины", ErrRejected)
+			"%w: пробник без сети не судит машину: выключатель заперт, иначе наша же авария сдаёт живые машины", ErrRejected)
 	}
 	if patch.RequireTwoVantages != nil && *patch.RequireTwoVantages {
 		if s.vantages == nil {
 			return DetectionPolicy{}, fmt.Errorf(
-				"%w: хаб не знает, сколько у него точек наблюдения — включать подтверждение из двух нельзя", ErrRejected)
+				"%w: хаб не знает, сколько у него точек наблюдения, включать подтверждение из двух нельзя", ErrRejected)
 		}
 		seen, err := s.Vantages(ctx)
 		if err != nil {
@@ -221,7 +221,7 @@ func (s *Service) SaveDetectionPolicy(ctx context.Context, patch DetectionPolicy
 		}
 		if len(seen) < 2 {
 			return DetectionPolicy{}, fmt.Errorf(
-				"%w: в сетке %d точка наблюдения — подтверждение из двух остановило бы любое выселение, а не ужесточило бы его",
+				"%w: в сетке %d точка наблюдения: подтверждение из двух остановило бы любое выселение, а не ужесточило бы его",
 				ErrRejected, len(seen))
 		}
 	}
@@ -230,7 +230,7 @@ func (s *Service) SaveDetectionPolicy(ctx context.Context, patch DetectionPolicy
 	for kind, c := range patch.SecondChance {
 		i := slices.Index(SuspectKinds, kind)
 		if i < 0 {
-			return DetectionPolicy{}, fmt.Errorf("%w: второго шанса для %q нет — бывает у домена, машины и прикрытия", ErrRejected, kind)
+			return DetectionPolicy{}, fmt.Errorf("%w: второго шанса для %q нет: он бывает у домена, машины и прикрытия", ErrRejected, kind)
 		}
 		chance[i] = c
 	}

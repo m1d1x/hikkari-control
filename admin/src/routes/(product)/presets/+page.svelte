@@ -330,11 +330,11 @@
 				</div>
 				<div class="preset-meta">
 					{#if p?.default}
-						<div class="default-badge">★ пресет по умолчанию — его получают все устройства</div>
+						<div class="default-badge">★ пресет по умолчанию: его получают все устройства</div>
 					{:else}
 						<label class="check">
 							<input type="checkbox" bind:checked={edit.default} />
-							<span>по умолчанию — его получают все устройства</span>
+							<span>по умолчанию: его получают все устройства</span>
 						</label>
 					{/if}
 				</div>
@@ -407,7 +407,7 @@
 						</div>
 						<div class="diff">
 							{#if !diff.length}
-								<div class="dim">без изменений — повтор v{latest(p)?.v} под новой версией</div>
+								<div class="dim">без изменений: повтор v{latest(p)?.v} под новой версией</div>
 							{/if}
 							{#each diff as d (d.text)}
 								<div class:ok={d.kind === 'add'} class:bad={d.kind === 'drop'}>{d.text}</div>
@@ -442,7 +442,7 @@
 						</div>
 					</div>
 				{:else if p?.current}
-					<div class="block dim">v{p.current.v} у всех · выпустил {p.current.createdBy || '—'}</div>
+					<div class="block dim">v{p.current.v} у всех · выпустил {p.current.createdBy || '-'}</div>
 				{/if}
 
 				{#if json}

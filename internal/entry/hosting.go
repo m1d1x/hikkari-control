@@ -467,7 +467,7 @@ func (s *Service) orderInRegion(ctx context.Context, h *hostingAccount, reg BoxR
 		// Nobody knows whether the hoster created it: the reservation stays
 		// counted until the pass looks for the label.
 		s.settleOrder(ctx, id, orderReserved, "", err)
-		return orderedBox{}, fmt.Errorf("заказ машины: ответ хостера не получен — заказ остаётся в бюджете, пока хаб не выяснит, создана ли машина: %w", err)
+		return orderedBox{}, fmt.Errorf("заказ машины: ответ хостера не получен, заказ остаётся в бюджете, пока хаб не выяснит, создана ли машина: %w", err)
 	}
 	s.settleOrder(ctx, id, orderCreated, inst.ID, nil)
 	addressed, err := s.awaitAddress(ctx, h.bp, inst)
@@ -564,7 +564,7 @@ func (s *Service) dropOrder(ctx context.Context, bp BoxProvider, id uuid.UUID, i
 		s.settleOrder(ctx, id, orderUndeleted, instanceID, err)
 		applog.Error(ctx, "entry", "ordered instance not kept and not deleted",
 			applog.F("instance", instanceID), applog.F("err", err.Error()))
-		return fmt.Errorf("%w; машину %s у хостера удалить не вышло (%v) — она в бюджете, хаб удалит её позже", cause, instanceID, err)
+		return fmt.Errorf("%w; машину %s у хостера удалить не вышло (%v); она в бюджете, хаб удалит её позже", cause, instanceID, err)
 	}
 	s.settleOrder(ctx, id, orderReleased, instanceID, cause)
 	return fmt.Errorf("%w; машина %s удалена у хостера", cause, instanceID)
@@ -616,12 +616,12 @@ func (s *Service) awaitAddress(ctx context.Context, bp BoxProvider, inst BoxInst
 		// refusal it is, instead of after the whole wait — the caller deletes
 		// the instance and may try the next region.
 		if strings.EqualFold(got.Status, "error") {
-			return BoxInstance{}, fmt.Errorf("%w: %w: машина %s у хостера в состоянии ERROR — хостер не нашёл под неё мощностей",
+			return BoxInstance{}, fmt.Errorf("%w: %w: машина %s у хостера в состоянии ERROR: хостер не нашёл под неё мощностей",
 				ErrProviderRefused, ErrRegionCapacity, inst.ID)
 		}
 		if s.now().After(deadline) {
 			return BoxInstance{}, fmt.Errorf(
-				"машина %s за %s не получила адрес (состояние %q) — инстанс заказан, его видно в списке хостера",
+				"машина %s за %s не получила адрес (состояние %q); инстанс заказан, его видно в списке хостера",
 				inst.ID, instanceWaitTimeout, got.Status)
 		}
 	}
@@ -733,7 +733,7 @@ func (s *Service) DeleteBoxInstance(ctx context.Context, box string) error {
 	}
 	switch {
 	case retired == nil:
-		return fmt.Errorf("%w: машина %s в строю — сперва сдать её", ErrRejected, box)
+		return fmt.Errorf("%w: машина %s в строю, сперва сдать её", ErrRejected, box)
 	case instanceID == nil || *instanceID == "":
 		return fmt.Errorf("%w: машина %s заведена руками, у хостера её удалять нечем", ErrRejected, box)
 	}
@@ -773,7 +773,7 @@ func confirmGone(ctx context.Context, bp BoxProvider, id string) error {
 	}
 	for _, inst := range list {
 		if inst.ID == id {
-			return fmt.Errorf("хостер ответил «нет машины» на удаление %s, а в списке региона она есть (%s, %s) — сдачу не записываю", id, inst.Address, inst.Status)
+			return fmt.Errorf("хостер ответил «нет машины» на удаление %s, а в списке региона она есть (%s, %s), сдачу не записываю", id, inst.Address, inst.Status)
 		}
 	}
 	return nil
@@ -1080,10 +1080,10 @@ func (p *Provisioner) handBackFresh(ctx context.Context, box string, cause error
 		}
 	}
 	if _, _, err := p.svc.Retire(ctx, box, reason); err != nil {
-		return fmt.Errorf("%w; сдать машину %s не удалось: %v — она осталась в аренде", cause, box, err)
+		return fmt.Errorf("%w; сдать машину %s не удалось: %v; она осталась в аренде", cause, box, err)
 	}
 	if err := p.svc.DeleteBoxInstance(ctx, box); err != nil {
-		return fmt.Errorf("%w; машину %s сдали, но у хостера не удалили: %v — она в бюджете, хаб удалит её позже", cause, box, err)
+		return fmt.Errorf("%w; машину %s сдали, но у хостера не удалили: %v; она в бюджете, хаб удалит её позже", cause, box, err)
 	}
 	return fmt.Errorf("%w; машина %s сдана и удалена у хостера", cause, box)
 }
@@ -1116,7 +1116,7 @@ const boxInOperatorsHands = `(b.host_key_forgotten_at IS NOT NULL
 // errOperatorsMachine is a handback refused because the machine is in the
 // operator's hands (boxInOperatorsHands) — read again inside the job, since a
 // key can be forgotten between the pass listing a machine and retiring it.
-var errOperatorsMachine = errors.New("машина в руках оператора — автоматика её не сдаёт")
+var errOperatorsMachine = errors.New("машина в руках оператора, автоматика её не сдаёт")
 
 // inOperatorsHands reads boxInOperatorsHands for one machine.
 func (s *Service) inOperatorsHands(ctx context.Context, box string) (bool, error) {
@@ -1154,7 +1154,7 @@ func (j *jobRun) autoHandBack(reason string) error {
 		if err := j.wipe(); err != nil {
 			j.log("стереть не удалось: %v", err)
 		}
-		j.log("машина заведена руками — аренду отменить в панели провайдера")
+		j.log("машина заведена руками: аренду отменить в панели провайдера")
 		return nil
 	}
 	if err := svc.DeleteBoxInstance(j.ctx, j.box); err != nil && !errors.Is(err, ErrNoSuchInstance) {
@@ -1333,7 +1333,7 @@ func (p *Provisioner) adoptIdle(ctx context.Context, spec OrderSpec) (box, note 
 			if _, _, rerr := p.svc.Retire(context.WithoutCancel(ctx), c.name, DeathProviderDown); rerr != nil {
 				applog.Error(ctx, "entry", "retire of a machine gone at the hoster failed", applog.F("box", c.name), applog.F("err", rerr.Error()))
 			}
-			notes = append(notes, fmt.Sprintf("простаивающей %s у хостера уже нет — снята с учёта", c.name))
+			notes = append(notes, fmt.Sprintf("простаивающей %s у хостера уже нет, снята с учёта", c.name))
 			continue
 		case err != nil:
 			return "", strings.Join(notes, "; "), fmt.Errorf("entry: idle machine %s cannot be verified: %w", c.name, err)
@@ -1392,7 +1392,7 @@ func (p *Provisioner) handBackIdle(ctx context.Context) ([]string, error) {
 		}
 		err := p.execJob(ctx, JobRetire, b.name, uuid.Nil, func(j *jobRun) error {
 			j.step("retire")
-			j.log("машина простаивает с %s без единого релея в строю — сдаю", b.since.Format(time.RFC3339))
+			j.log("машина простаивает с %s без единого релея в строю, сдаю", b.since.Format(time.RFC3339))
 			return j.autoHandBack(DeathOther)
 		})
 		if errors.Is(err, ErrBoxBusy) || errors.Is(err, errOperatorsMachine) {
@@ -1462,7 +1462,7 @@ func (j *jobRun) rebootAndWait() error {
 	if len(relays) == 0 {
 		// Nothing was handed out from this machine, so there is nothing to
 		// re-admit. The reboot still did what it was asked.
-		j.log("живых релеев на машине нет — пробовать допуск нечего")
+		j.log("живых релеев на машине нет, пробовать допуск нечего")
 		return nil
 	}
 	j.step("probe")
@@ -1682,12 +1682,12 @@ func (s *Service) releaseUndeleted(ctx context.Context, only []string) (int, err
 				// Two machines answer to one order's label: which one it
 				// made is not the hub's to guess, and deleting the wrong one
 				// cuts a machine that may carry people.
-				s.resetUnseen(ctx, o.id, fmt.Sprintf("у хостера %d машины с меткой nekko-%s — какая из них этого заказа, решает человек", len(matches), o.name))
+				s.resetUnseen(ctx, o.id, fmt.Sprintf("у хостера %d машины с меткой nekko-%s; какая из них этого заказа, решает человек", len(matches), o.name))
 				continue
 			case unaccounted > 0:
 				// A machine with the hub's tag that no box and no order
 				// accounts for may be this order's, renamed in the panel.
-				s.resetUnseen(ctx, o.id, fmt.Sprintf("у хостера %d машин с тегом хаба, которых хаб не знает — заказ остаётся в бюджете, пока их не разберут", unaccounted))
+				s.resetUnseen(ctx, o.id, fmt.Sprintf("у хостера %d машин с тегом хаба, которых хаб не знает; заказ остаётся в бюджете, пока их не разберут", unaccounted))
 				continue
 			default:
 				gone, err := s.noteUnseen(ctx, o.id)

@@ -81,10 +81,10 @@
 		return [
 			['хостер', providerLabel(p.provider)],
 			['гео', geo(p.location)],
-			['цена', p.monthlyCents != null ? `${formatCents(p.monthlyCents)}/мес` : '—'],
-			['трафик', traffic(p) ?? '—'],
-			['домен', p.cover || '—'],
-			['отпечаток', p.fingerprint || '—'],
+			['цена', p.monthlyCents != null ? `${formatCents(p.monthlyCents)}/мес` : '-'],
+			['трафик', traffic(p) ?? '-'],
+			['домен', p.cover || '-'],
+			['отпечаток', p.fingerprint || '-'],
 			['в выдаче', age(p.boundAt)],
 		];
 	}

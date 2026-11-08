@@ -122,7 +122,7 @@ func spendCaps(ctx context.Context, q db.DBTX, role string) (SpendCaps, error) {
 // below a day) are the table's: naming them twice would let the two drift.
 func (s *Service) SaveSpendCaps(ctx context.Context, role string, daily, monthly int, adminID string) (SpendReading, error) {
 	if role != SpendHosting && role != SpendRegistrar {
-		return SpendReading{}, fmt.Errorf("%w: группы трат %q нет — бывают hosting и registrar", ErrRejected, role)
+		return SpendReading{}, fmt.Errorf("%w: группы трат %q нет, бывают hosting и registrar", ErrRejected, role)
 	}
 	if daily < 0 || monthly < 0 {
 		return SpendReading{}, fmt.Errorf("%w: потолок не бывает отрицательным", ErrRejected)
@@ -318,7 +318,7 @@ func billedHours(start, end, from, to time.Time) int {
 // name, since raising the day's cap alone would buy nothing.
 func (s *Service) machineAffordable(ctx context.Context, q db.DBTX, monthlyCents int) error {
 	if monthlyCents <= 0 {
-		return fmt.Errorf("%w: хостер не назвал цену плана — без цены машину не заказываем", ErrRejected)
+		return fmt.Errorf("%w: хостер не назвал цену плана, без цены машину не заказываем", ErrRejected)
 	}
 	r, err := s.spendOf(ctx, q, SpendHosting)
 	if err != nil {
@@ -327,10 +327,10 @@ func (s *Service) machineAffordable(ctx context.Context, q db.DBTX, monthlyCents
 	day, month := newMachineCents(monthlyCents, s.now().UTC())
 	switch {
 	case r.monthExact+month > float64(r.MonthlyCents):
-		return fmt.Errorf("%w: за месяц хостинг выйдет в %s, с новой машиной %s — потолок месяца %s",
+		return fmt.Errorf("%w: за месяц хостинг выйдет в %s, с новой машиной %s, а потолок месяца %s",
 			ErrBudget, money(r.MonthProjectedCents), money(ceilCents(r.monthExact+month)), money(r.MonthlyCents))
 	case r.dayExact+day > float64(r.DailyCents):
-		return fmt.Errorf("%w: за день хостинг выйдет в %s, с новой машиной %s — потолок дня %s",
+		return fmt.Errorf("%w: за день хостинг выйдет в %s, с новой машиной %s, а потолок дня %s",
 			ErrBudget, money(r.DayProjectedCents), money(ceilCents(r.dayExact+day)), money(r.DailyCents))
 	}
 	return nil
@@ -346,10 +346,10 @@ func (s *Service) domainAffordable(ctx context.Context, q db.DBTX, costCents int
 	}
 	switch {
 	case r.MonthCents+costCents > r.MonthlyCents:
-		return fmt.Errorf("%w: на домены за месяц потрачено %s, с этим %s — потолок месяца %s",
+		return fmt.Errorf("%w: на домены за месяц потрачено %s, с этим %s, а потолок месяца %s",
 			ErrBudget, money(r.MonthCents), money(r.MonthCents+costCents), money(r.MonthlyCents))
 	case r.DayCents+costCents > r.DailyCents:
-		return fmt.Errorf("%w: на домены за день потрачено %s, с этим %s — потолок дня %s",
+		return fmt.Errorf("%w: на домены за день потрачено %s, с этим %s, а потолок дня %s",
 			ErrBudget, money(r.DayCents), money(r.DayCents+costCents), money(r.DailyCents))
 	}
 	return nil

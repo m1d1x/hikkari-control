@@ -230,7 +230,7 @@
 					{/snippet}
 				</MetricHero>
 				{#if missingOf.get('stages.toNoticeSec')}
-					<p class="note">до обнаружения — нет данных: {missingOf.get('stages.toNoticeSec')}</p>
+					<p class="note">до обнаружения нет данных: {missingOf.get('stages.toNoticeSec')}</p>
 				{/if}
 			</Panel>
 

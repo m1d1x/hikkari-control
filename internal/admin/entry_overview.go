@@ -429,7 +429,7 @@ func (h *Handlers) EntryOverview(w http.ResponseWriter, r *http.Request) {
 	out.Missing = append(out.Missing,
 		missingFigure{
 			Figure: "protocols.lossPct",
-			Why: "loss as a person experiences it is the client's to report, not the relay's — " +
+			Why: "loss as a person experiences it is the client's to report, not the relay's: " +
 				"an edge sees its own sockets, not the path; it belongs in the reach telemetry",
 		},
 	)
@@ -442,14 +442,14 @@ func (h *Handlers) EntryOverview(w http.ResponseWriter, r *http.Request) {
 	if out.Money.MachinesPriced == 0 && out.Money.MachinesUnpriced > 0 {
 		out.Missing = append(out.Missing, missingFigure{
 			Figure: "money.machines",
-			Why: "every machine in service was rented by hand and carries no price — " +
+			Why: "every machine in service was rented by hand and carries no price; " +
 				"a machine the hub orders itself records what it costs",
 		})
 	}
 	if out.Traffic == nil {
 		out.Missing = append(out.Missing, missingFigure{
 			Figure: "traffic",
-			Why:    "no relay has pulsed in this window — П9.3 is deployed when the boxes are re-provisioned",
+			Why:    "no relay has pulsed in this window; П9.3 is deployed when the boxes are re-provisioned",
 		})
 	}
 
@@ -463,7 +463,7 @@ func (h *Handlers) EntryOverview(w http.ResponseWriter, r *http.Request) {
 	// person's traffic has no per-account source.
 	out.Missing = append(out.Missing, missingFigure{
 		Figure: "traffic.perUser.media",
-		Why: "voice and files go through the sfu and the media relay, which count no bytes per account — " +
+		Why: "voice and files go through the sfu and the media relay, which count no bytes per account; " +
 			"the per-person figure is the message socket only",
 	})
 

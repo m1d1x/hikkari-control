@@ -144,16 +144,16 @@
 		<span class="cell c-username">{user.username}</span>
 		<span class="cell c-id mono dim">{shortId}</span>
 		<span class="cell c-lastseen dim">{lastSeenText}</span>
-		<span class="cell c-avg mono">{user.avgSessionMs ? formatDuration(user.avgSessionMs) : '—'}</span>
-		<span class="cell c-max mono">{user.maxSessionMs ? formatDuration(user.maxSessionMs) : '—'}</span>
+		<span class="cell c-avg mono">{user.avgSessionMs ? formatDuration(user.avgSessionMs) : '-'}</span>
+		<span class="cell c-max mono">{user.maxSessionMs ? formatDuration(user.maxSessionMs) : '-'}</span>
 		<span class="cell c-sticky mono">
-			{user.stickiness ? user.stickiness.toFixed(1) + '%' : '—'}
+			{user.stickiness ? user.stickiness.toFixed(1) + '%' : '-'}
 		</span>
-		<span class="cell c-s3 mono">{user.s3StorageBytes ? formatBytes(user.s3StorageBytes) : '—'}</span>
+		<span class="cell c-s3 mono">{user.s3StorageBytes ? formatBytes(user.s3StorageBytes) : '-'}</span>
 		<span class="cell c-msgs mono">
-			{user.totalMessages ? formatNumber(user.totalMessages) : '—'}
+			{user.totalMessages ? formatNumber(user.totalMessages) : '-'}
 		</span>
-		<span class="cell c-servers mono">{user.serverCount || '—'}</span>
+		<span class="cell c-servers mono">{user.serverCount || '-'}</span>
 		<span class="cell c-created mono dim">{formatDate(user.createdAt)}</span>
 		<span class="cell c-fraud mono" style:color={fraudColor(user.fraudScore)}>
 			{user.fraudScore}

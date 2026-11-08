@@ -186,11 +186,11 @@
 								</div>
 								<div class="metrics">
 									<div>
-										<div class="val">{p.p50Ms ?? '—'}{#if p.p50Ms !== null}<small>мс</small>{/if}</div>
+										<div class="val">{p.p50Ms ?? '-'}{#if p.p50Ms !== null}<small>мс</small>{/if}</div>
 										<div class="lbl">пинг p50</div>
 									</div>
 									<div>
-										<div class="val">{p.p95Ms ?? '—'}{#if p.p95Ms !== null}<small>мс</small>{/if}</div>
+										<div class="val">{p.p95Ms ?? '-'}{#if p.p95Ms !== null}<small>мс</small>{/if}</div>
 										<div class="lbl">пинг p95</div>
 									</div>
 									<div><div class="val">{Math.round(p.okPct)}<small>%</small></div><div class="lbl" title="доля проверок тестеров, на которые релей ответил">доходит</div></div>
@@ -264,9 +264,9 @@
 											<td class="mono">{r.tag}</td>
 											<td><span class="dot" style="background: {protoColor(r.proto)}"></span> {label(r.proto)}</td>
 											<td class={r.up ? 'ok' : 'bad'}>{r.up ? 'отвечает' : 'упал'}</td>
-											<td>{r.reason ? (FAIL_LABEL[r.reason] ?? r.reason) : '—'}</td>
-											<td class="num mono">{r.flowsOpen !== undefined ? `${r.flowsOpen}/${r.flowsTotal}` : '—'}</td>
-											<td class="num mono">{r.pingMs ? `${r.pingMs} мс` : '—'}</td>
+											<td>{r.reason ? (FAIL_LABEL[r.reason] ?? r.reason) : '-'}</td>
+											<td class="num mono">{r.flowsOpen !== undefined ? `${r.flowsOpen}/${r.flowsTotal}` : '-'}</td>
+											<td class="num mono">{r.pingMs ? `${r.pingMs} мс` : '-'}</td>
 											<td>{r.lastOk ? seen(r.lastOk) : 'нет за окно'}</td>
 										</tr>
 									{/each}

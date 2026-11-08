@@ -233,7 +233,7 @@ func (h *Handlers) EntryPressure(w http.ResponseWriter, r *http.Request) {
 	// instead of guessed.
 	out.Missing = append(out.Missing, missingFigure{
 		Figure: "thresholds.counterfactual",
-		Why: "«сколько выселений дал бы другой порог» — это прогон истории проб через политику, которой не было; " +
+		Why: "«сколько выселений дал бы другой порог»: это прогон истории проб через политику, которой не было; " +
 			"хаб хранит пробы, а не решения, которых не принимал",
 	})
 

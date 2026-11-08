@@ -104,7 +104,7 @@ func (s *Service) askConfirmed(ctx context.Context, job uuid.UUID, names []strin
 		for i, n := range refused {
 			first[i] = n + "=" + v[n]
 		}
-		log("%s: %s — спрашиваю ещё одну точку обзора в РФ (ответили: %s)", by, strings.Join(first, ", "), strings.Join(asked, ", "))
+		log("%s: %s; спрашиваю ещё одну точку обзора в РФ (ответили: %s)", by, strings.Join(first, ", "), strings.Join(asked, ", "))
 		confirm, err := s.createProbeTask(ctx, job, refused, asked)
 		if err != nil {
 			return nil, err
@@ -115,7 +115,7 @@ func (s *Service) askConfirmed(ctx context.Context, job uuid.UUID, names []strin
 		}
 		vn, byn, err := s.waitProbe(ctx, confirm, round, poll)
 		if err != nil {
-			log("больше никто не ответил — решают %d точки", len(asked))
+			log("больше никто не ответил, решают %d точки", len(asked))
 			break
 		}
 		answers[byn] = vn
@@ -144,9 +144,9 @@ func (s *Service) askConfirmed(ctx context.Context, job uuid.UUID, names []strin
 			continue // the majority refuses, two instances: the first refusal's words stand
 		}
 		if ban > ok {
-			log("%s: %s — отказ один, тестеры блок не видят: двух инстанций нет", n, strings.Join(said, ", "))
+			log("%s: %s; отказ один, тестеры блок не видят: двух инстанций нет", n, strings.Join(said, ", "))
 		} else {
-			log("%s: %s — большинства за отказ нет", n, strings.Join(said, ", "))
+			log("%s: %s; большинства за отказ нет", n, strings.Join(said, ", "))
 		}
 		v[n] = verdictUnconfirmed
 	}

@@ -115,28 +115,28 @@
 								{#if h.perBoxMonthlyCents !== null}
 									{formatCents(h.perBoxMonthlyCents)}
 								{:else}
-									<span class="muted">—</span>
+									<span class="muted">-</span>
 								{/if}
 							</td>
 							<td class="num m">
 								{#if h.trafficGb !== null}
 									{formatTraffic(h.trafficGb)}
 								{:else}
-									<span class="muted">—</span>
+									<span class="muted">-</span>
 								{/if}
 							</td>
 							<td class="num m">
 								{#if costPerTb(h) !== null}
 									<span class="cost-val">{costPerTb(h)}</span>
 								{:else}
-									<span class="muted">—</span>
+									<span class="muted">-</span>
 								{/if}
 							</td>
 							<td class="num m">
 								{#if h.medianLifeDays !== null}
 									{h.medianLifeDays < 2 ? `${Math.round(h.medianLifeDays * 24)} ч` : `${h.medianLifeDays.toFixed(1)} дн`}
 								{:else}
-									<span class="muted">—</span>
+									<span class="muted">-</span>
 								{/if}
 							</td>
 						</tr>

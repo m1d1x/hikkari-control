@@ -66,7 +66,7 @@
 	function getCellValue(row: any, col: Column): string {
 		const val = row[col.key];
 		if (col.render) return col.render(val, row);
-		if (val == null) return '—';
+		if (val == null) return '-';
 		return String(val);
 	}
 </script>

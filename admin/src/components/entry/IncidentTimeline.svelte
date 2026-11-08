@@ -101,7 +101,7 @@
 				id: 'opened',
 				label: 'провал',
 				delta: '0 с',
-				text: `${cause(r.cause)}${r.advice ? ` — ${r.advice}` : ''}`,
+				text: `${cause(r.cause)}${r.advice ? `: ${r.advice}` : ''}`,
 				dotClass: '',
 			},
 		];
@@ -177,7 +177,7 @@
 	}
 
 	function formatVerdict(val: string): string {
-		if (!val) return '—';
+		if (!val) return '-';
 		return val.replace(/✓/g, '<span class="y">✓</span>').replace(/✗/g, '<span class="n">✗</span>');
 	}
 </script>

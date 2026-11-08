@@ -198,7 +198,7 @@ func (s *Service) CreateVantage(ctx context.Context, spec VantageSpec, actor str
 	err = tx.QueryRow(ctx, `SELECT status FROM entry_vantages WHERE slot = $1 FOR UPDATE`, spec.Slot).Scan(&existingStatus)
 	switch {
 	case err == nil && existingStatus == VantageActive:
-		return Vantage{}, fmt.Errorf("%w: слот %s уже заведён — смену машины делай через замену в слоте", ErrRejected, spec.Slot)
+		return Vantage{}, fmt.Errorf("%w: слот %s уже заведён, смену машины делай через замену в слоте", ErrRejected, spec.Slot)
 	case err != nil && !errors.Is(err, pgx.ErrNoRows):
 		return Vantage{}, err
 	}
@@ -478,7 +478,7 @@ func refuseFleetBox(ctx context.Context, q pgx.Tx, box string) error {
 		return err
 	}
 	if fleet {
-		return fmt.Errorf("%w: на машине %s есть релеи — точка наблюдения на машине флота запрещена: захваченная машина судила бы флот и получала бы адреса всего пула",
+		return fmt.Errorf("%w: на машине %s есть релеи, а точка наблюдения на машине флота запрещена: захваченная машина судила бы флот и получала бы адреса всего пула",
 			ErrRejected, box)
 	}
 	return nil
@@ -492,7 +492,7 @@ func refuseVantageBox(ctx context.Context, q pgx.Tx, box string) error {
 		return err
 	}
 	if serves {
-		return fmt.Errorf("%w: машина %s — точка наблюдения, релеев на ней не будет", ErrRejected, box)
+		return fmt.Errorf("%w: машина %s служит точкой наблюдения, релеев на ней не будет", ErrRejected, box)
 	}
 	return nil
 }

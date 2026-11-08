@@ -71,7 +71,7 @@
 						<div class="alert-content">
 							<span class="alert-message">{alert.message}</span>
 							<span class="alert-meta">
-								{alert.source} — {formatRelativeTime(alert.timestamp)}
+								{alert.source} · {formatRelativeTime(alert.timestamp)}
 							</span>
 						</div>
 						{#if !alert.acknowledged}

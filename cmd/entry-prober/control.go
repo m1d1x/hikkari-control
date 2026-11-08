@@ -103,7 +103,7 @@ func (cfg config) serveControl(ctx context.Context, stop context.CancelFunc) {
 		if _, err := cfg.hub.do(ctx, "POST", "/control", rep, &answer); err != nil {
 			log.Printf("entry-prober: control %d/%d reported: %v", rep.Reached, rep.Total, err)
 		} else if answer.Kicked {
-			log.Printf("entry-prober: the hub retired this point after a failed RU control (%d/%d, silent: %s) — stopping",
+			log.Printf("entry-prober: the hub retired this point after a failed RU control (%d/%d, silent: %s), stopping",
 				rep.Reached, rep.Total, strings.Join(rep.Failed, ", "))
 			stop()
 			return

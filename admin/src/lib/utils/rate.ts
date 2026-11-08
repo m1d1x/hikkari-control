@@ -5,7 +5,7 @@
  * hub's rate() (internal/entry/rate.go) prints the same.
  */
 export function formatRate(mbps: number, signed = false): string {
-	if (!Number.isFinite(mbps)) return '— Мбит/с';
+	if (!Number.isFinite(mbps)) return '- Мбит/с';
 	let v = Math.abs(mbps);
 	let unit = 'Мбит/с';
 	if (v > 0 && v < 1) [v, unit] = [v * 1000, 'кбит/с'];

@@ -161,7 +161,7 @@ func (s *Service) domainSpendHeld(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if p := modes.For(CauseShortOfDomains); p.Mode != ModeAuto {
-		return fmt.Sprintf("покупка домена в режиме %q — купи имя в консоли или включи auto для %s", p.Mode, PlaybookBuyDomain), nil
+		return fmt.Sprintf("покупка домена в режиме %q: купи имя в консоли или включи auto для %s", p.Mode, PlaybookBuyDomain), nil
 	}
 	pause, paused, err := s.anyCausePaused(ctx, pauseCauses(CauseShortOfDomains, PlaybookBuyDomain))
 	if err != nil {
@@ -234,7 +234,7 @@ func (s *Service) buyDomain(ctx context.Context, b *domainBuyer, box, ip string)
 	}
 	room := spend.RoomCents()
 	if room <= 0 {
-		return "", fmt.Errorf("%w: на домены места нет — за день %s из %s, за месяц %s из %s",
+		return "", fmt.Errorf("%w: на домены места нет: за день %s из %s, за месяц %s из %s",
 			ErrBudget, money(spend.DayCents), money(spend.DailyCents), money(spend.MonthCents), money(spend.MonthlyCents))
 	}
 	registerable := map[string]bool{}
@@ -388,7 +388,7 @@ func (s *Service) purchaseUnanswered(ctx context.Context, name string, buyErr er
 		// The row stays `buying`, which the spend counts too.
 		return fmt.Errorf("entry: buy %s: %w (and not recorded: %v)", name, buyErr, err)
 	}
-	return fmt.Errorf("entry: buy %s: ответ регистратора не получен — покупка считается в бюджете и будет повторена с тем же ключом: %w", name, buyErr)
+	return fmt.Errorf("entry: buy %s: ответ регистратора не получен, покупка считается в бюджете и будет повторена с тем же ключом: %w", name, buyErr)
 }
 
 // settlePurchase records a purchase the registrar answered with an order:
@@ -474,7 +474,7 @@ func (s *Service) replayUnknownPurchases(ctx context.Context, b *domainBuyer, bo
 				}
 			}
 			if !slices.ContainsFunc(listed, func(d RegistrarDomain) bool { return d.Domain == u.name }) {
-				s.recordDomainFailure(ctx, u.name, errors.New("ответа не было, а на аккаунте регистратора имени нет — не списано"))
+				s.recordDomainFailure(ctx, u.name, errors.New("ответа не было, а на аккаунте регистратора имени нет, не списано"))
 				continue
 			}
 			if ok, err := s.settlePurchase(ctx, b, u.name, "", box, ip); err != nil || ok {

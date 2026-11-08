@@ -25,7 +25,7 @@ func TestRate(t *testing.T) {
 		{999.7, "1 Гбит/с"},
 		{1250, "1,25 Гбит/с"},
 		{-0.3, "−300 кбит/с"},
-		{math.NaN(), "— Мбит/с"},
+		{math.NaN(), "- Мбит/с"},
 	} {
 		if got := rate(c.in); got != c.want {
 			t.Errorf("rate(%v) = %q, want %q", c.in, got, c.want)

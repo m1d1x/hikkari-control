@@ -52,8 +52,9 @@ func expiresIn(ctx context.Context, tx pgx.Tx, account uuid.UUID) (time.Time, er
 func (s *Service) linkLetter(_ subscription.Plan, link string, ends time.Time) mailer.Letter {
 	return mailer.Letter{
 		Title:       "подписка готова",
-		Lines:       []string{fmt.Sprintf("действует до %s", day(ends))},
+		Lines:       []string{"ваша ссылка на подписку. добавьте её в hikkari кнопкой ниже или вставьте в приложение вручную."},
 		Codes:       []string{link},
+		Notes:       []string{fmt.Sprintf("действует до %s", day(ends))},
 		Action:      link,
 		ActionLabel: "открыть подписку",
 	}

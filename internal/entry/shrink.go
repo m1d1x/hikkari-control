@@ -197,7 +197,7 @@ func (p *Provisioner) finishHandback(ctx context.Context, f FleetForecast, b lea
 	}
 	err = p.execJob(ctx, JobRetire, b.name, uuid.Nil, func(j *jobRun) error {
 		j.step("retire")
-		j.log("пул %s выше нужного (живых %d, держать %d и запас %d), машину освободили: %s — сдаю",
+		j.log("пул %s выше нужного (живых %d, держать %d и запас %d), машину освободили: %s, сдаю",
 			f.Pool, f.Live, f.Keep, f.Buffer, left)
 		return j.autoHandBack(DeathRotated)
 	})

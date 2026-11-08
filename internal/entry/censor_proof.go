@@ -78,7 +78,7 @@ func (s *Service) ProveCensorDeath(ctx context.Context, box, reason string) (map
 	// this wait is not a job. A refusal is put to the other live points.
 	verdicts, err := s.askConfirmed(ctx, uuid.Nil, names, time.Now().Add(censorProofTimeout), censorProofPoll, nil)
 	if errors.Is(err, errNoVerdict) {
-		return nil, fmt.Errorf("%w: пробник из РФ не ответил за %s — без его вердикта %s за %s не сдают; сдать без бана: причина rotated или other",
+		return nil, fmt.Errorf("%w: пробник из РФ не ответил за %s, а без его вердикта %s за %s не сдают; сдать без бана: причина rotated или other",
 			ErrRejected, censorProofTimeout, box, reason)
 	}
 	if err != nil {
@@ -103,10 +103,10 @@ func (s *Service) ProveCensorDeath(ctx context.Context, box, reason string) (map
 	sort.Strings(healthy)
 	switch {
 	case len(healthy) > 0:
-		return nil, fmt.Errorf("%w: пробник из РФ видит %s — это не %s; сдать без бана: причина rotated или other",
+		return nil, fmt.Errorf("%w: пробник из РФ видит %s, а это не %s; сдать без бана: причина rotated или other",
 			ErrRejected, strings.Join(healthy, ", "), reason)
 	case len(refused) == 0:
-		return nil, fmt.Errorf("%w: пробник из РФ не дал улик (%s) — без улик %s за %s не сдают",
+		return nil, fmt.Errorf("%w: пробник из РФ не дал улик (%s), а без улик %s за %s не сдают",
 			ErrRejected, strings.Join(blind, ", "), box, reason)
 	}
 	return verdicts, nil

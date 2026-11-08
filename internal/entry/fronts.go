@@ -99,7 +99,7 @@ func (s *Service) exitForFront(ctx context.Context, box string) (boxAccess, []in
 	case acc.proto != ProtoVlessXhttp:
 		return boxAccess{}, nil, fmt.Errorf("%w: вход ставится только перед XHTTP-машиной, а %s говорит %s", ErrRejected, box, acc.proto)
 	case acc.domain == "":
-		return boxAccess{}, nil, fmt.Errorf("%w: у %s ещё нет домена — сначала разверни её саму", ErrRejected, box)
+		return boxAccess{}, nil, fmt.Errorf("%w: у %s ещё нет домена, сначала разверни её саму", ErrRejected, box)
 	}
 	relays, err := s.relayIdentities(ctx, box)
 	if err != nil {
@@ -114,7 +114,7 @@ func (s *Service) exitForFront(ctx context.Context, box string) (boxAccess, []in
 		}
 	}
 	if len(ports) == 0 {
-		return boxAccess{}, nil, fmt.Errorf("%w: на %s нет живых релеев — пробрасывать нечего", ErrRejected, box)
+		return boxAccess{}, nil, fmt.Errorf("%w: на %s нет живых релеев, пробрасывать нечего", ErrRejected, box)
 	}
 	sort.Ints(ports)
 	return acc, ports, nil
@@ -125,7 +125,7 @@ func (s *Service) exitForFront(ctx context.Context, box string) (boxAccess, []in
 // front on the exit (entry_fronts_one_per_exit).
 func (s *Service) recordFront(ctx context.Context, f NewFront) (hostKey string, err error) {
 	if !frontNameRe.MatchString(f.Name) {
-		return "", fmt.Errorf("%w: имя входа %q — строчные буквы и цифры, как у машин", ErrRejected, f.Name)
+		return "", fmt.Errorf("%w: имя входа %q: нужны строчные буквы и цифры, как у машин", ErrRejected, f.Name)
 	}
 	if ip := net.ParseIP(f.Address); ip == nil || ip.To4() == nil {
 		return "", fmt.Errorf("%w: адрес входа должен быть IPv4", ErrRejected)
@@ -147,7 +147,7 @@ func (s *Service) recordFront(ctx context.Context, f NewFront) (hostKey string, 
 		Scan(&exit, &key, &retired)
 	switch {
 	case err == nil && (exit != f.ExitBox || retired):
-		return "", fmt.Errorf("%w: вход %s уже был (перед %s) — дай новое имя", ErrRejected, f.Name, exit)
+		return "", fmt.Errorf("%w: вход %s уже был (перед %s), дай новое имя", ErrRejected, f.Name, exit)
 	case err == nil:
 		if key != nil {
 			return *key, nil
@@ -164,7 +164,7 @@ func (s *Service) recordFront(ctx context.Context, f NewFront) (hostKey string, 
 		INSERT INTO entry_fronts (name, exit_box, address_ct, provider) VALUES ($1, $2, $3, $4)
 	`, f.Name, f.ExitBox, ct, f.Provider); err != nil {
 		if isUniqueViolation(err) {
-			return "", fmt.Errorf("%w: у %s уже есть активный вход — сначала сними его", ErrRejected, f.ExitBox)
+			return "", fmt.Errorf("%w: у %s уже есть активный вход, сначала сними его", ErrRejected, f.ExitBox)
 		}
 		return "", fmt.Errorf("entry: record front %s: %w", f.Name, err)
 	}
@@ -205,7 +205,7 @@ func (s *Service) resignBox(ctx context.Context, box string) ([]string, error) {
 func (s *Service) aimDomain(ctx context.Context, domain, ip string) error {
 	b := s.currentBuyer()
 	if b == nil || b.reg == nil {
-		return fmt.Errorf("%w: регистратор не подключён — A-запись %s не переставить", ErrRejected, domain)
+		return fmt.Errorf("%w: регистратор не подключён, A-запись %s не переставить", ErrRejected, domain)
 	}
 	return b.reg.SetARecord(ctx, domain, ip)
 }

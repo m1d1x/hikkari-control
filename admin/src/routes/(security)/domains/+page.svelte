@@ -480,7 +480,7 @@
 					<div class="m-head">
 						<span class="m-label">потрачено за месяц</span>
 						<span class="m-val m">{formatCents(metrics?.spend.monthSpentCents ?? 0)}</span>
-						<span class="m-cap">из {spend ? formatCents(spend.monthlyCapCents) : '—'}</span>
+						<span class="m-cap">из {spend ? formatCents(spend.monthlyCapCents) : '-'}</span>
 					</div>
 					<TimeSeries
 						labels={spendLabels}

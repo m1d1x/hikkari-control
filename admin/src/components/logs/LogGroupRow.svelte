@@ -50,7 +50,7 @@
 >
 	<span class="chev">{expanded ? '▾' : '▸'}</span>
 	<span class="count">×{group.count}</span>
-	<span class="cat" title={group.cat}>{group.cat || '—'}</span>
+	<span class="cat" title={group.cat}>{group.cat || '-'}</span>
 	<span class="msg" title={group.samplemsg}>{preview(group.samplemsg)}</span>
 	<span class="latest">{fmtLatest(group.latestTs)}</span>
 </div>

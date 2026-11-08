@@ -797,7 +797,7 @@ func (j *jobRun) canary(o *Orchestrator, build EdgeBuild, control string, pol Be
 	}
 	lone := control == ""
 	relay := b.relays[0].name
-	j.log("канарейка мерит %d пар(ы) по %s, порог приёма %d%%, роста rtt %d%% — всего %s бенча",
+	j.log("канарейка мерит %d пар(ы) по %s, порог приёма %d%%, роста rtt %d%%, всего %s бенча",
 		pol.Pairs, pol.RunDuration, pol.MinThroughputPct(), pol.MaxRTTGrowthPct(), pol.Benching())
 	if lone {
 		if why := o.pathSteady(j.ctx, relay, time.Now().Add(-pathRTTRecent), time.Now()); why != "" {
@@ -1038,7 +1038,7 @@ func (p *Provisioner) RunOnBox(ctx context.Context, box, cmd string, stdin io.Re
 		return "", fmt.Errorf("%w: %s", ErrBoxRetired, box)
 	}
 	if acc.hostKey == "" {
-		return "", fmt.Errorf("%w: ключ хоста %s ещё не записан — сначала разворот", ErrRejected, box)
+		return "", fmt.Errorf("%w: ключ хоста %s ещё не записан, сначала разворот", ErrRejected, box)
 	}
 	hubKey, _, err := p.svc.HubSSHKey(ctx)
 	if err != nil {

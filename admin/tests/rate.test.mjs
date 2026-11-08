@@ -25,7 +25,7 @@ test('formatRate picks the unit by size', () => {
 		[999.7, '1 Гбит/с'],
 		[1250, '1,25 Гбит/с'],
 		[-0.3, '−300 кбит/с'],
-		[NaN, '— Мбит/с'],
+		[NaN, '- Мбит/с'],
 	]) {
 		assert.equal(formatRate(v), want, `formatRate(${v})`);
 	}

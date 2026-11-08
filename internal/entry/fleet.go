@@ -185,7 +185,7 @@ func (s *Service) fleetForecast(ctx context.Context, policy DetectionPolicy, poo
 
 	hoster := s.hosterKind()
 	if hoster == "" {
-		f.Why = "хостера нет — прогноз не по кому считать, держим только цель"
+		f.Why = "хостера нет: прогноз не по кому считать, держим только цель"
 		return f, nil
 	}
 	now := s.now()
@@ -215,7 +215,7 @@ func (s *Service) fleetForecast(ctx context.Context, policy DetectionPolicy, poo
 		return f, fmt.Errorf("entry: losses of %s: %w", pool, err)
 	}
 	if f.Losses < fleetMinLosses || f.ExposureHours <= 0 {
-		f.Why = fmt.Sprintf("потерь за %d дней у %s: %d — мало для прогноза, держим только цель",
+		f.Why = fmt.Sprintf("потерь за %d дней у %s: %d, это мало для прогноза, держим только цель",
 			int(fleetLossWindow.Hours()/24), hoster, f.Losses)
 		return f, nil
 	}
@@ -228,7 +228,7 @@ func (s *Service) fleetForecast(ctx context.Context, policy DetectionPolicy, poo
 		return f, fmt.Errorf("entry: order to admission of %s: %w", pool, err)
 	}
 	if f.Horizon == 0 {
-		f.Why = "ни одного заказа хабом, прошедшего допуск, — горизонт не из чего мерить, держим только цель"
+		f.Why = "ни одного заказа хабом, прошедшего допуск: горизонт не из чего мерить, держим только цель"
 		return f, nil
 	}
 
@@ -457,7 +457,7 @@ func (s *Service) DetectFleet(ctx context.Context) (opened, closed int, err erro
 			if budget[inc.Pool] {
 				continue
 			}
-			note = "место под потолком есть — пул добирает парк"
+			note = "место под потолком есть, пул добирает парк"
 			if !ok || f.Need <= 0 {
 				note = "пулу больше не нужна машина"
 			}
@@ -481,9 +481,9 @@ func (s *Service) DetectFleet(ctx context.Context) (opened, closed int, err erro
 // fleetAdvice is the one sentence the console shows for a shortage.
 func fleetAdvice(f FleetForecast) string {
 	if f.Live < f.Target {
-		return fmt.Sprintf("в пуле %s живых машин %d из %d — нужна ещё одна", f.Pool, f.Live, f.Target)
+		return fmt.Sprintf("в пуле %s живых машин %d из %d, нужна ещё одна", f.Pool, f.Live, f.Target)
 	}
-	return fmt.Sprintf("в пуле %s живых машин %d при цели %d, но пока новая проходит допуск, ждём потерь: %s — заказ заранее",
+	return fmt.Sprintf("в пуле %s живых машин %d при цели %d, но пока новая проходит допуск, ждём потерь: %s, поэтому заказ заранее",
 		f.Pool, f.Live, f.Target, f.Why)
 }
 
@@ -530,7 +530,7 @@ func (m *Mechanic) scaleUp(ctx context.Context, inc Incident) (repairResult, err
 		return repairResult{}, err
 	}
 	if f.Need <= 0 {
-		return repairResult{outcome: fmt.Sprintf("пул %s уже добран (живых %d, цель %d) — машину не заказывали",
+		return repairResult{outcome: fmt.Sprintf("пул %s уже добран (живых %d, цель %d), машину не заказывали",
 			inc.Pool, f.Live, f.Target)}, nil
 	}
 	if m.prov == nil {

@@ -36,12 +36,12 @@
 	}
 
 	function statusLabel(s: SyntheticStep): string {
-		if (!s.hasData) return '—';
+		if (!s.hasData) return '-';
 		return s.up ? 'OK' : 'DOWN';
 	}
 
 	function fmtLatency(ms: number): string {
-		if (ms <= 0) return '—';
+		if (ms <= 0) return '-';
 		if (ms < 1) return '<1ms';
 		if (ms < 1000) return `${Math.round(ms)}ms`;
 		return `${(ms / 1000).toFixed(2)}s`;
@@ -63,7 +63,7 @@
 	<div class="section">
 		<div class="header">
 			<h3>User Journey</h3>
-			<span class="subtitle"> Synthetic loop running every 30s from adminru — login → DM → read echo </span>
+			<span class="subtitle"> Synthetic loop running every 30s from adminru: login → DM → read echo </span>
 		</div>
 		<div class="grid">
 			{#each steps as step (step.step)}

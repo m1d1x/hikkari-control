@@ -41,7 +41,7 @@ func RequireSecureDSNOrFatal(binary, connStr string) {
 	if os.Getenv(InsecureDBEnvVar) != "1" {
 		log.Fatalf("%s: DATABASE_URL refused: %v (set %s=1 ONLY for local dev)", binary, err, InsecureDBEnvVar)
 	}
-	log.Printf("WARN: %s: DATABASE_URL has %v — allowed only because %s=1", binary, err, InsecureDBEnvVar)
+	log.Printf("WARN: %s: DATABASE_URL has %v, allowed only because %s=1", binary, err, InsecureDBEnvVar)
 }
 
 // RequireDSNTLS rejects a Postgres connection string that disables TLS in
@@ -72,7 +72,7 @@ func RequireDSNTLS(connStr string) error {
 		return errors.New("sslmode=disable allowed only for loopback Postgres (localhost/127.0.0.1)")
 	}
 	if strings.Contains(lower, "sslmode=allow") || strings.Contains(lower, "sslmode=prefer") {
-		return errors.New("sslmode=allow/prefer is not strict enough — use require or stricter")
+		return errors.New("sslmode=allow/prefer is not strict enough; use require or stricter")
 	}
 	return errors.New("DATABASE_URL must explicitly set sslmode=require, verify-ca, or verify-full")
 }

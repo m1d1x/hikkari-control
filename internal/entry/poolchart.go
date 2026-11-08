@@ -315,7 +315,7 @@ func (s *Service) FleetChartNow(ctx context.Context) (FleetChart, error) {
 	}
 	if !hasVoice {
 		empty := poolSet(FleetForecast{Pool: ProtoHysteria2}, nil, nil, past, ahead)
-		empty.Why = "Нет регионов SFU с адресом для пересылки UDP — нагрузка и парк равны нулю; после настройки региона пул появится автоматически"
+		empty.Why = "Нет регионов SFU с адресом для пересылки UDP: нагрузка и парк равны нулю; после настройки региона пул появится автоматически"
 		out.Pools = append(out.Pools, empty)
 	}
 	d, m := domainLines(domains, pool, past, ahead)

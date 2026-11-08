@@ -108,7 +108,7 @@ func validateService(s Service) error {
 	for platform, entries := range s.Processes {
 		for _, name := range entries {
 			if isBrowser(platform, name) {
-				return fmt.Errorf("%s: %q — браузер; группа называет приложение сервиса, а браузер увёл бы на её сторону весь веб", s.ID, name)
+				return fmt.Errorf("%s: %q это браузер, а группа называет приложение сервиса; браузер увёл бы на её сторону весь веб", s.ID, name)
 			}
 		}
 	}
@@ -211,9 +211,9 @@ func normalizeIP(value string) (string, error) {
 		return netip.PrefixFrom(a, a.BitLen()).String(), nil
 	}
 	if host := hostFromURLish(value); host != "" && !isIPish(host) {
-		return "", fmt.Errorf("%q — это не ip: добавь %q в домены", value, host)
+		return "", fmt.Errorf("%q не ip: добавь %q в домены", value, host)
 	}
-	return "", fmt.Errorf("%q — не ip и не подсеть; примеры: 1.2.3.4, 192.168.0.0/16, 2001:db8::/32", value)
+	return "", fmt.Errorf("%q не ip и не подсеть; примеры: 1.2.3.4, 192.168.0.0/16, 2001:db8::/32", value)
 }
 
 func normalizeProcess(value string) (string, error) {
@@ -223,10 +223,10 @@ func normalizeProcess(value string) (string, error) {
 	}
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return "", fmt.Errorf("%q — не удалось извлечь имя приложения", value)
+		return "", fmt.Errorf("%q: не удалось извлечь имя приложения", value)
 	}
 	if strings.ContainsAny(name, `*?<>|"`) {
-		return "", fmt.Errorf("%q — не похоже на имя приложения", value)
+		return "", fmt.Errorf("%q не похоже на имя приложения", value)
 	}
 	return name, nil
 }
@@ -242,13 +242,13 @@ func normalizeFolder(value string) (string, error) {
 	}
 	frag = strings.TrimPrefix(frag, "/")
 	if strings.Trim(frag, "/") == "" {
-		return "", fmt.Errorf("%q — пустой путь", value)
+		return "", fmt.Errorf("%q: пустой путь", value)
 	}
 	if !strings.Contains(frag, "/") {
-		return "", fmt.Errorf("%q — нужен кусок пути со слешем, например %q", value, frag+"/")
+		return "", fmt.Errorf("%q: нужен кусок пути со слешем, например %q", value, frag+"/")
 	}
 	if strings.ContainsAny(frag, `*?<>|"`) {
-		return "", fmt.Errorf("%q — не похоже на путь", value)
+		return "", fmt.Errorf("%q не похоже на путь", value)
 	}
 	return frag, nil
 }
@@ -286,16 +286,16 @@ func normalizeDomain(value string) (string, error) {
 		host = canonical
 	}
 	if host == "" {
-		return "", fmt.Errorf("%q — не удалось извлечь домен", value)
+		return "", fmt.Errorf("%q: не удалось извлечь домен", value)
 	}
 	if isIPish(host) {
-		return "", fmt.Errorf("%q — это ip: добавь его в ip", host)
+		return "", fmt.Errorf("%q это ip: добавь его в ip", host)
 	}
 	if strings.ContainsAny(host, " \t/\\?#@") {
-		return "", fmt.Errorf("%q — не похоже на домен", value)
+		return "", fmt.Errorf("%q не похоже на домен", value)
 	}
 	if !strings.Contains(host, ".") && allowedZoneSuffixes[host] == "" {
-		return "", fmt.Errorf("%q — домен без точки, нужен вид example.com", host)
+		return "", fmt.Errorf("%q: домен без точки, нужен вид example.com", host)
 	}
 	if len(host) > 253 {
 		return "", fmt.Errorf("слишком длинный домен")

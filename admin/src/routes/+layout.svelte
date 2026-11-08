@@ -84,7 +84,7 @@
 </script>
 
 <svelte:head>
-	<title>{pageTitle ? `${pageTitle} — hikkari admin` : 'hikkari admin'}</title>
+	<title>{pageTitle ? `${pageTitle} · hikkari admin` : 'hikkari admin'}</title>
 </svelte:head>
 
 {#if bootState === 'login-route'}

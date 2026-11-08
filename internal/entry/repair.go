@@ -526,7 +526,7 @@ func (m *Mechanic) rails(ctx context.Context, inc Incident, playbook string) (wh
 		return "", true, nil
 	}
 	if tries >= policy.FailStrikes {
-		return fmt.Sprintf("ремонт %q пробовали %d раза и не помогло — дальше смотреть руками", inc.Playbook, tries), true, nil
+		return fmt.Sprintf("ремонт %q пробовали %d раза и не помогло, дальше смотреть руками", inc.Playbook, tries), true, nil
 	}
 	if last != nil && m.svc.now().Sub(*last) < policy.RepairCooldown {
 		return "", true, nil
@@ -548,7 +548,7 @@ func (m *Mechanic) rails(ctx context.Context, inc Incident, playbook string) (wh
 		return "", false, fmt.Errorf("entry: repair wave: %w", err)
 	}
 	if wave >= policy.WaveLimit {
-		why := fmt.Sprintf("%s: за %s причина %q сломала %d машины — это похоже на новое правило у цензора или на нашу ошибку, а не на %d поломок",
+		why := fmt.Sprintf("%s: за %s причина %q сломала %d машины: это похоже на новое правило у цензора или на нашу ошибку, а не на %d поломок",
 			wavePrefix, policy.WaveWindow, inc.Cause, wave, wave)
 		// The fuse is written down, not just acted on. Before it was a row the
 		// pause lived in the rolling window alone, which meant the autopilot
@@ -632,7 +632,7 @@ func (m *Mechanic) poolRails(ctx context.Context, inc Incident, playbook string,
 		return "", true, nil
 	}
 	if tries >= policy.FailStrikes {
-		return fmt.Sprintf("добор пула %s пробовали %d раза и не вышло — дальше смотреть руками", inc.Pool, tries), true, nil
+		return fmt.Sprintf("добор пула %s пробовали %d раза и не вышло, дальше смотреть руками", inc.Pool, tries), true, nil
 	}
 	if last != nil && now.Sub(*last) < policy.RepairCooldown {
 		return "", true, nil
@@ -661,7 +661,7 @@ func (s *Service) noLiveVantage(ctx context.Context, policy DetectionPolicy) (st
 	if live {
 		return "", nil
 	}
-	return fmt.Sprintf("ни один активный пробник не запрашивал задания допуска за %s — добор ждёт готовый пробник", policy.VerdictWindow), nil
+	return fmt.Sprintf("ни один активный пробник не запрашивал задания допуска за %s, добор ждёт готовый пробник", policy.VerdictWindow), nil
 }
 
 // fitsSubject refuses a repair that cannot apply to what the incident is
@@ -919,7 +919,7 @@ func (m *Mechanic) retirePorts(ctx context.Context, inc Incident) (string, error
 		return "", fmt.Errorf("%w: в уликах нет ни одного забаненного живого релея", ErrRejected)
 	}
 	if len(doomed) >= alive {
-		return "", fmt.Errorf("%w: забанены все %d живых релеев машины — это не порты, а адрес", ErrRejected, alive)
+		return "", fmt.Errorf("%w: забанены все %d живых релеев машины: это не порты, а адрес", ErrRejected, alive)
 	}
 	for _, name := range doomed {
 		if _, err := m.svc.MarkDead(ctx, name, DeathIPBanned); err != nil {
@@ -1040,7 +1040,7 @@ func (m *Mechanic) evictDomain(ctx context.Context, inc Incident) (string, error
 		return "", fmt.Errorf("%s; домен из пула: %w", head, err)
 	}
 	if !ok {
-		return "", fmt.Errorf("%s; в пуле доменов нет свободного — машина ждёт домен%s",
+		return "", fmt.Errorf("%s; в пуле доменов нет свободного, машина ждёт домен%s",
 			head, m.svc.domainPoolNote(ctx))
 	}
 	if err := m.prov.Reprovision(ctx, inc.Box); err != nil {
@@ -1090,7 +1090,7 @@ func (m *Mechanic) evictBox(ctx context.Context, inc Incident) (string, error) {
 		return "", err
 	}
 	c := policy.Box
-	out := fmt.Sprintf("машина снята с выдачи: релеев %d, держателей переселено %d; второй шанс — проба раз в %s, "+
+	out := fmt.Sprintf("машина снята с выдачи: релеев %d, держателей переселено %d; второй шанс: проба раз в %s, "+
 		"назад после %d чистых подряд, списание после %d проваленных или через %s",
 		relays, holders, c.ProbeEvery, c.ReturnClean, c.DeadFails, c.DeadAfter)
 	return out + m.svc.replacementNote(ctx, inc.Box), nil
@@ -1185,7 +1185,7 @@ func (s *Service) reapStuck(ctx context.Context) error {
 	now := s.now()
 	if _, err := s.pool.Exec(ctx, `
 		UPDATE entry_repairs
-		SET status = 'failed', error = 'исход ремонта не записан — снят по таймауту', finished_at = $2
+		SET status = 'failed', error = 'исход ремонта не записан, снят по таймауту', finished_at = $2
 		WHERE status = 'running' AND started_at < $1
 	`, now.Add(-repairTimeout-repairGrace), now); err != nil {
 		return fmt.Errorf("entry: reap repairs: %w", err)

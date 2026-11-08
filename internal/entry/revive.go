@@ -306,7 +306,7 @@ func (j *jobRun) rotateDest() (int, []string, error) {
 		}
 		if len(keep) == 0 {
 			return 0, nil, fmt.Errorf(
-				"%w: у релея %s не осталось ни одного живого прикрытия (%s) — пул прикрытий надо расширять, это решение человека",
+				"%w: у релея %s не осталось ни одного живого прикрытия (%s): пул прикрытий надо расширять, это решение человека",
 				ErrRejected, rel.name, strings.Join(rel.id.Covers, ", "))
 		}
 		id, err := rel.id.withCovers(keep)
@@ -387,7 +387,7 @@ func (j *jobRun) redeployCovers(r Remote, fresh []provRelay) ([]provRelay, error
 		}
 	}
 	if err := svc.nudgeHolders(j.ctx, relayNames(changed)); err != nil {
-		j.log("предупредить держателей не удалось: %v — они дотянут до следующего фетча", err)
+		j.log("предупредить держателей не удалось: %v; они дотянут до следующего фетча", err)
 	}
 	return changed, nil
 }

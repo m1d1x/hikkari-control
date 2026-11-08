@@ -5,5 +5,7 @@
 {{.}}
 {{end}}{{if .Action}}
 {{.ActionLabel}}: {{.Action}}
+{{end}}{{range .Notes}}
+{{.}}
 {{end}}
 hikkari.net

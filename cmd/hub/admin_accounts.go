@@ -160,7 +160,7 @@ func runAdminRole(args []string) {
 func printEnrollCode(code string) {
 	fmt.Printf("\n  enrolment code: %s   (valid %.0f hours, one use)\n\n", code, auth.AdminEnrollCodeTTL.Hours())
 	fmt.Println("  Open the panel (scripts/admin.sh), sign in with the password, enter this")
-	fmt.Println("  code, touch Touch ID — then save the ten recovery codes it shows.")
+	fmt.Println("  code, touch Touch ID, then save the ten recovery codes it shows.")
 }
 
 func runAdminPasswd(args []string) {

@@ -394,7 +394,7 @@ func (s *Service) CreateBox(ctx context.Context, b BoxSpec) error {
 	case !sshUserRe.MatchString(b.SSHUser):
 		return fmt.Errorf("%w: ssh user %q", ErrRejected, b.SSHUser)
 	case net.ParseIP(b.Address) == nil:
-		return fmt.Errorf("%w: box address %q must be an IP — a box is its address", ErrRejected, b.Address)
+		return fmt.Errorf("%w: box address %q must be an IP: a box is its address", ErrRejected, b.Address)
 	case !boxNameRe.MatchString(b.Name) || len(b.Name) > 24:
 		return fmt.Errorf("%w: box name %q must be <city letters><number>, e.g. ams1", ErrRejected, b.Name)
 	case b.Address == "":

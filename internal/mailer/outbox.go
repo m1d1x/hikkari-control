@@ -78,7 +78,7 @@ func (o *Outbox) Nudge() {
 // Run delivers until ctx ends, every interval and on every nudge.
 func (o *Outbox) Run(ctx context.Context, every time.Duration) {
 	if o.provider == nil {
-		applog.Warn(ctx, "mailer", "MAILER_PROVIDER not set — letters stay queued")
+		applog.Warn(ctx, "mailer", "MAILER_PROVIDER not set: letters stay queued")
 		return
 	}
 	t := time.NewTicker(every)

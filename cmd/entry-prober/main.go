@@ -250,7 +250,7 @@ func (cfg config) watchPool(ctx context.Context) {
 			log.Printf("entry-prober: relay list: %v", err)
 		case len(edges) == 0:
 			if !blind {
-				log.Printf("entry-prober: pool is empty — nothing to probe, the dataset gets no rows until a relay is alive again")
+				log.Printf("entry-prober: pool is empty, nothing to probe; the dataset gets no rows until a relay is alive again")
 				blind = true
 			}
 			eng.stop()

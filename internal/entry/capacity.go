@@ -276,9 +276,9 @@ func planCapacity(provider, plan string, boxes []BoxCapacity) PlanCapacity {
 	case CapacityCPU:
 		pc.Why = fmt.Sprintf("по линии CPU: к 100 %% машина выйдет на %s (медиана %d машин, до колена RTT ещё не доходили)", rate(pc.Mbps), pc.Boxes)
 	case CapacityFloor:
-		pc.Why = fmt.Sprintf("предел не мерен: держит минимум %s — столько уже возила или выдал бенч", rate(pc.Mbps))
+		pc.Why = fmt.Sprintf("предел не мерен: держит минимум %s (столько уже возила или выдал бенч)", rate(pc.Mbps))
 	default:
-		pc.Why = "машины тарифа ничего не возили — ёмкость не из чего читать"
+		pc.Why = "машины тарифа ничего не возили, ёмкость не из чего читать"
 	}
 	return pc
 }

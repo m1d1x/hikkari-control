@@ -140,7 +140,7 @@ func (s *Service) validateHostingDefaults(ctx context.Context, kind string, u Pr
 				return nil
 			}
 		}
-		return fmt.Errorf("%w: выбранный тариф недоступен в этом регионе — обнови каталог", ErrRejected)
+		return fmt.Errorf("%w: выбранный тариф недоступен в этом регионе, обнови каталог", ErrRejected)
 	}
-	return fmt.Errorf("%w: выбранного региона нет у провайдера — обнови каталог", ErrRejected)
+	return fmt.Errorf("%w: выбранного региона нет у провайдера, обнови каталог", ErrRejected)
 }

@@ -78,7 +78,7 @@ func (s *SMTP) Send(ctx context.Context, msg Message) error {
 	}
 	if s.cfg.Port != 465 {
 		if ok, _ := client.Extension("STARTTLS"); !ok {
-			return errors.New("mailer: relay does not offer STARTTLS — refusing to send credentials in clear")
+			return errors.New("mailer: relay does not offer STARTTLS, refusing to send credentials in clear")
 		}
 		if err := client.StartTLS(tlsCfg); err != nil {
 			return fmt.Errorf("mailer: STARTTLS: %w", err)

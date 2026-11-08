@@ -159,7 +159,7 @@ var playbookFor = map[string]Playbook{
 		Name:   PlaybookRestartEdge,
 		Mode:   ModeAuto,
 		Spends: false,
-		Why:    "процесс мёртв, машина и адрес живы: поднять юнит — дешевле ремонта нет",
+		Why:    "процесс мёртв, машина и адрес живы: поднять юнит, дешевле ремонта нет",
 	},
 	CauseProviderDown: {
 		Name:   PlaybookRebootBox,
@@ -203,7 +203,7 @@ var playbookFor = map[string]Playbook{
 	// itself when room comes back (fleetbudget.go).
 	CauseShortOfBudget: {
 		Mode: ModeAsk,
-		Why:  "пулу нужна машина, а потолок денег на хостинг не пускает: поднять потолок или ждать нового дня или месяца — хаб сам не покупает",
+		Why:  "пулу нужна машина, а потолок денег на хостинг не пускает: поднять потолок или ждать нового дня или месяца; хаб сам не покупает",
 	},
 	// The domain pool's own shortage: as for machines, a purchase, under the
 	// registrar caps.
@@ -226,7 +226,7 @@ func PlaybookForCause(cause string) Playbook {
 	if p, ok := playbookFor[cause]; ok {
 		return p
 	}
-	return Playbook{Mode: ModeAsk, Why: "хаб не знает ремонта для этой причины — смотреть руками"}
+	return Playbook{Mode: ModeAsk, Why: "хаб не знает ремонта для этой причины, смотреть руками"}
 }
 
 // MayRunUnattended says the hub can carry this out on its own.
@@ -347,7 +347,7 @@ func (s *Service) Playbook(ctx context.Context, cause string) (Playbook, error) 
 // decision that changes nothing — and for a word that is not a mode.
 func (s *Service) SetPlaybookMode(ctx context.Context, cause, mode, by string) error {
 	if mode != ModeAuto && mode != ModeAsk && mode != ModeOff {
-		return fmt.Errorf("%w: режим %q — бывает auto, ask или off", ErrRejected, mode)
+		return fmt.Errorf("%w: режим %q неизвестен, бывает auto, ask или off", ErrRejected, mode)
 	}
 	if PlaybookForCause(cause).Name == "" {
 		return fmt.Errorf("%w: для причины %q у хаба нет ремонта", ErrRejected, cause)

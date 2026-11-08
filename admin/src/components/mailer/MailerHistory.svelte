@@ -29,7 +29,7 @@
 	function deliveryView(r: MailerLogRow): DeliveryView {
 		// Failed-at-send rows never made it to the wire — webhooks don't fire.
 		if (r.status === 'failed') {
-			return { label: '—', tier: 'neutral', tooltip: 'Не отправлено' };
+			return { label: '-', tier: 'neutral', tooltip: 'Не отправлено' };
 		}
 		// SMTP rows can't get callbacks — show n/a so it's not confused with
 		// "delivered but unknown".
@@ -131,7 +131,7 @@
 									{dv.label}
 								</span>
 							</td>
-							<td class="admin">{r.sent_by_admin_name ?? '—'}</td>
+							<td class="admin">{r.sent_by_admin_name ?? '-'}</td>
 						</tr>
 					{/each}
 				</tbody>

@@ -85,7 +85,7 @@
 							</div>
 							<span class="item-meta">
 								{formatRelativeTime(incident.startedAt)}
-								{#if incident.resolvedAt}— resolved{:else}— ongoing{/if}
+								{#if incident.resolvedAt}· resolved{:else}· ongoing{/if}
 							</span>
 						</div>
 						<button class="ack-btn" onclick={() => ackIncident(incident)}>Ack</button>
@@ -103,7 +103,7 @@
 						<div class="dot" class:critical={alert.severity === 'critical'} class:warning={alert.severity === 'warning'} class:info={alert.severity === 'info'}></div>
 						<div class="item-content">
 							<span class="item-title">{alert.message}</span>
-							<span class="item-meta">{alert.source} — {formatRelativeTime(alert.timestamp)}</span>
+							<span class="item-meta">{alert.source} · {formatRelativeTime(alert.timestamp)}</span>
 						</div>
 						<button class="ack-btn" onclick={() => ackAlert(alert)}>Ack</button>
 					</div>
@@ -126,7 +126,7 @@
 							</div>
 							<span class="item-meta">
 								{formatRelativeTime(incident.startedAt)}
-								{#if incident.resolvedAt}— resolved{:else}— ongoing{/if}
+								{#if incident.resolvedAt}· resolved{:else}· ongoing{/if}
 							</span>
 						</div>
 					</div>
@@ -136,7 +136,7 @@
 						<div class="dot" class:critical={alert.severity === 'critical'} class:warning={alert.severity === 'warning'} class:info={alert.severity === 'info'}></div>
 						<div class="item-content">
 							<span class="item-title">{alert.message}</span>
-							<span class="item-meta">{alert.source} — {formatRelativeTime(alert.timestamp)}</span>
+							<span class="item-meta">{alert.source} · {formatRelativeTime(alert.timestamp)}</span>
 						</div>
 					</div>
 				{/each}

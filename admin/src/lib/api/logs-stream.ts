@@ -92,7 +92,7 @@ export function openLogStream(opts: LogStreamOptions): () => void {
 		ws.onopen = () => {
 			retryMs = 1000; // reset backoff after a successful open
 			opts.onStatus('open');
-			console.info('[logs-stream] OPEN — waiting for events');
+			console.info('[logs-stream] OPEN, waiting for events');
 		};
 
 		ws.onmessage = (e) => {
@@ -116,7 +116,7 @@ export function openLogStream(opts: LogStreamOptions): () => void {
 		};
 
 		ws.onclose = (ev) => {
-			console.warn(`[logs-stream] closed — code=${ev.code} reason="${ev.reason}" clean=${ev.wasClean}`);
+			console.warn(`[logs-stream] closed: code=${ev.code} reason="${ev.reason}" clean=${ev.wasClean}`);
 			ws = null;
 			if (stopped) {
 				opts.onStatus('closed');

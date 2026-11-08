@@ -181,7 +181,7 @@ func writeResolveErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrAliasNotFound):
 		writeErr(w, http.StatusNotFound, "install not found")
 	case errors.Is(err, ErrAmbiguousInstall):
-		writeErr(w, http.StatusConflict, "reference matches several installs — be more specific")
+		writeErr(w, http.StatusConflict, "reference matches several installs, be more specific")
 	default:
 		writeErr(w, http.StatusInternalServerError, "failed to resolve install")
 	}

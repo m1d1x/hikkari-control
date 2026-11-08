@@ -41,14 +41,14 @@
 		<div class="banner-head">
 			<span class="pulse"></span>
 			<span class="banner-title">
-				{sorted.length} active alert{sorted.length === 1 ? '' : 's'} — same signal as Telegram
+				{sorted.length} active alert{sorted.length === 1 ? '' : 's'}, same signal as Telegram
 			</span>
 		</div>
 		<div class="alert-list">
 			{#each sorted as alert (alert.source + ':' + alert.kind + ':' + alert.key)}
 				<div class="alert-item sev-{alert.severity}">
 					<span class="kind mono">{kindLabel(alert)}</span>
-					<span class="key mono">{alert.key || '—'}</span>
+					<span class="key mono">{alert.key || '-'}</span>
 					<span class="message">{alert.message}</span>
 					<span class="age mono">{formatRelativeTime(alert.firstSeen)}</span>
 				</div>

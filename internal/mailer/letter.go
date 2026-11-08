@@ -16,7 +16,10 @@ type Letter struct {
 	Lines []string `json:"lines"`
 	// Codes are shown as they are, each in a box, to copy (subscription
 	// links).
-	Codes       []string `json:"codes,omitempty"`
+	Codes []string `json:"codes,omitempty"`
+	// Notes are lines under the codes ("valid until …"), so the facts about
+	// a link sit right below it.
+	Notes       []string `json:"notes,omitempty"`
 	Action      string   `json:"action,omitempty"`
 	ActionLabel string   `json:"action_label,omitempty"`
 }

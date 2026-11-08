@@ -130,7 +130,7 @@ func (h *AdminHandlers) FleetHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if domains.Need > 0 && held[FleetPool(ProtoVlessXhttp, "")] && h.svc.currentBuyer().reg == nil {
-		warnings = append(warnings, "пул доменов: регистратора нет — новых доменов не будет")
+		warnings = append(warnings, "пул доменов: регистратора нет, новых доменов не будет")
 	}
 	// What one machine of each plan carries (П9.15); the dataset going down
 	// costs this column, not the screen.

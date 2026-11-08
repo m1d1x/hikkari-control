@@ -1911,7 +1911,7 @@ export function saveBenchPolicy(patch: {
 
 /** How long a stage took, in the console's words. Null is "нет данных". */
 export function formatSeconds(sec: number | null): string {
-	if (sec === null) return '—';
+	if (sec === null) return '-';
 	if (sec < 1) return '<1 с';
 	if (sec < 60) return `${Math.round(sec)} с`;
 	if (sec < 3600) {

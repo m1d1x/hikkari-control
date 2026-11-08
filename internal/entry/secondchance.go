@@ -390,8 +390,8 @@ func judge(ctx context.Context, tx pgx.Tx, kind, subject string, r reading, c Se
 	}
 	var status string
 	err := tx.QueryRow(ctx, judgeSuspect, kind, subject, r == readClean, c.ReturnClean, c.DeadFails, mayDie,
-		fmt.Sprintf("чистых проб подряд: %d — возвращён в пул", c.ReturnClean),
-		fmt.Sprintf("проваленных проб: %d — списан", c.DeadFails),
+		fmt.Sprintf("чистых проб подряд: %d, возвращён в пул", c.ReturnClean),
+		fmt.Sprintf("проваленных проб: %d, списан", c.DeadFails),
 	).Scan(&status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil // returned or written off meanwhile
@@ -469,7 +469,7 @@ func (s *Service) expire(ctx context.Context, kind string, c SecondChance) (int,
 		}
 	}
 	rows, err := tx.Query(ctx, expireSuspects, kind, c.DeadAfter.Seconds(),
-		fmt.Sprintf("не вернулся за %s — списан", c.DeadAfter), spared, kind == SuspectBox)
+		fmt.Sprintf("не вернулся за %s, списан", c.DeadAfter), spared, kind == SuspectBox)
 	if err != nil {
 		return 0, err
 	}
@@ -550,7 +550,7 @@ func (s *Service) SuspectBox(ctx context.Context, box, reason string) (relays, h
 		return 0, 0, err
 	}
 	if len(ids) == 0 {
-		return 0, 0, fmt.Errorf("%w: у машины %s нет релеев в выдаче — снимать нечего", ErrRejected, box)
+		return 0, 0, fmt.Errorf("%w: у машины %s нет релеев в выдаче, снимать нечего", ErrRejected, box)
 	}
 	held, err := s.repo.revokeGrants(ctx, tx, ids, revokeSuspect)
 	if err != nil {
@@ -629,7 +629,7 @@ func (p *Provisioner) retireDeadSuspects(ctx context.Context) ([]string, error) 
 			return out, fmt.Errorf("entry: handback wave: %w", err)
 		}
 		if wave >= policy.WaveLimit {
-			why := fmt.Sprintf("%s: за %s второй шанс списал %d машины — сдачу остальных держу до того, как посмотрит человек",
+			why := fmt.Sprintf("%s: за %s второй шанс списал %d машины; сдачу остальных держу, пока не посмотрит человек",
 				wavePrefix, policy.WaveWindow, wave)
 			if err := svc.PauseCause(ctx, cause, why, wave); err != nil {
 				return out, err
@@ -642,7 +642,7 @@ func (p *Provisioner) retireDeadSuspects(ctx context.Context) ([]string, error) 
 		}
 		err := p.execJob(ctx, JobRetire, d.box, uuid.Nil, func(j *jobRun) error {
 			j.step("retire")
-			j.log("второй шанс провален (%s) — сдаю машину", d.reason)
+			j.log("второй шанс провален (%s), сдаю машину", d.reason)
 			return j.autoHandBack(reason)
 		})
 		if errors.Is(err, ErrBoxBusy) || errors.Is(err, errOperatorsMachine) {

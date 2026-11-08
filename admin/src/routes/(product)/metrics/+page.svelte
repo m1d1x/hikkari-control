@@ -17,7 +17,7 @@
 	};
 	const VERSION_COLORS = ['#e8457c', '#6192d4', '#b07cd8', '#45b97c', '#e8a838'];
 
-	const or = (v: number | null, f: (v: number) => string) => (v === null ? '—' : f(v));
+	const or = (v: number | null, f: (v: number) => string) => (v === null ? '-' : f(v));
 	const osColor = (s: MetricsShare) => OS_COLOR[s.key] ?? '#787878';
 	const versionColor = (i: number) => VERSION_COLORS[i % VERSION_COLORS.length] ?? '#787878';
 

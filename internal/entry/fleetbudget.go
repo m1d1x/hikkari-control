@@ -48,7 +48,7 @@ func (s *Service) machineFits(ctx context.Context, plan *BoxPlan) (bool, string,
 
 // budgetAdvice is the one sentence the console shows for a pool the cap stops.
 func budgetAdvice(f FleetForecast, why string) string {
-	return fmt.Sprintf("пулу %s нужно ещё %d (живых %d при цели %d и запасе %d), но потолок денег не пускает: %s — поднять потолок или ждать нового дня или месяца",
+	return fmt.Sprintf("пулу %s нужно ещё %d (живых %d при цели %d и запасе %d), но потолок денег не пускает: %s; поднять потолок или ждать нового дня или месяца",
 		f.Pool, f.Need, f.Live, f.Target, f.Buffer, why)
 }
 

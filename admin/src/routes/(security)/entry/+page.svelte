@@ -250,7 +250,7 @@
 							{#if fleet.strip.timeToReplacement.medianSec !== null}
 								{formatTTR(fleet.strip.timeToReplacement.medianSec)}
 							{:else}
-								<span class="h-unit muted">—</span>
+								<span class="h-unit muted">-</span>
 							{/if}
 						</div>
 					</div>

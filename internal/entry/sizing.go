@@ -94,27 +94,27 @@ func loadTarget(sz PoolSizing, live int) (target, keep int, why string) {
 	d, c := sz.Demand, sz.Capacity
 	switch {
 	case d == nil:
-		return live, live, fmt.Sprintf("нагрузки не видно (нет датасета) — держим что есть: %d", live)
+		return live, live, fmt.Sprintf("нагрузки не видно (нет датасета), держим что есть: %d", live)
 	case d.Basis == DemandNone:
-		return 1, 1, "пул ничего не вёз за две недели — держим одну машину на первого пришедшего"
+		return 1, 1, "пул ничего не вёз за две недели, держим одну машину на первого пришедшего"
 	case c != nil && c.Source == CapacityFloor:
 		// Organic traffic is a lower bound on capacity, never a ceiling. In
 		// particular health probes must not buy more boxes just because their
 		// aggregate traffic exceeds one lightly used box's historical median.
 		n, k := hold, hold
-		why := fmt.Sprintf("видели минимум %s, предел мощности не измерен — держим %d, по нижней границе парк не наращиваем", rate(c.Mbps), hold)
+		why := fmt.Sprintf("видели минимум %s, предел мощности не измерен: держим %d, по нижней границе парк не наращиваем", rate(c.Mbps), hold)
 		if q, qwhy := quotaFloor(d, sz.Plan); qwhy != "" {
 			n, k = max(n, q), max(k, q)
 			why += "; " + qwhy
 		}
 		return n, k, why
 	case c == nil || c.Mbps <= 0:
-		return hold, hold, fmt.Sprintf("ёмкость машины не мерена — спрос %s делить не на что, держим что есть: %d",
+		return hold, hold, fmt.Sprintf("ёмкость машины не мерена, спрос %s делить не на что; держим что есть: %d",
 			rate(d.ForecastMbps), hold)
 	}
 	n := max(1, int(math.Ceil(d.ForecastMbps/(c.Mbps*fleetHeadroom))))
 	k := max(n, int(math.Ceil(d.ForecastMbps/(c.Mbps*fleetShrinkHeadroom))))
-	why = fmt.Sprintf("спрос %s к %s, машина держит %s (%s), по %.0f%% — нужно %d, сдавать ниже %.0f%% — держим до %d",
+	why = fmt.Sprintf("спрос %s к %s, машина держит %s (%s); при %.0f%% нужно %d, при сдаче ниже %.0f%% держим до %d",
 		rate(d.ForecastMbps), d.PeakAt.Format("02.01 15:04"), rate(c.Mbps), c.Source, fleetHeadroom*100, n, fleetShrinkHeadroom*100, k)
 	if q, qwhy := quotaFloor(d, sz.Plan); qwhy != "" {
 		why += "; " + qwhy
@@ -122,10 +122,10 @@ func loadTarget(sz PoolSizing, live int) (target, keep int, why string) {
 	}
 	switch {
 	case !d.Fresh && k < live:
-		return n, live, why + fmt.Sprintf("; но данные старые (последний замер %s) — не сжимаем, держим %d",
+		return n, live, why + fmt.Sprintf("; но данные старые (последний замер %s): не сжимаем, держим %d",
 			d.LastAt.Format("02.01 15:04"), live)
 	case !d.Complete && k < live:
-		return n, live, why + fmt.Sprintf("; но молчат %d релеев — не сжимаем, держим %d", len(d.Silent), live)
+		return n, live, why + fmt.Sprintf("; но молчат %d релеев: не сжимаем, держим %d", len(d.Silent), live)
 	}
 	return n, k, why
 }
@@ -141,9 +141,9 @@ func quotaFloor(d *PoolDemand, plan *BoxPlan) (int, string) {
 	// Cents per TB both ways: the machine's price over its allowance against
 	// the hoster's price for traffic past it.
 	if plan.MonthlyCents*1000 >= plan.BandwidthGB*plan.OverageCentsPerTB {
-		return 0, fmt.Sprintf("трафик %.0f ГБ в месяц — превышение квоты дешевле машины, докупать ради квоты не будем", d.MonthGB)
+		return 0, fmt.Sprintf("трафик %.0f ГБ в месяц: превышение квоты дешевле машины, докупать ради квоты не будем", d.MonthGB)
 	}
-	return q, fmt.Sprintf("трафик %.0f ГБ в месяц, квота машины %d ГБ — машина дешевле превышения, ради квоты не меньше %d",
+	return q, fmt.Sprintf("трафик %.0f ГБ в месяц, квота машины %d ГБ: машина дешевле превышения, ради квоты не меньше %d",
 		d.MonthGB, plan.BandwidthGB, q)
 }
 

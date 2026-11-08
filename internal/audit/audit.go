@@ -34,7 +34,7 @@ func Log(ctx context.Context, q db.DBTX, r *http.Request, e Entry) {
 		return
 	}
 	if e.Action == "" || e.TargetType == "" {
-		log.Printf("audit: skip — action=%q targetType=%q", e.Action, e.TargetType)
+		log.Printf("audit: skip, action=%q targetType=%q", e.Action, e.TargetType)
 		return
 	}
 

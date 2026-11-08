@@ -69,7 +69,7 @@ func (s *Service) applySubscriberFloor(ctx context.Context, f *FleetForecast, pr
 	f.Keep = max(f.Keep, floor)
 	if floor > f.Target {
 		f.Target = floor
-		f.TargetWhy += fmt.Sprintf("; живых подписок %d по %d ноды, на машину не больше %d — нужно %d",
+		f.TargetWhy += fmt.Sprintf("; живых подписок %d по %d ноды, на машину не больше %d, нужно %d",
 			live, slots, SubscribersPerBox, floor)
 	}
 	return nil

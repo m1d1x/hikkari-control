@@ -165,7 +165,7 @@ func (h *Handlers) AdminRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	applog.Info(r.Context(), "auth", "admin refresh stage2 success — access re-minted",
+	applog.Info(r.Context(), "auth", "admin refresh stage2 success, access re-minted",
 		applog.F("session_id", session.ID),
 		applog.F("admin_id", admin.ID),
 		applog.F("ip", maskIP(clientIP)))
