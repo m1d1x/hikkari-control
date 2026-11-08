@@ -83,18 +83,21 @@ type entryPressure struct {
 // perBucket). A registered slot whose prober stopped reporting stays in the
 // list with Silent = true and a PerBucket line at zero rather than vanishing.
 type pressureVantage struct {
-	Region     string     `json:"region"`
-	Title      string     `json:"title,omitempty"`
-	Box        string     `json:"box,omitempty"`
-	Host       string     `json:"host,omitempty"`
-	Provider   string     `json:"provider,omitempty"`
-	Status     string     `json:"status,omitempty"`
-	CreatedAt  *time.Time `json:"createdAt,omitempty"`
-	RetiredAt  *time.Time `json:"retiredAt,omitempty"`
-	Unreadable bool       `json:"unreadable,omitempty"`
-	Silent     bool       `json:"silent"`
-	Probes     int        `json:"probes"`
-	Relays     int        `json:"relays"`
+	ProberSHA         string     `json:"proberSha,omitempty"`
+	ProberPollAt      *time.Time `json:"proberPollAt,omitempty"`
+	ProberUpdateError string     `json:"proberUpdateError,omitempty"`
+	Region            string     `json:"region"`
+	Title             string     `json:"title,omitempty"`
+	Box               string     `json:"box,omitempty"`
+	Host              string     `json:"host,omitempty"`
+	Provider          string     `json:"provider,omitempty"`
+	Status            string     `json:"status,omitempty"`
+	CreatedAt         *time.Time `json:"createdAt,omitempty"`
+	RetiredAt         *time.Time `json:"retiredAt,omitempty"`
+	Unreadable        bool       `json:"unreadable,omitempty"`
+	Silent            bool       `json:"silent"`
+	Probes            int        `json:"probes"`
+	Relays            int        `json:"relays"`
 	// LastSeen is unix seconds of its newest probe row (0 when never seen).
 	LastSeen int64 `json:"lastSeen"`
 	// LastVerdict is the verdict of that newest row, whatever the window:
@@ -410,7 +413,7 @@ func (h *Handlers) fillPressureVantages(
 			SELECT v.slot, v.title, COALESCE(v.box, ''),
 			       COALESCE(v.host_ct, b.address_ct),
 			       CASE WHEN v.provider <> '' THEN v.provider ELSE COALESCE(b.provider, '') END,
-			       v.status, v.created_at, v.retired_at
+			       v.status, v.created_at, v.retired_at, v.prober_sha, v.prober_poll_at, v.prober_update_error
 			FROM entry_vantages v
 			LEFT JOIN entry_boxes b ON b.name = v.box
 			ORDER BY v.created_at ASC, v.slot ASC
@@ -424,8 +427,10 @@ func (h *Handlers) fillPressureVantages(
 				hostCT                             []byte
 				createdAt                          time.Time
 				retiredAt                          *time.Time
+				proberSHA, proberUpdateError       string
+				proberPollAt                       *time.Time
 			)
-			if err := pgRows.Scan(&slot, &title, &box, &hostCT, &provider, &status, &createdAt, &retiredAt); err != nil {
+			if err := pgRows.Scan(&slot, &title, &box, &hostCT, &provider, &status, &createdAt, &retiredAt, &proberSHA, &proberPollAt, &proberUpdateError); err != nil {
 				pgRows.Close()
 				return err
 			}
@@ -435,14 +440,17 @@ func (h *Handlers) fillPressureVantages(
 			}
 			ca := createdAt.UTC()
 			pv := &pressureVantage{
-				Region:    slot,
-				Title:     title,
-				Box:       box,
-				Provider:  provider,
-				Status:    status,
-				CreatedAt: &ca,
-				RetiredAt: retiredAt,
-				PerBucket: make([]int, len(out.Points)),
+				Region:            slot,
+				ProberSHA:         proberSHA,
+				ProberPollAt:      proberPollAt,
+				ProberUpdateError: proberUpdateError,
+				Title:             title,
+				Box:               box,
+				Provider:          provider,
+				Status:            status,
+				CreatedAt:         &ca,
+				RetiredAt:         retiredAt,
+				PerBucket:         make([]int, len(out.Points)),
 			}
 			if len(hostCT) > 0 {
 				if plain, err := cryptobox.Decrypt(hostCT); err != nil {

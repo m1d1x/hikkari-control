@@ -67,6 +67,9 @@ func main() {
 			runEntryBench(os.Args[2:])
 		case "ops-token":
 			runOpsToken(os.Args[2:])
+		case "entry-vantage-adopt":
+			runEntryVantageAdopt(os.Args[2:])
+			os.Exit(0)
 		case "entry-vantage-token":
 			runEntryVantageToken(os.Args[2:])
 		case "entry-vantage-add":
@@ -77,7 +80,12 @@ func main() {
 			runMailTest(os.Args[2:])
 		case "subscriber-add", "subscriber-renew", "subscriber-status", "subscriber-revoke", "plan-set", "plan-retire":
 			runSubscriber(os.Args[1], os.Args[2:])
+		default:
+			fmt.Fprintf(os.Stderr, "unknown hub command: %s\n", os.Args[1])
+			os.Exit(2)
 		}
+		// CLI handlers must never fall through into a second hub process.
+		os.Exit(0)
 	}
 	if err := run(); err != nil {
 		log.Fatal(err)
@@ -158,7 +166,7 @@ func run() error {
 	if store != nil {
 		rollout.SetHealth(store)
 	}
-	go rollout.Run(ctx)
+	go func() { prov.RollProbers(ctx); rollout.Run(ctx) }()
 	go svc.RunResigner(ctx)
 
 	// ── Public plane: what probers and relays talk to ─────
@@ -239,6 +247,7 @@ func run() error {
 		telemetry.NewLandingServer(store, config.Default().AllWebOrigins()).Register(mux)
 		mux.HandleFunc("POST /api/v1/internal/entry-probes", probesink.IngestEntry(store, svc))
 		entry.RegisterProberRoutes(mux, svc)
+		entry.RegisterProberUpdates(mux, svc, prov)
 		entry.RegisterPulseRoutes(mux, svc, os.Getenv("EDGE_PULSE_TOKEN"))
 		entry.RegisterBenchRoutes(mux, svc)
 		svc.SetBenchSink(benchSink{store})

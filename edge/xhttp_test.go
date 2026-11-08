@@ -234,7 +234,7 @@ func talk(t *testing.T, door int, wait time.Duration) string {
 // site through the secret path, a port on the box itself gets nothing, and
 // everything off the path is a plain site — not an Xray error.
 func TestAnXhttpEdgeTunnelsUnderTheSecretPathAndIsASiteElsewhere(t *testing.T) {
-	edgePort, local := freePort(t, "tcp"), freePort(t, "tcp")
+	edgePort, local := freePort(t, "tcp"), freeXhttpLocalPort(t)
 	sitePort, strangerPort := freePort(t, "tcp"), freePort(t, "tcp")
 	tcpEcho(t, sitePort, "site")
 	tcpEcho(t, strangerPort, "stranger")
@@ -384,7 +384,7 @@ func tlsFrontProxy(t *testing.T, edgeAddr string) (int, string) {
 // fronted shape a real nginx gives on a node (H10); the proxy here is the stand
 // -in, nginx itself is verified on the box.
 func TestAPlaintextFrontTunnelsBehindATLSProxy(t *testing.T) {
-	edgePort, local := freePort(t, "tcp"), freePort(t, "tcp")
+	edgePort, local := freePort(t, "tcp"), freeXhttpLocalPort(t)
 	sitePort := freePort(t, "tcp")
 	tcpEcho(t, sitePort, "site")
 
@@ -484,4 +484,16 @@ func TestTheDecoyAnswersLikeNginx(t *testing.T) {
 			}
 		})
 	}
+}
+
+func freeXhttpLocalPort(t *testing.T) int {
+	t.Helper()
+	for attempt := 0; attempt < 128; attempt++ {
+		port := freePort(t, "tcp")
+		if port <= 65000 {
+			return port
+		}
+	}
+	t.Fatal("no free XHTTP local port within 1024..65000")
+	return 0
 }

@@ -98,10 +98,18 @@ func (h *AdminHandlers) VantagesHandler(w http.ResponseWriter, r *http.Request) 
 	if h.refused(w, err) {
 		return
 	}
+	statuses := make([]proberVantageStatus, 0, len(slots))
+	for _, slot := range slots {
+		status, err := h.svc.readProberStatus(r.Context(), slot)
+		if h.refused(w, err) {
+			return
+		}
+		statuses = append(statuses, status)
+	}
 	if slots == nil {
 		slots = []Vantage{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"vantages": slots})
+	writeJSON(w, http.StatusOK, map[string]any{"vantages": statuses})
 }
 
 // CreateVantageHandler — POST /api/v1/admin/entry/vantages: open a new slot

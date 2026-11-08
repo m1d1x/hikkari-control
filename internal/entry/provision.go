@@ -396,6 +396,9 @@ func (j *jobRun) wipe() error {
 // token is issued here, and the one the slot had stops working: the machine
 // that receives it is the slot's voice from now on.
 func (p *Provisioner) DeployProber(ctx context.Context, box, slot, adminID string) (uuid.UUID, error) {
+	return p.deployProberJob(ctx, box, slot, adminID, trustOperator)
+}
+func (p *Provisioner) deployProberJob(ctx context.Context, box, slot, adminID string, trust firstUse) (uuid.UUID, error) {
 	if !p.CanDeployProber() {
 		return uuid.Nil, fmt.Errorf("%w: хаб не знает своего адреса или в образе нет бинаря пробника", ErrRejected)
 	}
@@ -416,7 +419,7 @@ func (p *Provisioner) DeployProber(ctx context.Context, box, slot, adminID strin
 	if err != nil {
 		return uuid.Nil, err
 	}
-	token, err := p.svc.issueBoxVantageToken(ctx, slot, box)
+	token, oldHash, resume, err := p.svc.beginProberToken(ctx, slot, box)
 	if err != nil {
 		_ = p.svc.finishJob(context.WithoutCancel(ctx), id, err)
 		return uuid.Nil, err
@@ -424,23 +427,49 @@ func (p *Provisioner) DeployProber(ctx context.Context, box, slot, adminID strin
 	p.svc.spawn(func(ctx context.Context) {
 		jctx, cancel := context.WithTimeout(ctx, p.jobTimeout)
 		defer cancel()
-		// Only the operator starts a prober deploy (admin_vantages.go), onto a
-		// machine outside the fleet: it is the operator's own job, like
-		// provisioning, and may meet the machine's key for the first time.
-		j := &jobRun{p: p, ctx: jctx, id: id, box: box, firstUse: trustOperator}
-		j.finish(j.deployProber(slot, token), "готово: пробник слота "+strings.ToUpper(slot)+" запущен на "+box)
+		// Operator deploys may meet a machine's key for the first time;
+		// automatic rollout always requires its previously pinned host key.
+		j := &jobRun{p: p, ctx: jctx, id: id, box: box, firstUse: trust}
+		err := j.deployProber(slot, token, resume)
+		if err != nil {
+			recovery, stop := context.WithTimeout(context.WithoutCancel(jctx), 30*time.Second)
+			defer stop()
+			if e := p.restoreProberToken(recovery, slot, token, oldHash); e != nil {
+				err = errors.Join(err, fmt.Errorf("rollback token: %w", e))
+			}
+		}
+		p.proberUpdateError(context.WithoutCancel(jctx), slot, p.proberSHAForSlot(context.WithoutCancel(jctx), slot), err)
+		j.finish(err, "готово: пробник слота "+strings.ToUpper(slot)+" запущен на "+box)
 	})
 	return id, nil
 }
 
-func (j *jobRun) deployProber(slot, token string) error {
+func (j *jobRun) deployProber(slot, token string, resume bool) (deployErr error) {
 	j.step("login")
 	r, err := j.loginByKey()
 	if err != nil {
 		return err
 	}
 	defer r.Close()
+	r, err = j.p.proberRemote(j.ctx, proberPrivileges(r, j.acc.user))
+	if err != nil {
+		return err
+	}
 
+	// Back up env before any change; preserve binary until the poll confirms.
+	if _, err := r.Run(j.ctx, "bash -s -- "+resumeArg(resume), strings.NewReader(proberBackupScript)); err != nil {
+		return fmt.Errorf("backup prober: %w", err)
+	}
+	defer func() {
+		if deployErr == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(j.ctx), 30*time.Second)
+		defer cancel()
+		if _, err := r.Run(ctx, "bash -s", strings.NewReader(proberRollbackScript)); err != nil {
+			deployErr = errors.Join(deployErr, fmt.Errorf("rollback prober: %w", err))
+		}
+	}()
 	j.step("deploy")
 	arch, err := j.arch(r)
 	if err != nil {
@@ -451,6 +480,9 @@ func (j *jobRun) deployProber(slot, token string) error {
 		return fmt.Errorf("в образе хаба нет бинаря пробника под %s", arch)
 	}
 
+	if _, err := j.p.svc.pool.Exec(j.ctx, `UPDATE entry_vantages SET prober_arch=$2 WHERE slot=$1`, slot, arch); err != nil {
+		return fmt.Errorf("record architecture: %w", err)
+	}
 	out, _ := r.Run(j.ctx, "sha256sum /usr/local/bin/nekko-entry-prober 2>/dev/null | cut -d' ' -f1", nil)
 	if strings.TrimSpace(out) != pbuild.SHA {
 		binBytes, err := pbuild.read()
@@ -462,6 +494,9 @@ func (j *jobRun) deployProber(slot, token string) error {
 			bytes.NewReader(binBytes),
 		); err != nil {
 			return fmt.Errorf("загрузка бинаря пробника: %w", err)
+		}
+		if _, err := r.Run(j.ctx, "echo '"+pbuild.SHA+"  /usr/local/bin/nekko-entry-prober.new' | sha256sum -c -", nil); err != nil {
+			return fmt.Errorf("verify prober upload: %w", err)
 		}
 		j.log("бинарь пробника %s… загружен (%d МБ)", pbuild.SHA[:12], len(binBytes)>>20)
 	} else {
@@ -476,20 +511,19 @@ func (j *jobRun) deployProber(slot, token string) error {
 		nil)
 	xrayBin := strings.TrimSpace(hasEngine)
 	if xrayBin == "" {
-		if ebuild, ok := j.p.builds[arch]; ok {
-			if ebytes, err := ebuild.read(); err == nil {
-				if _, err := r.Run(j.ctx,
-					"cat > /usr/local/bin/nekko-edge && chmod 755 /usr/local/bin/nekko-edge",
-					bytes.NewReader(ebytes),
-				); err == nil {
-					xrayBin = "/usr/local/bin/nekko-edge"
-					j.log("движок туннеля nekko-edge (%s…) установлен", ebuild.SHA[:12])
-				}
-			}
+		ebuild, ok := j.p.builds[arch]
+		if !ok {
+			return fmt.Errorf("engine install: no tunnel engine artifact for %s", arch)
 		}
-	}
-	if xrayBin == "" {
+		ebytes, err := ebuild.read()
+		if err != nil {
+			return fmt.Errorf("engine artifact: %w", err)
+		}
+		if _, err := r.Run(j.ctx, "cat > /usr/local/bin/nekko-edge && chmod 755 /usr/local/bin/nekko-edge", bytes.NewReader(ebytes)); err != nil {
+			return fmt.Errorf("engine install: %w", err)
+		}
 		xrayBin = "/usr/local/bin/nekko-edge"
+		j.log("движок туннеля nekko-edge (%s…) установлен", ebuild.SHA[:12])
 	}
 
 	if _, err := r.Run(j.ctx, "cat > /etc/systemd/system/nekko-entry-prober.service", strings.NewReader(proberUnit)); err != nil {
@@ -505,7 +539,18 @@ func (j *jobRun) deployProber(slot, token string) error {
 	if _, err := r.Run(j.ctx, "bash -s", strings.NewReader(proberSwapScript)); err != nil {
 		return fmt.Errorf("запуск пробника: %w", err)
 	}
-	j.log("nekko-entry-prober активен (слот %s, движок %s)", strings.ToUpper(slot), xrayBin)
+	j.step("poll confirmation")
+	started := time.Now()
+	if err := j.waitProber(slot, pbuild.SHA, started); err != nil {
+		return err
+	}
+	if err := j.p.finishProberToken(j.ctx, slot, token); err != nil {
+		return fmt.Errorf("confirm prober identity: %w", err)
+	}
+	if _, err := r.Run(j.ctx, "rm -f /etc/nekko-entry-prober/update.pending", nil); err != nil {
+		return fmt.Errorf("confirm prober update: %w", err)
+	}
+	j.log("nekko-entry-prober активен, sha и опрос подтверждены (слот %s, движок %s)", strings.ToUpper(slot), xrayBin)
 	return nil
 }
 
@@ -525,6 +570,10 @@ func (p *Provisioner) StopProber(box string) {
 			return
 		}
 		defer r.Close()
+		r, err = p.proberRemote(ctx, proberPrivileges(r, j.acc.user))
+		if err != nil {
+			return
+		}
 		_, _ = r.Run(ctx, `systemctl disable --now nekko-entry-prober >/dev/null 2>&1 || true
 rm -rf /etc/nekko-entry-prober /usr/local/bin/nekko-entry-prober /usr/local/bin/nekko-entry-prober.new /etc/systemd/system/nekko-entry-prober.service
 systemctl daemon-reload >/dev/null 2>&1 || true`, nil)
@@ -554,7 +603,9 @@ WantedBy=multi-user.target
 
 const proberSwapScript = `set -eu
 bin=/usr/local/bin/nekko-entry-prober
-[ -f "$bin.new" ] && mv "$bin.new" "$bin"
+if [ -f "$bin.new" ]; then
+ mv "$bin.new" "$bin"
+fi
 chmod 755 "$bin"
 chmod 600 /etc/nekko-entry-prober/prober.env.new
 rm -f /etc/nekko-entry-prober/edges.json
