@@ -522,6 +522,10 @@ func proberEnv(apiURL, slot, token, xrayBin string) string {
 	env.WriteString("ENTRY_PROBE_TUNNEL_URL=" + apiURL + "/healthz\n")
 	env.WriteString("PROBE_INGEST_URL=" + apiURL + "/api/v1/internal/entry-probes\n")
 	env.WriteString("PROBE_INGEST_TOKEN=" + token + "\n")
+	// Hikkari may share a host with Nekko, whose prober uses 10810 and
+	// offsets for admission/bench/reprobe engines. Keep our entire range
+	// separate in the hub-owned config so every redeploy preserves it.
+	env.WriteString("ENTRY_PROBE_SOCKS_BASE=20810\n")
 	if xrayBin != "" {
 		env.WriteString("ENTRY_PROBE_XRAY_BIN=" + xrayBin + "\n")
 	}
