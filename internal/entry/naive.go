@@ -15,6 +15,10 @@ type NaiveParams struct {
 	User string `json:"user"`
 	Pass string `json:"pass"`
 	H3   bool   `json:"h3,omitempty"`
+	// UDP makes the relay a Hikkari v1.01 relay: the edge adds the datagram
+	// channel on udp/<port> and UDP-over-TCP in the tunnel (edge/hikkari.go).
+	// The TCP side is the same Naive, so Naive-only links keep working.
+	UDP bool `json:"udp,omitempty"`
 }
 
 func domainProtocol(proto string) bool { return proto == ProtoVlessXhttp || proto == ProtoNaive }
@@ -27,7 +31,7 @@ func newNaiveIdentity(port, base int, host string) (Identity, error) {
 	if _, err := rand.Read(secret[:]); err != nil {
 		return Identity{}, err
 	}
-	return Identity{Port: port, LocalPortBase: base, Naive: &NaiveParams{Host: host, User: "probe", Pass: hex.EncodeToString(secret[:])}}, nil
+	return Identity{Port: port, LocalPortBase: base, Naive: &NaiveParams{Host: host, User: "probe", Pass: hex.EncodeToString(secret[:]), UDP: true}}, nil
 }
 
 func (j *jobRun) installNaive(r Remote, rel provRelay) error {
@@ -88,6 +92,15 @@ CONF
 fi
 printf 'nameserver 127.0.0.1\noptions timeout:2 attempts:2\n' >/etc/resolv.conf
 `
+
+// withHikkariUDP turns a Naive relay into a Hikkari relay on the same
+// address, port, domain and credentials.
+func (id Identity) withHikkariUDP() Identity {
+	n := *id.Naive
+	n.UDP, n.H3 = true, false
+	id.Naive = &n
+	return id
+}
 
 func (id Identity) withDomain(domain string) (Identity, error) {
 	if id.Naive == nil {

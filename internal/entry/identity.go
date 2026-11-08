@@ -751,7 +751,7 @@ func (id Identity) withXhttpDomain(domain string) (Identity, error) {
 // about quotes.
 func (id Identity) EdgeEnv() (map[string]string, error) {
 	if n := id.Naive; n != nil {
-		return map[string]string{"EDGE_PROTO": ProtoNaive, "EDGE_LISTEN": "0.0.0.0:" + strconv.Itoa(id.Port), "EDGE_NAIVE_HOST": n.Host, "EDGE_NAIVE_USER": n.User, "EDGE_NAIVE_PASS": n.Pass, "EDGE_NAIVE_H3": strconv.FormatBool(n.H3)}, nil
+		return map[string]string{"EDGE_PROTO": ProtoNaive, "EDGE_LISTEN": "0.0.0.0:" + strconv.Itoa(id.Port), "EDGE_NAIVE_HOST": n.Host, "EDGE_NAIVE_USER": n.User, "EDGE_NAIVE_PASS": n.Pass, "EDGE_NAIVE_H3": strconv.FormatBool(n.H3), "EDGE_HIKKARI_UDP": strconv.FormatBool(n.UDP)}, nil
 	}
 	if h := id.Hysteria; h != nil {
 		finalmask, err := json.Marshal(xrayFinalmask(h.Masks))

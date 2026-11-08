@@ -220,7 +220,7 @@ func (s *Service) LinksFor(ctx context.Context, token, engine string) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	return s.links(ctx, account, engine, awgCaps{}, 0, false)
+	return s.links(ctx, account, engine, awgCaps{}, 0, false, false)
 }
 
 // featuresHeader is how a client says what it can dial beyond what every client
@@ -283,7 +283,9 @@ func networkOf(h http.Header) uint32 {
 	return uint32(n)
 }
 
-func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, awg awgCaps, asn uint32, naive bool) ([]string, error) {
+// hikkari: the client's core speaks Hikkari v1.01 (feature "hikkari"); its
+// Naive relays that carry the datagram channel get hikkari+v1:// links.
+func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, awg awgCaps, asn uint32, naive, hikkari bool) ([]string, error) {
 	key, err := s.accessKey(ctx, account)
 	if err != nil {
 		return nil, err
@@ -315,6 +317,9 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 			continue
 		}
 		render := Link
+		if rec.Proto == entry.ProtoNaive && hikkari && rec.NaiveParams != nil && rec.NaiveParams.UDP {
+			render = HikkariLink
+		}
 		if rec.Proto == entry.ProtoHysteria2 && engine != "xray" {
 			render = SingBoxHysteriaLink
 		}
@@ -413,7 +418,7 @@ func (s *Service) Handler() http.HandlerFunc {
 			return
 		}
 		if err == nil {
-			links, err = s.links(r.Context(), account, engine, wantsAwg(r.Header), networkOf(r.Header), hasNaiveFeature(r.Header))
+			links, err = s.links(r.Context(), account, engine, wantsAwg(r.Header), networkOf(r.Header), hasNaiveFeature(r.Header), hasFeature(r.Header, "hikkari"))
 		}
 		if err != nil {
 			applog.Error(r.Context(), "subscription", "batch failed", applog.F("err", err.Error()))
@@ -472,9 +477,11 @@ func (s *Service) Handler() http.HandlerFunc {
 	}
 }
 
-func hasNaiveFeature(h http.Header) bool {
+func hasNaiveFeature(h http.Header) bool { return hasFeature(h, "naive") }
+
+func hasFeature(h http.Header, want string) bool {
 	for _, feature := range strings.Split(h.Get(featuresHeader), ",") {
-		if strings.TrimSpace(feature) == "naive" {
+		if strings.TrimSpace(feature) == want {
 			return true
 		}
 	}

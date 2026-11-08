@@ -22,6 +22,21 @@ var errNoLink = errors.New("relay has no client link")
 // Link renders Hikkari links. Extended Hysteria2 links require the Xray
 // adapter: pinSHA256 is the leaf certificate digest, and finalmask is the
 // base64url JSON mask list from the signed record (including Noise).
+// HikkariLink renders a Hikkari v1.01 relay (a Naive relay with the datagram
+// channel): one credential, TCP over Naive on tcp/<port>, UDP over QUIC
+// datagrams on udp/<port> of the same host.
+//
+//	hikkari+v1://hikkari:<key>@<address>:<port>?sni=<domain>#<label>
+func HikkariLink(r entry.RelayRecord) (string, error) {
+	p := r.NaiveParams
+	if r.Proto != entry.ProtoNaive || p == nil || !p.UDP || p.Host == "" || p.User == "" || p.Pass == "" {
+		return "", errNoLink
+	}
+	q := url.Values{"sni": {p.Host}}
+	u := url.URL{Scheme: "hikkari+v1", Host: net.JoinHostPort(r.Address, strconv.Itoa(r.Port)), User: url.UserPassword(p.User, p.Pass), RawQuery: q.Encode(), Fragment: "Hikkari " + r.Name}
+	return u.String(), nil
+}
+
 func Link(r entry.RelayRecord) (string, error) {
 	host := net.JoinHostPort(r.Address, strconv.Itoa(r.Port))
 	label := "Hikkari " + r.Name

@@ -6,6 +6,8 @@ require (
 	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828
 	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/caddyserver/forwardproxy v0.0.0-20261107184000-9ff40760afd1
+	github.com/sagernet/sing v0.9.0-beta.4
+	github.com/sagernet/sing-quic v0.7.2-0.20261002084117-75c3ac4fa12b
 	github.com/xtls/xray-core v1.260327.1-0.20261010092107-701af60772cd
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.60.0
@@ -121,8 +123,6 @@ require (
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/sagernet/quic-go v0.61.0-sing-box-mod.9 // indirect
-	github.com/sagernet/sing v0.9.0-beta.4 // indirect
-	github.com/sagernet/sing-quic v0.7.2-0.20261002084117-75c3ac4fa12b // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/shurcooL/sanitized_anchor_name v1.0.0 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
@@ -210,6 +210,6 @@ require (
 	lukechampine.com/blake3 v1.4.1 // indirect
 )
 
-replace github.com/caddyserver/forwardproxy => github.com/m1d1x/forwardproxy v0.0.0-20261107184000-9ff40760afd1
+replace github.com/caddyserver/forwardproxy => github.com/m1d1x/forwardproxy v0.0.0-20261108141158-30cd3e5b4389
 
 replace github.com/caddyserver/caddy/v2 => github.com/m1d1x/caddy/v2 v2.11.8-0.20261107181814-6481dda01571

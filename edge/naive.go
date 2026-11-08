@@ -31,6 +31,9 @@ const protoNaive = "naive"
 type naiveConfig struct {
 	Listen, Host, User, Pass, Root, Storage string
 	H3                                      bool
+	// UDP turns the relay into a Hikkari v1.01 relay (hikkari.go): the
+	// datagram channel on udp/<port> and UDP-over-TCP inside the tunnel.
+	UDP bool
 }
 
 func naiveFromEnv(get func(string) string) (naiveConfig, error) {
@@ -61,12 +64,19 @@ func naiveFromEnv(get func(string) string) (naiveConfig, error) {
 			return n, errors.New("naive: invalid H3 setting")
 		}
 	}
+	if value := get("EDGE_HIKKARI_UDP"); value != "" {
+		n.UDP, err = strconv.ParseBool(value)
+		if err != nil {
+			return n, errors.New("naive: invalid Hikkari UDP setting")
+		}
+	}
 	return n, nil
 }
 
 func (n naiveConfig) document() ([]byte, error) {
 	protocols := []string{"h1", "h2"}
-	if n.H3 {
+	// The datagram channel owns udp/<port>; Caddy's HTTP/3 would take it.
+	if n.H3 && !n.UDP {
 		protocols = append(protocols, "h3")
 	}
 	credential := []byte(base64.StdEncoding.EncodeToString([]byte(n.User + ":" + n.Pass)))
@@ -114,6 +124,10 @@ type naiveRuntime struct {
 	serial   uint64
 	closed   bool
 	total    naiveCount
+	// onKeys, when set, receives every new roster (the datagram channel).
+	onKeys func([]string)
+	// uotFlows and datagramFlows count UDP associations per Hikkari channel.
+	uotFlows, datagramFlows atomic.Int64
 }
 
 func newNaiveRuntime(cfg naiveConfig) *naiveRuntime {
@@ -138,7 +152,11 @@ func (n *naiveRuntime) Set(ctx context.Context, keys []string) error {
 			cancel = append(cancel, s.cancel)
 		}
 	}
+	onKeys := n.onKeys
 	n.mu.Unlock()
+	if onKeys != nil {
+		onKeys(sortedKeys(want))
+	}
 	for _, f := range cancel {
 		f()
 	}
@@ -238,6 +256,9 @@ func (g *naiveGate) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	n.sessions[id] = naiveSession{key, cancel}
 	n.mu.Unlock()
 	defer func() { cancel(); n.mu.Lock(); delete(n.sessions, id); n.mu.Unlock() }()
+	if n.cfg.UDP && isUoTHost(r.Host) {
+		ctx = n.withUoT(ctx, r.Host)
+	}
 	r = r.Clone(ctx)
 	r.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(n.cfg.User+":"+n.cfg.Pass)))
 	r.Body = &naiveBody{ReadCloser: r.Body, total: &n.total, key: counter}
@@ -298,6 +319,13 @@ func runNaive() error {
 	defer caddy.Stop()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	if cfg.UDP {
+		udp, err := startHikkariUDP(ctx, runtime)
+		if err != nil {
+			return err
+		}
+		defer udp.Close()
+	}
 	if pc, ok := pulseFromEnv(osEnv); ok {
 		spawnPulse(ctx, runtime, pc, runtime)
 	}

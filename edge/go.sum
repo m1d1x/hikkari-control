@@ -265,8 +265,8 @@ github.com/libp2p/go-netroute v0.2.1 h1:V8kVrpD8GK0Riv15/7VN6RbUQ3URNZVosw7H2v9t
 github.com/libp2p/go-netroute v0.2.1/go.mod h1:hraioZr0fhBjG0ZRXJJ6Zj2IVEVNx6tDTFQfSmcq7mQ=
 github.com/m1d1x/caddy/v2 v2.11.8-0.20261107181814-6481dda01571 h1:mN3aJVRFl/LrlWzvaLIDn7vnhjxjaLw2ULiYKbhUT6c=
 github.com/m1d1x/caddy/v2 v2.11.8-0.20261107181814-6481dda01571/go.mod h1:azDlZ9NxHX5/76XpIU8XjX6VXKnYV0uz9A8y3kqd5yo=
-github.com/m1d1x/forwardproxy v0.0.0-20261107184000-9ff40760afd1 h1:kJ+A5glw0uqHyFX0TyP8NAfF5QDLTScgdcC3hAdEve8=
-github.com/m1d1x/forwardproxy v0.0.0-20261107184000-9ff40760afd1/go.mod h1:H51REBUZjz9xYdRkNk8d65bU77h95hAben5kpUw8YKw=
+github.com/m1d1x/forwardproxy v0.0.0-20261108141158-30cd3e5b4389 h1:oo3PTnAxvttAZ5xn+bKQqpJZqYVM10VgrRzBllIivdo=
+github.com/m1d1x/forwardproxy v0.0.0-20261108141158-30cd3e5b4389/go.mod h1:H51REBUZjz9xYdRkNk8d65bU77h95hAben5kpUw8YKw=
 github.com/magiconair/properties v1.8.0/go.mod h1:PppfXfuXeibc/6YijjN8zIbojt8czPbwD3XqdrwzmxQ=
 github.com/manifoldco/promptui v0.9.0 h1:3V4HzJk1TtXW1MTZMP7mdlwbBpIinw3HztaIlYthEiA=
 github.com/manifoldco/promptui v0.9.0/go.mod h1:ka04sppxSGFAtxX0qhlYQjISsg9mR4GWtQEhdbn6Pgg=

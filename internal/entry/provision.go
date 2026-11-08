@@ -791,6 +791,12 @@ func (j *jobRun) provision(password string) error {
 		}
 	}
 
+	if acc.proto == ProtoNaive {
+		if relays, err = j.enableHikkariUDP(relays); err != nil {
+			return err
+		}
+	}
+
 	j.step("harden")
 	if err := j.harden(r, relays); err != nil {
 		return err
@@ -877,6 +883,29 @@ func (j *jobRun) upgradeAwgRelays(relays []provRelay) ([]provRelay, error) {
 		return relays, nil
 	}
 	j.movedRelays = append(j.movedRelays, upgraded...)
+	return j.liveRelays()
+}
+
+// enableHikkariUDP turns every Naive relay of the box into a Hikkari v1.01
+// relay (NaiveParams.UDP) and returns the relays as they stand after. Holders
+// are told to come back for the re-signed record, which offers the datagram
+// channel to clients that speak Hikkari.
+func (j *jobRun) enableHikkariUDP(relays []provRelay) ([]provRelay, error) {
+	var turned []string
+	for _, rel := range relays {
+		if rel.id.Naive == nil || rel.id.Naive.UDP {
+			continue
+		}
+		if err := j.p.svc.setRelayIdentity(j.ctx, rel.name, rel.id.withHikkariUDP()); err != nil {
+			return nil, fmt.Errorf("Hikkari UDP для %s: %w", rel.name, err)
+		}
+		j.log("%s: релей Naive переведён на Hikkari v1.01 (UDP-канал на том же порту)", rel.name)
+		turned = append(turned, rel.name)
+	}
+	if len(turned) == 0 {
+		return relays, nil
+	}
+	j.movedRelays = append(j.movedRelays, turned...)
 	return j.liveRelays()
 }
 
@@ -1441,7 +1470,7 @@ func (j *jobRun) harden(r Remote, relays []provRelay) error {
 	}
 	if j.acc.proto == ProtoNaive {
 		for _, rel := range relays {
-			if rel.id.Naive != nil && rel.id.Naive.H3 {
+			if rel.id.Naive != nil && (rel.id.Naive.H3 || rel.id.Naive.UDP) {
 				ports = append(ports, strconv.Itoa(rel.id.Port)+"/udp")
 			}
 		}
