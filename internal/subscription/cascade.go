@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -31,6 +32,9 @@ import (
 type cascade struct {
 	address string
 	port    int
+	// flag is the exit box's country as an emoji flag, "" when its
+	// location names none: the link dials Russia, the traffic leaves there.
+	flag string
 	// relays are the exit's Hikkari relays the trunk reaches, by name.
 	relays map[string]bool
 }
@@ -46,11 +50,13 @@ var ErrNoCascadeSource = errors.New("subscription: no cascade source")
 
 // cascadeOf is account's cascade, or nil when it has none.
 func (s *Service) cascadeOf(ctx context.Context, account uuid.UUID) (*cascade, error) {
-	var exitBox, entryBox string
+	var exitBox, entryBox, exitLocation string
 	var port int
-	err := s.pool.QueryRow(ctx,
-		`SELECT exit_box, entry_box, entry_port FROM entry_cascades WHERE account_id = $1`, account).
-		Scan(&exitBox, &entryBox, &port)
+	err := s.pool.QueryRow(ctx, `
+		SELECT c.exit_box, c.entry_box, c.entry_port, coalesce(b.location, '')
+		FROM entry_cascades c LEFT JOIN entry_boxes b ON b.name = c.exit_box
+		WHERE c.account_id = $1`, account).
+		Scan(&exitBox, &entryBox, &port, &exitLocation)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -65,16 +71,22 @@ func (s *Service) cascadeOf(ctx context.Context, account uuid.UUID) (*cascade, e
 	if err != nil {
 		return nil, fmt.Errorf("subscription: cascade %s → %s: %w", entryBox, exitBox, err)
 	}
-	return &cascade{address: address, port: port, relays: relays}, nil
+	return &cascade{address: address, port: port, relays: relays, flag: countryFlag(exitLocation)}, nil
 }
 
 // link renders rec, already carrying the account's key, as a link through
-// the entry; false for a record the cascade does not carry.
-func (c *cascade) link(rec entry.RelayRecord, dup bool) (string, bool) {
+// the entry; false for a record the cascade does not carry. label is the
+// exit relay's node label ("амстердам-001"), the name every link reads by;
+// a relay with no node yet is named by itself. The node's id stays off the
+// link (see above), only its name is taken.
+func (c *cascade) link(rec entry.RelayRecord, label string, dup bool) (string, bool) {
 	if rec.Proto != entry.ProtoHikkari || !c.relays[rec.Name] {
 		return "", false
 	}
-	name := rec.Name
+	name := label
+	if name == "" {
+		name = rec.Name
+	}
 	rec.Address, rec.Port = c.address, c.port
 	link, err := HikkariLink(rec, dup)
 	if err != nil {
@@ -84,8 +96,21 @@ func (c *cascade) link(rec entry.RelayRecord, dup bool) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	u.Fragment = "Hikkari " + name + " через вход"
+	u.Fragment = strings.TrimSpace(c.flag + " " + name)
 	return u.String(), true
+}
+
+// countryFlag is the emoji flag of a box row's location ("Amsterdam, NL"),
+// whose last part is an ISO 3166-1 alpha-2 code when the hoster names the
+// country; "" otherwise. The client shows the flag instead of geolocating
+// the address it dials, and older clients drop it from the name.
+func countryFlag(location string) string {
+	parts := strings.Split(location, ",")
+	code := strings.ToUpper(strings.TrimSpace(parts[len(parts)-1]))
+	if len(parts) < 2 || len(code) != 2 || code[0] < 'A' || code[0] > 'Z' || code[1] < 'A' || code[1] > 'Z' {
+		return ""
+	}
+	return string([]rune{0x1f1e6 + rune(code[0]-'A'), 0x1f1e6 + rune(code[1]-'A')})
 }
 
 // SetCascade makes the account name's subscription dial exitBox's Hikkari

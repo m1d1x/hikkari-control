@@ -29,6 +29,11 @@ func (c *cascadeBatch) CascadeVia(_ context.Context, entryBox, exitBox string) (
 	return c.entryAddr, c.relays, nil
 }
 
+// NodeNamesFor names the exit relay's node as the fleet would.
+func (c *cascadeBatch) NodeNamesFor(context.Context, uint32) (map[string]entry.NodeName, error) {
+	return map[string]entry.NodeName{"unl1-2": {Slug: "ams-node", Label: "амстердам-001"}}, nil
+}
+
 func hikkariRecord(name, addr string) entry.RelayRecord {
 	return entry.RelayRecord{Name: name, Proto: entry.ProtoHikkari, Address: addr, Port: 443,
 		HikkariParams: &entry.HikkariParams{Host: "exit.example", User: "probe", Pass: "0123456789abcdef0123"}}
@@ -36,7 +41,7 @@ func hikkariRecord(name, addr string) entry.RelayRecord {
 
 // A cascade account is served only the exit's Hikkari relays, each dialling
 // the entry's address and port with the relay's own SNI and the account's
-// key, and with no node on the link; dropping the cascade brings its relays
+// key, named by the exit's node and country, and with no node id on the link; dropping the cascade brings its relays
 // back as they are.
 func TestACascadeAccountDialsTheExitThroughTheEntry(t *testing.T) {
 	pool := livePool(t)
@@ -52,9 +57,9 @@ func TestACascadeAccountDialsTheExitThroughTheEntry(t *testing.T) {
 	}
 	s := New(pool, batch, []entry.Key{signer.Key()})
 	ctx := context.Background()
-	for _, box := range []string{"ruin1", "unl1"} {
+	for box, location := range map[string]string{"ruin1": "Moscow, RU", "unl1": "Amsterdam, NL"} {
 		if _, err := pool.Exec(ctx, `INSERT INTO entry_boxes (name, address_ct, provider, location, proto)
-			VALUES ($1, '\x00', 'test', 'de', 'hikkari') ON CONFLICT (name) DO NOTHING`, box); err != nil {
+			VALUES ($1, '\x00', 'test', $2, 'hikkari') ON CONFLICT (name) DO UPDATE SET location = $2`, box, location); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -103,7 +108,7 @@ func TestACascadeAccountDialsTheExitThroughTheEntry(t *testing.T) {
 	pass, _ := u.User.Password()
 	if u.Scheme != "hikkari+v1" || u.Host != "192.0.2.10:8443" || u.Query().Get("sni") != "exit.example" ||
 		u.Query().Get("dup") != "1" || u.Query().Get("hikkari-node") != "" || pass == "0123456789abcdef0123" ||
-		u.Fragment != "Hikkari unl1-2 через вход" {
+		u.Fragment != "🇳🇱 амстердам-001" {
 		t.Fatalf("cascade link %s", links[0])
 	}
 	var all bool
@@ -119,5 +124,21 @@ func TestACascadeAccountDialsTheExitThroughTheEntry(t *testing.T) {
 	}
 	if err := s.DropCascade(ctx, name); err == nil {
 		t.Fatal("dropping a cascade that is not there succeeded")
+	}
+}
+
+func TestCountryFlagIsTheLocationsISOCode(t *testing.T) {
+	for location, want := range map[string]string{
+		"Amsterdam, NL":          "🇳🇱",
+		"Netherlands, nl":        "🇳🇱",
+		"Riga, LV":               "🇱🇻",
+		"de":                     "",
+		"Amsterdam":              "",
+		"Amsterdam, Netherlands": "",
+		"":                       "",
+	} {
+		if got := countryFlag(location); got != want {
+			t.Errorf("countryFlag(%q) = %q, want %q", location, got, want)
+		}
 	}
 }

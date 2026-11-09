@@ -337,7 +337,7 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 			if !hikkari || engine == "xray" {
 				continue
 			}
-			if link, ok := via.link(withKey(rec, key), hikkariDup); ok {
+			if link, ok := via.link(withKey(rec, key), nodes[rec.Name].Label, hikkariDup); ok {
 				links = append(links, link)
 			}
 			continue
