@@ -49,6 +49,15 @@ type incomingEntryProbe struct {
 	// prober's payload, which reads as a door nobody measured — zero of zero.
 	XUDPGot  uint16 `json:"xudpGot"`
 	XUDPSent uint16 `json:"xudpSent"`
+	// A Hikkari relay's dup session (cmd/entry-prober/dup.go), beside the
+	// datagram door. Zero from a prober that does not run it.
+	DupGot     uint16 `json:"dupGot"`
+	DupSent    uint16 `json:"dupSent"`
+	DupVoice   uint16 `json:"dupVoice"`
+	DupNaive   uint16 `json:"dupNaive"`
+	DupSources uint8  `json:"dupSources"`
+	DupLanes   uint8  `json:"dupLanes"`
+	DupOK      uint8  `json:"dupOk"`
 }
 
 type entryIngestRequest struct {
@@ -178,6 +187,13 @@ func normalizeEntry(slot string, in []incomingEntryProbe, now time.Time) ([]anal
 			Detail:       p.Detail,
 			XUDPGot:      p.XUDPGot,
 			XUDPSent:     p.XUDPSent,
+			DupGot:       p.DupGot,
+			DupSent:      p.DupSent,
+			DupVoice:     p.DupVoice,
+			DupNaive:     p.DupNaive,
+			DupSources:   p.DupSources,
+			DupLanes:     p.DupLanes,
+			DupOK:        p.DupOK,
 		})
 	}
 	return out, nil

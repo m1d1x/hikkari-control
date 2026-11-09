@@ -76,6 +76,7 @@ func probeNaiveEdge(ctx context.Context, e edge, target string, k2 bool, now tim
 	}
 	if e.Proto == protoHikkari {
 		res = probeDatagram(ctx, kit.Core, e, res, timeout)
+		res = probeDupEdge(ctx, kit.Core, e, res, timeout)
 	}
 	return res
 }

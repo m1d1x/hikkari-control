@@ -138,6 +138,19 @@ type EntryProbeRecord struct {
 	// (П9.7, cmd/entry-prober/voice.go).
 	XUDPGot  uint16
 	XUDPSent uint16
+	// Dup*: a Hikkari relay's dup session (v1.02/v1.03) as a client with
+	// dup=1 runs it — the call answered out of sent, answer frames by the
+	// voice datagram carrier and by the stream copy (Naive), how many sources
+	// the far end saw, whether the relay answered the attach (lanes), and the
+	// session's own verdict. The plain datagram door above never touches the
+	// relay's dup hub. Not in Verdict either.
+	DupGot     uint16
+	DupSent    uint16
+	DupVoice   uint16
+	DupNaive   uint16
+	DupSources uint8
+	DupLanes   uint8
+	DupOK      uint8
 }
 
 // EntryReachRecord is one client's attempt to reach the service (plan 42

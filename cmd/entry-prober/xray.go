@@ -53,8 +53,9 @@ const (
 )
 
 // naive reports whether the relay is dialled through the Naive client core: a
-// Naive relay, and the stream channel of a Hikkari one. Admission does not
-// probe Hikkari's datagram channel (spec/v1.md, "Not in v1").
+// Naive relay, and the stream channel of a Hikkari one. A Hikkari relay's
+// datagram channel is probed beside it (datagram.go), and its dup hub by a
+// session as a client with dup=1 runs it (dup.go).
 func (e edge) naive() bool { return e.Proto == protoNaive || e.Proto == protoHikkari }
 
 // UnmarshalJSON gives a Hikkari relay its credential as the Naive one.

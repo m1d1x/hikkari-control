@@ -198,6 +198,14 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 	`); err != nil {
 		return fmt.Errorf("fleet analytics schema 9: %w", err)
 	}
+	for _, column := range []string{
+		"dup_got UInt16", "dup_sent UInt16", "dup_voice UInt16", "dup_naive UInt16",
+		"dup_sources UInt8", "dup_lanes UInt8", "dup_ok UInt8",
+	} {
+		if err := s.conn.Exec(ctx, `ALTER TABLE entry_probes ADD COLUMN IF NOT EXISTS `+column+` DEFAULT 0`); err != nil {
+			return fmt.Errorf("fleet analytics schema 10 (%s): %w", column, err)
+		}
+	}
 	return s.migrateTelemetry(ctx)
 }
 
@@ -343,7 +351,7 @@ func (s *Store) InsertEntryProbes(ctx context.Context, records []EntryProbeRecor
 		"wait_for_async_insert": 0,
 	}))
 	batch, err := s.conn.PrepareBatch(ctx,
-		"INSERT INTO entry_probes (ts, source_region, relay_name, raw_tcp, reality_ok, reality_rtt_ms, reality_http, k1_bare_tls, k2_control, cover, verdict, detail, xudp_got, xudp_sent)")
+		"INSERT INTO entry_probes (ts, source_region, relay_name, raw_tcp, reality_ok, reality_rtt_ms, reality_http, k1_bare_tls, k2_control, cover, verdict, detail, xudp_got, xudp_sent, dup_got, dup_sent, dup_voice, dup_naive, dup_sources, dup_lanes, dup_ok)")
 	if err != nil {
 		return fmt.Errorf("prepare entry_probes batch: %w", err)
 	}
@@ -358,7 +366,8 @@ func (s *Store) InsertEntryProbes(ctx context.Context, records []EntryProbeRecor
 		}
 		if err := batch.Append(r.Timestamp, r.SourceRegion, r.RelayName,
 			r.RawTCP, r.RealityOK, r.RealityRTTMs, r.RealityHTTP, r.K1BareTLS, r.K2Control,
-			r.Cover, verdict, detail, r.XUDPGot, r.XUDPSent); err != nil {
+			r.Cover, verdict, detail, r.XUDPGot, r.XUDPSent,
+			r.DupGot, r.DupSent, r.DupVoice, r.DupNaive, r.DupSources, r.DupLanes, r.DupOK); err != nil {
 			return fmt.Errorf("append entry probe: %w", err)
 		}
 	}

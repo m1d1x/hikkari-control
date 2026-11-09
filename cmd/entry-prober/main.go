@@ -127,6 +127,17 @@ type probeResult struct {
 	// Its own pair of numbers and not a word in the verdict — see withXUDP.
 	XUDPGot  uint16 `json:"xudpGot"`
 	XUDPSent uint16 `json:"xudpSent"`
+	// A Hikkari relay's dup session (v1.02/v1.03, dup.go): the call answered
+	// out of sent, answer frames by the voice datagram carrier and by the
+	// stream copy, sources the far end saw, whether the relay answered the
+	// attach, and the session's own verdict. Not in Verdict either.
+	DupGot     uint16 `json:"dupGot"`
+	DupSent    uint16 `json:"dupSent"`
+	DupVoice   uint16 `json:"dupVoice"`
+	DupNaive   uint16 `json:"dupNaive"`
+	DupSources uint8  `json:"dupSources"`
+	DupLanes   uint8  `json:"dupLanes"`
+	DupOK      uint8  `json:"dupOk"`
 }
 
 // detailAdmission marks the rows of an admission probe in the dataset, so a
