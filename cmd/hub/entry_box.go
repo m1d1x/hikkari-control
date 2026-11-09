@@ -44,9 +44,11 @@ package main
 //	                                    # exit of the cascade's trunk, reaching
 //	                                    # those loopback ports; reconfigures
 //	cmd/server entry-box trunk-exit-off <box>
-//	cmd/server entry-box trunk-entry <box> <exit-box> <listen=port,...> [members]
+//	cmd/server entry-box trunk-entry <box> <exit-box> <listen=port,...> [members] [hikkari-udp-copies=1|2]
 //	                                    # the trunk's entry on a box in Russia,
-//	                                    # members by Chromium (internal/entry/trunk.go)
+//	                                    # members by Chromium (internal/entry/trunk.go);
+//	                                    # the Hikkari relay's datagrams cross once
+//	                                    # (v1.02 copies them itself) unless =2
 //	cmd/server entry-box trunk-entry-off <box>
 //	cmd/server entry-box lab-reality <box> [port] [cover]
 //	                                    # stand up or update the опыт 0 lab
@@ -409,8 +411,8 @@ func runEntryBox(args []string) {
 		fmt.Printf("%s reconfigured\n", args[1])
 		os.Exit(0)
 	}
-	if (len(args) >= 4 && len(args) <= 5 && args[0] == "trunk-entry") || (len(args) == 2 && args[0] == "trunk-entry-off") {
-		// entry-box trunk-entry <box> <exit-box> <listen=port,...> [members]
+	if (len(args) >= 4 && len(args) <= 6 && args[0] == "trunk-entry") || (len(args) == 2 && args[0] == "trunk-entry-off") {
+		// entry-box trunk-entry <box> <exit-box> <listen=port,...> [members] [hikkari-udp-copies=1|2]
 		// — the cascade's trunk entry on a box in Russia (internal/entry/trunk.go).
 		if err := cryptobox.Configure(os.Getenv); err != nil {
 			fail(fmt.Errorf("content key: %w", err))
@@ -439,9 +441,15 @@ func runEntryBox(args []string) {
 			}
 			o.Forward[a] = b
 		}
-		if len(args) == 5 {
-			if o.Members, err = strconv.Atoi(args[4]); err != nil {
-				fail(fmt.Errorf("members %q", args[4]))
+		for _, a := range args[4:] {
+			if v, ok := strings.CutPrefix(a, "hikkari-udp-copies="); ok {
+				if o.HikkariUDPCopies, err = strconv.Atoi(v); err != nil || o.HikkariUDPCopies < 1 || o.HikkariUDPCopies > 2 {
+					fail(fmt.Errorf("hikkari-udp-copies %q: 1 or 2", v))
+				}
+				continue
+			}
+			if o.Members, err = strconv.Atoi(a); err != nil {
+				fail(fmt.Errorf("members %q", a))
 			}
 		}
 		if err := prov.StandTrunkEntry(ctx, args[1], o); err != nil {

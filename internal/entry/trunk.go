@@ -23,7 +23,9 @@ import (
 // other change of its env. The entry end is experiment equipment on a box in
 // Russia, like the provoke receiver: its own unit and binary
 // (hikkari-control/trunkentry, members dialled by Chromium) with the
-// libcronet.so it loads, no record, no subscriber, no pulse.
+// libcronet.so it loads, no relay record, no subscriber, no pulse. What was
+// stood is kept in trunk_entries, which the cascade watch reads
+// (cascade_watch.go, internal/cascadewatch).
 //
 //	cmd/server entry-box trunk-exit <box> <port,...>      # trunk on the box's Hikkari relays
 //	cmd/server entry-box trunk-exit-off <box>             # trunk off
@@ -97,6 +99,11 @@ type TrunkEntryOptions struct {
 	Forward map[int]int
 	// Members is the pool's size.
 	Members int
+	// HikkariUDPCopies is how many members carry each datagram on the ports
+	// that reach the exit's Hikkari relay: 1 (the default, 0) since v1.02
+	// clients copy their calls themselves, 2 as on any other port (to
+	// compare, or for clients without v1.02).
+	HikkariUDPCopies int
 }
 
 // trunkExitOf finds the Hikkari relay with a trunk on box, for an entry.
@@ -152,21 +159,31 @@ func (s *Service) CascadeVia(ctx context.Context, entryBox, exitBox string) (str
 	return acc.address, out, nil
 }
 
-// trunkEntryEnv renders the entry's env. CONTAINS THE TRUNK KEY.
+// trunkEntryEnv renders the entry's env. CONTAINS THE TRUNK KEY. addr is the
+// exit relay's address and port: a listen port forwarded to that port reaches
+// the Hikkari relay itself, whose v1.02 clients copy their datagrams over both
+// channels, so its datagrams cross the trunk once (EDGE_TRUNK_UDP_ONE_COPY;
+// plan, «Hikkari v1.02 за входом», п. 3).
 func trunkEntryEnv(addr, sni, key string, o TrunkEntryOptions) string {
 	listen := make([]int, 0, len(o.Forward))
 	for l := range o.Forward {
 		listen = append(listen, l)
 	}
 	sort.Ints(listen)
+	_, relayPort, _ := net.SplitHostPort(addr)
 	pairs := make([]string, 0, len(listen))
+	var once []string
 	for _, l := range listen {
 		pairs = append(pairs, fmt.Sprintf("%d=%d", l, o.Forward[l]))
+		if strconv.Itoa(o.Forward[l]) == relayPort && o.HikkariUDPCopies != 2 {
+			once = append(once, strconv.Itoa(l))
+		}
 	}
 	forward := strings.Join(pairs, ",")
 	return fmt.Sprintf("# Written by the nekko hub: the cascade's trunk entry.\n"+
 		"EDGE_TRUNK_EXIT=%s\nEDGE_TRUNK_SNI=%s\nEDGE_TRUNK_KEY=%s\nEDGE_TRUNK_MEMBERS=%d\n"+
-		"EDGE_TRUNK_FORWARD=%s\nEDGE_TRUNK_UDP=%s\n", addr, sni, key, o.Members, forward, forward)
+		"EDGE_TRUNK_FORWARD=%s\nEDGE_TRUNK_UDP=%s\nEDGE_TRUNK_UDP_ONE_COPY=%s\n",
+		addr, sni, key, o.Members, forward, forward, strings.Join(once, ","))
 }
 
 const trunkEntryUnitFile = `# Installed by the nekko hub: the cascade's trunk entry.
@@ -274,6 +291,9 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 	if o.Members < 1 || o.Members > 128 {
 		return fmt.Errorf("%w: членов пула %d, 1-128", ErrRejected, o.Members)
 	}
+	if o.HikkariUDPCopies < 0 || o.HikkariUDPCopies > 2 {
+		return fmt.Errorf("%w: копий датаграмм Hikkari %d, 1 или 2", ErrRejected, o.HikkariUDPCopies)
+	}
 	if len(o.Forward) == 0 {
 		return fmt.Errorf("%w: входу нечего пересылать", ErrRejected)
 	}
@@ -302,7 +322,11 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 	}
 	applog.Info(ctx, "entry", "operator trunk entry on box", applog.F("box", box), applog.F("exit", o.Exit),
 		applog.F("members", o.Members), applog.F("listen", strings.Join(listen, ",")))
-	return standTrunkEntry(ctx, r, p.trunkBuilds, p.cronetBuilds, trunkEntryEnv(addr, sni, key, o), listen, logf)
+	if err := standTrunkEntry(ctx, r, p.trunkBuilds, p.cronetBuilds, trunkEntryEnv(addr, sni, key, o), listen, logf); err != nil {
+		return err
+	}
+	// The cascade watch takes its pairs from here (cascade_watch.go).
+	return p.svc.recordTrunkEntry(ctx, box, o)
 }
 
 // standTrunkEntry is StandTrunkEntry's work on an open box. A file the box
@@ -350,5 +374,5 @@ func (p *Provisioner) StopTrunkEntry(ctx context.Context, box string) error {
 		return fmt.Errorf("снятие входа: %w", err)
 	}
 	applog.Info(ctx, "entry", strings.TrimSpace(out), applog.F("box", box))
-	return nil
+	return p.svc.forgetTrunkEntry(ctx, box)
 }

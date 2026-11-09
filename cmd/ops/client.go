@@ -382,6 +382,18 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 		return prettyJSON(data), nil
 	case "runs-record":
 		return c.runsRecord(args)
+	case "trunk":
+		q := url.Values{}
+		for _, k := range []string{"last", "layer", "entry", "rows", "limit"} {
+			if v := args[k]; v != "" {
+				q.Set(k, v)
+			}
+		}
+		data, err := c.request(http.MethodGet, "/api/v1/ops/trunk", q, nil)
+		if err != nil {
+			return "", err
+		}
+		return prettyJSON(data), nil
 	case "runs":
 		q := url.Values{}
 		for _, k := range []string{"profile", "source", "last", "limit"} {

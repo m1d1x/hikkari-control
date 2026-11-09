@@ -28,10 +28,16 @@ func TestTrunkEntryEnv(t *testing.T) {
 	for _, want := range []string{
 		"EDGE_TRUNK_EXIT=203.0.113.8:443\n", "EDGE_TRUNK_SNI=hk.example\n", "EDGE_TRUNK_KEY=key\n", "EDGE_TRUNK_MEMBERS=32\n",
 		"EDGE_TRUNK_FORWARD=8053=2053,8443=443\n", "EDGE_TRUNK_UDP=8053=2053,8443=443\n",
+		// 8443 reaches the Hikkari relay itself: its clients copy datagrams.
+		"EDGE_TRUNK_UDP_ONE_COPY=8443\n",
 	} {
 		if !strings.Contains(env, want) {
 			t.Fatalf("env lacks %q:\n%s", want, env)
 		}
+	}
+	env = trunkEntryEnv("203.0.113.8:443", "hk.example", "key", TrunkEntryOptions{Members: 32, Forward: map[int]int{8443: 443}, HikkariUDPCopies: 2})
+	if !strings.Contains(env, "EDGE_TRUNK_UDP_ONE_COPY=\n") {
+		t.Fatalf("two copies asked, one set:\n%s", env)
 	}
 }
 

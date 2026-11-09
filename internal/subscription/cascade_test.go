@@ -172,3 +172,49 @@ func TestCountryFlagIsTheLocationsISOCode(t *testing.T) {
 		}
 	}
 }
+
+// The watch's probe links: the exit's Hikkari relay straight and through the
+// entry, under the account's key, named by path in ASCII.
+func TestCascadeProbeLinksAreTheExitStraightAndThroughTheEntry(t *testing.T) {
+	pool := livePool(t)
+	signer := entry.NewSigner("entry-1", bytes.Repeat([]byte{9}, 32))
+	batch := &cascadeBatch{
+		fakeBatch: fakeBatch{envelopes: [][]byte{
+			signed(t, signer, realityRecord()),
+			signed(t, signer, hikkariRecord("unl1-2", "198.51.100.4")),
+		}},
+		entryAddr: "192.0.2.10",
+		relays:    map[string]bool{"unl1-2": true},
+	}
+	s := New(pool, batch, []entry.Key{signer.Key()})
+	ctx := context.Background()
+	name := "w-" + uuid.NewString()[:8]
+	if _, err := s.Add(ctx, name, unlimited(t, s)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CascadeProbeLinks(ctx, name, "ruin1", "unl1", 8443); err == nil {
+		t.Fatal("an account without the whole fleet was given probe links")
+	}
+	if _, err := pool.Exec(ctx, `UPDATE hub_accounts SET all_relays = true WHERE name = $1`, name); err != nil {
+		t.Fatal(err)
+	}
+	links, err := s.CascadeProbeLinks(ctx, name, "ruin1", "unl1", 8443)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 2 {
+		t.Fatalf("links %q", links)
+	}
+	want := map[string]string{"cascade-direct-unl1-2": "198.51.100.4:443", "cascade-entry-unl1-2": "192.0.2.10:8443"}
+	for _, l := range links {
+		u, err := url.Parse(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pass, _ := u.User.Password()
+		if want[u.Fragment] != u.Host || u.Query().Get("dup") != "1" || pass == "0123456789abcdef0123" || pass == "" {
+			t.Fatalf("probe link %s", l)
+		}
+		delete(want, u.Fragment)
+	}
+}

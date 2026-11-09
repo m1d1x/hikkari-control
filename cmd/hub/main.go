@@ -21,6 +21,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/auth"
 	"github.com/m1d1x/hikkari-control/internal/billing"
 	"github.com/m1d1x/hikkari-control/internal/capacity"
+	"github.com/m1d1x/hikkari-control/internal/cascadewatch"
 	"github.com/m1d1x/hikkari-control/internal/census"
 	"github.com/m1d1x/hikkari-control/internal/config"
 	"github.com/m1d1x/hikkari-control/internal/cryptobox"
@@ -383,6 +384,13 @@ func run() error {
 	stand.RegisterProberRoutes(mux, standRuns, entry.VantageGate(svc), entry.VantageOf)
 	stand.RegisterOpsRoutes(adminMux, standRuns, opsGate)
 	go standRuns.Run(ctx, time.Minute)
+	// The cascade watch: the trunk entries' journals every minute, a round
+	// of every layer every 10 minutes, the protocol layer as the points'
+	// cascade tasks (internal/cascadewatch).
+	cascadeWatch := cascadewatch.New(pool, svc, prov, subs, standRuns, knobErrs)
+	standRuns.SetCascade(cascadeWatch)
+	cascadewatch.RegisterOpsRoutes(adminMux, cascadeWatch, opsGate)
+	go cascadeWatch.Run(ctx)
 	// The knob controller: moves a node off a value Russia cuts onto a
 	// candidate the stand passes, and journals why (internal/stand controller.go).
 	knobs := stand.NewController(pool, svc)

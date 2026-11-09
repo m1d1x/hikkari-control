@@ -144,6 +144,9 @@ type Provisioner struct {
 	// (linux-<arch>/nekko-trunk-entry) and the libcronet.so it loads
 	// (trunk.go).
 	trunkBuilds, cronetBuilds map[string]EdgeBuild
+	// probeBuilds are the cascade watch's measuring binary
+	// (linux-<arch>/nekko-cascade-probe, cascade_watch.go).
+	probeBuilds  map[string]EdgeBuild
 	proberAPIURL string
 }
 
@@ -178,6 +181,7 @@ func NewProvisioner(svc *Service, dial Dialer, artifacts string) *Provisioner {
 		proberBuilds: loadProberBuilds(artifacts),
 		trunkBuilds:  loadNamedBuilds(artifacts, "nekko-trunk-entry"),
 		cronetBuilds: loadNamedBuilds(artifacts, "libcronet.so"),
+		probeBuilds:  loadNamedBuilds(artifacts, "nekko-cascade-probe"),
 		probeTimeout: 5 * time.Minute, probePoll: 2 * time.Second, drainPoll: drainPoll,
 		jobTimeout:   30 * time.Minute,
 		bootWait:     bootWait,

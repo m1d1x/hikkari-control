@@ -271,6 +271,8 @@ github.com/m1d1x/hikkari-protocol/server/naive v0.0.0-20261108155522-c8322b5caad
 github.com/m1d1x/hikkari-protocol/server/naive v0.0.0-20261108155522-c8322b5caadd/go.mod h1:C6s9lA2snZKui/f6HXLXTQvgxJs9CDxuOrRbVt5DFUk=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261109035325-db90d019f65b h1:kAyMctb2O4UrZ+uhmJgkZwst6DgY5eJHlF2RHyySx3I=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261109035325-db90d019f65b/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
+github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261109083628-8ddc69bc4893 h1:0bpHNO2l4y+Tmpjc0bNwnyFapFX7HMUz5EFz7MFdNv8=
+github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261109083628-8ddc69bc4893/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
 github.com/magiconair/properties v1.8.0/go.mod h1:PppfXfuXeibc/6YijjN8zIbojt8czPbwD3XqdrwzmxQ=
 github.com/manifoldco/promptui v0.9.0 h1:3V4HzJk1TtXW1MTZMP7mdlwbBpIinw3HztaIlYthEiA=
 github.com/manifoldco/promptui v0.9.0/go.mod h1:ka04sppxSGFAtxX0qhlYQjISsg9mR4GWtQEhdbn6Pgg=

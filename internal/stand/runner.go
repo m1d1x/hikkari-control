@@ -118,6 +118,9 @@ func (r Runner) Run(ctx context.Context, t Task) Result {
 	if t.Knob == capacity.TaskKind {
 		return r.runCapacity(ctx, profiles)
 	}
+	if t.Knob == CascadeTaskKind {
+		return r.runCascade(ctx, t, profiles)
+	}
 	var errs []string
 	measured := 0
 	for _, p := range profiles {

@@ -72,7 +72,11 @@ type Config struct {
 	Members        int
 	// TCP and UDP map a port the entry listens on to the exit's loopback
 	// port it reaches.
-	TCP, UDP       map[int]uint16
+	TCP, UDP map[int]uint16
+	// OneCopy are UDP listen ports whose datagrams cross the trunk once:
+	// their sender copies them itself (Hikkari v1.02 sends a call over both
+	// its channels), and a second copy here would make four.
+	OneCopy        map[int]bool
 	Stall          time.Duration
 	PortLo, PortHi int
 }
@@ -132,6 +136,19 @@ func ConfigFromEnv(get func(string) string) (Config, error) {
 	if c.UDP, err = forwards(get("EDGE_TRUNK_UDP"), "EDGE_TRUNK_UDP"); err != nil {
 		return c, err
 	}
+	c.OneCopy = map[int]bool{}
+	if raw := strings.TrimSpace(get("EDGE_TRUNK_UDP_ONE_COPY")); raw != "" {
+		for _, item := range strings.Split(raw, ",") {
+			p, err := strconv.Atoi(strings.TrimSpace(item))
+			if err != nil {
+				return c, fmt.Errorf("EDGE_TRUNK_UDP_ONE_COPY: %q is not a port", item)
+			}
+			if _, ok := c.UDP[p]; !ok {
+				return c, fmt.Errorf("EDGE_TRUNK_UDP_ONE_COPY: %d is not in EDGE_TRUNK_UDP", p)
+			}
+			c.OneCopy[p] = true
+		}
+	}
 	return c, nil
 }
 
@@ -166,8 +183,8 @@ func run(c Config) error {
 		return err
 	}
 	go logStats(ctx, entry)
-	log.Printf("nekko-trunk-entry: up: exit %s (%s), %d members, Chromium %s, tcp %v, udp %v",
-		c.Exit, c.SNI, c.Members, chromium.Version(), forwardList(c.TCP), forwardList(c.UDP))
+	log.Printf("nekko-trunk-entry: up: exit %s (%s), %d members, Chromium %s, tcp %v, udp %v, udp one copy %v",
+		c.Exit, c.SNI, c.Members, chromium.Version(), forwardList(c.TCP), forwardList(c.UDP), portList(c.OneCopy))
 	<-ctx.Done()
 	return nil
 }
@@ -219,7 +236,11 @@ func start(ctx context.Context, c Config, dial trunk.Dial) (*trunk.Entry, error)
 			return fail(fmt.Errorf("udp :%d: %w", port, err))
 		}
 		closers = append(closers, func() { pc.Close() })
-		go serveUDP(ctx, s, pc, to)
+		copies := 0 // the session's
+		if c.OneCopy[port] {
+			copies = 1
+		}
+		go serveUDP(ctx, s, pc, to, copies)
 	}
 	go func() {
 		<-ctx.Done()
@@ -231,8 +252,9 @@ func start(ctx context.Context, c Config, dial trunk.Dial) (*trunk.Entry, error)
 	return entry, nil
 }
 
-// serveUDP gives each client address on pc its own flow.
-func serveUDP(ctx context.Context, s *trunk.Session, pc net.PacketConn, to uint16) {
+// serveUDP gives each client address on pc its own flow, each datagram
+// carried by copies members (0: the session's).
+func serveUDP(ctx context.Context, s *trunk.Session, pc net.PacketConn, to uint16, copies int) {
 	var mu sync.Mutex
 	flows := map[string]*trunk.Flow{}
 	buf := make([]byte, trunk.MaxPayload)
@@ -249,7 +271,7 @@ func serveUDP(ctx context.Context, s *trunk.Session, pc net.PacketConn, to uint1
 		f := flows[key]
 		if f == nil {
 			client := from
-			f = s.OpenFlow(to, func(p []byte) { _, _ = pc.WriteTo(p, client) }, func() {
+			f = s.OpenFlowCopies(to, copies, func(p []byte) { _, _ = pc.WriteTo(p, client) }, func() {
 				mu.Lock()
 				delete(flows, key)
 				mu.Unlock()
@@ -267,7 +289,9 @@ func serveUDP(ctx context.Context, s *trunk.Session, pc net.PacketConn, to uint1
 	}
 }
 
-// logStats writes the pool's counters once a minute.
+// logStats writes the pool's counters once a minute. The hub reads the line
+// from the journal (hikkari-control internal/cascadewatch); its keys are
+// that reader's contract.
 func logStats(ctx context.Context, entry *trunk.Entry) {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
@@ -276,13 +300,41 @@ func logStats(ctx context.Context, entry *trunk.Entry) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			st := entry.Session().Stats()
-			dead, kills := entry.Ports().Counts()
-			log.Printf("nekko-trunk-entry: members=%d joined=%d stalled=%d broken=%d resent=%d dead_ports=%d port_kills=%d streams=%d/%d reset=%d up=%d down=%d flows=%d dgrams=%d/%d copies=%d",
-				st.Members, st.MembersJoined, st.MembersStall, st.MembersBroken, st.Resent, dead, kills,
-				st.Streams, st.StreamsOpened, st.StreamsReset, st.Up, st.Down, st.Flows, st.DgramsOut, st.DgramsIn, st.DgramsCopy)
+			log.Print("nekko-trunk-entry: " + statsLine(entry.Session().Stats(), entry.Session().MemberRTTs(), entry.Ports()))
 		}
 	}
+}
+
+// statsLine is the minute line: the counters since start, then the members'
+// smoothed round trips in milliseconds (p50, p90, max over the members up).
+func statsLine(st trunk.Stats, rtts []time.Duration, ports *trunk.PortBook) string {
+	dead, kills := ports.Counts()
+	return fmt.Sprintf("members=%d joined=%d stalled=%d broken=%d resent=%d dead_ports=%d port_kills=%d streams=%d/%d reset=%d up=%d down=%d flows=%d dgrams=%d/%d copies=%d rtt_p50=%s rtt_p90=%s rtt_max=%s",
+		st.Members, st.MembersJoined, st.MembersStall, st.MembersBroken, st.Resent, dead, kills,
+		st.Streams, st.StreamsOpened, st.StreamsReset, st.Up, st.Down, st.Flows, st.DgramsOut, st.DgramsIn, st.DgramsCopy,
+		rttAt(rtts, 50), rttAt(rtts, 90), rttAt(rtts, 100))
+}
+
+// rttAt is the q-th percentile of sorted round trips in milliseconds, "-"
+// for none.
+func rttAt(sorted []time.Duration, q int) string {
+	if len(sorted) == 0 {
+		return "-"
+	}
+	i := (len(sorted)*q + 99) / 100
+	if i < 1 {
+		i = 1
+	}
+	return strconv.FormatFloat(float64(sorted[i-1].Microseconds())/1000, 'f', 1, 64)
+}
+
+func portList(m map[int]bool) []int {
+	out := make([]int, 0, len(m))
+	for p := range m {
+		out = append(out, p)
+	}
+	sort.Ints(out)
+	return out
 }
 
 func forwardList(m map[int]uint16) []string {

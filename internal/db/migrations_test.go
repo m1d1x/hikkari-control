@@ -84,8 +84,9 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 	// the relay dataset (relay_*) the fleet's knobs are chosen by, the
 	// stand (stand_*) that fills it on schedule, the check of testers'
 	// configs against the knobs handed out (knob_*), testers' voice series
-	// that decide whether the fleet needs a UDP leg (voice_*), and the product
-	// metrics the admin draws as series (product_*).
+	// that decide whether the fleet needs a UDP leg (voice_*), the cascade's
+	// trunk entries and what the hub measures of them (trunk_*), and the
+	// product metrics the admin draws as series (product_*).
 	rows, err := pool.Query(ctx, `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`)
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +100,7 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 		if name != "schema_migrations" && name != "hub_accounts" && name != "hub_subscriptions" &&
 			name != "hub_access_keys" && name != "hub_key_usage" && name != "hub_plans" &&
 			name != "hub_orders" && name != "hub_mail_outbox" &&
-			!strings.HasPrefix(name, "entry_") && !strings.HasPrefix(name, "census_") && !strings.HasPrefix(name, "relay_") && !strings.HasPrefix(name, "stand_") && !strings.HasPrefix(name, "knob_") && !strings.HasPrefix(name, "voice_") && !strings.HasPrefix(name, "admin_") && name != "admins" &&
+			!strings.HasPrefix(name, "entry_") && !strings.HasPrefix(name, "census_") && !strings.HasPrefix(name, "relay_") && !strings.HasPrefix(name, "stand_") && !strings.HasPrefix(name, "knob_") && !strings.HasPrefix(name, "voice_") && !strings.HasPrefix(name, "trunk_") && !strings.HasPrefix(name, "admin_") && name != "admins" &&
 			name != "presets" && !strings.HasPrefix(name, "preset_") && !strings.HasPrefix(name, "support_") &&
 			!strings.HasPrefix(name, "product_") {
 			t.Errorf("non-control table in baseline: %s", name)

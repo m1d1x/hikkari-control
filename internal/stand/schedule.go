@@ -90,6 +90,8 @@ type Scheduler struct {
 	// apiURL is the hub's public API base URL, the one a point's prober
 	// reaches the hub at (config.Default().APIURL()).
 	apiURL string
+	// cascade is the cascade watch (cascade.go), nil without one.
+	cascade CascadeSource
 }
 
 // NewScheduler is the stand on pool; apiURL is the hub's public API base URL.
@@ -210,7 +212,7 @@ func (s *Scheduler) ClaimWithCapacity(ctx context.Context, slot string, capable 
 		err = s.pool.QueryRow(ctx, `
 			UPDATE stand_tasks SET status = 'claimed', claimed_at = now(), links_token_hash = $2
 			WHERE id = (SELECT id FROM stand_tasks WHERE slot = $1 AND status = 'queued' AND (knob <> 'capacity-v1' OR $3)
-			            ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+			            ORDER BY knob = 'cascade-v1' DESC, created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
 			RETURNING id, knob, vals, base, rounds, baseline_path`, slot, linksTokenHash(token), capable).
 			Scan(&t.ID, &t.Knob, &t.Values, &t.Base, &t.Rounds, &t.BaselinePath)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -220,7 +222,7 @@ func (s *Scheduler) ClaimWithCapacity(ctx context.Context, slot string, capable 
 			return nil, fmt.Errorf("claim stand task: %w", err)
 		}
 		st, err := s.settings(ctx)
-		if err == nil && !st.Enabled && t.Knob != capacity.TaskKind {
+		if err == nil && !st.Enabled && t.Knob != capacity.TaskKind && t.Knob != CascadeTaskKind {
 			err = errors.New("стенд выключен: stand_settings.enabled = false")
 		}
 		if err == nil && t.Knob == capacity.TaskKind {
@@ -248,7 +250,9 @@ type Result struct {
 	Capacity []capacity.Sample `json:"capacity,omitempty"`
 	Core     string            `json:"core"`
 	Rows     []Row             `json:"rows"`
-	Error    string            `json:"error,omitempty"`
+	// Voice are the calls of a cascade task (cascade.go).
+	Voice []CascadeVoice `json:"voice,omitempty"`
+	Error string         `json:"error,omitempty"`
 }
 
 // Finish records slot's result for task id: the rows go to the dataset as
@@ -296,9 +300,19 @@ func (s *Scheduler) Finish(ctx context.Context, slot string, id uuid.UUID, res R
 	if len(res.Capacity) > 0 {
 		return 0, fmt.Errorf("%w: capacity in diagnostic task", ErrNotAResult)
 	}
+	if knob != CascadeTaskKind && len(res.Voice) > 0 {
+		return 0, fmt.Errorf("%w: calls in a run of %q", ErrNotAResult, knob)
+	}
+	rowKnob := knob
+	if knob == CascadeTaskKind {
+		rowKnob = LoadBurst // a cascade task's rows are the load of diag:load
+		if len(res.Voice) > 16 {
+			return 0, fmt.Errorf("%w: %d calls", ErrNotAResult, len(res.Voice))
+		}
+	}
 	rows := make([]Row, len(res.Rows))
 	for i, r := range res.Rows {
-		if r.Knob != knob && r.Knob != Baseline {
+		if r.Knob != rowKnob && r.Knob != Baseline {
 			return 0, fmt.Errorf("%w: row of knob %q in a run of %q", ErrNotAResult, r.Knob, knob)
 		}
 		r.Vantage = slot
@@ -325,6 +339,16 @@ func (s *Scheduler) Finish(ctx context.Context, slot string, id uuid.UUID, res R
 	added, err := s.rows.Insert(ctx, data)
 	if err != nil {
 		return added, err
+	}
+	if knob == CascadeTaskKind && s.cascade != nil {
+		entryBox, round, err := s.cascadeTask(ctx, id)
+		if err != nil {
+			return added, err
+		}
+		res.Rows = rows
+		if err := s.cascade.CascadeFinished(ctx, slot, entryBox, round, res); err != nil {
+			return added, fmt.Errorf("cascade watch: %w", err)
+		}
 	}
 	status, reason := TaskDone, strings.TrimSpace(res.Error)
 	if reason != "" {
@@ -447,6 +471,16 @@ func (s *Scheduler) FleetLinks(ctx context.Context, token string) ([]string, err
 		}); ok {
 			return fleet.CapacityLinks(ctx, slot)
 		}
+	}
+	if knob == CascadeTaskKind {
+		if s.cascade == nil {
+			return nil, errors.New("stand: cascade task with no cascade watch")
+		}
+		var entryBox string
+		if err := s.pool.QueryRow(ctx, `SELECT coalesce(cascade_entry, '') FROM stand_tasks WHERE links_token_hash = $1`, linksTokenHash(token)).Scan(&entryBox); err != nil {
+			return nil, fmt.Errorf("stand cascade links: %w", err)
+		}
+		return s.cascade.CascadeLinks(ctx, entryBox)
 	}
 
 	return s.fleet.Links(ctx)
