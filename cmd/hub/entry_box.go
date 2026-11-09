@@ -44,9 +44,9 @@ package main
 //	                                    # exit of the cascade's trunk, reaching
 //	                                    # those loopback ports; reconfigures
 //	cmd/server entry-box trunk-exit-off <box>
-//	cmd/server entry-box trunk-entry <box> <exit-box> <fp> <listen=port,...> [members]
-//	                                    # the trunk's entry on a box in Russia
-//	                                    # (internal/entry/trunk.go)
+//	cmd/server entry-box trunk-entry <box> <exit-box> <listen=port,...> [members]
+//	                                    # the trunk's entry on a box in Russia,
+//	                                    # members by Chromium (internal/entry/trunk.go)
 //	cmd/server entry-box trunk-entry-off <box>
 //	cmd/server entry-box lab-reality <box> [port] [cover]
 //	                                    # stand up or update the опыт 0 lab
@@ -409,8 +409,8 @@ func runEntryBox(args []string) {
 		fmt.Printf("%s reconfigured\n", args[1])
 		os.Exit(0)
 	}
-	if (len(args) >= 5 && len(args) <= 6 && args[0] == "trunk-entry") || (len(args) == 2 && args[0] == "trunk-entry-off") {
-		// entry-box trunk-entry <box> <exit-box> <fp> <listen=port,...> [members]
+	if (len(args) >= 4 && len(args) <= 5 && args[0] == "trunk-entry") || (len(args) == 2 && args[0] == "trunk-entry-off") {
+		// entry-box trunk-entry <box> <exit-box> <listen=port,...> [members]
 		// — the cascade's trunk entry on a box in Russia (internal/entry/trunk.go).
 		if err := cryptobox.Configure(os.Getenv); err != nil {
 			fail(fmt.Errorf("content key: %w", err))
@@ -429,8 +429,8 @@ func runEntryBox(args []string) {
 			}
 			os.Exit(0)
 		}
-		o := entry.TrunkEntryOptions{Exit: args[2], FP: args[3], Forward: map[int]int{}}
-		for _, pair := range strings.Split(args[4], ",") {
+		o := entry.TrunkEntryOptions{Exit: args[2], Forward: map[int]int{}}
+		for _, pair := range strings.Split(args[3], ",") {
 			l, r, ok := strings.Cut(pair, "=")
 			a, e1 := strconv.Atoi(l)
 			b, e2 := strconv.Atoi(r)
@@ -439,9 +439,9 @@ func runEntryBox(args []string) {
 			}
 			o.Forward[a] = b
 		}
-		if len(args) == 6 {
-			if o.Members, err = strconv.Atoi(args[5]); err != nil {
-				fail(fmt.Errorf("members %q", args[5]))
+		if len(args) == 5 {
+			if o.Members, err = strconv.Atoi(args[4]); err != nil {
+				fail(fmt.Errorf("members %q", args[4]))
 			}
 		}
 		if err := prov.StandTrunkEntry(ctx, args[1], o); err != nil {

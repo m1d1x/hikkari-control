@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # The fleet hub (cmd/hub), carrying what it deploys to the boxes it runs:
-# linux-<arch>/{nekko-edge,nekko-entry-prober} under the artifact directory
+# linux-<arch>/{nekko-edge,nekko-entry-prober,nekko-trunk-entry,libcronet.so}
+# under the artifact directory
 # (internal/entry DefaultArtifactDir). The image is the version: a box runs the
 # current build when its binary's digest equals the one in here.
 
@@ -34,12 +35,31 @@ RUN --mount=type=cache,target=/go/pkg/mod \
         -o /out/relay/linux-$arch/nekko-edge . || exit 1; \
     done
 
+# ── The cascade's trunk entry (trunkentry/, its own module: it links cronet) ─
+# Pure Go with purego: the binary loads libcronet.so from its own directory,
+# which the hub stages beside it (internal/entry/trunk.go).
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS trunk-builder
+WORKDIR /src/trunkentry
+COPY trunkentry/go.mod trunkentry/go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY trunkentry/ ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    for arch in amd64 arm64; do \
+      mkdir -p /out/relay/linux-$arch && \
+      CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -tags with_purego -trimpath -ldflags="-s -w" \
+        -o /out/relay/linux-$arch/nekko-trunk-entry . && \
+      cp "$(go list -m -f '{{.Dir}}' github.com/sagernet/cronet-go/lib/linux_$arch)/libcronet.so" \
+        /out/relay/linux-$arch/libcronet.so || exit 1; \
+    done
+
 # ── Runtime ──────────────────────────────────────────────────────────────────
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 1000 hub
 COPY --from=builder /out/hub /usr/local/bin/hub
 COPY --from=builder /out/relay/ /usr/local/share/nekko/relay/
 COPY --from=edge-builder /out/relay/ /usr/local/share/nekko/relay/
+COPY --from=trunk-builder /out/relay/ /usr/local/share/nekko/relay/
 RUN mkdir -p /data && chown hub:hub /data
 USER hub
 EXPOSE 8090

@@ -269,8 +269,8 @@ github.com/m1d1x/hikkari-protocol v0.0.0-20261109012637-a25e3114f98c h1:B22fjmWX
 github.com/m1d1x/hikkari-protocol v0.0.0-20261109012637-a25e3114f98c/go.mod h1:n6g14ffrmydnUSkndaeZX7+B7y9NjK/EKIkmg7DuYh4=
 github.com/m1d1x/hikkari-protocol/server/naive v0.0.0-20261108155522-c8322b5caadd h1:p1286Dmx6quLq0/LxmJgEI+sD69698V0OWytb9zGPgo=
 github.com/m1d1x/hikkari-protocol/server/naive v0.0.0-20261108155522-c8322b5caadd/go.mod h1:C6s9lA2snZKui/f6HXLXTQvgxJs9CDxuOrRbVt5DFUk=
-github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261109031501-6dc5fd49ee0c h1:2YhkjWslw6i+q2/U1XN7YBCRYiDUQ9e0DQS664l/GV8=
-github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261109031501-6dc5fd49ee0c/go.mod h1:Q+uu5NVhwXkGNQbKO0cBc97GbuIkHKrXqHkmeiMQRa8=
+github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261109035325-db90d019f65b h1:kAyMctb2O4UrZ+uhmJgkZwst6DgY5eJHlF2RHyySx3I=
+github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261109035325-db90d019f65b/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
 github.com/magiconair/properties v1.8.0/go.mod h1:PppfXfuXeibc/6YijjN8zIbojt8czPbwD3XqdrwzmxQ=
 github.com/manifoldco/promptui v0.9.0 h1:3V4HzJk1TtXW1MTZMP7mdlwbBpIinw3HztaIlYthEiA=
 github.com/manifoldco/promptui v0.9.0/go.mod h1:ka04sppxSGFAtxX0qhlYQjISsg9mR4GWtQEhdbn6Pgg=

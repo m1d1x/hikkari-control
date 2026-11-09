@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -116,17 +117,18 @@ func TestTrunkThroughHikkariRelay(t *testing.T) {
 		}
 	}
 
-	entryPort := freePort(t, "tcp")
-	ec := TrunkEntryConfig{
-		Exit: relay, SNI: "hk.example", Key: trunkKey, Hello: "chrome_131", Members: 4,
-		TCP: map[int]uint16{entryPort: echoPort}, UDP: map[int]uint16{entryPort: echoPort},
-		PortLo: defaultTrunkPortLo, PortHi: defaultTrunkPortHi,
+	// Members dialled by a Go client speaking the member's wire (the entry
+	// dials them with Chromium, hikkari-protocol trunk/chromium; Chromium
+	// against this Caddy relay is the Hikkari client's own path).
+	dial := func(ctx context.Context, port int) (io.ReadWriteCloser, error) {
+		return goMember(relay, roots, trunkKey, port)
 	}
-	dial := trunk.Dialer{Exit: relay, SNI: "hk.example", Hello: trunk.Hellos[ec.Hello], Key: trunkKey, Roots: roots}.Dial
-	entry, err := startTrunkEntry(ctx, ec, dial)
+	ports, _ := trunk.NewPortBook(42000, 43000, time.Minute)
+	entry, err := trunk.NewEntry(trunk.Config{}, 4, dial, ports, t.Logf)
 	if err != nil {
 		t.Fatal(err)
 	}
+	go entry.Run(ctx)
 	deadline := time.Now().Add(15 * time.Second)
 	for entry.Session().Stats().Members < 4 {
 		if time.Now().After(deadline) {
@@ -135,10 +137,8 @@ func TestTrunkThroughHikkariRelay(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	c, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(entryPort)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	c, edgeSide := net.Pipe()
+	go entry.Session().Carry(edgeSide, echoPort)
 	defer c.Close()
 	data := make([]byte, 2<<20)
 	_, _ = rand.Read(data)
@@ -149,16 +149,16 @@ func TestTrunkThroughHikkariRelay(t *testing.T) {
 		t.Fatalf("tcp through the trunk: %v", err)
 	}
 
-	u, err := net.Dial("udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(entryPort)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer u.Close()
-	_, _ = u.Write([]byte("voice"))
-	_ = u.SetReadDeadline(time.Now().Add(5 * time.Second))
-	b := make([]byte, 64)
-	if k, err := u.Read(b); err != nil || string(b[:k]) != "voice" {
-		t.Fatalf("udp through the trunk: %q %v", b[:k], err)
+	back := make(chan string, 1)
+	f := entry.Session().OpenFlow(echoPort, func(p []byte) { back <- string(p) }, nil)
+	f.Send([]byte("voice"))
+	select {
+	case v := <-back:
+		if v != "voice" {
+			t.Fatalf("udp through the trunk: %q", v)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("udp through the trunk: no answer")
 	}
 	if sessions, st := n.trunk.Stats(); sessions != 1 || st.Members != 4 {
 		t.Fatalf("exit: %d sessions, %+v", sessions, st)
@@ -196,57 +196,107 @@ func freeAddr(t *testing.T) string {
 	return net.JoinHostPort("127.0.0.1", strconv.Itoa(freePort(t, "tcp")))
 }
 
-// TestHubOffersTheTrunkHellos: the hub refuses a trunk fp before it touches a
-// box (internal/entry/trunk.go trunkFPs); it must name exactly what the edge
-// takes. Checked from the repository's own source.
-func TestHubOffersTheTrunkHellos(t *testing.T) {
-	src, err := os.ReadFile("../internal/entry/trunk.go")
+// goMember is one trunk member over Go's TLS and HTTP/2: CONNECT
+// trunk.Host with the trunk credential and Naive padding of the first 8
+// frames each way.
+func goMember(relay string, roots *x509.CertPool, key string, port int) (io.ReadWriteCloser, error) {
+	d := net.Dialer{Timeout: 5 * time.Second, LocalAddr: &net.TCPAddr{Port: port}}
+	raw, err := tls.DialWithDialer(&d, "tcp", relay, &tls.Config{ServerName: "hk.example", RootCAs: roots, NextProtos: []string{"h2"}})
 	if err != nil {
-		t.Skip("internal/entry is not next to edge")
+		return nil, err
 	}
-	start := bytes.Index(src, []byte("var trunkFPs = map[string]bool{"))
-	if start < 0 {
-		t.Fatal("trunkFPs not found")
+	cc, err := (&http2.Transport{}).NewClientConn(raw)
+	if err != nil {
+		raw.Close()
+		return nil, err
 	}
-	body := src[start:]
-	body = body[:bytes.Index(body, []byte("\n}"))]
-	hub := map[string]bool{}
-	for _, part := range bytes.Split(body, []byte(`"`))[1:] {
-		if s := string(part); !strings.ContainsAny(s, ":{}\n\t ,") && s != "" {
-			hub[s] = true
-		}
+	body, feed := io.Pipe()
+	req := &http.Request{Method: http.MethodConnect, URL: &url.URL{Host: trunk.Host}, Host: trunk.Host, Body: body, ContentLength: -1,
+		Header: http.Header{"Proxy-Authorization": {basicAuth(trunk.User, key)}, "Padding": {strings.Repeat("~", 40)}}}
+	resp, err := cc.RoundTrip(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		raw.Close()
+		return nil, fmt.Errorf("connect: %v %v", resp, err)
 	}
-	if len(hub) != len(trunk.Hellos) {
-		t.Fatalf("hub offers %v, edge takes %v", hub, trunk.HelloNames())
-	}
-	for name := range trunk.Hellos {
-		if !hub[name] {
-			t.Fatalf("hub does not offer %s", name)
-		}
-	}
+	return &goTunnel{r: &unpadReader{r: resp.Body}, w: &padWriter{w: feed}, closers: []io.Closer{feed, resp.Body, raw}}, nil
 }
 
-func TestTrunkEntryConfig(t *testing.T) {
-	env := map[string]string{
-		"EDGE_TRUNK_EXIT": "203.0.113.8:443", "EDGE_TRUNK_SNI": "hk.example", "EDGE_TRUNK_KEY": "trunk-key-0123456789abcdef-xyz",
-		"EDGE_TRUNK_FP": "chrome_131", "EDGE_TRUNK_MEMBERS": "32", "EDGE_TRUNK_FORWARD": "8053=2053,8443=443", "EDGE_TRUNK_UDP": "8443=443",
+type goTunnel struct {
+	r       io.Reader
+	w       io.Writer
+	closers []io.Closer
+}
+
+func (g *goTunnel) Read(p []byte) (int, error)  { return g.r.Read(p) }
+func (g *goTunnel) Write(p []byte) (int, error) { return g.w.Write(p) }
+func (g *goTunnel) Close() error {
+	for _, c := range g.closers {
+		_ = c.Close()
 	}
-	c, err := TrunkEntryConfigFromEnv(func(k string) string { return env[k] })
-	if err != nil {
-		t.Fatal(err)
+	return nil
+}
+
+type padWriter struct {
+	w    io.Writer
+	sent int
+}
+
+func (p *padWriter) Write(b []byte) (int, error) {
+	if p.sent >= 8 {
+		return p.w.Write(b)
 	}
-	if c.Members != 32 || c.TCP[8053] != 2053 || c.UDP[8443] != 443 || len(c.UDP) != 1 {
-		t.Fatalf("%+v", c)
-	}
-	for k, bad := range map[string]string{
-		"EDGE_TRUNK_EXIT": "hk.example:443", "EDGE_TRUNK_SNI": "203.0.113.8", "EDGE_TRUNK_KEY": "short",
-		"EDGE_TRUNK_FP": "chrome", "EDGE_TRUNK_MEMBERS": "0", "EDGE_TRUNK_FORWARD": "",
-	} {
-		was := env[k]
-		env[k] = bad
-		if _, err := TrunkEntryConfigFromEnv(func(k string) string { return env[k] }); err == nil {
-			t.Fatalf("%s=%q accepted", k, bad)
+	written := 0
+	for len(b) > 0 && p.sent < 8 {
+		n := min(len(b), 65535-3-16)
+		frame := append([]byte{byte(n >> 8), byte(n), 16}, b[:n]...)
+		frame = append(frame, make([]byte, 16)...)
+		if _, err := p.w.Write(frame); err != nil {
+			return written, err
 		}
-		env[k] = was
+		p.sent++
+		written += n
+		b = b[n:]
 	}
+	if len(b) > 0 {
+		n, err := p.w.Write(b)
+		return written + n, err
+	}
+	return written, nil
+}
+
+type unpadReader struct {
+	r         io.Reader
+	got, left int
+	pad       int
+}
+
+func (u *unpadReader) Read(b []byte) (int, error) {
+	for u.got < 8 || u.left > 0 {
+		if u.left == 0 {
+			var h [3]byte
+			if _, err := io.ReadFull(u.r, h[:]); err != nil {
+				return 0, err
+			}
+			u.left, u.pad = int(h[0])<<8|int(h[1]), int(h[2])
+			u.got++
+			if u.left == 0 {
+				if _, err := io.CopyN(io.Discard, u.r, int64(u.pad)); err != nil {
+					return 0, err
+				}
+				continue
+			}
+		}
+		if len(b) > u.left {
+			b = b[:u.left]
+		}
+		n, err := u.r.Read(b)
+		u.left -= n
+		if u.left == 0 && n > 0 && u.pad > 0 {
+			if _, err := io.CopyN(io.Discard, u.r, int64(u.pad)); err != nil {
+				return n, err
+			}
+		}
+		return n, err
+	}
+	return u.r.Read(b)
 }

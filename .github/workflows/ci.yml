@@ -49,11 +49,17 @@ jobs:
           cache-dependency-path: |
             go.sum
             edge/go.sum
+            trunkentry/go.sum
       - run: go vet ./...
       - run: go test -p 1 -count=1 ./...
       - name: edge
         working-directory: edge
         run: go vet ./... && go test -count=1 ./...
+      - name: trunk entry
+        working-directory: trunkentry
+        env:
+          CGO_ENABLED: '0'
+        run: go vet -tags with_purego ./... && go test -tags with_purego -count=1 ./...
 
   admin:
     runs-on: ubuntu-24.04

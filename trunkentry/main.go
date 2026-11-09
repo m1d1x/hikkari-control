@@ -1,18 +1,26 @@
+// Command nekko-trunk-entry is the Russian half of the cascade with its trunk
+// (hikkari-protocol trunk, spec/trunk.md; hikkari-client
+// plans/2026-11-05-ru-cascade.md, шаг 2). It takes clients' TCP connections and
+// UDP datagrams on its ports and carries them over a pool of members to a
+// Hikkari relay abroad, which hands them to its own services on loopback.
+//
+//	client ─► :443 entry (RU) ═ pool, EDGE_TRUNK_MEMBERS, Chromium ═► exit relay ─► 127.0.0.1:443
+//
+// What crosses the border is the trunk's own Hikkari stream channel, dialled
+// by Chromium (trunk/chromium, the cronet build the client core links), never
+// the client's TLS: опыт 0 found the border cutting clients' hellos both ways.
+// The entry ends the client's TCP only; the client's TLS and keys stay end to
+// end with the exit's relay. It holds the trunk key and nothing of any
+// subscriber.
+//
+// Its own binary, not an EDGE_PROTO of nekko-edge: it links cronet (on Linux
+// libcronet.so beside the binary, -tags with_purego), which no relay needs.
+//
+// Usage:
+//
+//	nekko-trunk-entry          run with EDGE_TRUNK_* from the environment
+//	nekko-trunk-entry check    validate the environment and load libcronet, then exit
 package main
-
-// EDGE_PROTO=trunk-entry is the Russian half of the cascade with its trunk
-// (package trunk; hikkari-client plans/2026-11-05-ru-cascade.md, шаг 2). It
-// takes clients' TCP connections and UDP datagrams on its ports and carries
-// them over a pool of members to a Hikkari relay abroad, which hands them to
-// its own services on loopback.
-//
-//	client ─► :443 trunk-entry (RU) ═ pool, EDGE_TRUNK_MEMBERS ═► exit relay ─► 127.0.0.1:443
-//
-// What crosses the border is the trunk's TLS with the hello the hub chose
-// (EDGE_TRUNK_FP), never the client's: опыт 0 found the border cutting
-// clients' hellos both ways. The entry terminates the client's TCP only; the
-// client's TLS and keys stay end to end with the exit's relay. It holds the
-// trunk key and nothing of any subscriber.
 
 import (
 	"context"
@@ -30,14 +38,37 @@ import (
 	"time"
 
 	"github.com/m1d1x/hikkari-protocol/trunk"
+	"github.com/m1d1x/hikkari-protocol/trunk/chromium"
 )
 
-const protoTrunkEntry = "trunk-entry"
+func main() {
+	cmd := "run"
+	if len(os.Args) > 1 {
+		cmd = os.Args[1]
+	}
+	c, err := ConfigFromEnv(os.Getenv)
+	if err != nil {
+		log.Fatalf("nekko-trunk-entry: %v", err)
+	}
+	if err := chromium.Load(); err != nil {
+		log.Fatalf("nekko-trunk-entry: %v", err)
+	}
+	switch cmd {
+	case "check":
+		fmt.Printf("config OK, Chromium %s\n", chromium.Version())
+	case "run":
+		if err := run(c); err != nil {
+			log.Fatalf("nekko-trunk-entry: %v", err)
+		}
+	default:
+		fmt.Fprintf(os.Stderr, "usage: nekko-trunk-entry [run|check]\n")
+		os.Exit(2)
+	}
+}
 
-// TrunkEntryConfig is EDGE_TRUNK_*.
-type TrunkEntryConfig struct {
+// Config is EDGE_TRUNK_*.
+type Config struct {
 	Exit, SNI, Key string
-	Hello          string
 	Members        int
 	// TCP and UDP map a port the entry listens on to the exit's loopback
 	// port it reaches.
@@ -47,19 +78,18 @@ type TrunkEntryConfig struct {
 }
 
 const (
-	defaultTrunkMembers = 32
-	maxTrunkMembers     = 128
+	defaultMembers = 32
+	maxMembers     = 128
 	// Source ports below Linux's ephemeral range (32768-60999), so the
 	// members' chosen ports do not race the kernel's own picks.
-	defaultTrunkPortLo = 20000
-	defaultTrunkPortHi = 32767
+	defaultPortLo = 20000
+	defaultPortHi = 32767
 )
 
-func TrunkEntryConfigFromEnv(get func(string) string) (TrunkEntryConfig, error) {
-	c := TrunkEntryConfig{
-		Exit: strings.TrimSpace(get("EDGE_TRUNK_EXIT")), SNI: strings.TrimSpace(get("EDGE_TRUNK_SNI")),
-		Key: get("EDGE_TRUNK_KEY"), Hello: strings.TrimSpace(get("EDGE_TRUNK_FP")),
-		Members: defaultTrunkMembers, PortLo: defaultTrunkPortLo, PortHi: defaultTrunkPortHi,
+func ConfigFromEnv(get func(string) string) (Config, error) {
+	c := Config{
+		Exit: strings.TrimSpace(get("EDGE_TRUNK_EXIT")), SNI: strings.TrimSpace(get("EDGE_TRUNK_SNI")), Key: get("EDGE_TRUNK_KEY"),
+		Members: defaultMembers, PortLo: defaultPortLo, PortHi: defaultPortHi,
 	}
 	host, port, err := net.SplitHostPort(c.Exit)
 	if err != nil || net.ParseIP(host) == nil {
@@ -74,12 +104,9 @@ func TrunkEntryConfigFromEnv(get func(string) string) (TrunkEntryConfig, error) 
 	if err := trunk.ParseKey(c.Key); err != nil {
 		return c, fmt.Errorf("EDGE_TRUNK_KEY: %w", err)
 	}
-	if _, ok := trunk.Hellos[c.Hello]; !ok {
-		return c, fmt.Errorf("EDGE_TRUNK_FP: %q is not one of %s", c.Hello, strings.Join(trunk.HelloNames(), ", "))
-	}
 	if v := get("EDGE_TRUNK_MEMBERS"); v != "" {
-		if c.Members, err = strconv.Atoi(v); err != nil || c.Members < 1 || c.Members > maxTrunkMembers {
-			return c, fmt.Errorf("EDGE_TRUNK_MEMBERS: %q, 1-%d", v, maxTrunkMembers)
+		if c.Members, err = strconv.Atoi(v); err != nil || c.Members < 1 || c.Members > maxMembers {
+			return c, fmt.Errorf("EDGE_TRUNK_MEMBERS: %q, 1-%d", v, maxMembers)
 		}
 	}
 	if v := get("EDGE_TRUNK_STALL"); v != "" {
@@ -96,20 +123,20 @@ func TrunkEntryConfigFromEnv(get func(string) string) (TrunkEntryConfig, error) 
 		}
 		c.PortLo, c.PortHi = a, b
 	}
-	if c.TCP, err = trunkForwards(get("EDGE_TRUNK_FORWARD"), "EDGE_TRUNK_FORWARD"); err != nil {
+	if c.TCP, err = forwards(get("EDGE_TRUNK_FORWARD"), "EDGE_TRUNK_FORWARD"); err != nil {
 		return c, err
 	}
 	if len(c.TCP) == 0 {
 		return c, errors.New("EDGE_TRUNK_FORWARD: empty, an entry must forward something")
 	}
-	if c.UDP, err = trunkForwards(get("EDGE_TRUNK_UDP"), "EDGE_TRUNK_UDP"); err != nil {
+	if c.UDP, err = forwards(get("EDGE_TRUNK_UDP"), "EDGE_TRUNK_UDP"); err != nil {
 		return c, err
 	}
 	return c, nil
 }
 
-// trunkForwards reads "listen=exitport,...".
-func trunkForwards(raw, name string) (map[int]uint16, error) {
+// forwards reads "listen=exitport,...".
+func forwards(raw, name string) (map[int]uint16, error) {
 	out := map[int]uint16{}
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -130,30 +157,23 @@ func trunkForwards(raw, name string) (map[int]uint16, error) {
 	return out, nil
 }
 
-func runTrunkEntry() error {
-	c, err := TrunkEntryConfigFromEnv(osEnv)
-	if err != nil {
-		return err
-	}
+func run(c Config) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	entry, err := startTrunkEntry(ctx, c, nil)
+	dial := chromium.Dialer{Exit: c.Exit, SNI: c.SNI, Key: c.Key}.Dial
+	entry, err := start(ctx, c, dial)
 	if err != nil {
 		return err
 	}
-	go logTrunkEntry(ctx, entry)
-	log.Printf("nekko-edge: trunk entry up: exit %s (%s), %d members, fp %s, tcp %v, udp %v",
-		c.Exit, c.SNI, c.Members, c.Hello, forwardList(c.TCP), forwardList(c.UDP))
+	go logStats(ctx, entry)
+	log.Printf("nekko-trunk-entry: up: exit %s (%s), %d members, Chromium %s, tcp %v, udp %v",
+		c.Exit, c.SNI, c.Members, chromium.Version(), forwardList(c.TCP), forwardList(c.UDP))
 	<-ctx.Done()
 	return nil
 }
 
-// startTrunkEntry opens the listeners and the pool. dial replaces the
-// network dialer in tests.
-func startTrunkEntry(ctx context.Context, c TrunkEntryConfig, dial trunk.Dial) (*trunk.Entry, error) {
-	if dial == nil {
-		dial = trunk.Dialer{Exit: c.Exit, SNI: c.SNI, Hello: trunk.Hellos[c.Hello], Key: c.Key}.Dial
-	}
+// start opens the listeners and the pool.
+func start(ctx context.Context, c Config, dial trunk.Dial) (*trunk.Entry, error) {
 	ports, err := trunk.NewPortBook(c.PortLo, c.PortHi, 0)
 	if err != nil {
 		return nil, err
@@ -163,9 +183,9 @@ func startTrunkEntry(ctx context.Context, c TrunkEntryConfig, dial trunk.Dial) (
 		return nil, err
 	}
 	s := entry.Session()
-	var listeners []func()
+	var closers []func()
 	fail := func(err error) (*trunk.Entry, error) {
-		for _, close := range listeners {
+		for _, close := range closers {
 			close()
 		}
 		return nil, err
@@ -173,14 +193,14 @@ func startTrunkEntry(ctx context.Context, c TrunkEntryConfig, dial trunk.Dial) (
 	for port, to := range c.TCP {
 		ln, err := net.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.Itoa(port)))
 		if err != nil {
-			return fail(fmt.Errorf("trunk entry tcp :%d: %w", port, err))
+			return fail(fmt.Errorf("tcp :%d: %w", port, err))
 		}
-		listeners = append(listeners, func() { ln.Close() })
+		closers = append(closers, func() { ln.Close() })
 		go func() {
 			for {
 				conn, err := ln.Accept()
 				if err != nil {
-					if ctx.Err() != nil {
+					if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 						return
 					}
 					time.Sleep(100 * time.Millisecond)
@@ -196,14 +216,14 @@ func startTrunkEntry(ctx context.Context, c TrunkEntryConfig, dial trunk.Dial) (
 	for port, to := range c.UDP {
 		pc, err := net.ListenPacket("udp", net.JoinHostPort("0.0.0.0", strconv.Itoa(port)))
 		if err != nil {
-			return fail(fmt.Errorf("trunk entry udp :%d: %w", port, err))
+			return fail(fmt.Errorf("udp :%d: %w", port, err))
 		}
-		listeners = append(listeners, func() { pc.Close() })
-		go serveTrunkUDP(ctx, s, pc, to)
+		closers = append(closers, func() { pc.Close() })
+		go serveUDP(ctx, s, pc, to)
 	}
 	go func() {
 		<-ctx.Done()
-		for _, close := range listeners {
+		for _, close := range closers {
 			close()
 		}
 	}()
@@ -211,8 +231,8 @@ func startTrunkEntry(ctx context.Context, c TrunkEntryConfig, dial trunk.Dial) (
 	return entry, nil
 }
 
-// serveTrunkUDP gives each client address on pc its own flow.
-func serveTrunkUDP(ctx context.Context, s *trunk.Session, pc net.PacketConn, to uint16) {
+// serveUDP gives each client address on pc its own flow.
+func serveUDP(ctx context.Context, s *trunk.Session, pc net.PacketConn, to uint16) {
 	var mu sync.Mutex
 	flows := map[string]*trunk.Flow{}
 	buf := make([]byte, trunk.MaxPayload)
@@ -247,8 +267,8 @@ func serveTrunkUDP(ctx context.Context, s *trunk.Session, pc net.PacketConn, to 
 	}
 }
 
-// logTrunkEntry writes the pool's counters once a minute.
-func logTrunkEntry(ctx context.Context, entry *trunk.Entry) {
+// logStats writes the pool's counters once a minute.
+func logStats(ctx context.Context, entry *trunk.Entry) {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {
@@ -258,7 +278,7 @@ func logTrunkEntry(ctx context.Context, entry *trunk.Entry) {
 		case <-t.C:
 			st := entry.Session().Stats()
 			dead, kills := entry.Ports().Counts()
-			log.Printf("nekko-edge: trunk entry: members=%d joined=%d stalled=%d broken=%d resent=%d dead_ports=%d port_kills=%d streams=%d/%d reset=%d up=%d down=%d flows=%d dgrams=%d/%d copies=%d",
+			log.Printf("nekko-trunk-entry: members=%d joined=%d stalled=%d broken=%d resent=%d dead_ports=%d port_kills=%d streams=%d/%d reset=%d up=%d down=%d flows=%d dgrams=%d/%d copies=%d",
 				st.Members, st.MembersJoined, st.MembersStall, st.MembersBroken, st.Resent, dead, kills,
 				st.Streams, st.StreamsOpened, st.StreamsReset, st.Up, st.Down, st.Flows, st.DgramsOut, st.DgramsIn, st.DgramsCopy)
 		}

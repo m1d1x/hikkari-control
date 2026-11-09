@@ -140,6 +140,10 @@ type Provisioner struct {
 	// into a vantage slot (К3′ / П9.12). Its token is the slot's own, issued
 	// at deploy time.
 	proberBuilds map[string]EdgeBuild
+	// trunkBuilds and cronetBuilds are the cascade's trunk entry
+	// (linux-<arch>/nekko-trunk-entry) and the libcronet.so it loads
+	// (trunk.go).
+	trunkBuilds, cronetBuilds map[string]EdgeBuild
 	proberAPIURL string
 }
 
@@ -172,6 +176,8 @@ func NewProvisioner(svc *Service, dial Dialer, artifacts string) *Provisioner {
 		svc: svc, dial: dial,
 		builds:       loadEdgeBuilds(artifacts),
 		proberBuilds: loadProberBuilds(artifacts),
+		trunkBuilds:  loadNamedBuilds(artifacts, "nekko-trunk-entry"),
+		cronetBuilds: loadNamedBuilds(artifacts, "libcronet.so"),
 		probeTimeout: 5 * time.Minute, probePoll: 2 * time.Second, drainPoll: drainPoll,
 		jobTimeout:   30 * time.Minute,
 		bootWait:     bootWait,

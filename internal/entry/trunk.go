@@ -13,35 +13,32 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/applog"
 )
 
-// The cascade's trunk (hikkari-control/edge/trunk; hikkari-client
+// The cascade's trunk (hikkari-protocol trunk, spec/trunk.md; hikkari-client
 // plans/2026-11-05-ru-cascade.md, шаг 2), stood by the hub.
 //
 // The exit end is part of a Hikkari relay abroad: its identity carries a
 // trunk key and the loopback ports the trunk may reach, its env says them to
 // the edge (EDGE_HIKKARI_TRUNK_*), and the relay is reconfigured like any
 // other change of its env. The entry end is experiment equipment on a box in
-// Russia, like the provoke receiver: its own unit (nekko-trunk-entry), its own
-// copy of the edge binary, no record, no subscriber, no pulse.
+// Russia, like the provoke receiver: its own unit and binary
+// (hikkari-control/trunkentry, members dialled by Chromium) with the
+// libcronet.so it loads, no record, no subscriber, no pulse.
 //
 //	cmd/server entry-box trunk-exit <box> <port,...>      # trunk on the box's Hikkari relays
 //	cmd/server entry-box trunk-exit-off <box>             # trunk off
-//	cmd/server entry-box trunk-entry <box> <exit-box> <fp> <listen=port,...> [members]
+//	cmd/server entry-box trunk-entry <box> <exit-box> <listen=port,...> [members]
 //	cmd/server entry-box trunk-entry-off <box>
 
 const (
-	trunkEntryUnit    = "nekko-trunk-entry"
-	trunkEntryBinary  = "/usr/local/bin/nekko-trunk-entry"
+	trunkEntryUnit = "nekko-trunk-entry"
+	// trunkEntryDir holds the binary and libcronet.so side by side: the
+	// binary loads the library from its own directory.
+	trunkEntryDir     = "/usr/local/lib/nekko-trunk-entry"
+	trunkEntryBinary  = trunkEntryDir + "/nekko-trunk-entry"
 	trunkEntryEnvFile = "/etc/nekko-trunk-entry.env"
 	// DefaultTrunkMembers is the pool of the cascade plan (16–64 members).
 	DefaultTrunkMembers = 32
 )
-
-// trunkFPs are the hellos the edge offers a member (edge/trunk.Hellos). The
-// hub refuses a name the edge would refuse at check, before it touches a box.
-var trunkFPs = map[string]bool{
-	"chrome_131": true, "chrome_133": true, "chrome_120": true, "firefox_120": true,
-	"firefox_148": true, "safari_26": true, "edge_106": true,
-}
 
 // SetTrunkExit gives every Hikkari relay on box a trunk reaching ports on
 // its loopback, keeping a key it already has; no ports takes the trunk off.
@@ -94,8 +91,6 @@ func (s *Service) SetTrunkExit(ctx context.Context, box string, ports []int) ([]
 type TrunkEntryOptions struct {
 	// Exit is the box whose Hikkari relay the trunk ends at.
 	Exit string
-	// FP is the members' ClientHello (edge/trunk.Hellos).
-	FP string
 	// Forward maps a port the entry listens on (TCP and UDP) to the exit's
 	// loopback port it reaches; each must be open on the exit.
 	Forward map[int]int
@@ -137,9 +132,9 @@ func trunkEntryEnv(addr, sni, key string, o TrunkEntryOptions) string {
 		pairs = append(pairs, fmt.Sprintf("%d=%d", l, o.Forward[l]))
 	}
 	forward := strings.Join(pairs, ",")
-	return fmt.Sprintf("# Written by the nekko hub: the cascade's trunk entry.\nEDGE_PROTO=trunk-entry\n"+
-		"EDGE_TRUNK_EXIT=%s\nEDGE_TRUNK_SNI=%s\nEDGE_TRUNK_KEY=%s\nEDGE_TRUNK_FP=%s\nEDGE_TRUNK_MEMBERS=%d\n"+
-		"EDGE_TRUNK_FORWARD=%s\nEDGE_TRUNK_UDP=%s\n", addr, sni, key, o.FP, o.Members, forward, forward)
+	return fmt.Sprintf("# Written by the nekko hub: the cascade's trunk entry.\n"+
+		"EDGE_TRUNK_EXIT=%s\nEDGE_TRUNK_SNI=%s\nEDGE_TRUNK_KEY=%s\nEDGE_TRUNK_MEMBERS=%d\n"+
+		"EDGE_TRUNK_FORWARD=%s\nEDGE_TRUNK_UDP=%s\n", addr, sni, key, o.Members, forward, forward)
 }
 
 const trunkEntryUnitFile = `# Installed by the nekko hub: the cascade's trunk entry.
@@ -166,25 +161,33 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 `
 
-// trunkEntrySwapScript refuses a listen port another process holds, checks
-// the new binary against the new env, opens the ports in ufw, restarts the
-// unit and waits until it listens on all of them.
+// trunkEntrySwapScript takes the staged directory (dir.new: the running
+// copy plus the files that changed, as file.new), refuses a listen port
+// another process holds, checks the new binary with the new library against
+// the new env, swaps the directory, opens the ports in ufw, restarts the unit
+// and waits until it listens on all of them.
 const trunkEntrySwapScript = `set -eu
-bin=` + trunkEntryBinary + `
+dir=` + trunkEntryDir + `
 env=` + trunkEntryEnvFile + `
 for port in "$@"; do
 	holder=$(ss -tlnpH "sport = :$port" | grep -v nekko-trunk-en || true)
 	if [ -n "$holder" ]; then
 		echo "порт $port занят: $holder" >&2
-		rm -f "$bin.new" "$env.new"
+		rm -rf "$dir.new" "$env.new"
 		exit 3
 	fi
 done
-[ -f "$bin.new" ] || cp "$bin" "$bin.new"
-chmod 755 "$bin.new"
+for f in nekko-trunk-entry libcronet.so; do
+	if [ -f "$dir.new/$f.new" ]; then mv "$dir.new/$f.new" "$dir.new/$f"; fi
+done
+chmod 755 "$dir.new" "$dir.new/nekko-trunk-entry"
+chmod 644 "$dir.new/libcronet.so"
 chmod 600 "$env.new"
-( set -a; . "$env.new"; set +a; "$bin.new" check ) >/dev/null
-mv "$bin.new" "$bin"
+( set -a; . "$env.new"; set +a; "$dir.new/nekko-trunk-entry" check )
+rm -rf "$dir.old"
+if [ -d "$dir" ]; then mv "$dir" "$dir.old"; fi
+mv "$dir.new" "$dir"
+rm -rf "$dir.old"
 mv "$env.new" "$env"
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
 	for port in "$@"; do
@@ -224,17 +227,15 @@ if [ -n "$ports" ] && command -v ufw >/dev/null 2>&1 && ufw status | grep -q "St
 		ufw delete allow "$port/udp" >/dev/null 2>&1 || true
 	done
 fi
-rm -f /etc/systemd/system/` + trunkEntryUnit + `.service ` + trunkEntryEnvFile + ` ` + trunkEntryBinary + `
+rm -f /etc/systemd/system/` + trunkEntryUnit + `.service ` + trunkEntryEnvFile + `
+rm -rf ` + trunkEntryDir + ` ` + trunkEntryDir + `.new
 systemctl daemon-reload
 echo "` + trunkEntryUnit + ` снят${ports:+, порты $ports закрыты}"
 `
 
 // StandTrunkEntry stands up or updates the trunk entry on box. Running it
-// again is the update (a new exit, fp or pool).
+// again is the update (a new exit or pool, a new build).
 func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEntryOptions) error {
-	if !trunkFPs[o.FP] {
-		return fmt.Errorf("%w: fp %q", ErrRejected, o.FP)
-	}
 	if o.Members == 0 {
 		o.Members = DefaultTrunkMembers
 	}
@@ -268,14 +269,28 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 		applog.Info(ctx, "entry", fmt.Sprintf(format, args...), applog.F("box", box))
 	}
 	applog.Info(ctx, "entry", "operator trunk entry on box", applog.F("box", box), applog.F("exit", o.Exit),
-		applog.F("fp", o.FP), applog.F("members", o.Members), applog.F("listen", strings.Join(listen, ",")))
-	if err := stageLabBinary(ctx, r, p.builds, trunkEntryBinary, logf); err != nil {
+		applog.F("members", o.Members), applog.F("listen", strings.Join(listen, ",")))
+	return standTrunkEntry(ctx, r, p.trunkBuilds, p.cronetBuilds, trunkEntryEnv(addr, sni, key, o), listen, logf)
+}
+
+// standTrunkEntry is StandTrunkEntry's work on an open box. A file the box
+// already has is not sent again; a failed check leaves the running entry as
+// it was.
+func standTrunkEntry(ctx context.Context, r Remote, bins, libs map[string]EdgeBuild, env string, listen []string, logf func(string, ...any)) error {
+	staged := trunkEntryDir + ".new"
+	if _, err := r.Run(ctx, "rm -rf "+staged+" && mkdir -p "+staged+" && (cp -a "+trunkEntryDir+"/. "+staged+"/ 2>/dev/null || true)", nil); err != nil {
+		return fmt.Errorf("каталог входа: %w", err)
+	}
+	if err := stageLabBinary(ctx, r, bins, staged+"/nekko-trunk-entry", logf); err != nil {
+		return err
+	}
+	if err := stageLabBinary(ctx, r, libs, staged+"/libcronet.so", logf); err != nil {
 		return err
 	}
 	if _, err := r.Run(ctx, "cat > /etc/systemd/system/"+trunkEntryUnit+".service", strings.NewReader(trunkEntryUnitFile)); err != nil {
 		return fmt.Errorf("unit-файл: %w", err)
 	}
-	if _, err := r.Run(ctx, "umask 077; cat > "+trunkEntryEnvFile+".new", strings.NewReader(trunkEntryEnv(addr, sni, key, o))); err != nil {
+	if _, err := r.Run(ctx, "umask 077; cat > "+trunkEntryEnvFile+".new", strings.NewReader(env)); err != nil {
 		return fmt.Errorf("env: %w", err)
 	}
 	out, err := r.Run(ctx, "bash -s -- "+strings.Join(listen, " "), strings.NewReader(trunkEntrySwapScript))
