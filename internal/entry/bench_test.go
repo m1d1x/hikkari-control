@@ -388,6 +388,11 @@ func TestCompareWithControlCancelsDriftOnTheSharedPath(t *testing.T) {
 	if ok, why, _ := CompareWithControl(before, pair(run(63, 140), run(60, 80)), benchPolicyUnderTest()); ok || !strings.Contains(strings.Join(why, ";"), "rtt") {
 		t.Fatalf("a canary whose rtt grew alone was passed: %v", why)
 	}
+	// The control alone sped up, the canary held its own numbers: the
+	// control's path, not the build (unl1 against euw1, 09.11).
+	if ok, why, err := CompareWithControl(pair(run(230, 75), run(128, 78)), pair(run(226, 76), run(163, 77)), benchPolicyUnderTest()); err != nil || !ok {
+		t.Fatalf("a faster control condemned a canary that held: %v %v", why, err)
+	}
 	broke := run(63, 84)
 	broke.Drops = 2
 	if ok, _, _ := CompareWithControl(before, pair(broke, run(60, 80)), benchPolicyUnderTest()); ok {

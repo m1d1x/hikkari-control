@@ -106,6 +106,14 @@ func Steady(r BenchResult) string {
 // down more than 20%, RTT ratio up more than 30% — or broke while the
 // control did not. Drift on the path the two share cancels out. A control
 // that broke, or a baseline that did, is no verdict.
+//
+// A metric condemns the build only when the canary lost ground both against
+// the control AND on its own numbers. The ratio alone is as noisy as the
+// control's own path: on 08–09.11 unl1 held 194→213 and 239/220→224/229
+// Mbit/s across the swap while euw1, the control, went 87→149→178, and the
+// ratio called an unchanged build "worse". A build that is really worse loses
+// on both: the control cannot make a slower canary look fast, and a path that
+// slowed for both leaves the ratio intact.
 func CompareWithControl(before, after BenchResult, p BenchPolicy) (ok bool, reasons []string, err error) {
 	kb, ka := before.Control, after.Control
 	usable := func(r *BenchResult) bool {
@@ -128,14 +136,20 @@ func CompareWithControl(before, after BenchResult, p BenchPolicy) (ok bool, reas
 		reasons = append(reasons, "прогон после пустой")
 	}
 	share := func(c, k float64) float64 { return c / k }
-	if b, a := share(before.DownMbps, kb.DownMbps), share(after.DownMbps, ka.DownMbps); a < b*p.MinThroughputShare {
-		reasons = append(reasons, fmt.Sprintf("приём относительно контроля %.2f против %.2f до", a, b))
+	if b, a := share(before.DownMbps, kb.DownMbps), share(after.DownMbps, ka.DownMbps); a < b*p.MinThroughputShare &&
+		after.DownMbps < before.DownMbps*p.MinThroughputShare {
+		reasons = append(reasons, fmt.Sprintf("приём относительно контроля %.2f против %.2f до, сам %s против %s",
+			a, b, rate(after.DownMbps), rate(before.DownMbps)))
 	}
-	if b, a := share(before.UpMbps, kb.UpMbps), share(after.UpMbps, ka.UpMbps); a < b*p.MinThroughputShare {
-		reasons = append(reasons, fmt.Sprintf("отдача относительно контроля %.2f против %.2f до", a, b))
+	if b, a := share(before.UpMbps, kb.UpMbps), share(after.UpMbps, ka.UpMbps); a < b*p.MinThroughputShare &&
+		after.UpMbps < before.UpMbps*p.MinThroughputShare {
+		reasons = append(reasons, fmt.Sprintf("отдача относительно контроля %.2f против %.2f до, сама %s против %s",
+			a, b, rate(after.UpMbps), rate(before.UpMbps)))
 	}
-	if b, a := share(before.ChatRTTP50Ms, kb.ChatRTTP50Ms), share(after.ChatRTTP50Ms, ka.ChatRTTP50Ms); a > b*p.MaxRTTGrowth {
-		reasons = append(reasons, fmt.Sprintf("rtt относительно контроля %.2f против %.2f до", a, b))
+	if b, a := share(before.ChatRTTP50Ms, kb.ChatRTTP50Ms), share(after.ChatRTTP50Ms, ka.ChatRTTP50Ms); a > b*p.MaxRTTGrowth &&
+		after.ChatRTTP50Ms > before.ChatRTTP50Ms*p.MaxRTTGrowth {
+		reasons = append(reasons, fmt.Sprintf("rtt относительно контроля %.2f против %.2f до, сам %.0f мс против %.0f",
+			a, b, after.ChatRTTP50Ms, before.ChatRTTP50Ms))
 	}
 	return len(reasons) == 0, reasons, nil
 }
