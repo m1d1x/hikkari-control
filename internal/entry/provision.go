@@ -766,6 +766,14 @@ func (j *jobRun) provision(password string) error {
 		}
 	}
 
+	// A dead relay's unit may still run: unl1-1 (Naive) kept serving tcp/443
+	// beside its Hikkari successor after an adoption (09.11), and SO_REUSEPORT
+	// split the dials between a revoked key and the new one, so admission read
+	// "unknown" half the time. Harden opens the live relays' ports again.
+	if err := j.sweepDead(r); err != nil {
+		return err
+	}
+
 	j.step("relays")
 	relays, err := j.ensureRelays()
 	if err != nil {
