@@ -54,6 +54,14 @@ func (s *Service) CascadeProbeLinks(ctx context.Context, account, entryBox, exit
 	if err != nil {
 		return nil, err
 	}
+	// A relay serves a key only while the account holds a grant on it, and a
+	// drain (a rollout's canary, a replacement) revokes grants: a subscriber
+	// gets new ones on its next fetch, and so does the watch here, as a
+	// subscriber's fetch would. Without it the watch's key went dead with the
+	// first drain (10:32 09.11) and every round read the protocol red.
+	if _, err := s.batch.BundleFor(ctx, id, entry.GrantMeta{}, ""); err != nil {
+		return nil, err
+	}
 	// The exit's relays as they stand, not as the pool hands them out: a
 	// relay a canary took out of the pool is still the exit, and the watch
 	// measures it.

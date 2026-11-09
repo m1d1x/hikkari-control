@@ -171,9 +171,13 @@ func TestCascadeProbeLinksAreTheExitStraightAndThroughTheEntry(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE hub_accounts SET all_relays = true WHERE name = $1`, name); err != nil {
 		t.Fatal(err)
 	}
+	asked := len(batch.asked)
 	links, err := s.CascadeProbeLinks(ctx, name, "ruin1", "unl1", 8443)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(batch.asked) != asked+1 {
+		t.Fatal("the probe links were rendered without a fetch of the account's bundle: its grants lapse with the first drain")
 	}
 	if len(links) != 2 {
 		t.Fatalf("links %q", links)
