@@ -20,6 +20,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,7 +29,7 @@ import (
 	hkserver "github.com/m1d1x/hikkari-protocol/server"
 )
 
-// Hikkari v1.01 end to end with the real client core (HIKKARI_TEST_CORE, a
+// Hikkari v1 (v1.01, v1.02) end to end with the real client core (HIKKARI_TEST_CORE, a
 // sing-box-lx build with the hikkari outbound): TCP over the Naive channel,
 // UDP over the datagram channel, and UDP over the Naive channel when the
 // datagram channel is off or unreachable. Loopback egress is allowed only here.
@@ -48,6 +50,9 @@ func TestHikkariRealCoreTwoChannels(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer echo.Close()
+	var echoed atomic.Int64
+	var echoMu sync.Mutex
+	echoSources := map[string]bool{}
 	go func() {
 		b := make([]byte, 2048)
 		for {
@@ -55,6 +60,10 @@ func TestHikkariRealCoreTwoChannels(t *testing.T) {
 			if err != nil {
 				return
 			}
+			echoed.Add(1)
+			echoMu.Lock()
+			echoSources[from.String()] = true
+			echoMu.Unlock()
 			_, _ = echo.WriteToUDP(b[:n], from)
 		}
 	}()
@@ -113,9 +122,15 @@ func TestHikkariRealCoreTwoChannels(t *testing.T) {
 		{"datagram", nil, "datagram"},
 		{"udp disabled", map[string]any{"disabled": true}, "uot"},
 		{"datagram unreachable", map[string]any{"server_port": deadPort, "connect_timeout": "1s"}, "uot"},
+		{"v1.02 duplicated", map[string]any{"dup": true}, "dup"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			uotBefore, dgBefore := n.uotFlows.Load(), udp.Flows()
+			streamBefore, datagramBefore := n.dup.Carriers()
+			echoedBefore := echoed.Load()
+			echoMu.Lock()
+			clear(echoSources)
+			echoMu.Unlock()
 			outbound := map[string]any{"type": "hikkari", "tag": "proxy", "server": "127.0.0.1", "server_port": atoi(port), "password": key,
 				"tls": map[string]any{"enabled": true, "server_name": "hk.example", "certificate": []string{certPEM}}}
 			if tc.udp != nil {
@@ -149,6 +164,19 @@ func TestHikkariRealCoreTwoChannels(t *testing.T) {
 			case "uot":
 				if uot == 0 || dg != 0 {
 					t.Fatalf("udp went datagram=%d uot=%d, want uot", dg, uot)
+				}
+			case "dup":
+				// A call is carried by both channels, leaves the relay once per
+				// packet from one exit socket, and comes back once.
+				stream, datagram := n.dup.Carriers()
+				echoMu.Lock()
+				sources := len(echoSources)
+				echoMu.Unlock()
+				if datagram-datagramBefore == 0 || stream-streamBefore == 0 || uot != 0 {
+					t.Fatalf("carriers: datagram %d, stream %d, uot %d", datagram-datagramBefore, stream-streamBefore, uot)
+				}
+				if e := echoed.Load() - echoedBefore; e > int64(sent) || sources != 1 || got > sent {
+					t.Fatalf("far end saw %d packets from %d sources; client got %d of %d", e, sources, got, sent)
 				}
 			}
 			t.Logf("tcp %d bytes; udp %d/%d echoed over %s, worst gap %v", len(body), got, sent, tc.channel, gaps)

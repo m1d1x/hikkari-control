@@ -23,15 +23,16 @@ var errNoLink = errors.New("relay has no client link")
 // adapter: pinSHA256 is the leaf certificate digest, and finalmask is the
 // base64url JSON mask list from the signed record (including Noise).
 // HikkariLink renders a Hikkari v1 relay: one credential, TCP over Naive on tcp/<port>, UDP over QUIC
-// datagrams on udp/<port> of the same host.
+// datagrams on udp/<port> of the same host. dup=1: the relay serves v1.02 duplicated UDP (every
+// edge of this hub does, edge/hikkari.go), so a client may carry a call over both channels at once.
 //
-//	hikkari+v1://hikkari:<key>@<address>:<port>?sni=<domain>#<label>
+//	hikkari+v1://hikkari:<key>@<address>:<port>?sni=<domain>&dup=1#<label>
 func HikkariLink(r entry.RelayRecord) (string, error) {
 	p := r.HikkariParams
 	if r.Proto != entry.ProtoHikkari || p == nil || p.Host == "" || p.User == "" || p.Pass == "" {
 		return "", errNoLink
 	}
-	q := url.Values{"sni": {p.Host}}
+	q := url.Values{"sni": {p.Host}, "dup": {"1"}}
 	u := url.URL{Scheme: "hikkari+v1", Host: net.JoinHostPort(r.Address, strconv.Itoa(r.Port)), User: url.UserPassword(p.User, p.Pass), RawQuery: q.Encode(), Fragment: "Hikkari " + r.Name}
 	return u.String(), nil
 }

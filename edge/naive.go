@@ -136,6 +136,9 @@ type naiveRuntime struct {
 	onKeys func([]string)
 	// uotFlows counts UDP associations over the Naive channel.
 	uotFlows atomic.Int64
+	// dup serves v1.02 duplicated UDP sessions for both channels; set when
+	// the relay is Hikkari.
+	dup *hkserver.DupHub
 }
 
 func newNaiveRuntime(cfg naiveConfig) *naiveRuntime {
@@ -262,10 +265,14 @@ func (g *naiveGate) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	n.serial++
 	id := n.serial
 	n.sessions[id] = naiveSession{key, cancel}
+	hub := n.dup
 	n.mu.Unlock()
 	defer func() { cancel(); n.mu.Lock(); delete(n.sessions, id); n.mu.Unlock() }()
 	if n.cfg.UDP && hkserver.IsUoTHost(r.Host) {
 		ctx = n.withUoT(ctx, r.Host)
+	}
+	if hub != nil && hkserver.IsDupHost(r.Host) {
+		ctx = hkserver.WithDup(ctx, hub, key)
 	}
 	r = r.Clone(ctx)
 	r.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(n.cfg.User+":"+n.cfg.Pass)))

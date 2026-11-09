@@ -1,6 +1,6 @@
 package main
 
-// Hikkari v1.01 on this edge: one protocol with two channels on one relay and
+// Hikkari v1 (v1.01, v1.02) on this edge: one protocol with two channels on one relay and
 // one key. The protocol lives in github.com/m1d1x/hikkari-protocol; the edge
 // gives it the relay's roster, counters, certificate, site and exit policy.
 //
@@ -8,6 +8,9 @@ package main
 //	         UDP-over-TCP fallback inside the same CONNECT tunnel
 //	udp/443  the datagram channel (hikkari-protocol/server: QUIC DATAGRAM);
 //	         an unauthenticated HTTP/3 request gets the same site as tcp/443
+//	both     v1.02 duplicated UDP: a CONNECT to dup.hikkari.arpa and a UDP
+//	         association addressed to it are carriers of one session, one
+//	         exit socket (hikkari-protocol/dup)
 //
 // Both channels admit the same key roster (naiveRuntime.keys), count into the
 // same totals and are revoked together. EDGE_PROTO=hikkari is its own protocol with
@@ -88,6 +91,12 @@ func (n *naiveRuntime) roster() []string {
 // startHikkariUDP opens the datagram channel on udp/<port> of n's listener
 // with the relay's ACME certificate (Caddy's storage) and the roster n admits.
 func startHikkariUDP(ctx context.Context, n *naiveRuntime) (*hkserver.Datagram, error) {
+	// v1.02: one hub for both channels, so the carriers of a session share
+	// one exit socket. Set before the datagram channel admits anyone.
+	n.mu.Lock()
+	n.dup = hkserver.NewDupHub(exitPolicy, 0)
+	hub := n.dup
+	n.mu.Unlock()
 	d, err := hkserver.ListenDatagram(ctx, hkserver.DatagramOptions{
 		Listen:        n.cfg.Listen,
 		Certificate:   hkserver.CaddyCertificate(n.cfg.Storage, n.cfg.Host),
@@ -95,6 +104,7 @@ func startHikkariUDP(ctx context.Context, n *naiveRuntime) (*hkserver.Datagram, 
 		ProbePassword: n.cfg.Pass,
 		Admitter:      n,
 		Exit:          exitPolicy,
+		Dup:           hub,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("hikkari udp: %w", err)

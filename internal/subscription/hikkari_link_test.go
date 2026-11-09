@@ -15,7 +15,7 @@ func TestHikkariLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "hikkari+v1://hikkari:subscriber-key-0123456789@179.253.75.148:443?sni=vm.example#Hikkari%20nvn1"; link != want {
+	if want := "hikkari+v1://hikkari:subscriber-key-0123456789@179.253.75.148:443?dup=1&sni=vm.example#Hikkari%20nvn1"; link != want {
 		t.Fatalf("link\n got %s\nwant %s", link, want)
 	}
 	if plain, err := Link(rec); err != nil || plain != link {
