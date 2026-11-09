@@ -111,7 +111,7 @@ func TestACascadeAccountDialsTheExitThroughTheEntry(t *testing.T) {
 	pass, _ := u.User.Password()
 	if u.Scheme != "hikkari+v1" || u.Host != "192.0.2.10:8443" || u.Query().Get("sni") != "exit.example" ||
 		u.Query().Get("dup") != "1" || u.Query().Get("hikkari-node") != "" || pass == "0123456789abcdef0123" ||
-		u.Fragment != "🇳🇱 амстердам-001 каскад" {
+		u.Fragment != "🇳🇱 амстердам-101" {
 		t.Fatalf("cascade link %s", links[0])
 	}
 	var all bool
@@ -193,5 +193,20 @@ func TestCascadeProbeLinksAreTheExitStraightAndThroughTheEntry(t *testing.T) {
 			t.Fatalf("probe link %s", l)
 		}
 		delete(want, u.Fragment)
+	}
+}
+
+func TestACascadeNumbersTheNodeFromOne(t *testing.T) {
+	for label, want := range map[string]string{
+		"нидерланды-002": "нидерланды-102",
+		"амстердам-123":  "амстердам-1123",
+		"unl1-2":         "unl1-12",
+		"нидерланды":     "нидерланды",
+		"нидерланды-a1":  "нидерланды-a1",
+		"нидерланды-":    "нидерланды-",
+	} {
+		if got := cascadeName(label); got != want {
+			t.Errorf("cascadeName(%q) = %q, want %q", label, got, want)
+		}
 	}
 }

@@ -78,9 +78,9 @@ func (s *Service) cascadeOf(ctx context.Context, account uuid.UUID) (*cascade, e
 // the entry; false for a record the cascade does not carry. label is the
 // exit relay's node label ("амстердам-001"), the name every link reads by;
 // a relay with no node yet is named by itself. The node's id stays off the
-// link (see above), only its name is taken. The name ends in cascadeSuffix:
-// the same relay served directly reads the same label, and a tester's log
-// names the profile it dialled only by this name.
+// link (see above), only its name is taken, numbered by cascadeName: the same
+// relay served directly reads the same label, and a tester's log names the
+// profile it dialled only by this name.
 func (c *cascade) link(rec entry.RelayRecord, label string, dup bool) (string, bool) {
 	if rec.Proto != entry.ProtoHikkari || !c.relays[rec.Name] {
 		return "", false
@@ -98,12 +98,25 @@ func (c *cascade) link(rec entry.RelayRecord, label string, dup bool) (string, b
 	if err != nil {
 		return "", false
 	}
-	u.Fragment = strings.TrimSpace(c.flag + " " + name + " " + cascadeSuffix)
+	u.Fragment = strings.TrimSpace(c.flag + " " + cascadeName(name))
 	return u.String(), true
 }
 
-// cascadeSuffix tells a cascade's link from the exit relay's own.
-const cascadeSuffix = "каскад"
+// cascadeName is a node's label as its cascade reads: the number's first
+// digit says the way in, 0 straight and 1 through the cascade
+// ("нидерланды-002" → "нидерланды-102"). A number that does not start with 0
+// gets the 1 in front ("-123" → "-1123"); a label with no number is kept.
+func cascadeName(label string) string {
+	i := strings.LastIndexByte(label, '-')
+	num := label[i+1:]
+	if i < 0 || num == "" || strings.Trim(num, "0123456789") != "" {
+		return label
+	}
+	if num[0] == '0' {
+		return label[:i+1] + "1" + num[1:]
+	}
+	return label[:i+1] + "1" + num
+}
 
 // countryFlag is the emoji flag of a box row's location ("Amsterdam, NL"),
 // whose last part is an ISO 3166-1 alpha-2 code when the hoster names the
