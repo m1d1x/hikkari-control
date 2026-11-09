@@ -79,7 +79,7 @@ func TestAnExitTakesIPv6OnlyForANameWithoutIPv4(t *testing.T) {
 	}
 	probe.Close()
 
-	edgePort, local := freePort(t, "tcp"), freePort(t, "tcp")
+	edgePort, local := freePort(t, "tcp"), freeLocalPortBase(t)
 	site, refused := freePort(t, "tcp"), freePort(t, "tcp")
 	tcpEchoOn(t, "127.0.0.1", site, "four")
 	tcpEchoOn(t, "::1", site, "six")

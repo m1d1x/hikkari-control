@@ -45,7 +45,7 @@ func TestARealityEdgeCarriesDatagramsToTheInternetButNotToTheBox(t *testing.T) {
 		"EDGE_SHORT_IDS":       sid,
 		"EDGE_CLIENTS":         uuid,
 		"EDGE_COVERS":          coverName,
-		"EDGE_LOCAL_PORT_BASE": strconv.Itoa(freePort(t, "tcp")),
+		"EDGE_LOCAL_PORT_BASE": strconv.Itoa(freeLocalPortBase(t)),
 		"EDGE_ECHO_PORT":       strconv.Itoa(echoPort),
 	}))
 	if err != nil {

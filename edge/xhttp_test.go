@@ -234,7 +234,7 @@ func talk(t *testing.T, door int, wait time.Duration) string {
 // site through the secret path, a port on the box itself gets nothing, and
 // everything off the path is a plain site — not an Xray error.
 func TestAnXhttpEdgeTunnelsUnderTheSecretPathAndIsASiteElsewhere(t *testing.T) {
-	edgePort, local := freePort(t, "tcp"), freeXhttpLocalPort(t)
+	edgePort, local := freePort(t, "tcp"), freeLocalPortBase(t)
 	sitePort, strangerPort := freePort(t, "tcp"), freePort(t, "tcp")
 	tcpEcho(t, sitePort, "site")
 	tcpEcho(t, strangerPort, "stranger")
@@ -384,7 +384,7 @@ func tlsFrontProxy(t *testing.T, edgeAddr string) (int, string) {
 // fronted shape a real nginx gives on a node (H10); the proxy here is the stand
 // -in, nginx itself is verified on the box.
 func TestAPlaintextFrontTunnelsBehindATLSProxy(t *testing.T) {
-	edgePort, local := freePort(t, "tcp"), freeXhttpLocalPort(t)
+	edgePort, local := freePort(t, "tcp"), freeLocalPortBase(t)
 	sitePort := freePort(t, "tcp")
 	tcpEcho(t, sitePort, "site")
 
@@ -486,7 +486,12 @@ func TestTheDecoyAnswersLikeNginx(t *testing.T) {
 	}
 }
 
-func freeXhttpLocalPort(t *testing.T) int {
+// freeLocalPortBase is a free TCP port the configs take as
+// EDGE_LOCAL_PORT_BASE, which they refuse above 65000. The OS hands out
+// ephemeral ports up to 65535, and macOS in sequence: near the top of the
+// range a plain freePort fails every test that starts an edge, several in one
+// run.
+func freeLocalPortBase(t *testing.T) int {
 	t.Helper()
 	for attempt := 0; attempt < 128; attempt++ {
 		port := freePort(t, "tcp")
@@ -494,6 +499,6 @@ func freeXhttpLocalPort(t *testing.T) int {
 			return port
 		}
 	}
-	t.Fatal("no free XHTTP local port within 1024..65000")
+	t.Fatal("no free local port within 1024..65000")
 	return 0
 }

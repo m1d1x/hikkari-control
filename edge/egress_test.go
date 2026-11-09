@@ -276,7 +276,7 @@ func TestTheEdgeBlocksRussianDomainsAndIPsWhileAllowingTheInternet(t *testing.T)
 	}
 
 	t.Run("xhttp", func(t *testing.T) {
-		edgePort, local, sitePort := freePort(t, "tcp"), freePort(t, "tcp"), freePort(t, "tcp")
+		edgePort, local, sitePort := freePort(t, "tcp"), freeLocalPortBase(t), freePort(t, "tcp")
 		tcpEcho(t, sitePort, "site")
 		m, pin := xhttpEnv(t, edgePort, local)
 		c, err := XhttpConfigFromEnv(env(m))
@@ -328,7 +328,7 @@ func TestTheEdgeBlocksRussianDomainsAndIPsWhileAllowingTheInternet(t *testing.T)
 		// deliberately refuses an echo sharing a numeric cover port.
 		basePort := 0
 		for attempt := 0; attempt < 128; attempt++ {
-			candidate := freePort(t, "tcp")
+			candidate := freeLocalPortBase(t)
 			if candidate != echoPort && candidate != edgePort && candidate != sitePort {
 				basePort = candidate
 				break

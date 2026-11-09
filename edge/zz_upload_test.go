@@ -33,7 +33,7 @@ func tcpSink(t *testing.T, port, n int) {
 
 func TestZZUpload(t *testing.T) {
 	const n = 1 << 20
-	edgePort, local := freePort(t, "tcp"), freeXhttpLocalPort(t)
+	edgePort, local := freePort(t, "tcp"), freeLocalPortBase(t)
 	sinkPort := freePort(t, "tcp")
 	tcpSink(t, sinkPort, n)
 	m, pin := xhttpEnv(t, edgePort, local)

@@ -19,7 +19,7 @@ const (
 // startXhttp runs an XHTTP edge's Xray on loopback, as run() would.
 func startXhttp(t *testing.T) (*core.Instance, edge) {
 	t.Helper()
-	m, _ := xhttpEnv(t, freePort(t, "tcp"), freePort(t, "tcp"))
+	m, _ := xhttpEnv(t, freePort(t, "tcp"), freeLocalPortBase(t))
 	prev := osEnv
 	osEnv = env(m)
 	t.Cleanup(func() { osEnv = prev })
@@ -108,7 +108,7 @@ func TestKeyTotalsAreReadPerKey(t *testing.T) {
 // under the key; once the hub's list drops the key, the same client is
 // turned away while the shared credential still goes through.
 func TestAKeyDialsIsCountedAndIsCutOff(t *testing.T) {
-	edgePort, local, sitePort := freePort(t, "tcp"), freePort(t, "tcp"), freePort(t, "tcp")
+	edgePort, local, sitePort := freePort(t, "tcp"), freeLocalPortBase(t), freePort(t, "tcp")
 	tcpEcho(t, sitePort, "site")
 	m, pin := xhttpEnv(t, edgePort, local)
 	_, inst := startXhttpEdge(t, m, sitePort)
