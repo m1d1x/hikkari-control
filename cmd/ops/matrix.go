@@ -55,12 +55,12 @@ func (c *client) matrix(args map[string]string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	core, coreLabel, err := matrixCore()
+	core, err := matrixCore()
 	if err != nil {
 		return "", err
 	}
-	plan.Core = coreLabel
-	script, err := stand.Script(plan, matrixCoreDir+"/sing-box")
+	plan.Core = core.Label
+	script, err := stand.Script(plan, matrixCoreDir+"/"+stand.KitCore)
 	if err != nil {
 		return "", err
 	}
@@ -233,10 +233,16 @@ func matrixVantageList(s string) ([]string, error) {
 	return out, nil
 }
 
-// matrixRun puts the core on the vantage if it is not there yet and runs the
-// script over one SSH connection.
-func matrixRun(name, host, core, script string, p stand.Plan) ([]stand.Row, error) {
-	if err := matrixUpload(host, core); err != nil {
+// matrixRun puts the core and its libcronet.so on the vantage if they are not
+// there yet and runs the script over one SSH connection.
+func matrixRun(name, host string, core matrixCoreFiles, script string, p stand.Plan) ([]stand.Row, error) {
+	// The core loads libcronet.so for Naive and Hikkari from its own
+	// directory: without it every such outbound fails to start
+	// ("cronet: library not found", load_error=true on every row).
+	if err := matrixUpload(host, core.Core, stand.KitCore, 0o755); err != nil {
+		return nil, err
+	}
+	if err := matrixUpload(host, core.Cronet, stand.KitCronet, 0o644); err != nil {
 		return nil, err
 	}
 	wait := p.Wait()
@@ -254,13 +260,14 @@ func matrixRun(name, host, core, script string, p stand.Plan) ([]stand.Row, erro
 	return rows, nil
 }
 
-// matrixUpload copies the core unless the vantage already holds the same one.
-func matrixUpload(host, core string) error {
-	sum, err := fileSHA256(core)
+// matrixUpload copies a file of the core into matrixCoreDir under name unless
+// the vantage already holds the same one, by SHA-256.
+func matrixUpload(host, local, name string, mode os.FileMode) error {
+	sum, err := fileSHA256(local)
 	if err != nil {
 		return err
 	}
-	remote := matrixCoreDir + "/sing-box"
+	remote := matrixCoreDir + "/" + name
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	have, _ := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host,
@@ -273,11 +280,11 @@ func matrixUpload(host, core string) error {
 	// gzipped, in parts small enough to pass, each retried on its own; the
 	// vantage checks the whole against the hash before it replaces the old
 	// core, so a cut upload never leaves a half core for the next run.
-	parts, err := gzipParts(core, matrixUploadPart)
+	parts, err := gzipParts(local, matrixUploadPart)
 	if err != nil {
 		return err
 	}
-	dir := matrixCoreDir + "/up"
+	dir := matrixCoreDir + "/up-" + name
 	if out, err := sshRun(host, "rm -rf "+dir+" && mkdir -p "+dir, nil, time.Minute); err != nil {
 		return fmt.Errorf("upload to %s: %v: %s", host, err, out)
 	}
@@ -297,7 +304,7 @@ func matrixUpload(host, core string) error {
 	}
 	// A file of its own: a writer left from a cut upload must not share it, or
 	// the core is renamed into place still open for writing ("text file busy").
-	join := fmt.Sprintf(`set -e; t=$(mktemp %[2]s.XXXXXX); cat %[1]s/p* | gunzip > $t; [ "$(sha256sum $t | cut -d' ' -f1)" = %[3]s ] || { rm -f $t; echo hash mismatch; exit 1; }; chmod 755 $t; mv -f $t %[2]s; rm -rf %[1]s`, dir, remote, sum)
+	join := fmt.Sprintf(`set -e; t=$(mktemp %[2]s.XXXXXX); cat %[1]s/p* | gunzip > $t; [ "$(sha256sum $t | cut -d' ' -f1)" = %[3]s ] || { rm -f $t; echo hash mismatch; exit 1; }; chmod %[4]o $t; mv -f $t %[2]s; rm -rf %[1]s`, dir, remote, sum, mode)
 	if out, err := sshRun(host, join, nil, 2*time.Minute); err != nil {
 		return fmt.Errorf("upload to %s: %v: %s", host, err, out)
 	}
@@ -353,41 +360,63 @@ func fileSHA256(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// matrixCoreFiles is the core and the libcronet.so it loads, both
+// linux-amd64, from one tag of the fork.
+type matrixCoreFiles struct {
+	Core, Cronet, Label string
+}
+
 // matrixCore is the core users run, built for the vantages: our fork
 // m1d1x/sing-box-lx at the tag the client's CI pins (its patches are commits
-// there), cached by the tag.
-func matrixCore() (path, label string, err error) {
+// there), with the libcronet.so of the cronet-go that tag's go.mod pins, as
+// the client's stand kit takes it (hikkari-client scripts/build-stand-kit.sh).
+// Both are cached by the tag.
+func matrixCore() (matrixCoreFiles, error) {
+	var out matrixCoreFiles
 	engine, err := clientEngineDir()
 	if err != nil {
-		return "", "", err
+		return out, err
 	}
 	repo := filepath.Dir(engine)
 	workflow, err := os.ReadFile(filepath.Join(repo, ".github", "workflows", "build-windows.yml"))
 	if err != nil {
-		return "", "", err
+		return out, err
 	}
 	m := regexp.MustCompile(`(?m)^\s*SING_BOX_LX_TAG:\s*(\S+)`).FindSubmatch(workflow)
 	if m == nil {
-		return "", "", errors.New("no SING_BOX_LX_TAG in the client's build-windows.yml")
+		return out, errors.New("no SING_BOX_LX_TAG in the client's build-windows.yml")
 	}
 	tag := string(m[1])
-	label = "sing-box-lx " + tag
 	cache, err := os.UserCacheDir()
 	if err != nil {
-		return "", "", err
+		return out, err
 	}
-	path = filepath.Join(cache, "hikkari", "matrix", "sing-box-"+tag+"-linux-amd64")
-	if _, err := os.Stat(path); err == nil {
-		return path, label, nil
+	dir := filepath.Join(cache, "hikkari", "matrix")
+	out = matrixCoreFiles{
+		Core:   filepath.Join(dir, "sing-box-"+tag+"-linux-amd64"),
+		Cronet: filepath.Join(dir, "libcronet-"+tag+"-linux-amd64.so"),
+		Label:  "sing-box-lx " + tag,
 	}
-	if err := buildMatrixCore(tag, path); err != nil {
-		return "", "", err
+	core, cronet := out.Core, out.Cronet
+	if _, err := os.Stat(core); err == nil {
+		core = ""
 	}
-	return path, label, nil
+	if _, err := os.Stat(cronet); err == nil {
+		cronet = ""
+	}
+	if core == "" && cronet == "" {
+		return out, nil
+	}
+	if err := buildMatrixCore(tag, core, cronet); err != nil {
+		return out, err
+	}
+	return out, nil
 }
 
-// buildMatrixCore follows the client's CI (build-windows.yml, job sing-box).
-func buildMatrixCore(tag string, out string) error {
+// buildMatrixCore follows the client's CI (build-windows.yml, job sing-box):
+// the core into core and the tag's libcronet.so into cronet; an empty path is
+// left alone.
+func buildMatrixCore(tag, core, cronet string) error {
 	work, err := os.MkdirTemp("", "hikkari-matrix-core-")
 	if err != nil {
 		return err
@@ -410,6 +439,30 @@ func buildMatrixCore(tag string, out string) error {
 	if _, err := run(work, nil, "git", "clone", "-q", "--depth", "1", "--branch", tag, "https://github.com/m1d1x/sing-box-lx", src); err != nil {
 		return err
 	}
+	if cronet != "" {
+		// The module the tag's go.mod pins, as the client's stand kit takes it.
+		raw, err := run(src, []string{"GOOS=linux", "GOARCH=amd64"}, "go", "mod", "download", "-json", "github.com/sagernet/cronet-go/lib/linux_amd64")
+		if err != nil {
+			return err
+		}
+		var mod struct{ Dir, Error string }
+		if err := json.Unmarshal([]byte(raw), &mod); err != nil {
+			return fmt.Errorf("go mod download cronet-go/lib/linux_amd64: %w", err)
+		}
+		if mod.Error != "" || mod.Dir == "" {
+			return fmt.Errorf("go mod download cronet-go/lib/linux_amd64: %s", mod.Error)
+		}
+		lib, err := os.ReadFile(filepath.Join(mod.Dir, "libcronet.so"))
+		if err != nil {
+			return err
+		}
+		if err := writeMatrixFile(cronet, lib, 0o644); err != nil {
+			return err
+		}
+	}
+	if core == "" {
+		return nil
+	}
 	if _, err := run(src, nil, "git", "submodule", "update", "-q", "--init", "--depth", "1",
 		"submodules/gvisor", "submodules/sing-tun", "submodules/utls", "submodules/wireguard-go"); err != nil {
 		return err
@@ -418,13 +471,25 @@ func buildMatrixCore(tag string, out string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(core), 0o755); err != nil {
 		return err
 	}
-	tmp := out + ".tmp"
+	tmp := core + ".tmp"
 	if _, err := run(src, []string{"GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0"}, "go", "build", "-trimpath", "-tags", tags,
 		"-ldflags", "-checklinkname=0 -s -w -buildid=", "-o", tmp, "./cmd/sing-box"); err != nil {
 		return err
 	}
-	return os.Rename(tmp, out)
+	return os.Rename(tmp, core)
+}
+
+// writeMatrixFile writes data to path whole or not at all.
+func writeMatrixFile(path string, data []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
