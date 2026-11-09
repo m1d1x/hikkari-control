@@ -175,6 +175,15 @@ func startVoiceDoor(ctx context.Context, core string, outbound map[string]any) (
 		return 0, nil, err
 	}
 	tp, _ := strconv.Atoi(port)
+	// The door hands the core an address, not a name: the Hikkari outbound
+	// carries datagrams to addresses only (a name is "unsupported address"
+	// and the call reads as lost), as a client's datagrams through its tun
+	// always are.
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
+	if err != nil || len(ips) == 0 {
+		return 0, nil, fmt.Errorf("resolve %s: %v", host, err)
+	}
+	host = ips[0].String()
 	ready, err := freePort("tcp")
 	if err != nil {
 		return 0, nil, err
