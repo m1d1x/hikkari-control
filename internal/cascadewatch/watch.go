@@ -31,6 +31,8 @@ package cascadewatch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -266,11 +268,18 @@ func (w *Watch) alert(ctx context.Context, p entry.TrunkPair, code, msg string) 
 	row := telemetry.ErrorRow{
 		TS: now.UTC(), Install: "cascade:" + p.Entry,
 		App:  telemetry.App{Version: "hub", Channel: "hub", OS: "linux"},
-		Code: code, Component: "cascade", FP: code + ":" + p.Entry + "-" + p.Exit, Msg: clip(msg), Count: 1,
+		Code: code, Component: "cascade", FP: alertFP(code, p), Msg: clip(msg), Count: 1,
 	}
 	if err := w.errs.InsertTelemetry(ctx, nil, []telemetry.ErrorRow{row}); err != nil {
 		applog.Error(ctx, "cascade", "alert not written", applog.F("err", err.Error()))
 	}
+}
+
+// alertFP groups an alert by code and pair: 16 hex, the errors table's
+// fingerprint width.
+func alertFP(code string, p entry.TrunkPair) string {
+	sum := sha256.Sum256([]byte(code + "\x00" + p.Entry + "\x00" + p.Exit))
+	return hex.EncodeToString(sum[:8])
 }
 
 // startRound starts the pair's round when one is due and none runs.

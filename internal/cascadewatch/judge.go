@@ -12,11 +12,12 @@ import (
 // is to blame, so it errs on the side of saying nothing.
 const (
 	// The box: CPU stolen by neighbours (eun16 at 47–90 % made a protocol
-	// look slow, research 2026-11-09 hysteria2), a load the CPUs cannot
-	// carry, memory running out, conntrack near its limit, the interface
-	// dropping more than 0.5 % of what it got.
+	// look slow, research 2026-11-09 hysteria2), a load far past what the
+	// CPUs carry (a burst of our own measurements reaches 2.5 per CPU on
+	// nekko-spb and hurts nothing), memory running out, conntrack near its
+	// limit, the interface dropping more than 0.5 % of what it got.
 	maxStealPct     = 20.0
-	maxLoadPerCPU   = 2.0
+	maxLoadPerCPU   = 4.0
 	minMemAvailFrac = 0.05
 	maxConntrack    = 0.8
 	maxIfaceDrop    = 0.005

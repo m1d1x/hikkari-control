@@ -277,6 +277,11 @@ type fakeErrs struct {
 }
 
 func (f *fakeErrs) InsertTelemetry(_ context.Context, _ []telemetry.EventRow, errs []telemetry.ErrorRow) error {
+	for _, e := range errs {
+		if len(e.FP) != 16 {
+			return fmt.Errorf("fp %q: the errors table takes 16", e.FP)
+		}
+	}
 	f.mu.Lock()
 	f.rows = append(f.rows, errs...)
 	f.mu.Unlock()
