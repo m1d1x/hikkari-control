@@ -100,8 +100,14 @@ func withKey(rec entry.RelayRecord, k accessKey) entry.RelayRecord {
 
 // Relay keys: the keys of accounts with a live subscription (plans.go) and a
 // live grant on the relay, in the relay protocol's own credential.
+//
+// A grant the current drain revoked counts as live while the relay is still
+// out of the pool for the rollout: its holder was told to move, but a client
+// moves only on its next subscription fetch, and a key gone from the relay
+// before that turns the profile it still dials into «invalid request user id»
+// (incident 09.11). The restart of the swap cuts the holder off soon enough.
 const relayKeys = `
-	SELECT CASE $2
+	SELECT DISTINCT CASE $2
 		WHEN 'hysteria2' THEN k.hy2_auth
  WHEN 'naive' THEN k.hy2_auth
  WHEN 'hikkari' THEN k.hy2_auth
@@ -110,7 +116,10 @@ const relayKeys = `
 	FROM entry_grants g
 	JOIN entry_relays r ON r.id = g.relay_id
 	JOIN hub_access_keys k ON k.account_id = g.account_id
-	WHERE r.name = $1 AND g.revoked_at IS NULL
+	WHERE r.name = $1
+	  AND (g.revoked_at IS NULL
+	       OR (g.revoke_reason = 'drained' AND r.status IN ('testing', 'draining')
+	           AND g.revoked_at >= r.drained_at))
 	  AND ($2 <> 'amneziawg' OR k.awg_public IS NOT NULL)
 	  AND EXISTS (SELECT 1 FROM hub_subscriptions s WHERE s.account_id = g.account_id AND ` + liveTerms + `)
 	ORDER BY 1`

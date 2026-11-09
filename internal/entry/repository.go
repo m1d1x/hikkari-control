@@ -118,11 +118,26 @@ const (
 	// the canary, draining on the box next in line. Only alive ones: a pending
 	// relay was never handed out and has nobody to move.
 	drainBoxRelays = `
-		UPDATE entry_relays SET status = $2
+		UPDATE entry_relays SET status = $2, drained_at = now()
 		WHERE box = $1 AND status = 'alive'
 		RETURNING id`
+	// Of the relays just drained, those whose lane (box protocol and voice
+	// region) still has an alive personal relay on another machine: only their
+	// holders have somewhere to move. A lane of one machine keeps its grants
+	// through the drain — revoking them moved nobody and cut everyone off
+	// (incident 09.11: euw1, the only XHTTP machine, refused its holders for
+	// nine minutes; the canary on unl1, the only Hikkari one, took the cascade
+	// down for two hours).
+	drainMovableRelays = `
+		SELECT r.id FROM entry_relays r JOIN entry_boxes b ON b.name = r.box
+		WHERE r.id = ANY($1)
+		  AND EXISTS (SELECT 1 FROM entry_relays o JOIN entry_boxes ob ON ob.name = o.box
+		              WHERE o.kind = 'personal' AND o.status = 'alive' AND o.box <> r.box
+		                AND ob.retired_at IS NULL
+		                AND ob.proto IS NOT DISTINCT FROM b.proto
+		                AND coalesce(ob.region, '') = coalesce(b.region, ''))`
 	restoreBoxRelays = `
-		UPDATE entry_relays SET status = 'alive'
+		UPDATE entry_relays SET status = 'alive', drained_at = NULL
 		WHERE box = $1 AND status IN ('testing', 'draining')
 		RETURNING name`
 
@@ -553,8 +568,9 @@ func (r *Repository) revokeGrants(ctx context.Context, tx pgx.Tx, relays []int64
 }
 
 // drainBox moves the box's alive relays to `status` (testing or draining) and
-// revokes their live grants as drained; returns how many relays moved and who
-// held them.
+// revokes as drained the live grants of those whose lane has another machine
+// to move to (drainMovableRelays); returns how many relays moved and the
+// holders told to move.
 func (r *Repository) drainBox(ctx context.Context, tx pgx.Tx, box, status string) (moved int, holders []uuid.UUID, err error) {
 	rows, err := tx.Query(ctx, drainBoxRelays, box, status)
 	if err != nil {
@@ -567,7 +583,18 @@ func (r *Repository) drainBox(ctx context.Context, tx pgx.Tx, box, status string
 	if len(ids) == 0 {
 		return 0, nil, nil
 	}
-	holders, err = r.revokeGrants(ctx, tx, ids, revokeDrained)
+	rows, err = tx.Query(ctx, drainMovableRelays, ids)
+	if err != nil {
+		return 0, nil, err
+	}
+	movable, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil {
+		return 0, nil, err
+	}
+	if len(movable) == 0 {
+		return len(ids), nil, nil
+	}
+	holders, err = r.revokeGrants(ctx, tx, movable, revokeDrained)
 	return len(ids), holders, err
 }
 

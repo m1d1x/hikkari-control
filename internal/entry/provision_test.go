@@ -41,6 +41,9 @@ type fakeBox struct {
 	// conns answers the relay connection count, one value per ask; the last
 	// one repeats.
 	conns []int
+	// rejects answers the count of refused handshakes in the edge journal,
+	// one value per ask; the last one repeats.
+	rejects []int
 }
 
 func (b *fakeBox) dial(_ context.Context, t sshexec.Target, auth ...ssh.AuthMethod) (Remote, error) {
@@ -103,6 +106,15 @@ func (r *fakeRemote) Run(_ context.Context, cmd string, stdin io.Reader) (string
 		}
 		sum := sha256.Sum256(r.b.binary)
 		return hex.EncodeToString(sum[:]) + "\n", nil
+	case strings.Contains(string(in), "grep -c ' rejected '"):
+		n := 0
+		if len(r.b.rejects) > 0 {
+			n = r.b.rejects[0]
+			if len(r.b.rejects) > 1 {
+				r.b.rejects = r.b.rejects[1:]
+			}
+		}
+		return strconv.Itoa(n) + "\n", nil
 	case strings.Contains(string(in), "state established"):
 		n := 0
 		if len(r.b.conns) > 0 {

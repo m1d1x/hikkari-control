@@ -188,6 +188,9 @@ func (rh *rolloutHarness) boxOnV1() string {
 func (rh *rolloutHarness) orchestrator() *Orchestrator {
 	o := NewOrchestrator(rh.svc, rh.v2)
 	o.benchSlack, o.benchPoll, o.drainFor = 5*time.Second, 10*time.Millisecond, 0
+	// No watch and no evening peak unless a test asks: the watch is minutes
+	// long, and the peak depends on the hour the suite runs at.
+	o.watchFor, o.busy = 0, nil
 	// How long a run lasts and how many pairs a verdict needs are the bench
 	// policy's (migration 067), so the harness turns those knobs in the row
 	// rather than on the orchestrator: one pair of one-minute runs, which is
@@ -877,5 +880,63 @@ func TestADrainedRelayIsStillWatched(t *testing.T) {
 	}
 	if got := watched(); len(got) != relayTarget(ProtoVlessRealityVision) {
 		t.Fatalf("watched %v while drained: the canary's own relay must stay observed", got)
+	}
+}
+
+// Incident 09.11: an updated box that starts refusing its users is rolled
+// back and the rollout stops, though its admission probe was clean.
+func TestABoxThatRefusesItsUsersAfterTheSwapIsRolledBack(t *testing.T) {
+	rh := newRolloutHarness(t)
+	older := rh.boxOnV1()
+	rh.boxOnV1() // the canary, newest
+	o := rh.orchestrator()
+	o.watchFor, o.watchBaseline = 60*time.Millisecond, 10*time.Minute
+	// Before the drain: 30 refusals in ten minutes, the background of
+	// probing. After the swap: 400 in a fraction of a minute.
+	rh.fleet.box(t, rh.harness, older).rejects = []int{30, 400}
+	o.round(context.Background())
+	ro := rh.rolloutOfV2()
+	if ro.Stage != RolloutFailed || !strings.Contains(ro.Error, older) || !strings.Contains(ro.Error, "отказов") {
+		t.Fatalf("rollout %+v", ro)
+	}
+	if rh.runsOn(older) != rh.sha1 {
+		t.Fatal("the refusing box was not rolled back")
+	}
+	for _, s := range rh.statuses(older) {
+		if s != StatusAlive {
+			t.Fatalf("relays of the rolled-back box %v", rh.statuses(older))
+		}
+	}
+}
+
+// The same watch passes a box whose refusals stay at their background.
+func TestABoxThatServesAfterTheSwapPassesItsWatch(t *testing.T) {
+	rh := newRolloutHarness(t)
+	older := rh.boxOnV1()
+	rh.boxOnV1()
+	o := rh.orchestrator()
+	o.watchFor, o.watchBaseline = 60*time.Millisecond, 10*time.Minute
+	rh.fleet.box(t, rh.harness, older).rejects = []int{30, 0}
+	o.round(context.Background())
+	if ro := rh.rolloutOfV2(); ro.Stage != RolloutDone {
+		t.Fatalf("rollout %+v", ro)
+	}
+	if rh.runsOn(older) != rh.sha2 {
+		t.Fatal("the box was not updated")
+	}
+}
+
+// In the evening peak a rollout touches no box and stays moving.
+func TestNoBoxIsTouchedInTheEveningPeak(t *testing.T) {
+	rh := newRolloutHarness(t)
+	box := rh.boxOnV1()
+	o := rh.orchestrator()
+	o.busy = func(time.Time) bool { return true }
+	o.round(context.Background())
+	if rh.runsOn(box) != rh.sha1 || len(rh.phases) != 0 {
+		t.Fatalf("a box was touched in the peak: runs %s, benches %v", rh.runsOn(box)[:12], rh.phases)
+	}
+	if !o.unsettled(context.Background()) {
+		t.Fatal("the rollout settled in the peak; it must stay moving for the next round")
 	}
 }

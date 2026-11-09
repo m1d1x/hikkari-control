@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -108,6 +109,25 @@ type Orchestrator struct {
 	drainFor   time.Duration // how long holders get to move off a box
 	sickSince  time.Duration // how far back a probe failure disqualifies a canary
 	retryEvery time.Duration // between rounds while a rollout has no verdict
+
+	// After a box is swapped the rollout watches its traffic for watchFor
+	// before the next box (0: no watch), against the watchBaseline before the
+	// drain. The rollout is one goroutine, so at most one box of any lane is
+	// ever out; the watch is the pause between two of them.
+	watchFor      time.Duration
+	watchBaseline time.Duration
+	// busy says the fleet is at its evening peak: no box is drained then, the
+	// rollout waits for the next round (incident 09.11).
+	busy func(time.Time) bool
+}
+
+// The evening peak in Moscow, 18:00–24:00 MSK (15:00–21:00 UTC): a rollout
+// does not start a box in it. Every user of the fleet is in Russia.
+const peakFromUTC, peakToUTC = 15, 21
+
+func eveningPeak(t time.Time) bool {
+	h := t.UTC().Hour()
+	return h >= peakFromUTC && h < peakToUTC
 }
 
 // NewOrchestrator builds the rollout runner over the hub's provisioner.
@@ -116,6 +136,8 @@ func NewOrchestrator(svc *Service, prov *Provisioner) *Orchestrator {
 		svc: svc, prov: prov,
 		benchSlack: 3 * time.Minute, benchPoll: 5 * time.Second,
 		drainFor: 5 * time.Minute, sickSince: 24 * time.Hour, retryEvery: time.Hour,
+		watchFor: 3 * time.Minute, watchBaseline: 10 * time.Minute,
+		busy: eveningPeak,
 	}
 }
 
@@ -340,6 +362,9 @@ func (o *Orchestrator) roll(ctx context.Context, build EdgeBuild) error {
 	if err != nil || ro == nil {
 		return err
 	}
+	if o.peak(ctx, build) {
+		return nil
+	}
 	if ro.Stage == RolloutCanary {
 		if err := o.canary(ctx, build, ro); err != nil {
 			return err
@@ -352,6 +377,17 @@ func (o *Orchestrator) roll(ctx context.Context, build EdgeBuild) error {
 		return o.rolling(ctx, build, ro)
 	}
 	return nil
+}
+
+// peak reports (and logs) that the fleet is at its evening peak: the rollout
+// stays moving and Run comes back to it after retryEvery.
+func (o *Orchestrator) peak(ctx context.Context, build EdgeBuild) bool {
+	if o.busy == nil || !o.busy(time.Now()) {
+		return false
+	}
+	applog.Info(ctx, "entry", "rollout: evening peak, no box is touched until it ends",
+		applog.F("arch", build.Arch), applog.F("sha", build.SHA[:12]))
+	return true
 }
 
 // current returns the rollout to drive for this build, or nil when the fleet
@@ -604,6 +640,9 @@ func (o *Orchestrator) rolling(ctx context.Context, build EdgeBuild, ro *Rollout
 		if len(behind) == 0 {
 			return o.svc.endRollout(ctx, ro.ID, RolloutDone, "")
 		}
+		if o.peak(ctx, build) {
+			return nil
+		}
 		sort.SliceStable(behind, func(i, j int) bool { return behind[i].holders < behind[j].holders })
 		box := behind[0]
 		err = o.prov.execJob(ctx, JobUpdate, box.name, ro.ID, func(j *jobRun) error {
@@ -689,7 +728,11 @@ func (j *jobRun) open(build EdgeBuild) (boxOpened, error) {
 	return boxOpened{r: r, relays: relays, arch: arch}, nil
 }
 
-// drain takes the box's relays out of the pool and waits for their holders.
+// drain takes the box's relays out of the pool and waits for the holders it
+// told to move. A lane with no other machine moves nobody (Service.Drain keeps
+// their grants and keys): waiting for them to leave would only stretch the
+// time the box is out of the pool, so the swap goes on at once and its
+// restart is the one cut they see.
 func (j *jobRun) drain(o *Orchestrator, b boxOpened, status string) error {
 	j.step("drain")
 	relays, holders, err := j.p.svc.Drain(j.ctx, j.box, status)
@@ -697,6 +740,10 @@ func (j *jobRun) drain(o *Orchestrator, b boxOpened, status string) error {
 		return err
 	}
 	j.log("из пула ушли релеев: %d, держателей разбужено: %d", relays, holders)
+	if holders == 0 {
+		j.log("пересаживать некого: другой машины в полосе нет, держатели остаются до перезапуска")
+		return nil
+	}
 	_, err = j.waitEmpty(b.r, b.relays, o.drainFor)
 	return err
 }
@@ -973,13 +1020,17 @@ func shortSHA(sha string) string {
 	return sha[:12]
 }
 
-// update is the job for every box after the canary (step 4).
+// update is the job for every box after the canary (step 4): drained,
+// swapped, probed, back in the pool — and then watched on its real traffic
+// (watch) before the rollout may touch the next box. A box that refuses its
+// users after the swap is rolled back and the rollout fails.
 func (j *jobRun) update(o *Orchestrator, build EdgeBuild) (err error) {
 	b, err := j.open(build)
 	if err != nil {
 		return err
 	}
 	defer b.r.Close()
+	base := j.sample(b.r, b.relays, o.watchBaseline)
 	if err := j.drain(o, b, StatusDraining); err != nil {
 		j.back()
 		return err
@@ -989,8 +1040,102 @@ func (j *jobRun) update(o *Orchestrator, build EdgeBuild) (err error) {
 	if err := j.swap(b, build); err != nil {
 		return err
 	}
+	swapped := time.Now()
 	j.step("probe")
-	return j.probe(b.relays)
+	if err := j.probe(b.relays); err != nil {
+		return err
+	}
+	// Back in the pool before the watch: the watch is of the box serving.
+	j.back()
+	return j.watch(o, b, base, swapped)
+}
+
+// trafficSample is what the box's own edge says about its users over a
+// window: connections established on the relay ports now (-1: not counted,
+// a UDP relay or the count failed) and handshakes refused per minute.
+type trafficSample struct {
+	conns      int
+	rejectsMin float64
+}
+
+// The watch after a swap (incident 09.11). A box passes when, over watchFor
+// after the swap, its edge refuses no more users than before the drain and
+// its connections come back.
+const (
+	// Refusals per minute a box may show after a swap whatever its baseline:
+	// active probing and stale clients knock with wrong keys all the time.
+	watchRejectFloor = 20.0
+	// ... and the multiple of its own baseline it may not exceed.
+	watchRejectGrowth = 3.0
+	// Connections are judged only on a box that had this many before.
+	watchConnsMin = 5
+	// The share of them that must be back by the end of the watch.
+	watchConnsBack = 0.25
+)
+
+// judgeSwap says why a box failed its watch, or "" when it passed.
+func judgeSwap(before, after trafficSample) string {
+	limit := max(watchRejectFloor, before.rejectsMin*watchRejectGrowth)
+	if after.rejectsMin > limit {
+		return fmt.Sprintf("после обновления отказов %.0f в минуту против %.0f до", after.rejectsMin, before.rejectsMin)
+	}
+	if before.conns >= watchConnsMin && after.conns >= 0 &&
+		float64(after.conns) < float64(before.conns)*watchConnsBack {
+		return fmt.Sprintf("после обновления соединений %d против %d до", after.conns, before.conns)
+	}
+	return ""
+}
+
+// rejectCountScript prints how many handshakes the box's edges refused since
+// $1 (a journalctl time, "-600s").
+const rejectCountScript = `set -u
+journalctl -u 'nekko-edge@*' --since "$1" --no-pager -q -o cat 2>/dev/null | grep -c ' rejected ' || true
+`
+
+// sample reads the box's traffic over the last `window`. A box that cannot
+// be read gives an empty sample: the watch is a guard on top of the probe,
+// and a box whose journal is unreadable is not a box that refuses its users.
+func (j *jobRun) sample(r Remote, relays []provRelay, window time.Duration) trafficSample {
+	s := trafficSample{conns: -1}
+	if !j.acc.overUDP() {
+		if n, err := j.connCount(r, relays); err == nil {
+			s.conns = n
+		}
+	}
+	if window <= 0 {
+		return s
+	}
+	secs := int((window + time.Second - 1) / time.Second)
+	mins := float64(secs) / 60
+	out, err := r.Run(j.ctx, fmt.Sprintf("bash -s -- -%ds", secs), strings.NewReader(rejectCountScript))
+	if err != nil {
+		return s
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(out)); err == nil {
+		s.rejectsMin = float64(n) / mins
+	}
+	return s
+}
+
+// watch holds the rollout on this box for watchFor after the swap and judges
+// it on its traffic; the deferred settle rolls the build back on a failure.
+func (j *jobRun) watch(o *Orchestrator, b boxOpened, base trafficSample, swapped time.Time) error {
+	if o.watchFor <= 0 {
+		return nil
+	}
+	j.step("watch")
+	j.log("до обновления: соединений %d, отказов %.1f в минуту; смотрю %s", base.conns, base.rejectsMin, o.watchFor)
+	select {
+	case <-j.ctx.Done():
+		return j.ctx.Err()
+	case <-time.After(time.Until(swapped.Add(o.watchFor))):
+	}
+	after := j.sample(b.r, b.relays, time.Since(swapped))
+	j.log("после обновления: соединений %d, отказов %.1f в минуту", after.conns, after.rejectsMin)
+	if why := judgeSwap(base, after); why != "" {
+		return errors.New(why)
+	}
+	return nil
 }
 
 // undoCanary settles a canary a restart cut off: the old build back if the

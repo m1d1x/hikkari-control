@@ -104,6 +104,34 @@ func TestARelayLearnsTheKeysOfItsLiveGrants(t *testing.T) {
 	if keys, err := s.KeysOf(ctx, stream, entry.ProtoVlessXhttp); err != nil || keys == nil || len(keys) != 0 {
 		t.Fatalf("after revoking the grant: %v %v (an empty list, not none)", keys, err)
 	}
+
+	// Incident 09.11: while the relay is still out of the pool for the drain
+	// that revoked the grant, the holder's key stays on it — the client moves
+	// on its next fetch, and until then it dials the old profile.
+	if _, err := pool.Exec(ctx, `UPDATE entry_relays SET status = 'draining', envelope_ct = '\x00', key_id = 'k', issued_at = now(),
+		expires_at = now() + interval '1 day', signed_at = now(), drained_at = now() - interval '1 minute' WHERE name = $1`, stream); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE entry_grants SET revoked_at = now() WHERE id = $1`, grants[1]); err != nil {
+		t.Fatal(err)
+	}
+	if keys, _ := s.KeysOf(ctx, stream, entry.ProtoVlessXhttp); !slices.Equal(keys, []string{kb.vlessID}) {
+		t.Fatalf("during the drain: %v, want the drained holder's key", keys)
+	}
+	// A grant revoked by an earlier drain does not come back with this one.
+	if _, err := pool.Exec(ctx, `UPDATE entry_relays SET drained_at = now() + interval '1 minute' WHERE name = $1`, stream); err != nil {
+		t.Fatal(err)
+	}
+	if keys, _ := s.KeysOf(ctx, stream, entry.ProtoVlessXhttp); len(keys) != 0 {
+		t.Fatalf("an older drain's grant came back: %v", keys)
+	}
+	// Back in the pool: the drained grant is gone for good.
+	if _, err := pool.Exec(ctx, `UPDATE entry_relays SET status = 'alive', drained_at = NULL WHERE name = $1`, stream); err != nil {
+		t.Fatal(err)
+	}
+	if keys, _ := s.KeysOf(ctx, stream, entry.ProtoVlessXhttp); len(keys) != 0 {
+		t.Fatalf("after the restore: %v", keys)
+	}
 }
 
 // Usage adds up across relays and edge runs; within one run a late pulse

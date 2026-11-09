@@ -360,3 +360,41 @@ func TestWaitingForAnEmptyBox(t *testing.T) {
 		t.Fatalf("log:\n%s", ph.logText(id))
 	}
 }
+
+// Incident 09.11: the only machine of its lane keeps its holders through a
+// drain — there is nowhere to move them, and a revoked grant took the key off
+// the relay and the profile out of the next subscription fetch.
+func TestADrainOfTheOnlyMachineInItsLaneKeepsItsHolders(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := h.pool.Exec(ctx, `UPDATE entry_relays SET status = 'dead', died_at = now(), died_reason = 'other' WHERE status <> 'dead'`); err != nil {
+		t.Fatal(err)
+	}
+	n := &nudges{}
+	h.svc.SetNotifier(n)
+	h.personal(1)
+	a := testAccount(t, h.pool)
+	held := h.batch(a)
+	if len(held) != 1 {
+		t.Fatalf("batch %v", held)
+	}
+	relays, holders, err := h.svc.Drain(ctx, boxOf(held[0]), StatusDraining)
+	if err != nil || relays != 1 || holders != 0 {
+		t.Fatalf("drain: %d relays, %d holders, %v", relays, holders, err)
+	}
+	if len(n.relays) != 0 {
+		t.Fatalf("holders were told to move with nowhere to go: %v", n.relays)
+	}
+	if _, reason := grantOf(t, h, a, held[0]); reason != nil {
+		t.Fatalf("the grant was revoked as %s", *reason)
+	}
+	if got := h.batch(a); !slices.Equal(got, held) {
+		t.Fatalf("the batch lost the draining relay: %v", got)
+	}
+	if handedOut(t, h, held[0]) {
+		t.Fatal("a draining relay is handed out to newcomers")
+	}
+	if _, err := h.svc.Restore(ctx, boxOf(held[0])); err != nil {
+		t.Fatal(err)
+	}
+}

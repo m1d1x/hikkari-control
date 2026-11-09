@@ -2082,22 +2082,12 @@ func (j *jobRun) waitEmpty(r Remote, relays []provRelay, limit time.Duration) (i
 		j.log("голосовой вход: соединения по UDP не считаются, звонки переподключатся сами")
 		return 0, nil
 	}
-	ports := make([]string, 0, len(relays))
-	for _, rel := range relays {
-		ports = append(ports, strconv.Itoa(rel.id.Port))
-	}
-	sort.Strings(ports)
-	cmd := "bash -s -- " + strings.Join(ports, " ")
 	deadline := time.Now().Add(limit)
 	last := -1
 	for {
-		out, err := r.Run(j.ctx, cmd, strings.NewReader(connCountScript))
+		n, err := j.connCount(r, relays)
 		if err != nil {
-			return 0, fmt.Errorf("счёт соединений: %w", err)
-		}
-		n, err := strconv.Atoi(strings.TrimSpace(out))
-		if err != nil {
-			return 0, fmt.Errorf("счёт соединений: ответ %s", remoteWord(out))
+			return 0, err
 		}
 		if n != last {
 			j.log("на релеях соединений: %d", n)
@@ -2116,6 +2106,28 @@ func (j *jobRun) waitEmpty(r Remote, relays []provRelay, limit time.Duration) (i
 		case <-time.After(j.p.drainPoll):
 		}
 	}
+}
+
+// connCount is how many TCP connections are established on the relays' ports
+// right now.
+func (j *jobRun) connCount(r Remote, relays []provRelay) (int, error) {
+	if len(relays) == 0 {
+		return 0, nil
+	}
+	ports := make([]string, 0, len(relays))
+	for _, rel := range relays {
+		ports = append(ports, strconv.Itoa(rel.id.Port))
+	}
+	sort.Strings(ports)
+	out, err := r.Run(j.ctx, "bash -s -- "+strings.Join(ports, " "), strings.NewReader(connCountScript))
+	if err != nil {
+		return 0, fmt.Errorf("счёт соединений: %w", err)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return 0, fmt.Errorf("счёт соединений: ответ %s", remoteWord(out))
+	}
+	return n, nil
 }
 
 // connCountScript prints how many TCP connections are established on any of
