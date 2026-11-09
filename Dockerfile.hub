@@ -37,8 +37,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # ── The cascade's trunk entry (trunkentry/, its own module: it links cronet) ─
 # Pure Go with purego: the binary loads libcronet.so from its own directory,
-# which the hub stages beside it (internal/entry/trunk.go).
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS trunk-builder
+# which the hub stages beside it (internal/entry/trunk.go). Built on Debian,
+# not Alpine: Go's linker names the build host's loader, and on Alpine that is
+# musl's, which the boxes (glibc, like libcronet.so itself) do not have.
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS trunk-builder
 WORKDIR /src/trunkentry
 COPY trunkentry/go.mod trunkentry/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
