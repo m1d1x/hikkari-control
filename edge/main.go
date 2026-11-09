@@ -12,7 +12,10 @@
 // And one that is not a protocol: EDGE_PROTO=cascade (cascade.go), the
 // Russian entry of the РФ-каскад, which only hands TCP to an XHTTP exit. And
 // EDGE_PROTO=provoke (provoke.go), the receiving end of the cascade's опыт 0,
-// which answers stimuli and says what reached it.
+// which answers stimuli and says what reached it. And EDGE_PROTO=trunk-entry
+// (trunk_entry.go), the Russian entry that carries clients over the cascade's
+// trunk (package trunk) to a Hikkari relay abroad, whose exit end the relay
+// serves itself (trunk_exit.go).
 //
 // Every protocol leaves through the same exit (egress.go): the internet, minus
 // the box's own and the hoster's private networks and outbound SMTP. The edge
@@ -78,6 +81,13 @@ func main() {
 		}
 		if osEnv("EDGE_PROTO") == protoCascade {
 			if _, err := CascadeConfigFromEnv(osEnv); err != nil {
+				log.Fatalf("nekko-edge: %v", err)
+			}
+			fmt.Println("config OK")
+			return
+		}
+		if osEnv("EDGE_PROTO") == protoTrunkEntry {
+			if _, err := TrunkEntryConfigFromEnv(osEnv); err != nil {
 				log.Fatalf("nekko-edge: %v", err)
 			}
 			fmt.Println("config OK")
@@ -200,6 +210,9 @@ func run() error {
 	}
 	if osEnv("EDGE_PROTO") == protoProvoke {
 		return provoke()
+	}
+	if osEnv("EDGE_PROTO") == protoTrunkEntry {
+		return runTrunkEntry()
 	}
 	e, err := load()
 	if err != nil {

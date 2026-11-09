@@ -24,6 +24,7 @@ import (
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	_ "github.com/caddyserver/caddy/v2/modules/standard"
+	"github.com/m1d1x/hikkari-control/edge/trunk"
 	hkserver "github.com/m1d1x/hikkari-protocol/server"
 	_ "github.com/m1d1x/hikkari-protocol/server/naive"
 )
@@ -43,6 +44,9 @@ type naiveConfig struct {
 	// UDP is set for EDGE_PROTO=hikkari (hikkari.go): the datagram channel on
 	// udp/<port> and UDP-over-TCP inside the tunnel.
 	UDP bool
+	// Trunk is the cascade trunk's exit on a Hikkari relay (trunk_exit.go);
+	// no keys, no trunk.
+	Trunk trunkExitConfig
 }
 
 func naiveFromEnv(get func(string) string) (naiveConfig, error) {
@@ -71,6 +75,11 @@ func naiveFromEnv(get func(string) string) (naiveConfig, error) {
 	}
 	if n.User == "" || strings.ContainsAny(n.User, ":\r\n") || len(n.Pass) < 16 || strings.ContainsAny(n.Pass, "\r\n") {
 		return n, errors.New("naive: invalid probe credential")
+	}
+	if hikkari {
+		if n.Trunk, err = trunkExitFromEnv(get); err != nil {
+			return n, err
+		}
 	}
 	if value := get("EDGE_NAIVE_H3"); value != "" && !hikkari {
 		n.H3, err = strconv.ParseBool(value)
@@ -139,6 +148,8 @@ type naiveRuntime struct {
 	// dup serves v1.02 duplicated UDP sessions for both channels; set when
 	// the relay is Hikkari.
 	dup *hkserver.DupHub
+	// trunk is the cascade trunk's exit (trunk_exit.go), nil without keys.
+	trunk *trunk.Exit
 }
 
 func newNaiveRuntime(cfg naiveConfig) *naiveRuntime {
@@ -230,6 +241,9 @@ func (g *naiveGate) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		return next.ServeHTTP(w, r)
 	}
 	n := g.runtime
+	if user == trunk.User || isTrunkHost(r.Host) {
+		return n.serveTrunk(w, r, next, user, pass)
+	}
 	probe := subtle.ConstantTimeCompare([]byte(user+":"+pass), []byte(n.cfg.User+":"+n.cfg.Pass)) == 1
 	n.mu.Lock()
 	if n.closed {
@@ -275,12 +289,16 @@ func (g *naiveGate) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		ctx = hkserver.WithDup(ctx, hub, key)
 	}
 	r = r.Clone(ctx)
-	r.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(n.cfg.User+":"+n.cfg.Pass)))
+	r.Header.Set("Proxy-Authorization", basicAuth(n.cfg.User, n.cfg.Pass))
 	r.Body = &naiveBody{ReadCloser: r.Body, total: &n.total, key: counter}
 	// Do not return upstream errors to Caddy's request logger: a CONNECT URL is
 	// a destination. Only byte counters, never destinations, leave this layer.
 	_ = next.ServeHTTP(&naiveWriter{ResponseWriter: w, total: &n.total, key: counter}, r)
 	return nil
+}
+
+func basicAuth(user, pass string) string {
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+pass))
 }
 
 type naiveBody struct {
@@ -334,6 +352,7 @@ func runNaive() error {
 	defer caddy.Stop()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	runtime.startTrunkExit(ctx)
 	if cfg.UDP {
 		udp, err := startHikkariUDP(ctx, runtime)
 		if err != nil {

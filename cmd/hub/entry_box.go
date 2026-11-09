@@ -39,6 +39,15 @@ package main
 //	                                    # default; checks it from the hub
 //	cmd/server entry-box provoke-off <box>
 //	                                    # take the receiver off the box
+//	cmd/server entry-box trunk-exit <box> <port,...>
+//	                                    # the box's Hikkari relays become the
+//	                                    # exit of the cascade's trunk, reaching
+//	                                    # those loopback ports; reconfigures
+//	cmd/server entry-box trunk-exit-off <box>
+//	cmd/server entry-box trunk-entry <box> <exit-box> <fp> <listen=port,...> [members]
+//	                                    # the trunk's entry on a box in Russia
+//	                                    # (internal/entry/trunk.go)
+//	cmd/server entry-box trunk-entry-off <box>
 //	cmd/server entry-box lab-reality <box> [port] [cover]
 //	                                    # stand up or update the опыт 0 lab
 //	                                    # Reality relay on a recorded box
@@ -360,6 +369,84 @@ func runEntryBox(args []string) {
 		}
 		// The link holds the relay's id: stdout only, never the log.
 		fmt.Println(link)
+		os.Exit(0)
+	}
+	if (len(args) == 3 && args[0] == "trunk-exit") || (len(args) == 2 && args[0] == "trunk-exit-off") {
+		// entry-box trunk-exit <box> <port,...> — the box's Hikkari relays
+		// become the exit of the cascade's trunk, reaching those loopback
+		// ports (internal/entry/trunk.go); -off takes it away. Applied now by
+		// a reconfigure job, on the build the box runs.
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		var ports []int
+		if args[0] == "trunk-exit" {
+			for _, p := range strings.Split(args[2], ",") {
+				n, err := strconv.Atoi(strings.TrimSpace(p))
+				if err != nil {
+					fail(fmt.Errorf("port %q", p))
+				}
+				ports = append(ports, n)
+			}
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		relays, err := svc.SetTrunkExit(ctx, args[1], ports)
+		if err != nil {
+			fail(err)
+		}
+		fmt.Printf("trunk %s: %s\n", map[bool]string{true: "on " + args[2], false: "off"}[len(ports) > 0], strings.Join(relays, ", "))
+		jctx, jcancel := context.WithTimeout(context.Background(), 40*time.Minute)
+		defer jcancel()
+		if err := entry.NewOrchestrator(svc, newProvisioner(svc)).Reconfigure(jctx, args[1]); err != nil {
+			fail(fmt.Errorf("reconfigure %s: %w", args[1], err))
+		}
+		fmt.Printf("%s reconfigured\n", args[1])
+		os.Exit(0)
+	}
+	if (len(args) >= 5 && len(args) <= 6 && args[0] == "trunk-entry") || (len(args) == 2 && args[0] == "trunk-entry-off") {
+		// entry-box trunk-entry <box> <exit-box> <fp> <listen=port,...> [members]
+		// — the cascade's trunk entry on a box in Russia (internal/entry/trunk.go).
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+		if args[0] == "trunk-entry-off" {
+			if err := prov.StopTrunkEntry(ctx, args[1]); err != nil {
+				fail(err)
+			}
+			os.Exit(0)
+		}
+		o := entry.TrunkEntryOptions{Exit: args[2], FP: args[3], Forward: map[int]int{}}
+		for _, pair := range strings.Split(args[4], ",") {
+			l, r, ok := strings.Cut(pair, "=")
+			a, e1 := strconv.Atoi(l)
+			b, e2 := strconv.Atoi(r)
+			if !ok || e1 != nil || e2 != nil {
+				fail(fmt.Errorf("forward %q is not listen=port", pair))
+			}
+			o.Forward[a] = b
+		}
+		if len(args) == 6 {
+			if o.Members, err = strconv.Atoi(args[5]); err != nil {
+				fail(fmt.Errorf("members %q", args[5]))
+			}
+		}
+		if err := prov.StandTrunkEntry(ctx, args[1], o); err != nil {
+			fail(err)
+		}
 		os.Exit(0)
 	}
 	if len(args) >= 2 && len(args) <= 3 && (args[0] == "provoke" || args[0] == "provoke-off") {

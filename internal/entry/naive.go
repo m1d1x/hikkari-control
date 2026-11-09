@@ -26,6 +26,11 @@ type HikkariParams struct {
 	Host string `json:"host"`
 	User string `json:"user"`
 	Pass string `json:"pass"`
+	// TrunkKey and TrunkPorts make the relay the exit of the cascade's trunk
+	// (trunk.go, edge/trunk_exit.go): entries presenting the key reach these
+	// loopback ports of the box. Empty: no trunk.
+	TrunkKey   string `json:"trunk_key,omitempty"`
+	TrunkPorts []int  `json:"trunk_ports,omitempty"`
 }
 
 func domainProtocol(proto string) bool {

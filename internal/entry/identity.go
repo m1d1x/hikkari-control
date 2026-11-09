@@ -758,7 +758,16 @@ func (id Identity) EdgeEnv() (map[string]string, error) {
 		return map[string]string{"EDGE_PROTO": ProtoNaive, "EDGE_LISTEN": "0.0.0.0:" + strconv.Itoa(id.Port), "EDGE_NAIVE_HOST": n.Host, "EDGE_NAIVE_USER": n.User, "EDGE_NAIVE_PASS": n.Pass, "EDGE_NAIVE_H3": strconv.FormatBool(n.H3)}, nil
 	}
 	if h := id.Hikkari; h != nil {
-		return map[string]string{"EDGE_PROTO": ProtoHikkari, "EDGE_LISTEN": "0.0.0.0:" + strconv.Itoa(id.Port), "EDGE_HIKKARI_HOST": h.Host, "EDGE_HIKKARI_USER": h.User, "EDGE_HIKKARI_PASS": h.Pass}, nil
+		env := map[string]string{"EDGE_PROTO": ProtoHikkari, "EDGE_LISTEN": "0.0.0.0:" + strconv.Itoa(id.Port), "EDGE_HIKKARI_HOST": h.Host, "EDGE_HIKKARI_USER": h.User, "EDGE_HIKKARI_PASS": h.Pass}
+		if h.TrunkKey != "" {
+			ports := make([]string, len(h.TrunkPorts))
+			for i, p := range h.TrunkPorts {
+				ports[i] = strconv.Itoa(p)
+			}
+			env["EDGE_HIKKARI_TRUNK_KEYS"] = h.TrunkKey
+			env["EDGE_HIKKARI_TRUNK_PORTS"] = strings.Join(ports, ",")
+		}
+		return env, nil
 	}
 	if h := id.Hysteria; h != nil {
 		finalmask, err := json.Marshal(xrayFinalmask(h.Masks))
