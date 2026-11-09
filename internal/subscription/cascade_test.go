@@ -22,6 +22,9 @@ type cascadeBatch struct {
 	relays    map[string]bool
 }
 
+// BoxRecords is every record the fleet holds, in the pool or not.
+func (c *cascadeBatch) BoxRecords(context.Context, string) ([][]byte, error) { return c.envelopes, nil }
+
 func (c *cascadeBatch) CascadeVia(_ context.Context, entryBox, exitBox string) (string, map[string]bool, error) {
 	if entryBox != "ruin1" || exitBox != "unl1" {
 		return "", nil, entry.ErrRejected

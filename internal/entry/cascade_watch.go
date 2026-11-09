@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 )
 
 // What the cascade watch (internal/cascadewatch) needs of the fleet: the
@@ -128,6 +130,35 @@ func (s *Service) TrunkPairs(ctx context.Context) ([]TrunkPair, error) {
 		out = append(out, p)
 	}
 	return out, nil
+}
+
+// BoxRecords are the signed records of every relay on box that has one and
+// still stands, in the pool or out of it (testing under a canary, draining,
+// suspect): the cascade watch measures the exit whatever the pool makes of
+// it, since a relay out of the pool is when the question of blame comes up.
+func (s *Service) BoxRecords(ctx context.Context, box string) ([][]byte, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT name, envelope_ct FROM entry_relays
+		WHERE box = $1 AND kind = 'personal' AND status IN ('alive', 'testing', 'draining', 'suspect') AND expires_at > $2
+		ORDER BY name`, box, s.now())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][]byte
+	for rows.Next() {
+		var name string
+		var ct []byte
+		if err := rows.Scan(&name, &ct); err != nil {
+			return nil, err
+		}
+		raw, err := cryptobox.Decrypt(ct)
+		if err != nil {
+			return nil, fmt.Errorf("entry: open relay %s: %w", name, err)
+		}
+		out = append(out, raw)
+	}
+	return out, rows.Err()
 }
 
 // VantageBox is the box under an observation point's slot, "" when the slot

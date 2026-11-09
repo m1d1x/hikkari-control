@@ -29,7 +29,8 @@ const (
 // path to relay.
 func CascadeProbeLabel(path, relay string) string { return "cascade-" + path + "-" + relay }
 
-// CascadeProbeLinks are account's links to exitBox's Hikkari relays, each
+// CascadeProbeLinks are account's links to exitBox's Hikkari relays (in the
+// pool or out of it), each
 // straight and through the trunk entry on entryBox at port, with v1.02's
 // duplicated UDP as testers' clients get it.
 func (s *Service) CascadeProbeLinks(ctx context.Context, account, entryBox, exitBox string, port int) ([]string, error) {
@@ -53,13 +54,22 @@ func (s *Service) CascadeProbeLinks(ctx context.Context, account, entryBox, exit
 	if err != nil {
 		return nil, err
 	}
-	b, err := s.batch.BundleFor(ctx, id, entry.GrantMeta{}, "")
+	// The exit's relays as they stand, not as the pool hands them out: a
+	// relay a canary took out of the pool is still the exit, and the watch
+	// measures it.
+	boxes, ok := s.batch.(interface {
+		BoxRecords(ctx context.Context, box string) ([][]byte, error)
+	})
+	if !ok {
+		return nil, ErrNoCascadeSource
+	}
+	records, err := boxes.BoxRecords(ctx, exitBox)
 	if err != nil {
 		return nil, err
 	}
 	now := s.now()
 	var links []string
-	for _, raw := range b.Relays {
+	for _, raw := range records {
 		rec, err := entry.OpenRecord(raw, s.keys, now)
 		if err != nil || rec.Proto != entry.ProtoHikkari || !relays[rec.Name] {
 			continue
