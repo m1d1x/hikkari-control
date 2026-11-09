@@ -78,7 +78,9 @@ func (s *Service) cascadeOf(ctx context.Context, account uuid.UUID) (*cascade, e
 // the entry; false for a record the cascade does not carry. label is the
 // exit relay's node label ("амстердам-001"), the name every link reads by;
 // a relay with no node yet is named by itself. The node's id stays off the
-// link (see above), only its name is taken.
+// link (see above), only its name is taken. The name ends in cascadeSuffix:
+// the same relay served directly reads the same label, and a tester's log
+// names the profile it dialled only by this name.
 func (c *cascade) link(rec entry.RelayRecord, label string, dup bool) (string, bool) {
 	if rec.Proto != entry.ProtoHikkari || !c.relays[rec.Name] {
 		return "", false
@@ -96,9 +98,12 @@ func (c *cascade) link(rec entry.RelayRecord, label string, dup bool) (string, b
 	if err != nil {
 		return "", false
 	}
-	u.Fragment = strings.TrimSpace(c.flag + " " + name)
+	u.Fragment = strings.TrimSpace(c.flag + " " + name + " " + cascadeSuffix)
 	return u.String(), true
 }
+
+// cascadeSuffix tells a cascade's link from the exit relay's own.
+const cascadeSuffix = "каскад"
 
 // countryFlag is the emoji flag of a box row's location ("Amsterdam, NL"),
 // whose last part is an ISO 3166-1 alpha-2 code when the hoster names the

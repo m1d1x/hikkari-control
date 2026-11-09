@@ -111,7 +111,7 @@ func TestACascadeAccountDialsTheExitThroughTheEntry(t *testing.T) {
 	pass, _ := u.User.Password()
 	if u.Scheme != "hikkari+v1" || u.Host != "192.0.2.10:8443" || u.Query().Get("sni") != "exit.example" ||
 		u.Query().Get("dup") != "1" || u.Query().Get("hikkari-node") != "" || pass == "0123456789abcdef0123" ||
-		u.Fragment != "🇳🇱 амстердам-001" {
+		u.Fragment != "🇳🇱 амстердам-001 каскад" {
 		t.Fatalf("cascade link %s", links[0])
 	}
 	var all bool
