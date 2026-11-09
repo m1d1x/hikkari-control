@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -118,6 +119,37 @@ func (s *Service) trunkExitOf(ctx context.Context, box string) (addr, sni, key s
 		}
 	}
 	return "", "", "", nil, fmt.Errorf("%w: у %s нет Hikkari-релея с магистралью, сначала entry-box trunk-exit", ErrRejected, box)
+}
+
+// CascadeVia is what a subscription dialling exitBox through the trunk entry
+// on entryBox needs: the entry's address, and the Hikkari relays on exitBox
+// whose port the trunk reaches (their records keep SNI and key, only the
+// address and port the client dials change). No relay is an error: such a
+// cascade would serve an empty subscription.
+func (s *Service) CascadeVia(ctx context.Context, entryBox, exitBox string) (string, map[string]bool, error) {
+	acc, err := s.boxAccess(ctx, entryBox)
+	if err != nil {
+		return "", nil, err
+	}
+	if acc.retired {
+		return "", nil, fmt.Errorf("%w: %s", ErrBoxRetired, entryBox)
+	}
+	relays, err := s.relayIdentities(ctx, exitBox)
+	if err != nil {
+		return "", nil, err
+	}
+	out := map[string]bool{}
+	for _, rel := range relays {
+		h := rel.id.Hikkari
+		if h == nil || h.TrunkKey == "" || !slices.Contains(h.TrunkPorts, rel.id.Port) {
+			continue
+		}
+		out[rel.name] = true
+	}
+	if len(out) == 0 {
+		return "", nil, fmt.Errorf("%w: на %s нет Hikkari-релея, чей порт открыт магистрали", ErrRejected, exitBox)
+	}
+	return acc.address, out, nil
 }
 
 // trunkEntryEnv renders the entry's env. CONTAINS THE TRUNK KEY.

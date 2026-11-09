@@ -304,6 +304,10 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 			return nil, err
 		}
 	}
+	via, err := s.cascadeOf(ctx, account)
+	if err != nil {
+		return nil, err
+	}
 	now := s.now()
 	links := make([]string, 0, len(b.Relays))
 	for _, raw := range b.Relays {
@@ -312,6 +316,17 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 			// A record the hub cannot open is the hub's own fault, not the
 			// subscriber's: logged, and the rest of the batch still served.
 			applog.Error(ctx, "subscription", "relay record not opened", applog.F("err", err.Error()))
+			continue
+		}
+		if via != nil {
+			// A cascade account is served only its links through the entry
+			// (cascade.go).
+			if !hikkari || engine == "xray" {
+				continue
+			}
+			if link, ok := via.link(withKey(rec, key), hikkariDup); ok {
+				links = append(links, link)
+			}
 			continue
 		}
 		if rec.Proto == entry.ProtoNaive && (!naive || engine == "xray") {

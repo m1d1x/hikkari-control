@@ -81,7 +81,8 @@ func main() {
 			runEntryVantageNetwork(os.Args[2:])
 		case "mail-test":
 			runMailTest(os.Args[2:])
-		case "subscriber-add", "subscriber-renew", "subscriber-status", "subscriber-revoke", "plan-set", "plan-retire":
+		case "subscriber-add", "subscriber-renew", "subscriber-status", "subscriber-revoke", "plan-set", "plan-retire",
+			"subscriber-cascade", "subscriber-cascade-off":
 			runSubscriber(os.Args[1], os.Args[2:])
 		default:
 			fmt.Fprintf(os.Stderr, "unknown hub command: %s\n", os.Args[1])

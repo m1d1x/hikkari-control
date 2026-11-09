@@ -26,6 +26,12 @@ const gib = 1 << 30
 // plan on sale, or changed; subscriptions already sold keep their terms.
 //
 // plan-retire <id>: the plan is no longer sold.
+//
+// subscriber-cascade <name> <exit-box> <entry-box> <port>: the subscriber's
+// links become the exit's Hikkari relays dialled at the trunk entry on
+// entry-box, port (internal/subscription/cascade.go), and only them.
+//
+// subscriber-cascade-off <name>: the subscriber's links are its relays again.
 func runSubscriber(cmd string, args []string) {
 	fail := func(err error) {
 		fmt.Fprintln(os.Stderr, cmd+":", err)
@@ -33,7 +39,7 @@ func runSubscriber(cmd string, args []string) {
 	}
 	want := map[string]int{
 		"subscriber-add": 2, "subscriber-renew": 2, "subscriber-status": 1, "subscriber-revoke": 1,
-		"plan-set": 5, "plan-retire": 1,
+		"plan-set": 5, "plan-retire": 1, "subscriber-cascade": 4, "subscriber-cascade-off": 1,
 	}[cmd]
 	if len(args) != want {
 		fail(fmt.Errorf("wrong arguments, see cmd/hub/subscribers.go"))
@@ -92,6 +98,20 @@ func runSubscriber(cmd string, args []string) {
 			fail(err)
 		}
 		fmt.Println("plan set")
+	case "subscriber-cascade":
+		port, err := strconv.Atoi(args[3])
+		if err != nil {
+			fail(fmt.Errorf("%q is not a port", args[3]))
+		}
+		if err := subs.SetCascade(ctx, args[0], args[1], args[2], port); err != nil {
+			fail(err)
+		}
+		fmt.Printf("%s: hikkari relays of %s through %s:%d\n", args[0], args[1], args[2], port)
+	case "subscriber-cascade-off":
+		if err := subs.DropCascade(ctx, args[0]); err != nil {
+			fail(err)
+		}
+		fmt.Println("cascade off")
 	case "plan-retire":
 		if err := subs.RetirePlan(ctx, args[0]); err != nil {
 			fail(err)
