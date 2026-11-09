@@ -161,6 +161,25 @@ func (s *Service) BoxRecords(ctx context.Context, box string) ([][]byte, error) 
 	return out, rows.Err()
 }
 
+// RelayStatuses are the pool states of the relays on box that are not dead
+// (alive, testing under a canary, draining, suspect, pending).
+func (s *Service) RelayStatuses(ctx context.Context, box string) (map[string]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT name, status FROM entry_relays WHERE box = $1 AND status <> 'dead'`, box)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var name, status string
+		if err := rows.Scan(&name, &status); err != nil {
+			return nil, err
+		}
+		out[name] = status
+	}
+	return out, rows.Err()
+}
+
 // VantageBox is the box under an observation point's slot, "" when the slot
 // has none.
 func (s *Service) VantageBox(ctx context.Context, slot string) (string, error) {

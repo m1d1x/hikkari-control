@@ -71,6 +71,7 @@ const (
 type Fleet interface {
 	TrunkPairs(ctx context.Context) ([]entry.TrunkPair, error)
 	VantageBox(ctx context.Context, slot string) (string, error)
+	RelayStatuses(ctx context.Context, box string) (map[string]string, error)
 }
 
 // Boxes opens a box and stages the probe on it (entry.Provisioner).
@@ -403,6 +404,13 @@ func (w *Watch) Round(ctx context.Context, p entry.TrunkPair, round time.Time) e
 			prevData = prev.Data
 		}
 		ok, why := judgeVPS(d, prevData)
+		if b == ext {
+			// The exit's relays as the pool holds them: a canary of the fleet's
+			// rollout swaps the relay's build and restarts it under the round.
+			if st, err := w.fleet.RelayStatuses(ctx, p.Exit); err == nil {
+				d["relays"] = st
+			}
+		}
 		if err := w.store.Insert(ctx, row(LayerVPS, b.vantage, b.name, d, ok, why)); err != nil {
 			return err
 		}

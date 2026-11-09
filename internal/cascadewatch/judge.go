@@ -165,6 +165,19 @@ func judgeRound(rows []Run, minutes []Run, ruSlots map[string]bool) Verdict {
 	}
 	for _, r := range rows {
 		seen[r.Layer] = true
+		if r.Layer == LayerVPS && r.Vantage == "exit" {
+			relays, _ := r.Data["relays"].(map[string]any)
+			names := make([]string, 0, len(relays))
+			for n := range relays {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			for _, n := range names {
+				if st, _ := relays[n].(string); st != "alive" {
+					v.Notes = append(v.Notes, fmt.Sprintf("релей выхода %s вне пула: %s (testing: канарейка раскатки меняет его сборку и перезапускает)", n, st))
+				}
+			}
+		}
 		if r.OK == nil || *r.OK {
 			continue
 		}

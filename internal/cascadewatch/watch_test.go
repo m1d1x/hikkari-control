@@ -194,6 +194,9 @@ type fakeFleet struct{ pair entry.TrunkPair }
 func (f fakeFleet) TrunkPairs(context.Context) ([]entry.TrunkPair, error) {
 	return []entry.TrunkPair{f.pair}, nil
 }
+func (f fakeFleet) RelayStatuses(context.Context, string) (map[string]string, error) {
+	return map[string]string{"unl1-2": "testing"}, nil
+}
 func (f fakeFleet) VantageBox(_ context.Context, slot string) (string, error) {
 	if slot == "lv-main" {
 		return "lvbox", nil
@@ -374,6 +377,9 @@ func TestDBARoundMeasuresEveryLayerAndJudgesIt(t *testing.T) {
 	}
 	if v[0].Data["first_red"] != LayerTrunk || *v[0].OK {
 		t.Fatalf("verdict %+v", v[0].Data)
+	}
+	if notes, _ := v[0].Data["notes"].([]any); len(notes) == 0 || !strings.Contains(fmt.Sprint(notes), "unl1-2 вне пула: testing") {
+		t.Fatalf("the exit's canary is not said: %v", v[0].Data["notes"])
 	}
 	if errs.codes()["cascade.red.trunk"] != 1 {
 		t.Fatalf("alerts %v", errs.codes())
