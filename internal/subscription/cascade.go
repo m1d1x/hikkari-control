@@ -49,7 +49,7 @@ func (s *Service) cascadeOf(ctx context.Context, account uuid.UUID) (*cascade, e
 	var exitBox, entryBox string
 	var port int
 	err := s.pool.QueryRow(ctx,
-		`SELECT exit_box, entry_box, entry_port FROM hub_account_cascades WHERE account_id = $1`, account).
+		`SELECT exit_box, entry_box, entry_port FROM entry_cascades WHERE account_id = $1`, account).
 		Scan(&exitBox, &entryBox, &port)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -114,7 +114,7 @@ func (s *Service) SetCascade(ctx context.Context, name, exitBox, entryBox string
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO hub_account_cascades (account_id, exit_box, entry_box, entry_port) VALUES ($1, $2, $3, $4)
+		INSERT INTO entry_cascades (account_id, exit_box, entry_box, entry_port) VALUES ($1, $2, $3, $4)
 		ON CONFLICT (account_id) DO UPDATE SET exit_box = $2, entry_box = $3, entry_port = $4, created_at = now()`,
 		account, exitBox, entryBox, port); err != nil {
 		return err
@@ -126,7 +126,7 @@ func (s *Service) SetCascade(ctx context.Context, name, exitBox, entryBox string
 // the whole fleet: SetCascade does not know what the account held before.
 func (s *Service) DropCascade(ctx context.Context, name string) error {
 	tag, err := s.pool.Exec(ctx, `
-		DELETE FROM hub_account_cascades c USING hub_accounts a
+		DELETE FROM entry_cascades c USING hub_accounts a
 		WHERE a.id = c.account_id AND a.name = $1`, name)
 	if err != nil {
 		return err

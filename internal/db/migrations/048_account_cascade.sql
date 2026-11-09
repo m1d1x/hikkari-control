@@ -3,7 +3,7 @@
 -- входа entry_box и его портом entry_port, который магистраль везёт к релею.
 -- TLS клиента сквозной до релея: SNI и ключ остаются релея выхода. Выдаётся
 -- вручную (hub subscriber-cascade); у остальных аккаунтов строки нет.
-CREATE TABLE hub_account_cascades (
+CREATE TABLE entry_cascades (
     account_id uuid PRIMARY KEY REFERENCES hub_accounts(id) ON DELETE CASCADE,
     exit_box text NOT NULL REFERENCES entry_boxes(name),
     entry_box text NOT NULL REFERENCES entry_boxes(name),

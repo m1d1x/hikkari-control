@@ -124,8 +124,8 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND confrelid = 'hub_accounts'::regclass`).Scan(&references); err != nil {
 		t.Fatal(err)
 	}
-	if references != 6 {
-		t.Errorf("account foreign keys: %d, want grants, fail reports, subscriptions, access keys, key usage and orders", references)
+	if references != 7 {
+		t.Errorf("account foreign keys: %d, want grants, fail reports, subscriptions, access keys, key usage, orders and cascades", references)
 	}
 	var cap int
 	if err := pool.QueryRow(ctx, `SELECT sum(daily_cap_cents + monthly_cap_cents) FROM entry_spend_caps`).Scan(&cap); err != nil {
