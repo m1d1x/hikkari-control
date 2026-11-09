@@ -73,11 +73,18 @@ func TestLayersReadRedWhereAUserWouldNotice(t *testing.T) {
 	cur := map[string]any{"cpus": 1.0, "steal_pct": 47.0, "load1": 0.5, "mem_total_mb": 2000.0, "mem_avail_mb": 900.0,
 		"iface": "eth0", "uptime_sec": 200.0, "rx_packets": 101000.0, "rx_drop": 1000.0}
 	prev := map[string]any{"iface": "eth0", "uptime_sec": 100.0, "rx_packets": 1000.0, "rx_drop": 0.0}
-	if ok, why := judgeVPS(cur, prev); ok || !strings.Contains(why, "steal 47%") || !strings.Contains(why, "теряет 1.0% входящих") {
+	if ok, why := judgeVPS(cur, prev); ok || !strings.Contains(why, "steal 47% за 1 с") || !strings.Contains(why, "теряет 1.0% входящих") {
 		t.Fatalf("eun16-like box: %v %q", ok, why)
 	}
 	if num(cur, "d_rx_drop") != 1000 {
 		t.Fatalf("differences not kept: %v", cur)
+	}
+	// A second's steal of 45 % on a box whose steal over the interval is 7 %
+	// is not a bad box.
+	cur = map[string]any{"cpus": 2.0, "steal_pct": 45.0, "ticks_total": 2000.0, "ticks_steal": 170.0, "ticks_idle": 1300.0, "uptime_sec": 200.0}
+	prev = map[string]any{"ticks_total": 1000.0, "ticks_steal": 100.0, "ticks_idle": 600.0, "uptime_sec": 100.0}
+	if ok, why := judgeVPS(cur, prev); !ok || num(cur, "steal_avg_pct") != 7 || num(cur, "busy_avg_pct") != 23 {
+		t.Fatalf("steal over the interval: %v %q %v", ok, why, cur)
 	}
 	if ok, _ := judgePath(map[string]any{"flows": 12.0, "opened": 12.0, "ping_sent": 20.0, "ping_recv": 0.0}); !ok {
 		t.Fatal("ICMP filtered by the exit read as loss")

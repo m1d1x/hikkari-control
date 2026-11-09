@@ -14,7 +14,13 @@ import (
 // is bad. Counters of the interfaces are since boot; the hub takes their
 // differences between rounds.
 type VPS struct {
-	CPUs       int     `json:"cpus"`
+	CPUs int `json:"cpus"`
+	// CPU time since boot in ticks (/proc/stat): the hub takes differences
+	// between rounds, the box's steal and busy over 10 minutes rather than
+	// the second this run looked at.
+	TicksTotal float64 `json:"ticks_total"`
+	TicksSteal float64 `json:"ticks_steal"`
+	TicksIdle  float64 `json:"ticks_idle"`
 	StealPct   float64 `json:"steal_pct"`
 	IOWaitPct  float64 `json:"iowait_pct"`
 	BusyPct    float64 `json:"busy_pct"`
@@ -58,7 +64,9 @@ func measureVPS() (VPS, error) {
 	var total float64
 	for i := range b {
 		total += b[i] - a[i]
+		v.TicksTotal += b[i]
 	}
+	v.TicksSteal, v.TicksIdle = b[7], b[3]+b[4]
 	if total > 0 {
 		// user nice system idle iowait irq softirq steal
 		v.StealPct = round1(100 * (b[7] - a[7]) / total)

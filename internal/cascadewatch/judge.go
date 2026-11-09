@@ -55,8 +55,19 @@ func has(d map[string]any, k string) bool { _, ok := d[k]; return ok }
 // interface's drops since then. It adds the differences to cur.
 func judgeVPS(cur, prev map[string]any) (bool, string) {
 	var why []string
-	if s := num(cur, "steal_pct"); s > maxStealPct {
-		why = append(why, fmt.Sprintf("steal %.0f%%", s))
+	// Steal over the time since the last round when there is one: a second's
+	// sample swings from 0 to 50 % on a box whose 10-minute steal is 7 %
+	// (nekko-spb 09.11, against sar).
+	steal, over := num(cur, "steal_pct"), "за 1 с"
+	if prev != nil && num(cur, "ticks_total") > num(prev, "ticks_total") && num(prev, "ticks_total") > 0 {
+		dt := num(cur, "ticks_total") - num(prev, "ticks_total")
+		steal = float64(int(1000*(num(cur, "ticks_steal")-num(prev, "ticks_steal"))/dt)) / 10
+		cur["steal_avg_pct"] = steal
+		cur["busy_avg_pct"] = float64(int(1000*(dt-(num(cur, "ticks_idle")-num(prev, "ticks_idle"))-(num(cur, "ticks_steal")-num(prev, "ticks_steal")))/dt)) / 10
+		over = "за интервал"
+	}
+	if steal > maxStealPct {
+		why = append(why, fmt.Sprintf("steal %.0f%% %s", steal, over))
 	}
 	if cpus := num(cur, "cpus"); cpus > 0 && num(cur, "load1") > maxLoadPerCPU*cpus {
 		why = append(why, fmt.Sprintf("load %.1f на %d CPU", num(cur, "load1"), int(cpus)))
