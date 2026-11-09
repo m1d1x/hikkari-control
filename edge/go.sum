@@ -267,6 +267,8 @@ github.com/m1d1x/caddy/v2 v2.11.8-0.20261107181814-6481dda01571 h1:mN3aJVRFl/Lrl
 github.com/m1d1x/caddy/v2 v2.11.8-0.20261107181814-6481dda01571/go.mod h1:azDlZ9NxHX5/76XpIU8XjX6VXKnYV0uz9A8y3kqd5yo=
 github.com/m1d1x/hikkari-protocol v0.0.0-20261109012637-a25e3114f98c h1:B22fjmWXqnFuYfzRDL8SAymaUub1k7RzAnSHwwD98lQ=
 github.com/m1d1x/hikkari-protocol v0.0.0-20261109012637-a25e3114f98c/go.mod h1:n6g14ffrmydnUSkndaeZX7+B7y9NjK/EKIkmg7DuYh4=
+github.com/m1d1x/hikkari-protocol v0.0.0-20261109182516-17e0428a7a25 h1:lsxmXyBufcnsL1qvgELbYhtn/8dX1Z1oumDo0O+BvBk=
+github.com/m1d1x/hikkari-protocol v0.0.0-20261109182516-17e0428a7a25/go.mod h1:n6g14ffrmydnUSkndaeZX7+B7y9NjK/EKIkmg7DuYh4=
 github.com/m1d1x/hikkari-protocol/server/naive v0.0.0-20261108155522-c8322b5caadd h1:p1286Dmx6quLq0/LxmJgEI+sD69698V0OWytb9zGPgo=
 github.com/m1d1x/hikkari-protocol/server/naive v0.0.0-20261108155522-c8322b5caadd/go.mod h1:C6s9lA2snZKui/f6HXLXTQvgxJs9CDxuOrRbVt5DFUk=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261109035325-db90d019f65b h1:kAyMctb2O4UrZ+uhmJgkZwst6DgY5eJHlF2RHyySx3I=

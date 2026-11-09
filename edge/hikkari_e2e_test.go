@@ -29,7 +29,7 @@ import (
 	hkserver "github.com/m1d1x/hikkari-protocol/server"
 )
 
-// Hikkari v1 (v1.01, v1.02) end to end with the real client core (HIKKARI_TEST_CORE, a
+// Hikkari v1 (v1.01, v1.02, v1.03) end to end with the real client core (HIKKARI_TEST_CORE, a
 // sing-box-lx build with the hikkari outbound): TCP over the Naive channel,
 // UDP over the datagram channel, and UDP over the Naive channel when the
 // datagram channel is off or unreachable. Loopback egress is allowed only here.
@@ -122,7 +122,7 @@ func TestHikkariRealCoreTwoChannels(t *testing.T) {
 		{"datagram", nil, "datagram"},
 		{"udp disabled", map[string]any{"disabled": true}, "uot"},
 		{"datagram unreachable", map[string]any{"server_port": deadPort, "connect_timeout": "1s"}, "uot"},
-		{"v1.02 duplicated", map[string]any{"dup": true}, "dup"},
+		{"v1.03 duplicated with lanes", map[string]any{"dup": true}, "dup"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			uotBefore, dgBefore := n.uotFlows.Load(), udp.Flows()
@@ -167,12 +167,14 @@ func TestHikkariRealCoreTwoChannels(t *testing.T) {
 				}
 			case "dup":
 				// A call is carried by both channels, leaves the relay once per
-				// packet from one exit socket, and comes back once.
+				// packet from one exit socket, and comes back once. v1.03: its
+				// voice has a datagram carrier on a QUIC connection of its own
+				// beside the session's first one.
 				stream, datagram := n.dup.Carriers()
 				echoMu.Lock()
 				sources := len(echoSources)
 				echoMu.Unlock()
-				if datagram-datagramBefore == 0 || stream-streamBefore == 0 || uot != 0 {
+				if datagram-datagramBefore < 2 || stream-streamBefore == 0 || uot != 0 {
 					t.Fatalf("carriers: datagram %d, stream %d, uot %d", datagram-datagramBefore, stream-streamBefore, uot)
 				}
 				if e := echoed.Load() - echoedBefore; e > int64(sent) || sources != 1 || got > sent {
