@@ -51,7 +51,7 @@ import (
 
 // Account is the hub's own account whose key the protocol layer dials with.
 // It holds the whole fleet; the operator makes it once (hub subscriber-add,
-// then subscriber-cascade-add, which also sets all_relays).
+// then subscriber-cascade, which also sets all_relays).
 const Account = "cascade-watch"
 
 // ProvokePort is the exit's provoke receiver (edge/provoke.go), whose chunks

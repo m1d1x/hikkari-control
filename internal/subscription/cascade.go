@@ -7,12 +7,9 @@ package subscription
 //
 // The entry terminates only TCP (and carries UDP), so the client's TLS, SNI
 // and key are the exit relay's own: the link is the relay's, with the entry's
-// address and port. An account with only set is served only these links, so
-// what it measures is the cascade and nothing else; without it the link
-// through the entry stands beside the account's direct links, named apart
-// (cascadeSuffix), so a tester's diag:load round measures both paths. Either
-// way the account holds the whole fleet (all_relays), so the exit relay knows
-// its key whichever relay stands there.
+// address and port. Such an account is served only these links, so what it
+// measures is the cascade and nothing else, and it holds the whole fleet
+// (all_relays), so the exit relay knows its key whichever relay stands there.
 //
 // The link carries no node (hikkari-node): a cascade's failures are the
 // entry's or the trunk's as much as the relay's, and must not count against
@@ -40,14 +37,7 @@ type cascade struct {
 	flag string
 	// relays are the exit's Hikkari relays the trunk reaches, by name.
 	relays map[string]bool
-	// only: the account is served the links through the entry and no others.
-	only bool
 }
-
-// cascadeSuffix names a link through the entry when it stands beside the
-// same relay's direct link: the two must read apart in the app and in a
-// tester's log.
-const cascadeSuffix = " через вход"
 
 // CascadeVia finds the entry's address and the exit relays a cascade carries
 // to (entry.Service.CascadeVia).
@@ -62,12 +52,11 @@ var ErrNoCascadeSource = errors.New("subscription: no cascade source")
 func (s *Service) cascadeOf(ctx context.Context, account uuid.UUID) (*cascade, error) {
 	var exitBox, entryBox, exitLocation string
 	var port int
-	var only bool
 	err := s.pool.QueryRow(ctx, `
-		SELECT c.exit_box, c.entry_box, c.entry_port, coalesce(b.location, ''), c.cascade_only
+		SELECT c.exit_box, c.entry_box, c.entry_port, coalesce(b.location, '')
 		FROM entry_cascades c LEFT JOIN entry_boxes b ON b.name = c.exit_box
 		WHERE c.account_id = $1`, account).
-		Scan(&exitBox, &entryBox, &port, &exitLocation, &only)
+		Scan(&exitBox, &entryBox, &port, &exitLocation)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -82,7 +71,7 @@ func (s *Service) cascadeOf(ctx context.Context, account uuid.UUID) (*cascade, e
 	if err != nil {
 		return nil, fmt.Errorf("subscription: cascade %s → %s: %w", entryBox, exitBox, err)
 	}
-	return &cascade{address: address, port: port, relays: relays, flag: countryFlag(exitLocation), only: only}, nil
+	return &cascade{address: address, port: port, relays: relays, flag: countryFlag(exitLocation)}, nil
 }
 
 // link renders rec, already carrying the account's key, as a link through
@@ -108,9 +97,6 @@ func (c *cascade) link(rec entry.RelayRecord, label string, dup bool) (string, b
 		return "", false
 	}
 	u.Fragment = strings.TrimSpace(c.flag + " " + name)
-	if !c.only {
-		u.Fragment += cascadeSuffix
-	}
 	return u.String(), true
 }
 
@@ -128,9 +114,8 @@ func countryFlag(location string) string {
 }
 
 // SetCascade makes the account name's subscription dial exitBox's Hikkari
-// relays through the trunk entry on entryBox at port: only them when only is
-// set, beside the account's direct links otherwise.
-func (s *Service) SetCascade(ctx context.Context, name, exitBox, entryBox string, port int, only bool) error {
+// relays through the trunk entry on entryBox at port, and only them.
+func (s *Service) SetCascade(ctx context.Context, name, exitBox, entryBox string, port int) error {
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("subscription: cascade port %d", port)
 	}
@@ -154,9 +139,9 @@ func (s *Service) SetCascade(ctx context.Context, name, exitBox, entryBox string
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO entry_cascades (account_id, exit_box, entry_box, entry_port, cascade_only) VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (account_id) DO UPDATE SET exit_box = $2, entry_box = $3, entry_port = $4, cascade_only = $5, created_at = now()`,
-		account, exitBox, entryBox, port, only); err != nil {
+		INSERT INTO entry_cascades (account_id, exit_box, entry_box, entry_port) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (account_id) DO UPDATE SET exit_box = $2, entry_box = $3, entry_port = $4, created_at = now()`,
+		account, exitBox, entryBox, port); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

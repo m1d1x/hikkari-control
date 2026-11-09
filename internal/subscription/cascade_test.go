@@ -91,10 +91,10 @@ func TestACascadeAccountDialsTheExitThroughTheEntry(t *testing.T) {
 		t.Fatalf("an unknown account's link: %v", err)
 	}
 
-	if err := s.SetCascade(ctx, name, "unl1", "nowhere", 8443, true); err == nil {
+	if err := s.SetCascade(ctx, name, "unl1", "nowhere", 8443); err == nil {
 		t.Fatal("a cascade through an entry the fleet cannot say was set")
 	}
-	if err := s.SetCascade(ctx, name, "unl1", "ruin1", 8443, true); err != nil {
+	if err := s.SetCascade(ctx, name, "unl1", "ruin1", 8443); err != nil {
 		t.Fatal(err)
 	}
 	links := get()
@@ -114,36 +114,6 @@ func TestACascadeAccountDialsTheExitThroughTheEntry(t *testing.T) {
 	var all bool
 	if err := pool.QueryRow(ctx, `SELECT all_relays FROM hub_accounts WHERE name = $1`, name).Scan(&all); err != nil || !all {
 		t.Fatalf("a cascade account must hold the whole fleet, so the exit relay knows its key: %v %v", all, err)
-	}
-
-	// Beside the direct links: the relay's own link stays, the one through
-	// the entry is added and reads apart from it.
-	if err := s.SetCascade(ctx, name, "unl1", "ruin1", 8443, false); err != nil {
-		t.Fatal(err)
-	}
-	links = get()
-	var through, direct []string
-	for _, l := range links {
-		if strings.Contains(l, "192.0.2.10:8443") {
-			through = append(through, l)
-		} else {
-			direct = append(direct, l)
-		}
-	}
-	if len(through) != 1 || len(direct) != 3 {
-		t.Fatalf("links %q, want the three direct ones and one through the entry", links)
-	}
-	if u, err := url.Parse(through[0]); err != nil || u.Fragment != "🇳🇱 амстердам-001 через вход" || u.Query().Get("hikkari-node") != "" {
-		t.Fatalf("cascade link beside the direct ones %s", through[0])
-	}
-	var named bool
-	for _, l := range direct {
-		if u, err := url.Parse(l); err == nil && u.Fragment == "амстердам-001" && u.Host == "198.51.100.4:443" {
-			named = true
-		}
-	}
-	if !named {
-		t.Fatalf("the exit relay's direct link is gone or renamed: %q", direct)
 	}
 
 	if err := s.DropCascade(ctx, name); err != nil {

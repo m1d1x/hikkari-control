@@ -34,10 +34,6 @@ const gib = 1 << 30
 // links become the exit's Hikkari relays dialled at the trunk entry on
 // entry-box, port (internal/subscription/cascade.go), and only them.
 //
-// subscriber-cascade-add <name> <exit-box> <entry-box> <port>: the same links
-// through the entry, beside the subscriber's direct links and named apart
-// ("… через вход"), so a tester's diag:load measures both in one round.
-//
 // subscriber-cascade-off <name>: the subscriber's links are its relays again.
 func runSubscriber(cmd string, args []string) {
 	fail := func(err error) {
@@ -46,7 +42,7 @@ func runSubscriber(cmd string, args []string) {
 	}
 	want := map[string]int{
 		"subscriber-add": 2, "subscriber-renew": 2, "subscriber-status": 1, "subscriber-link": 1, "subscriber-revoke": 1,
-		"plan-set": 5, "plan-retire": 1, "subscriber-cascade": 4, "subscriber-cascade-add": 4, "subscriber-cascade-off": 1,
+		"plan-set": 5, "plan-retire": 1, "subscriber-cascade": 4, "subscriber-cascade-off": 1,
 	}[cmd]
 	if len(args) != want {
 		fail(fmt.Errorf("wrong arguments, see cmd/hub/subscribers.go"))
@@ -111,20 +107,15 @@ func runSubscriber(cmd string, args []string) {
 			fail(err)
 		}
 		fmt.Println("plan set")
-	case "subscriber-cascade", "subscriber-cascade-add":
+	case "subscriber-cascade":
 		port, err := strconv.Atoi(args[3])
 		if err != nil {
 			fail(fmt.Errorf("%q is not a port", args[3]))
 		}
-		only := cmd == "subscriber-cascade"
-		if err := subs.SetCascade(ctx, args[0], args[1], args[2], port, only); err != nil {
+		if err := subs.SetCascade(ctx, args[0], args[1], args[2], port); err != nil {
 			fail(err)
 		}
-		if only {
-			fmt.Printf("%s: hikkari relays of %s through %s:%d, and only them\n", args[0], args[1], args[2], port)
-		} else {
-			fmt.Printf("%s: hikkari relays of %s through %s:%d, beside the direct links\n", args[0], args[1], args[2], port)
-		}
+		fmt.Printf("%s: hikkari relays of %s through %s:%d\n", args[0], args[1], args[2], port)
 	case "subscriber-cascade-off":
 		if err := subs.DropCascade(ctx, args[0]); err != nil {
 			fail(err)
