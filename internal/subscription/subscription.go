@@ -331,15 +331,14 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 			applog.Error(ctx, "subscription", "relay record not opened", applog.F("err", err.Error()))
 			continue
 		}
-		if via != nil {
-			// A cascade account is served only its links through the entry
-			// (cascade.go).
-			if !hikkari || engine == "xray" {
-				continue
-			}
+		if via != nil && hikkari && engine != "xray" {
 			if link, ok := via.link(withKey(rec, key), nodes[rec.Name].Label, hikkariDup); ok {
 				links = append(links, link)
 			}
+		}
+		if via != nil && via.only {
+			// A cascade account with only set is served its links through
+			// the entry and nothing else (cascade.go).
 			continue
 		}
 		if rec.Proto == entry.ProtoNaive && (!naive || engine == "xray") {
