@@ -79,6 +79,13 @@ func TestACascadeAccountDialsTheExitThroughTheEntry(t *testing.T) {
 		return strings.Split(string(raw), "\n")
 	}
 
+	if link, err := s.URLOf(ctx, name); err != nil || !strings.HasSuffix(link, "/sub/"+token) {
+		t.Fatalf("the link read back is %q (%v), want the one handed out", link, err)
+	}
+	if _, err := s.URLOf(ctx, "no-such-account"); err != ErrUnknown {
+		t.Fatalf("an unknown account's link: %v", err)
+	}
+
 	if err := s.SetCascade(ctx, name, "unl1", "nowhere", 8443); err == nil {
 		t.Fatal("a cascade through an entry the fleet cannot say was set")
 	}

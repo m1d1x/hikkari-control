@@ -185,6 +185,19 @@ func (s *Service) URL(ctx context.Context, account uuid.UUID) (string, error) {
 	return LinkURL(token), nil
 }
 
+// URLOf is URL for the account named name.
+func (s *Service) URLOf(ctx context.Context, name string) (string, error) {
+	var account uuid.UUID
+	err := s.pool.QueryRow(ctx, `SELECT id FROM hub_accounts WHERE name = $1`, name).Scan(&account)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrUnknown
+	}
+	if err != nil {
+		return "", err
+	}
+	return s.URL(ctx, account)
+}
+
 // RenewURL is the page that sells token's subscription its next period.
 func RenewURL(token string) string {
 	return config.Default().BaseURL() + "/pay#renew=" + token

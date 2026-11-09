@@ -20,6 +20,9 @@ const gib = 1 << 30
 //
 // subscriber-status <name>: the period's end and traffic.
 //
+// subscriber-link <name>: the subscriber's link again, read back from the
+// sealed token.
+//
 // subscriber-revoke <name>: the link stops working at once.
 //
 // plan-set <id> <days> <traffic GiB, 0 for none> <price kopecks> <title>: a
@@ -38,7 +41,7 @@ func runSubscriber(cmd string, args []string) {
 		os.Exit(1)
 	}
 	want := map[string]int{
-		"subscriber-add": 2, "subscriber-renew": 2, "subscriber-status": 1, "subscriber-revoke": 1,
+		"subscriber-add": 2, "subscriber-renew": 2, "subscriber-status": 1, "subscriber-link": 1, "subscriber-revoke": 1,
 		"plan-set": 5, "plan-retire": 1, "subscriber-cascade": 4, "subscriber-cascade-off": 1,
 	}[cmd]
 	if len(args) != want {
@@ -82,6 +85,12 @@ func runSubscriber(cmd string, args []string) {
 			limit = fmt.Sprintf("%.2f GiB", float64(t.TrafficBytes)/gib)
 		}
 		fmt.Printf("plan %s, expires %s, used %.2f GiB of %s\n", t.Plan, expires, float64(t.Up+t.Down)/gib, limit)
+	case "subscriber-link":
+		link, err := subs.URLOf(ctx, args[0])
+		if err != nil {
+			fail(err)
+		}
+		fmt.Println(link)
 	case "subscriber-revoke":
 		if err := subs.Revoke(ctx, args[0]); err != nil {
 			fail(err)
