@@ -41,17 +41,27 @@ func Profiles(ctx context.Context, parser, subURL string) ([]Profile, error) {
 	}
 	kept := out[:0]
 	for _, p := range out {
-		if p.Node != "" && reValue.MatchString(p.Node) {
-			p.Label = p.Node
-		}
-		if !reValue.MatchString(p.Label) && len(p.CapacityKey) == 64 {
-			p.Label = "profile-" + p.CapacityKey[:12]
-		}
+		p.Label = DatasetLabel(p)
 		if p.Config != nil && reValue.MatchString(p.Label) && p.Label != "" {
 			kept = append(kept, p)
 		}
 	}
 	return kept, nil
+}
+
+// DatasetLabel is how the dataset names the profile: the node it reaches
+// when the link names one, else "profile-" and the first 12 hex of its
+// capacity key, else its own label. The hub takes only [A-Za-z0-9._,/-] in a
+// row's profile, and a subscription's labels are the user's words
+// ("нидерланды-002"), so the label is the last resort.
+func DatasetLabel(p Profile) string {
+	if p.Node != "" && reValue.MatchString(p.Node) {
+		return p.Node
+	}
+	if !reValue.MatchString(p.Label) && len(p.CapacityKey) == 64 {
+		return "profile-" + p.CapacityKey[:12]
+	}
+	return p.Label
 }
 
 // Applies says whether knob is a knob of the profile at all: a fingerprint

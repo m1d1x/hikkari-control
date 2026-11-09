@@ -88,6 +88,9 @@ func (c *client) matrix(args map[string]string) (string, error) {
 	if plan.Base != "" {
 		out = "база: " + plan.Base + "\n" + out
 	}
+	if args["profile"] != plan.Profile {
+		out = "профиль " + args["profile"] + " в датасете: " + plan.Profile + "\n" + out
+	}
 	if len(rows) > 0 {
 		// Every run is history: the rows go to the hub's dataset, so the next
 		// question about this knob starts from them, not from scrollback.
@@ -179,18 +182,22 @@ func matrixPlanOf(args map[string]string) (stand.Plan, error) {
 		}
 		spec.Rounds = n
 	}
-	outbound, err := matrixOutbound(sub, label)
+	outbound, name, err := matrixOutbound(sub, label)
 	if err != nil {
 		return stand.Plan{}, err
 	}
+	// Rows name the profile as the hub's stand does: the hub refuses the
+	// subscription's own label when it is not ASCII.
+	spec.Profile = name
 	return stand.NewPlan(outbound, spec)
 }
 
-// matrixOutbound is the profile's sing-box outbound as the client builds it.
-func matrixOutbound(sub, label string) (map[string]interface{}, error) {
+// matrixOutbound is the profile's sing-box outbound as the client builds it,
+// and the profile's name in the dataset (stand.DatasetLabel).
+func matrixOutbound(sub, label string) (map[string]interface{}, string, error) {
 	dir, err := clientEngineDir()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -200,23 +207,25 @@ func matrixOutbound(sub, label string) (map[string]interface{}, error) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("census-parse: %s", strings.ReplaceAll(strings.TrimSpace(stderr.String()), sub, "[subscription]"))
+		return nil, "", fmt.Errorf("census-parse: %s", strings.ReplaceAll(strings.TrimSpace(stderr.String()), sub, "[subscription]"))
 	}
-	var entries []struct {
-		Label  string                 `json:"label"`
-		Config map[string]interface{} `json:"config"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &entries); err != nil {
-		return nil, errors.New("census-parse: unreadable answer")
+	return matrixPick(stdout.Bytes(), label)
+}
+
+// matrixPick finds the profile by its label in census-parse's answer.
+func matrixPick(raw []byte, label string) (map[string]interface{}, string, error) {
+	var entries []stand.Profile
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, "", errors.New("census-parse: unreadable answer")
 	}
 	var labels []string
 	for _, e := range entries {
 		if e.Label == label && e.Config != nil {
-			return e.Config, nil
+			return e.Config, stand.DatasetLabel(e), nil
 		}
 		labels = append(labels, e.Label)
 	}
-	return nil, fmt.Errorf("no profile %q in the subscription, it has: %s", label, strings.Join(labels, ", "))
+	return nil, "", fmt.Errorf("no profile %q in the subscription, it has: %s", label, strings.Join(labels, ", "))
 }
 
 func matrixVantageList(s string) ([]string, error) {
