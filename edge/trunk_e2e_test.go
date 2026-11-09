@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
-	"github.com/m1d1x/hikkari-control/edge/trunk"
+	"github.com/m1d1x/hikkari-protocol/trunk"
 	"golang.org/x/net/http2"
 )
 

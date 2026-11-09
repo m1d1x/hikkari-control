@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
-	"github.com/m1d1x/hikkari-control/edge/trunk"
 	"github.com/m1d1x/hikkari-protocol/connect"
+	"github.com/m1d1x/hikkari-protocol/trunk"
 )
 
 // trunkExitConfig is EDGE_HIKKARI_TRUNK_*: the keys entries present and the

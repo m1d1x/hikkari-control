@@ -24,9 +24,9 @@ import (
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	_ "github.com/caddyserver/caddy/v2/modules/standard"
-	"github.com/m1d1x/hikkari-control/edge/trunk"
 	hkserver "github.com/m1d1x/hikkari-protocol/server"
 	_ "github.com/m1d1x/hikkari-protocol/server/naive"
+	"github.com/m1d1x/hikkari-protocol/trunk"
 )
 
 const (

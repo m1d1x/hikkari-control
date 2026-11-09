@@ -29,7 +29,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/m1d1x/hikkari-control/edge/trunk"
+	"github.com/m1d1x/hikkari-protocol/trunk"
 )
 
 const protoTrunkEntry = "trunk-entry"
