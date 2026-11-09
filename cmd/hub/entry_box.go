@@ -39,6 +39,14 @@ package main
 //	                                    # default; checks it from the hub
 //	cmd/server entry-box provoke-off <box>
 //	                                    # take the receiver off the box
+//	cmd/server entry-box lab-reality <box> [port] [cover]
+//	                                    # stand up or update the опыт 0 lab
+//	                                    # Reality relay on a recorded box
+//	                                    # (internal/entry/lab_reality.go), 443
+//	                                    # and www.samsung.com by default;
+//	                                    # prints its share link on stdout
+//	cmd/server entry-box lab-reality-off <box>
+//	                                    # take the lab relay off the box
 //	cmd/server entry-box record <relay> # an alive relay's signed record, as a
 //	                                    # client gets it (the live voice harness)
 //
@@ -314,6 +322,44 @@ func runEntryBox(args []string) {
 			fail(fmt.Errorf("reconfigure %s: %w", box, err))
 		}
 		fmt.Printf("%s reconfigured\n", box)
+		os.Exit(0)
+	}
+	if len(args) >= 2 && len(args) <= 4 && (args[0] == "lab-reality" || args[0] == "lab-reality-off") {
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+		if args[0] == "lab-reality-off" {
+			if len(args) != 2 {
+				fail(fmt.Errorf("usage: cmd/server entry-box lab-reality-off <box>"))
+			}
+			if err := prov.StopLabReality(ctx, args[1]); err != nil {
+				fail(err)
+			}
+			os.Exit(0)
+		}
+		port, cover := entry.DefaultLabRealityPort, entry.DefaultLabRealityCover
+		if len(args) >= 3 {
+			if port, err = strconv.Atoi(args[2]); err != nil {
+				fail(fmt.Errorf("port %q", args[2]))
+			}
+		}
+		if len(args) == 4 {
+			cover = args[3]
+		}
+		link, err := prov.StandLabReality(ctx, args[1], port, cover)
+		if err != nil {
+			fail(err)
+		}
+		// The link holds the relay's id: stdout only, never the log.
+		fmt.Println(link)
 		os.Exit(0)
 	}
 	if len(args) >= 2 && len(args) <= 3 && (args[0] == "provoke" || args[0] == "provoke-off") {

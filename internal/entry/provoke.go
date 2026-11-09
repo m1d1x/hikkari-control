@@ -178,27 +178,8 @@ func (p *Provisioner) StopProvoke(ctx context.Context, box string) error {
 
 // standProvoke is StandProvoke's work on an open box.
 func standProvoke(ctx context.Context, r Remote, builds map[string]EdgeBuild, port int, logf func(string, ...any)) error {
-	out, err := r.Run(ctx, "uname -m", nil)
-	if err != nil {
+	if err := stageLabBinary(ctx, r, builds, provokeBinary, logf); err != nil {
 		return err
-	}
-	arch := map[string]string{"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[strings.TrimSpace(out)]
-	build, ok := builds[arch]
-	if arch == "" || !ok {
-		return fmt.Errorf("в образе хаба нет бинаря edge под %s", remoteWord(out))
-	}
-	have, _ := r.Run(ctx, "sha256sum "+provokeBinary+" 2>/dev/null | cut -d' ' -f1", nil)
-	if strings.TrimSpace(have) == build.SHA {
-		logf("бинарь приёмника %s… уже на месте", build.SHA[:12])
-	} else {
-		binary, err := build.read()
-		if err != nil {
-			return err
-		}
-		if _, err := r.Run(ctx, "cat > "+provokeBinary+".new", bytes.NewReader(binary)); err != nil {
-			return fmt.Errorf("загрузка бинаря: %w", err)
-		}
-		logf("бинарь приёмника %s… загружен (%d МБ)", build.SHA[:12], len(binary)>>20)
 	}
 	if _, err := r.Run(ctx, "cat > /etc/systemd/system/"+provokeUnit+".service", strings.NewReader(provokeUnitFile)); err != nil {
 		return fmt.Errorf("unit-файл: %w", err)
@@ -207,7 +188,7 @@ func standProvoke(ctx context.Context, r Remote, builds map[string]EdgeBuild, po
 	if _, err := r.Run(ctx, "cat > "+provokeEnvFile+".new", strings.NewReader(env)); err != nil {
 		return fmt.Errorf("env: %w", err)
 	}
-	out, err = r.Run(ctx, "bash -s -- "+strconv.Itoa(port), strings.NewReader(provokeSwapScript))
+	out, err := r.Run(ctx, "bash -s -- "+strconv.Itoa(port), strings.NewReader(provokeSwapScript))
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if line != "" {
 			logf("%s", line)
@@ -273,5 +254,34 @@ func checkProvoke(ctx context.Context, addr string) error {
 	if s := seen[hexTag]; !s.Hello || s.UDP == 0 {
 		return fmt.Errorf("seen: приёмник не видел своей проверки (hello=%t udp=%d)", s.Hello, s.UDP)
 	}
+	return nil
+}
+
+// stageLabBinary puts the hub's edge build for the box's arch at path.new,
+// unless path already holds it: experiment equipment runs its own copy of the
+// edge binary, never the one the box's relays run.
+func stageLabBinary(ctx context.Context, r Remote, builds map[string]EdgeBuild, path string, logf func(string, ...any)) error {
+	out, err := r.Run(ctx, "uname -m", nil)
+	if err != nil {
+		return err
+	}
+	arch := map[string]string{"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[strings.TrimSpace(out)]
+	build, ok := builds[arch]
+	if arch == "" || !ok {
+		return fmt.Errorf("в образе хаба нет бинаря edge под %s", remoteWord(out))
+	}
+	have, _ := r.Run(ctx, "sha256sum "+path+" 2>/dev/null | cut -d' ' -f1", nil)
+	if strings.TrimSpace(have) == build.SHA {
+		logf("бинарь %s %s… уже на месте", path, build.SHA[:12])
+		return nil
+	}
+	binary, err := build.read()
+	if err != nil {
+		return err
+	}
+	if _, err := r.Run(ctx, "cat > "+path+".new", bytes.NewReader(binary)); err != nil {
+		return fmt.Errorf("загрузка бинаря: %w", err)
+	}
+	logf("бинарь %s %s… загружен (%d МБ)", path, build.SHA[:12], len(binary)>>20)
 	return nil
 }
