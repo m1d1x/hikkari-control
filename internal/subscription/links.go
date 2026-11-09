@@ -23,23 +23,28 @@ var errNoLink = errors.New("relay has no client link")
 // adapter: pinSHA256 is the leaf certificate digest, and finalmask is the
 // base64url JSON mask list from the signed record (including Noise).
 // HikkariLink renders a Hikkari v1 relay: one credential, TCP over Naive on tcp/<port>, UDP over QUIC
-// datagrams on udp/<port> of the same host. dup=1: the relay serves v1.02 duplicated UDP (every
-// edge of this hub does, edge/hikkari.go), so a client may carry a call over both channels at once.
+// datagrams on udp/<port> of the same host. dup: the link says dup=1, the relay serves v1.02
+// duplicated UDP (every edge of this hub does, edge/hikkari.go) and the client may carry a call
+// over both channels at once. Only a client with the "hikkari-dup" feature is given it: clients up
+// to 1.0.69 refuse a link with a parameter they do not know.
 //
 //	hikkari+v1://hikkari:<key>@<address>:<port>?sni=<domain>&dup=1#<label>
-func HikkariLink(r entry.RelayRecord) (string, error) {
+func HikkariLink(r entry.RelayRecord, dup bool) (string, error) {
 	p := r.HikkariParams
 	if r.Proto != entry.ProtoHikkari || p == nil || p.Host == "" || p.User == "" || p.Pass == "" {
 		return "", errNoLink
 	}
-	q := url.Values{"sni": {p.Host}, "dup": {"1"}}
+	q := url.Values{"sni": {p.Host}}
+	if dup {
+		q.Set("dup", "1")
+	}
 	u := url.URL{Scheme: "hikkari+v1", Host: net.JoinHostPort(r.Address, strconv.Itoa(r.Port)), User: url.UserPassword(p.User, p.Pass), RawQuery: q.Encode(), Fragment: "Hikkari " + r.Name}
 	return u.String(), nil
 }
 
 func Link(r entry.RelayRecord) (string, error) {
 	if r.Proto == entry.ProtoHikkari {
-		return HikkariLink(r)
+		return HikkariLink(r, false)
 	}
 	host := net.JoinHostPort(r.Address, strconv.Itoa(r.Port))
 	label := "Hikkari " + r.Name

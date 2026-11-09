@@ -220,7 +220,7 @@ func (s *Service) LinksFor(ctx context.Context, token, engine string) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	return s.links(ctx, account, engine, awgCaps{}, 0, false, false)
+	return s.links(ctx, account, engine, awgCaps{}, 0, false, false, false)
 }
 
 // featuresHeader is how a client says what it can dial beyond what every client
@@ -284,8 +284,9 @@ func networkOf(h http.Header) uint32 {
 }
 
 // hikkari: the client's core speaks Hikkari v1 (feature "hikkari"); only such a
-// client is given hikkari+v1:// links.
-func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, awg awgCaps, asn uint32, naive, hikkari bool) ([]string, error) {
+// client is given hikkari+v1:// links. hikkariDup: it speaks v1.02 too (feature
+// "hikkari-dup") and its links say dup=1.
+func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, awg awgCaps, asn uint32, naive, hikkari, hikkariDup bool) ([]string, error) {
 	key, err := s.accessKey(ctx, account)
 	if err != nil {
 		return nil, err
@@ -320,6 +321,9 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 			continue
 		}
 		render := Link
+		if rec.Proto == entry.ProtoHikkari {
+			render = func(r entry.RelayRecord) (string, error) { return HikkariLink(r, hikkariDup) }
+		}
 		if rec.Proto == entry.ProtoHysteria2 && engine != "xray" {
 			render = SingBoxHysteriaLink
 		}
@@ -418,7 +422,7 @@ func (s *Service) Handler() http.HandlerFunc {
 			return
 		}
 		if err == nil {
-			links, err = s.links(r.Context(), account, engine, wantsAwg(r.Header), networkOf(r.Header), hasNaiveFeature(r.Header), hasFeature(r.Header, "hikkari"))
+			links, err = s.links(r.Context(), account, engine, wantsAwg(r.Header), networkOf(r.Header), hasNaiveFeature(r.Header), hasFeature(r.Header, "hikkari"), hasFeature(r.Header, "hikkari-dup"))
 		}
 		if err != nil {
 			applog.Error(r.Context(), "subscription", "batch failed", applog.F("err", err.Error()))
