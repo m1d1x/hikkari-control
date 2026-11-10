@@ -131,9 +131,9 @@ func TestStatsLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	ports.Dead(20001)
-	line := statsLine(trunk.Stats{Members: 32, MembersJoined: 33, MembersStall: 1, Resent: 2, Up: 10, Down: 20, DgramsOut: 5, DgramsIn: 4},
+	line := statsLine(trunk.Stats{Members: 32, MembersJoined: 33, MembersStall: 1, Resent: 2, Up: 10, Down: 20, DgramsOut: 5, DgramsIn: 4, Pauses: 2, Paused: 1500 * time.Millisecond},
 		[]time.Duration{20 * time.Millisecond, 30 * time.Millisecond, 40 * time.Millisecond, 100 * time.Millisecond}, ports)
-	want := "members=32 joined=33 stalled=1 broken=0 resent=2 dead_ports=1 port_kills=1 streams=0/0 reset=0 up=10 down=20 flows=0 dgrams=5/4 copies=0 rtt_p50=30.0 rtt_p90=100.0 rtt_max=100.0"
+	want := "members=32 joined=33 stalled=1 broken=0 resent=2 dead_ports=1 port_kills=1 streams=0/0 reset=0 up=10 down=20 flows=0 dgrams=5/4 copies=0 pauses=2 paused_ms=1500 rtt_p50=30.0 rtt_p90=100.0 rtt_max=100.0"
 	if line != want {
 		t.Fatalf("\n got %s\nwant %s", line, want)
 	}

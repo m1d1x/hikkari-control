@@ -21,6 +21,7 @@ import (
 const journal = `1794213568.844108 spb-3 nekko-trunk-entry[19617]: 2026/11/09 11:39:28 nekko-trunk-entry: members=32 joined=38 stalled=4 broken=2 resent=1 dead_ports=2 port_kills=4 streams=0/624 reset=71 up=919317 down=92481043 flows=1 dgrams=10/9 copies=3 rtt_p50=61.5 rtt_p90=80.0 rtt_max=120.2
 1794213570.100000 spb-3 nekko-trunk-entry[19617]: 2026/11/09 11:39:30 trunk: member 7: down after 41m47s: trunk: member stalled
 1794213571.100000 spb-3 nekko-trunk-entry[19617]: 2026/11/09 11:39:31 trunk: member 3: dial: dial tcp: i/o timeout
+1794213571.500000 spb-3 nekko-trunk-entry[19617]: 2026/11/09 11:39:31 trunk: paused 1.25s
 1794213572.100000 spb-3 nekko-trunk-entry[19617]: 2026/11/09 11:39:32 trunk: exit epoch 0011223344556677 after 8899aabbccddeeff: streams reset
 1794213573.100000 spb-3 nekko-trunk-entry[19617]: 2026/11/09 11:39:33 trunk: exit epoch 0011223344556677
 1794213574.100000 spb-3 systemd[1]: nekko-trunk-entry.service: Main process exited, code=killed, status=9/KILL
@@ -30,7 +31,7 @@ garbage line
 
 func TestJournalReadsTheEntrysLines(t *testing.T) {
 	lines := parseJournal(journal)
-	if len(lines) != 7 {
+	if len(lines) != 8 {
 		t.Fatalf("%d lines", len(lines))
 	}
 	if !lines[0].TS.Equal(time.Unix(1794213568, 844108000)) {
@@ -48,12 +49,15 @@ func TestJournalReadsTheEntrysLines(t *testing.T) {
 		}
 		kinds = append(kinds, d["kind"].(string))
 	}
-	if strings.Join(kinds, ",") != "stats,member_down,member_dial_failed,exit_epoch_changed,exit_epoch,unit,stats" {
+	if strings.Join(kinds, ",") != "stats,member_down,member_dial_failed,entry_paused,exit_epoch_changed,exit_epoch,unit,stats" {
 		t.Fatalf("kinds %v", kinds)
 	}
 	_, st, _ := classify(lines[0])
 	if num(st, "members") != 32 || num(st, "streams_opened") != 624 || num(st, "dgrams_in") != 9 || num(st, "rtt_p50_ms") != 61.5 || num(st, "copies") != 3 {
 		t.Fatalf("stats %v", st)
+	}
+	if _, p, _ := classify(lines[3]); num(p, "ms") != 1250 {
+		t.Fatalf("paused %v", p)
 	}
 	_, down, _ := classify(lines[1])
 	if down["why"] != "stalled" || num(down, "after_s") != 41*60+47 || num(down, "member") != 7 {

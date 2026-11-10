@@ -128,9 +128,9 @@ func (n *naiveRuntime) startTrunkExit(ctx context.Context) {
 				return
 			case <-t.C:
 				if sessions, st := x.Stats(); sessions > 0 {
-					log.Printf("nekko-edge: trunk exit: sessions=%d members=%d stalled=%d broken=%d resent=%d streams=%d/%d reset=%d up=%d down=%d flows=%d dgrams=%d/%d copies=%d",
+					log.Printf("nekko-edge: trunk exit: sessions=%d members=%d stalled=%d broken=%d resent=%d streams=%d/%d reset=%d up=%d down=%d flows=%d dgrams=%d/%d copies=%d pauses=%d paused_ms=%d",
 						sessions, st.Members, st.MembersStall, st.MembersBroken, st.Resent, st.Streams, st.StreamsOpened, st.StreamsReset,
-						st.Up, st.Down, st.Flows, st.DgramsOut, st.DgramsIn, st.DgramsCopy)
+						st.Up, st.Down, st.Flows, st.DgramsOut, st.DgramsIn, st.DgramsCopy, st.Pauses, st.Paused.Milliseconds())
 				}
 			}
 		}

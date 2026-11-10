@@ -309,10 +309,10 @@ func logStats(ctx context.Context, entry *trunk.Entry) {
 // smoothed round trips in milliseconds (p50, p90, max over the members up).
 func statsLine(st trunk.Stats, rtts []time.Duration, ports *trunk.PortBook) string {
 	dead, kills := ports.Counts()
-	return fmt.Sprintf("members=%d joined=%d stalled=%d broken=%d resent=%d dead_ports=%d port_kills=%d streams=%d/%d reset=%d up=%d down=%d flows=%d dgrams=%d/%d copies=%d rtt_p50=%s rtt_p90=%s rtt_max=%s",
+	return fmt.Sprintf("members=%d joined=%d stalled=%d broken=%d resent=%d dead_ports=%d port_kills=%d streams=%d/%d reset=%d up=%d down=%d flows=%d dgrams=%d/%d copies=%d pauses=%d paused_ms=%d rtt_p50=%s rtt_p90=%s rtt_max=%s",
 		st.Members, st.MembersJoined, st.MembersStall, st.MembersBroken, st.Resent, dead, kills,
 		st.Streams, st.StreamsOpened, st.StreamsReset, st.Up, st.Down, st.Flows, st.DgramsOut, st.DgramsIn, st.DgramsCopy,
-		rttAt(rtts, 50), rttAt(rtts, 90), rttAt(rtts, 100))
+		st.Pauses, st.Paused.Milliseconds(), rttAt(rtts, 50), rttAt(rtts, 90), rttAt(rtts, 100))
 }
 
 // rttAt is the q-th percentile of sorted round trips in milliseconds, "-"

@@ -44,6 +44,7 @@ var (
 	reStats      = regexp.MustCompile(`nekko-trunk-entry: (members=\d+ .*)$`)
 	reMemberDown = regexp.MustCompile(`trunk: member (\d+): down after (\S+): (.*)$`)
 	reMemberFail = regexp.MustCompile(`trunk: member (\d+): (dial|hello): (.*)$`)
+	rePaused     = regexp.MustCompile(`trunk: paused (\S+)$`)
 	reEpochReset = regexp.MustCompile(`trunk: exit epoch ([0-9a-f]+) after ([0-9a-f]+): streams reset`)
 	reEpoch      = regexp.MustCompile(`trunk: exit epoch ([0-9a-f]+)$`)
 	reUp         = regexp.MustCompile(`nekko-trunk-entry: up: (.*)$`)
@@ -66,6 +67,12 @@ func classify(l journalLine) (layer string, data map[string]any, ok bool) {
 	}
 	if m := reMemberFail.FindStringSubmatch(l.Msg); m != nil {
 		return LayerEvent, map[string]any{"kind": "member_" + m[2] + "_failed", "member": atoi(m[1]), "err": clip(m[3])}, true
+	}
+	if m := rePaused.FindStringSubmatch(l.Msg); m != nil {
+		// The entry's box did not run it: the pool waits it out instead of
+		// burying its members, so this is the lag users felt.
+		d, _ := time.ParseDuration(m[1])
+		return LayerEvent, map[string]any{"kind": "entry_paused", "ms": d.Milliseconds()}, true
 	}
 	if m := reEpochReset.FindStringSubmatch(l.Msg); m != nil {
 		return LayerEvent, map[string]any{"kind": "exit_epoch_changed", "epoch": m[1], "was": m[2]}, true
