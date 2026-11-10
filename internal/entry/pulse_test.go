@@ -356,3 +356,40 @@ func TestAPulseFilesTheHelloTapsCounts(t *testing.T) {
 		t.Fatalf("filed %+v", hellos)
 	}
 }
+
+// hikkariRecorder keeps the periods a pulse handed over, or fails.
+type hikkariRecorder struct {
+	seconds int64
+	periods map[string]json.RawMessage
+	fail    bool
+}
+
+func (h *hikkariRecorder) RecordRelayPeriods(_ context.Context, _ string, seconds int64, periods map[string]json.RawMessage) error {
+	if h.fail {
+		return context.DeadlineExceeded
+	}
+	h.seconds, h.periods = seconds, periods
+	return nil
+}
+
+// A Hikkari relay's periods go to their store; a store that fails costs the
+// periods, never the pulse, since the relay's key list rides on its answer.
+func TestPulseHandsHikkariPeriodsOverAndNeverFailsForThem(t *testing.T) {
+	h := newHarness(t)
+	box, _ := h.box()
+	relay := h.relay(box, KindPersonal)
+	obs := &hikkariRecorder{}
+	h.svc.SetHikkariObs(obs)
+	periods := map[string]json.RawMessage{"direct/k": json.RawMessage(`{"tcp":{"conns":1}}`)}
+	report := PulseReport{Relay: relay, UptimeS: 30, Hikkari: periods, HikkariS: 30}
+	if err := h.svc.RecordPulse(context.Background(), "s", PulseToken("s", box), report); err != nil {
+		t.Fatalf("record pulse: %v", err)
+	}
+	if obs.seconds != 30 || string(obs.periods["direct/k"]) != `{"tcp":{"conns":1}}` {
+		t.Fatalf("store got %d s, %v", obs.seconds, obs.periods)
+	}
+	obs.fail = true
+	if err := h.svc.RecordPulse(context.Background(), "s", PulseToken("s", box), report); err != nil {
+		t.Fatalf("a failing period store failed the pulse: %v", err)
+	}
+}

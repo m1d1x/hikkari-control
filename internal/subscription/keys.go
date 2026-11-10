@@ -196,3 +196,27 @@ func (s *Service) Usage(ctx context.Context, name string) (entry.KeyUsage, error
 		WHERE a.name = $1`, name).Scan(&u.Up, &u.Down)
 	return u, err
 }
+
+// AccountsOf names the account behind each key a relay reports (Hikkari
+// v1.04 periods); a key the hub does not know is left out.
+func (s *Service) AccountsOf(ctx context.Context, keys []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(keys) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT q.key, k.account_id::text FROM unnest($1::text[]) AS q(key)
+		JOIN hub_access_keys k ON k.vless_id::text = q.key OR k.hy2_auth = q.key OR k.awg_public = q.key`, keys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, account string
+		if err := rows.Scan(&key, &account); err != nil {
+			return nil, err
+		}
+		out[key] = account
+	}
+	return out, rows.Err()
+}

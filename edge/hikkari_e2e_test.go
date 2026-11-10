@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -26,6 +27,7 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
+	"github.com/m1d1x/hikkari-protocol/observe"
 	hkserver "github.com/m1d1x/hikkari-protocol/server"
 )
 
@@ -84,9 +86,14 @@ func TestHikkariRealCoreTwoChannels(t *testing.T) {
 
 	cfg := naiveConfig{Listen: address, Host: "hk.example", User: "probe", Pass: "probe-secret-long-enough", Root: root, Storage: storage, UDP: true}
 	n := newNaiveRuntime(cfg)
+	// The client is on loopback, as the trunk is on a relay: here it is a
+	// client of its own.
+	n.pathOf = func(string) string { return observe.PathDirect }
 	_ = n.Set(context.Background(), []string{key})
 	activeNaive.Store(n)
 	defer activeNaive.Store(nil)
+	setActiveWatches(n.watches)
+	defer setActiveWatches(nil)
 	raw, _ := cfg.document()
 	var doc map[string]any
 	if err = json.Unmarshal(raw, &doc); err != nil {
@@ -136,8 +143,14 @@ func TestHikkariRealCoreTwoChannels(t *testing.T) {
 			if tc.udp != nil {
 				outbound["udp"] = tc.udp
 			}
-			mixed, stop := hikkariTestCore(t, binary, outbound)
-			defer stop()
+			mixed, stopCore := hikkariTestCoreLog(t, binary, outbound)
+			stopped := false
+			stop := func() string { stopped = true; return stopCore() }
+			defer func() {
+				if !stopped {
+					stopCore()
+				}
+			}()
 
 			proxy, _ := url.Parse("http://" + mixed)
 			client := &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(proxy), DisableKeepAlives: true}}
@@ -180,10 +193,43 @@ func TestHikkariRealCoreTwoChannels(t *testing.T) {
 				if e := echoed.Load() - echoedBefore; e > int64(sent) || sources != 1 || got > sent {
 					t.Fatalf("far end saw %d packets from %d sources; client got %d of %d", e, sources, got, sent)
 				}
+				// v1.04: the core writes its period when it closes, in one
+				// line: the dup session's answers and the call.
+				logs := stop()
+				i := strings.Index(logs, "hikkari period s=")
+				if i < 0 {
+					t.Fatalf("no period in the core's log:\n%s", logs)
+				}
+				line := logs[i:]
+				if j := strings.IndexByte(line, '\n'); j >= 0 {
+					line = line[:j]
+				}
+				t.Logf("client %s", line)
+				if !strings.Contains(line, `"dup":{"sessions":1`) || !strings.Contains(line, `"calls":{"n":1`) || !strings.Contains(line, `"datagram":{"conns"`) {
+					t.Fatalf("client period: %s", line)
+				}
 			}
 			t.Logf("tcp %d bytes; udp %d/%d echoed over %s, worst gap %v", len(body), got, sent, tc.channel, gaps)
 		})
 	}
+
+	// v1.04: the relay's book saw the key's sessions on every channel.
+	periods, seconds := n.periods()
+	own := periods[observe.RelayGroup(observe.PathDirect, key)]
+	if own == nil || own.TCP == nil || own.Tunnels == nil || own.QUIC["datagram"] == nil || own.Dup == nil {
+		t.Fatalf("relay book after %d s: %+v", seconds, own)
+	}
+	if own.TCP.Conns == 0 || own.TCP.BytesOut == 0 || own.TCP.RTT.N() == 0 || (*own.Tunnels)[observe.EndEOF] == 0 {
+		t.Fatalf("stream channel: tcp %+v, tunnels %v", own.TCP, *own.Tunnels)
+	}
+	if q := own.QUIC["datagram"]; q.Conns < 3 || q.PktsOut == 0 || q.RTT.N() == 0 {
+		t.Fatalf("datagram channel: %+v", q)
+	}
+	if own.Dup.Fresh < 90 || own.Dup.Opened != 1 {
+		t.Fatalf("dup up: %+v", own.Dup)
+	}
+	raw, _ = json.Marshal(own)
+	t.Logf("relay period (%d s): %s", seconds, raw)
 
 	// Revoking the key closes the datagram channel's door too.
 	_ = n.Set(context.Background(), nil)
@@ -226,6 +272,14 @@ func hikkariTestCert(t *testing.T, host string) (string, string) {
 // given outbound and returns the inbound's address.
 func hikkariTestCore(t *testing.T, binary string, outbound map[string]any) (string, func()) {
 	t.Helper()
+	mixed, stop := hikkariTestCoreLog(t, binary, outbound)
+	return mixed, func() { stop() }
+}
+
+// hikkariTestCoreLog is hikkariTestCore whose stop interrupts the core, as
+// the app's service does, waits for it to close and returns its log.
+func hikkariTestCoreLog(t *testing.T, binary string, outbound map[string]any) (string, func() string) {
+	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -242,12 +296,22 @@ func hikkariTestCore(t *testing.T, binary string, outbound map[string]any) (stri
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, binary, "run", "-c", path)
 	cmd.Dir = filepath.Dir(binary)
-	cmd.Stderr = os.Stderr
+	var logs bytes.Buffer
+	var logsMu sync.Mutex
+	cmd.Stderr = io.MultiWriter(os.Stderr, lockedWriter{&logs, &logsMu})
+	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.WaitDelay = 10 * time.Second
 	if err = cmd.Start(); err != nil {
 		cancel()
 		t.Fatal(err)
 	}
-	stop := func() { cancel(); _ = cmd.Wait() }
+	stop := func() string {
+		cancel()
+		_ = cmd.Wait()
+		logsMu.Lock()
+		defer logsMu.Unlock()
+		return logs.String()
+	}
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
 		if c, err := net.DialTimeout("tcp", mixed, 100*time.Millisecond); err == nil {
 			c.Close()
@@ -257,6 +321,17 @@ func hikkariTestCore(t *testing.T, binary string, outbound map[string]any) (stri
 	stop()
 	t.Fatal("client core did not start")
 	return "", nil
+}
+
+type lockedWriter struct {
+	w  io.Writer
+	mu *sync.Mutex
+}
+
+func (l lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
 
 // socksUDPEcho sends count datagrams of 160 bytes every 20 ms (a call) through

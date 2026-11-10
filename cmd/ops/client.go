@@ -329,6 +329,18 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 			return "", err
 		}
 		return prettyJSON(data), nil
+	case "hikkari":
+		q := url.Values{}
+		for _, k := range []string{"who", "side", "path", "metric", "last", "step"} {
+			if v := args[k]; v != "" {
+				q.Set(k, v)
+			}
+		}
+		data, err := c.request(http.MethodGet, "/api/v1/ops/hikkari", q, nil)
+		if err != nil {
+			return "", err
+		}
+		return prettyJSON(data), nil
 	case "matrix":
 		return c.matrix(args)
 	case "stand":

@@ -28,6 +28,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/db"
 	"github.com/m1d1x/hikkari-control/internal/entry"
 	"github.com/m1d1x/hikkari-control/internal/geoip"
+	"github.com/m1d1x/hikkari-control/internal/hikkariobs"
 	"github.com/m1d1x/hikkari-control/internal/knobcheck"
 	"github.com/m1d1x/hikkari-control/internal/mailer"
 	"github.com/m1d1x/hikkari-control/internal/presets"
@@ -263,6 +264,8 @@ func run() error {
 		// arrive. Events that came in before that existed are carried over once.
 		backfillReach(ctx, pool, store)
 		svc.SetPulseSink(pulseSink{store})
+		// Hikkari v1.04: what each relay saw of its sessions, by account.
+		svc.SetHikkariObs(&hikkariobs.Recorder{Sink: store, Accounts: subs})
 		svc.SetUserTrafficSink(userTrafficSink{store})
 		svc.SetLoadSource(loadSource{store})
 		svc.SetVerdicts(verdictSource{store})
@@ -378,6 +381,12 @@ func run() error {
 		return id, err
 	}, testerAliases(testerStore), opsGate)
 	go voiceruns.NewIngester(voiceRuns, pool).Run(ctx, 2*time.Minute)
+	if store != nil {
+		// Hikkari v1.04: clients' periods from testers' logs, and the
+		// agent's view of both ends (tool hikkari).
+		go hikkariobs.NewIngester(&hikkariobs.Recorder{Sink: store, Accounts: subs}, pool).Run(ctx, 2*time.Minute)
+		hikkariobs.RegisterOpsRoutes(adminMux, store, hikkariSubjects(pool, testerStore), hikkariNames(pool, testerStore), opsGate)
+	}
 	// The stand on the hub's schedule: every active observation point runs
 	// every enabled knob over every relay of the fleet, rows into relayRuns.
 	standRuns := stand.NewScheduler(pool, svc, standFleet{subs: subs, fleet: svc}, relayRuns, config.Default().APIURL())

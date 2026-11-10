@@ -8,6 +8,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/m1d1x/hikkari-control/internal/hikkariobs"
 )
 
 // Store manages ClickHouse connections and event writes.
@@ -206,7 +207,50 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 			return fmt.Errorf("fleet analytics schema 10 (%s): %w", column, err)
 		}
 	}
+	// Hikkari v1.04 observability (internal/hikkariobs): one row per number
+	// of a period. Ordered by metric first: a chart reads one metric over
+	// time for a relay, a path or a person.
+	if err := s.conn.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS hikkari_obs (
+			ts       DateTime CODEC(Delta, ZSTD(1)),
+			side     LowCardinality(String),
+			relay    LowCardinality(String),
+			path     LowCardinality(String),
+			subject  String CODEC(ZSTD(1)),
+			period_s UInt32,
+			metric   LowCardinality(String),
+			value    Float64 CODEC(ZSTD(1))
+		) ENGINE = MergeTree()
+		PARTITION BY toYYYYMM(ts)
+		ORDER BY (metric, side, relay, path, subject, ts)
+		TTL ts + INTERVAL 180 DAY
+	`); err != nil {
+		return fmt.Errorf("fleet analytics schema 11: %w", err)
+	}
 	return s.migrateTelemetry(ctx)
+}
+
+// InsertHikkariObs writes rows of Hikkari periods. Async like the pulses
+// they ride on: a lost batch is half a minute of one relay's numbers.
+func (s *Store) InsertHikkariObs(ctx context.Context, rows []hikkariobs.Row) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
+		"async_insert":          1,
+		"wait_for_async_insert": 0,
+	}))
+	batch, err := s.conn.PrepareBatch(ctx,
+		"INSERT INTO hikkari_obs (ts, side, relay, path, subject, period_s, metric, value)")
+	if err != nil {
+		return fmt.Errorf("prepare hikkari_obs batch: %w", err)
+	}
+	for _, r := range rows {
+		if err := batch.Append(r.TS, r.Side, r.Relay, r.Path, r.Subject, r.PeriodS, r.Metric, r.Value); err != nil {
+			return fmt.Errorf("append hikkari_obs: %w", err)
+		}
+	}
+	return batch.Send()
 }
 
 // InsertEntryRelayStats writes a batch of relay pulses (plan 42 П9.3). Async

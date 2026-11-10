@@ -32,8 +32,11 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/m1d1x/hikkari-control/internal/applog"
 )
 
 // PulseInterval is how often an edge is expected to report. The console reads
@@ -96,7 +99,20 @@ type PulseReport struct {
 	// Hellos is what the edge's hello tap counted since the start: cover →
 	// hk → connections (edge/hellotap.go); nil without a tap.
 	Hellos map[string]map[string]int64
+	// Hikkari and HikkariS: a Hikkari relay's v1.04 periods by
+	// "<path>/<key>" over HikkariS seconds.
+	Hikkari  map[string]json.RawMessage
+	HikkariS int64
 }
+
+// HikkariObs files a Hikkari relay's v1.04 periods (internal/hikkariobs):
+// periods by "<path>/<key>" over seconds.
+type HikkariObs interface {
+	RecordRelayPeriods(ctx context.Context, relay string, seconds int64, periods map[string]json.RawMessage) error
+}
+
+// SetHikkariObs wires the store of Hikkari periods; nil drops them.
+func (s *Service) SetHikkariObs(h HikkariObs) { s.hikkariObs = h }
 
 // EdgeHellos files the hello tap's counts of one edge run
 // (internal/knobcheck). Declared on the consumer side, like RelayKeys.
@@ -197,6 +213,13 @@ func (s *Service) RecordPulse(ctx context.Context, master, bearer string, p Puls
 	if s.edgeHellos != nil && len(p.Hellos) > 0 && p.Boot != "" {
 		if err := s.edgeHellos.RecordHellos(ctx, p.Relay, p.Boot, p.Hellos); err != nil {
 			return err
+		}
+	}
+	if s.hikkariObs != nil && len(p.Hikkari) > 0 {
+		// What a relay saw of its sessions never stops the pulse: the key
+		// list rides on the answer.
+		if err := s.hikkariObs.RecordRelayPeriods(ctx, p.Relay, p.HikkariS, p.Hikkari); err != nil {
+			applog.Error(ctx, "entry", "hikkari periods not recorded", applog.F("relay", p.Relay), applog.F("err", err.Error()))
 		}
 	}
 	if s.relayKeys != nil && len(p.Keys) > 0 {

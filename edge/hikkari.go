@@ -24,7 +24,9 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/m1d1x/hikkari-protocol/observe"
 	hkserver "github.com/m1d1x/hikkari-protocol/server"
+	M "github.com/sagernet/sing/common/metadata"
 )
 
 // exitPolicy is egress.go's exit for what the edge dials itself (the datagram
@@ -95,6 +97,7 @@ func startHikkariUDP(ctx context.Context, n *naiveRuntime) (*hkserver.Datagram, 
 	// one exit socket. Set before the datagram channel admits anyone.
 	n.mu.Lock()
 	n.dup = hkserver.NewDupHub(exitPolicy, 0)
+	n.dup.Observe(n.book)
 	hub := n.dup
 	n.mu.Unlock()
 	d, err := hkserver.ListenDatagram(ctx, hkserver.DatagramOptions{
@@ -105,6 +108,10 @@ func startHikkariUDP(ctx context.Context, n *naiveRuntime) (*hkserver.Datagram, 
 		Admitter:      n,
 		Exit:          exitPolicy,
 		Dup:           hub,
+		Book:          n.book,
+		Group: func(key string, remote M.Socksaddr) string {
+			return observe.RelayGroup(n.pathOf(remote.String()), key)
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("hikkari udp: %w", err)

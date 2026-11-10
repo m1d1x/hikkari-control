@@ -26,7 +26,10 @@ import (
 // maxPulseBody bounds one pulse: a dozen numbers plus a pair of totals per
 // access key on the relay. Room for some thousands of keys; anything larger
 // is not a pulse.
-const maxPulseBody = 1 << 20
+//
+// A Hikkari relay's pulse also carries v1.04 periods, a few hundred bytes to
+// a couple of KiB per key that was used in the last 30 s.
+const maxPulseBody = 4 << 20
 
 // pulseBody is the wire shape, shared by contract with edge/pulse.go. The edge
 // is a module of its own and cannot import this type, so the contract is the
@@ -48,6 +51,10 @@ type pulseBody struct {
 	// Hellos: the hello tap's counts of this edge run, cover → hk →
 	// connections (edge/hellotap.go).
 	Hellos map[string]map[string]int64 `json:"hellos,omitempty"`
+	// Hikkari: v1.04 periods by "<path>/<key>" over HikkariS seconds
+	// (edge/pulse.go, hikkari-protocol observe.Period).
+	Hikkari  map[string]json.RawMessage `json:"hikkari,omitempty"`
+	HikkariS int64                      `json:"hikkariS,omitempty"`
 }
 
 type pulseKeyBody struct {
@@ -94,6 +101,8 @@ func RegisterPulseRoutes(mux *http.ServeMux, svc *Service, token string) {
 			Boot:      body.Boot,
 			Keys:      keyUsage(body.Keys),
 			Hellos:    body.Hellos,
+			Hikkari:   body.Hikkari,
+			HikkariS:  body.HikkariS,
 		})
 		switch {
 		case errors.Is(err, ErrPulseRefused):

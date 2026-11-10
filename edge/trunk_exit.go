@@ -185,7 +185,7 @@ func (n *naiveRuntime) serveTrunk(w http.ResponseWriter, r *http.Request, next c
 			defer relaySide.Close()
 			stop := context.AfterFunc(ctx, func() { _ = relaySide.Close() })
 			defer stop()
-			_ = x.ServeMember(relaySide)
+			n.tunnelEnded(trunkGroup, "", x.ServeMember(relaySide))
 		}()
 		return proxySide, nil
 	})

@@ -20,10 +20,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	_ "github.com/caddyserver/caddy/v2/modules/standard"
+	"github.com/m1d1x/hikkari-protocol/observe"
 	hkserver "github.com/m1d1x/hikkari-protocol/server"
 	_ "github.com/m1d1x/hikkari-protocol/server/naive"
 	"github.com/m1d1x/hikkari-protocol/trunk"
@@ -115,16 +117,25 @@ func (n naiveConfig) document() ([]byte, error) {
 		"storage": map[string]any{"module": "file_system", "root": n.Storage},
 		"apps": map[string]any{
 			"tls": map[string]any{"certificates": map[string]any{"automate": []string{n.Host}}},
-			"http": map[string]any{"servers": map[string]any{"naive": map[string]any{
+			"http": map[string]any{"servers": map[string]any{"naive": n.withWrappers(map[string]any{
 				"listen": []string{n.Listen}, "protocols": protocols, "tls_connection_policies": []any{map[string]any{}},
 				"routes": []any{map[string]any{"handle": []any{
 					map[string]any{"handler": "hikkari_naive"},
 					map[string]any{"handler": "hikkari_proxy", "hide_ip": true, "hide_via": true, "probe_resistance": map[string]any{}, "auth_credentials": [][]byte{credential}, "acl": []any{map[string]any{"subjects": deny, "allow": false}}},
 					map[string]any{"handler": "file_server", "root": n.Root},
 				}}},
-			}}},
+			})}},
 		},
 	})
+}
+
+// withWrappers puts the v1.04 TCP watch (tcpwatch.go) under TLS on a
+// Hikkari relay's server; a Naive relay keeps Caddy's own listener.
+func (n naiveConfig) withWrappers(server map[string]any) map[string]any {
+	if n.UDP {
+		server["listener_wrappers"] = []any{map[string]any{"wrapper": "hikkari_watch"}, map[string]any{"wrapper": "tls"}}
+	}
+	return server
 }
 
 type naiveCount struct{ up, down atomic.Int64 }
@@ -150,10 +161,63 @@ type naiveRuntime struct {
 	dup *hkserver.DupHub
 	// trunk is the cascade trunk's exit (trunk_exit.go), nil without keys.
 	trunk *trunk.Exit
+	// book and watches are v1.04 observability (tcpwatch.go), set when the
+	// relay is Hikkari: what each key's sessions saw, by path.
+	book    *observe.Book
+	watches *tcpWatches
+	// unsent are periods a pulse did not deliver, merged into the next.
+	unsent map[string]*observe.Period
+	taken  time.Time
+	// pathOf tells the trunk's connections from clients' (tcpwatch.go);
+	// tests on loopback replace it.
+	pathOf func(remote string) string
 }
 
 func newNaiveRuntime(cfg naiveConfig) *naiveRuntime {
-	return &naiveRuntime{cfg: cfg, keys: map[string]bool{}, totals: map[string]*naiveCount{}, sessions: map[uint64]naiveSession{}}
+	n := &naiveRuntime{cfg: cfg, keys: map[string]bool{}, totals: map[string]*naiveCount{}, sessions: map[uint64]naiveSession{}, pathOf: pathOf}
+	if cfg.UDP {
+		n.book = observe.NewBook()
+		n.watches = newTCPWatches(n.book)
+		n.taken = time.Now()
+	}
+	return n
+}
+
+// periods hands out what the book counted since the last pulse, with what
+// the last pulses did not deliver, and the seconds they cover.
+func (n *naiveRuntime) periods() (map[string]*observe.Period, int64) {
+	if n.book == nil {
+		return nil, 0
+	}
+	got := n.book.Take()
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for group, p := range n.unsent {
+		if q := got[group]; q != nil {
+			p = observe.Merge(map[string]*observe.Period{"0": p, "1": q})
+		}
+		got[group] = p
+	}
+	n.unsent = nil
+	seconds := int64(time.Since(n.taken).Seconds())
+	return got, seconds
+}
+
+// periodsSent says whether a pulse delivered the periods it carried; those it
+// did not go with the next one, the time they cover with them.
+func (n *naiveRuntime) periodsSent(periods map[string]*observe.Period, ok bool) {
+	if n.book == nil {
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if ok {
+		n.taken = time.Now()
+		return
+	}
+	if len(periods) > 0 {
+		n.unsent = periods
+	}
 }
 
 // Set removes the authority before cancelling streams, atomically with new
@@ -242,6 +306,7 @@ func (g *naiveGate) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	}
 	n := g.runtime
 	if user == trunk.User || isTrunkHost(r.Host) {
+		n.watches.claim(r.RemoteAddr, trunkGroup)
 		return n.serveTrunk(w, r, next, user, pass)
 	}
 	probe := subtle.ConstantTimeCompare([]byte(user+":"+pass), []byte(n.cfg.User+":"+n.cfg.Pass)) == 1
@@ -282,6 +347,13 @@ func (g *naiveGate) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	hub := n.dup
 	n.mu.Unlock()
 	defer func() { cancel(); n.mu.Lock(); delete(n.sessions, id); n.mu.Unlock() }()
+	path := n.pathOf(r.RemoteAddr)
+	group := observe.RelayGroup(path, key)
+	if path == observe.PathDirect {
+		// A loopback connection is the trunk's: its kernel numbers are the box's.
+		n.watches.claim(r.RemoteAddr, group)
+	}
+	ctx = observe.WithGroup(ctx, group)
 	if n.cfg.UDP && hkserver.IsUoTHost(r.Host) {
 		ctx = n.withUoT(ctx, r.Host)
 	}
@@ -293,8 +365,27 @@ func (g *naiveGate) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	r.Body = &naiveBody{ReadCloser: r.Body, total: &n.total, key: counter}
 	// Do not return upstream errors to Caddy's request logger: a CONNECT URL is
 	// a destination. Only byte counters, never destinations, leave this layer.
-	_ = next.ServeHTTP(&naiveWriter{ResponseWriter: w, total: &n.total, key: counter}, r)
+	err = next.ServeHTTP(&naiveWriter{ResponseWriter: w, total: &n.total, key: counter}, r)
+	n.tunnelEnded(group, key, err)
 	return nil
+}
+
+// tunnelEnded counts how a key's tunnel ended in its group's period.
+func (n *naiveRuntime) tunnelEnded(group, key string, err error) {
+	if n.book == nil {
+		return
+	}
+	n.mu.Lock()
+	stopping := n.closed
+	revoked := key != "" && !n.keys[key]
+	n.mu.Unlock()
+	reason := tunnelEnd(err, revoked, stopping)
+	n.book.Record(group, func(p *observe.Period) {
+		if p.Tunnels == nil {
+			p.Tunnels = &observe.Ends{}
+		}
+		p.Tunnels.Add(reason)
+	})
 }
 
 func basicAuth(user, pass string) string {
@@ -342,6 +433,8 @@ func runNaive() error {
 		return errors.New("naive controller already running")
 	}
 	defer activeNaive.Store(nil)
+	setActiveWatches(runtime.watches)
+	defer setActiveWatches(nil)
 	document, err := cfg.document()
 	if err != nil {
 		return err

@@ -49,6 +49,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/m1d1x/hikkari-protocol/observe"
 	"github.com/xtls/xray-core/features/stats"
 )
 
@@ -129,6 +130,11 @@ type pulseBody struct {
 	// Hellos are the hello tap's counts since the start: cover → hk →
 	// connections (hellotap.go); absent without a tap.
 	Hellos map[string]map[string]int64 `json:"hellos,omitempty"`
+	// Hikkari is v1.04 observability (hikkari-protocol spec/v1.md): what the
+	// sessions of each "<path>/<key>" saw in the HikkariS seconds since the
+	// last delivered pulse; absent on other protocols.
+	Hikkari  map[string]*observe.Period `json:"hikkari,omitempty"`
+	HikkariS int64                      `json:"hikkariS,omitempty"`
 }
 
 type pulseKey struct {
@@ -169,6 +175,7 @@ func spawnPulse(ctx context.Context, source pulseSource, cfg pulseConfig, keys k
 			body := readPulse(source, cfg, started)
 			body.Boot = boot
 			answer, err := sendPulse(ctx, client, cfg, body)
+			periodsSent(source, body.Hikkari, err == nil)
 			switch {
 			case err != nil:
 				if ctx.Err() == nil {
@@ -232,7 +239,7 @@ func (s awgSource) read() (up, down, conns int64, keys map[string]pulseKey) {
 func readPulse(source pulseSource, cfg pulseConfig, started time.Time) pulseBody {
 	up, down, conns, keys := source.read()
 	cpu, mem := boxLoad()
-	return pulseBody{
+	body := pulseBody{
 		Relay:     cfg.relay,
 		UptimeS:   int64(time.Since(started).Seconds()),
 		BytesUp:   up,
@@ -243,6 +250,23 @@ func readPulse(source pulseSource, cfg pulseConfig, started time.Time) pulseBody
 		Version:   cfg.version,
 		Keys:      keys,
 		Hellos:    helloTotals(source),
+	}
+	if s, ok := source.(observedSource); ok {
+		body.Hikkari, body.HikkariS = s.periods()
+	}
+	return body
+}
+
+// observedSource is a source that keeps a v1.04 book (naiveRuntime on a
+// Hikkari relay).
+type observedSource interface {
+	periods() (map[string]*observe.Period, int64)
+	periodsSent(map[string]*observe.Period, bool)
+}
+
+func periodsSent(source pulseSource, periods map[string]*observe.Period, ok bool) {
+	if s, isObserved := source.(observedSource); isObserved {
+		s.periodsSent(periods, ok)
 	}
 }
 
