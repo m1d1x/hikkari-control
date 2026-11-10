@@ -573,14 +573,27 @@ type listenerSlot struct{ ln net.Listener }
 
 var relayListener atomic.Pointer[listenerSlot]
 
-func init() {
-	caddy.RegisterNetwork(relayNetwork, func(_ context.Context, _, _, _ string, _ uint, _ net.ListenConfig) (any, error) {
-		slot := relayListener.Load()
-		if slot == nil {
-			return nil, errors.New("hikkari: no relay listener")
-		}
+func init() { caddy.RegisterNetwork(relayNetwork, relayNetworkListener) }
+
+// relayNetworkListener hands Caddy the relay's own socket for the relay's
+// port only. Caddy derives other servers from the relay's address, with its
+// network: the automatic HTTP->HTTPS redirects on :80. Those listen on their
+// own TCP socket, as they did before the relay owned its listener; given
+// the relay's socket they took half of its connections as plain HTTP (unl1
+// 10.11 20:02 UTC: no trunk member and no probe got through).
+func relayNetworkListener(ctx context.Context, _, host, portRange string, portOffset uint, cfg net.ListenConfig) (any, error) {
+	slot := relayListener.Load()
+	if slot == nil {
+		return nil, errors.New("hikkari: no relay listener")
+	}
+	if _, port, err := net.SplitHostPort(slot.ln.Addr().String()); err == nil && port == portRange && portOffset == 0 {
 		return slot.ln, nil
-	})
+	}
+	na, err := caddy.ParseNetworkAddress("tcp/" + net.JoinHostPort(host, portRange))
+	if err != nil {
+		return nil, err
+	}
+	return na.Listen(ctx, portOffset, cfg)
 }
 
 var _ caddy.Provisioner = (*naiveGate)(nil)

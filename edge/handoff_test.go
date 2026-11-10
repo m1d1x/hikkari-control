@@ -352,3 +352,37 @@ func (c *testTLS) SetHandshakeTimeout(time.Duration)   {}
 func (c *testTLS) STDConfig() (*aTLS.STDConfig, error) { return c.config, nil }
 func (c *testTLS) Client(net.Conn) (aTLS.Conn, error)  { return nil, net.ErrClosed }
 func (c *testTLS) Clone() aTLS.Config                  { return &testTLS{config: c.config.Clone()} }
+
+// The relay's network gives Caddy the relay's socket for the relay's port
+// and nothing else: the redirect server Caddy adds on :80 with the same
+// network must get a socket of its own.
+func TestRelayNetworkGivesTheRelaySocketOnlyForItsPort(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	relayListener.Store(&listenerSlot{ln})
+	defer relayListener.Store(nil)
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	got, err := relayNetworkListener(context.Background(), relayNetwork, "127.0.0.1", port, 0, net.ListenConfig{})
+	if err != nil || got != ln {
+		t.Fatalf("relay port: %v %v, want the relay's socket", got, err)
+	}
+	other := strconv.Itoa(freePort(t, "tcp"))
+	got, err = relayNetworkListener(context.Background(), relayNetwork, "127.0.0.1", other, 0, net.ListenConfig{})
+	if err != nil {
+		t.Fatalf("other port: %v", err)
+	}
+	if got == ln {
+		t.Fatal("another port got the relay's socket")
+	}
+	l, ok := got.(net.Listener)
+	if !ok {
+		t.Fatalf("other port: %T", got)
+	}
+	defer l.Close()
+	if _, p, _ := net.SplitHostPort(l.Addr().String()); p != other {
+		t.Fatalf("other port listens on %s, want %s", p, other)
+	}
+}
