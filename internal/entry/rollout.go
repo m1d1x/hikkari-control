@@ -1218,6 +1218,41 @@ func (s *Service) SetHelloTap(ctx context.Context, box string, on bool) error {
 // on the build already on the box: drained, reinstalled, probed, back in the
 // pool. The build stays, so a rollout's canary still judges builds, not a
 // configuration that changed under it.
+// UpdateNow moves one box to this image's build for its arch now, by the
+// owner's command: the rollout's own job on it (drain, swap, admission probe,
+// watch, rollback on failure), without waiting out the evening peak. The
+// rollout that comes later finds the box already on the build.
+func (o *Orchestrator) UpdateNow(ctx context.Context, box string) error {
+	all, err := o.svc.fleet(ctx)
+	if err != nil {
+		return err
+	}
+	var target *fleetBox
+	for i := range all {
+		if all[i].name == box {
+			target = &all[i]
+		}
+	}
+	if target == nil {
+		return fmt.Errorf("машины %s нет во флоте", box)
+	}
+	if target.arch == "" {
+		return fmt.Errorf("архитектура %s неизвестна: сборка на машине не прочитана", box)
+	}
+	for _, build := range o.prov.EdgeBuilds() {
+		if build.Arch != target.arch {
+			continue
+		}
+		if target.sha == build.SHA {
+			return fmt.Errorf("%s уже на сборке %s", box, build.SHA[:12])
+		}
+		return o.prov.execJob(ctx, JobUpdate, box, uuid.Nil, func(j *jobRun) error {
+			return j.update(o, build)
+		})
+	}
+	return fmt.Errorf("в образе hub нет сборки для %s", target.arch)
+}
+
 func (o *Orchestrator) Reconfigure(ctx context.Context, box string) error {
 	return o.prov.execJob(ctx, JobReconfigure, box, uuid.Nil, func(j *jobRun) error {
 		return j.reconfigure(o)

@@ -943,3 +943,37 @@ func TestNoBoxIsTouchedInTheEveningPeak(t *testing.T) {
 		t.Fatal("the rollout settled in the peak; it must stay moving for the next round")
 	}
 }
+
+// The owner's `entry-box update <box>`: that box goes to the image's build
+// now, through the rollout's own update job, even at the evening peak; the
+// rest of the fleet waits for the rollout.
+func TestUpdateNowMovesOneBoxEvenAtThePeak(t *testing.T) {
+	rh := newRolloutHarness(t)
+	target := rh.boxOnV1()
+	other := rh.boxOnV1()
+	o := rh.orchestrator()
+	o.busy = func(time.Time) bool { return true }
+	if err := o.UpdateNow(context.Background(), target); err != nil {
+		t.Fatalf("update now: %v", err)
+	}
+	if got := rh.runsOn(target); got != rh.sha2 {
+		t.Fatalf("%s runs %s…, want v2", target, got[:12])
+	}
+	if sha := rh.recorded(target); sha != rh.sha2 {
+		t.Fatalf("%s recorded at %s", target, sha)
+	}
+	for _, s := range rh.statuses(target) {
+		if s != StatusAlive {
+			t.Fatalf("%s relays %v after the update", target, rh.statuses(target))
+		}
+	}
+	if got := rh.runsOn(other); got == rh.sha2 {
+		t.Fatalf("%s was moved too", other)
+	}
+	if err := o.UpdateNow(context.Background(), target); err == nil {
+		t.Fatal("a box already on the build was updated again")
+	}
+	if err := o.UpdateNow(context.Background(), "no-such-box"); err == nil {
+		t.Fatal("an unknown box was accepted")
+	}
+}

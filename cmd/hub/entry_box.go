@@ -335,6 +335,28 @@ func runEntryBox(args []string) {
 		fmt.Printf("%s reconfigured\n", box)
 		os.Exit(0)
 	}
+	if len(args) == 2 && args[0] == "update" {
+		// entry-box update <box> — the box moved to this image's edge build
+		// now, by the rollout's own job (drain, swap, probe, watch), without
+		// waiting out the evening peak: the owner's command.
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		_, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		jctx, jcancel := context.WithTimeout(context.Background(), 40*time.Minute)
+		defer jcancel()
+		if err := entry.NewOrchestrator(svc, newProvisioner(svc)).UpdateNow(jctx, args[1]); err != nil {
+			fail(fmt.Errorf("update %s: %w", args[1], err))
+		}
+		fmt.Printf("%s updated\n", args[1])
+		os.Exit(0)
+	}
 	if len(args) >= 2 && len(args) <= 4 && (args[0] == "lab-reality" || args[0] == "lab-reality-off") {
 		if err := cryptobox.Configure(os.Getenv); err != nil {
 			fail(fmt.Errorf("content key: %w", err))
