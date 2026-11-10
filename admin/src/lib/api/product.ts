@@ -1,7 +1,7 @@
 import { get } from './client';
 import type { Win } from '$lib/product/format';
 import { USE_MOCK } from '$lib/config/mock';
-import { mockProductDowntime, mockProductMetrics } from './productMock';
+import { mockProductDowntime, mockProductMetrics, mockTesterCharts } from './productMock';
 
 // The product section's screens, counted by the hub from the clients'
 // telemetry (internal/admin/product_metrics.go, product_errors.go). A person
@@ -140,4 +140,28 @@ export interface ProductDowntime {
 export function fetchProductDowntime(win: Win): Promise<ProductDowntime> {
 	if (USE_MOCK) return Promise.resolve(mockProductDowntime(win));
 	return get('/api/v1/admin/product/downtime', { window: win });
+}
+
+/** One tester's lines (hub internal/downtime testers.go), a value per bucket, null where nothing was measured. */
+export interface TesterLines {
+	/** minutes the tunnel was on and carried nothing */
+	lost: (number | null)[];
+	/** median answer of Russian sites over the direct path, ms */
+	ruMs: (number | null)[];
+	/** minutes no Russian site answered */
+	ruMissed: (number | null)[];
+}
+
+export interface TesterCharts {
+	window: Win;
+	bucketSeconds: number;
+	/** bucket starts, ISO, oldest first; the last one is still filling */
+	buckets: string[];
+	/** by install id; a tester with no minutes in the window is absent */
+	testers: Record<string, TesterLines>;
+}
+
+export function fetchTesterCharts(win: Win): Promise<TesterCharts> {
+	if (USE_MOCK) return Promise.resolve(mockTesterCharts(win));
+	return get('/api/v1/admin/product/testers', { window: win });
 }

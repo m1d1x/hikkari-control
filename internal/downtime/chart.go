@@ -153,8 +153,10 @@ func assemble(win string, since, until time.Time, step time.Duration, counts []C
 	return c
 }
 
-// RegisterAdminRoutes mounts GET /api/v1/admin/product/downtime?window=7d.
+// RegisterAdminRoutes mounts GET /api/v1/admin/product/downtime?window=7d and
+// the testers screen's GET /api/v1/admin/product/testers?window=7d.
 func RegisterAdminRoutes(mux *http.ServeMux, s *Store, names Namer, auth func(http.HandlerFunc) http.HandlerFunc) {
+	registerTesterRoutes(mux, s, auth)
 	mux.HandleFunc("GET /api/v1/admin/product/downtime", auth(func(w http.ResponseWriter, r *http.Request) {
 		var name func(string) string
 		if names != nil {

@@ -69,6 +69,7 @@
 		'/metrics': 'метрики продукта',
 		'/errors': 'ошибки продукта',
 		'/support': 'обращения',
+		'/tester-overview': 'тестеры',
 		'/testers': 'логи тестеров',
 		'/subscriptions': 'подписки',
 		'/donations': 'донаты',

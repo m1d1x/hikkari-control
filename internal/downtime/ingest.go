@@ -10,7 +10,8 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/db"
 )
 
-// Ingester moves clients' minutes from testers' log stream into product_tunnel_minutes.
+// Ingester moves clients' minutes from testers' log stream into
+// product_tunnel_minutes and product_tester_ru_minutes.
 type Ingester struct {
 	store *Store
 	pool  db.Pool
@@ -51,7 +52,7 @@ func (in *Ingester) Once(ctx context.Context) (int, error) {
 	for {
 		rows, err := in.pool.Query(ctx, `
 			SELECT id, install_id, body FROM support_tester_log_chunks
-			WHERE id > $1 AND body LIKE '%`+linePrefix+`%'
+			WHERE id > $1 AND (body LIKE '%`+linePrefix+`%' OR body LIKE '%`+ruPrefix+`%')
 			ORDER BY id ASC LIMIT 200`, cursor)
 		if err != nil {
 			return total, fmt.Errorf("read chunks: %w", err)
@@ -79,13 +80,21 @@ func (in *Ingester) Once(ctx context.Context) (int, error) {
 		}
 		for _, c := range chunks {
 			var minutes []Minute
+			var ru []RuMinute
 			for _, line := range strings.Split(c.body, "\n") {
 				if m, ok := ParseLine(line, c.install); ok {
 					minutes = append(minutes, m...)
 				}
+				if m, ok := ParseRuLine(line, c.install); ok {
+					ru = append(ru, m...)
+				}
 			}
 			n, err := in.store.Insert(ctx, minutes)
 			if err != nil {
+				return total, fmt.Errorf("chunk %d: %w", c.id, err)
+			}
+			total += n
+			if n, err = in.store.InsertRu(ctx, ru); err != nil {
 				return total, fmt.Errorf("chunk %d: %w", c.id, err)
 			}
 			total += n

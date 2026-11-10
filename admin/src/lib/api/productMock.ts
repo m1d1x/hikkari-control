@@ -1,4 +1,4 @@
-import type { DowntimePerson, MetricsShare, ProductDowntime, ProductMetrics, TimeSeries } from './product';
+import type { DowntimePerson, MetricsShare, ProductDowntime, ProductMetrics, TesterCharts, TimeSeries } from './product';
 import type { Win } from '$lib/product/format';
 
 // Fixture for `VITE_USE_MOCK=true`: product overview with believable figures.
@@ -114,4 +114,20 @@ export function mockProductDowntime(win: Win): ProductDowntime {
 	});
 	const averageTotal = people.reduce((a, p) => a + p.lostTotal, 0) / people.length;
 	return { window: win, bucketSeconds: step, buckets, average, averageTotal, people };
+}
+
+/** The mock testers' lines: one with a bad evening of its own network, one whose tunnel failed on a good network. */
+export function mockTesterCharts(win: Win): TesterCharts {
+	const down = mockProductDowntime(win);
+	const n = down.buckets.length;
+	const testers: TesterCharts['testers'] = {};
+	for (const p of down.people) {
+		const homeDown = (i: number) => p.install === 't-cbfed41c' && i === n - 5;
+		testers[p.install] = {
+			lost: p.lost.map((v, i) => (homeDown(i) ? 0 : v)),
+			ruMs: p.lost.map((v, i) => (v === null ? null : homeDown(i) ? 180 : 24 + ((i * 7) % 11))),
+			ruMissed: p.lost.map((v, i) => (v === null ? null : homeDown(i) ? 23 : 0)),
+		};
+	}
+	return { window: win, bucketSeconds: down.bucketSeconds, buckets: down.buckets, testers };
 }

@@ -18,15 +18,7 @@
 		type SubscriptionDetail,
 		type SubscriptionState,
 	} from '$lib/api/billing';
-	import {
-		fetchTesterInstalls,
-		fetchTesterRelays,
-		renameTester,
-		type TesterInstall,
-		type TesterRelays,
-	} from '$lib/api/support';
-	import { fetchProductDowntime } from '$lib/api/product';
-	import { ago, num, rub } from '$lib/product/format';
+	import { num, rub } from '$lib/product/format';
 
 	// Subscriptions sold through the landing (internal/billing) and issued by
 	// hand. Everything here is the owner's; revoking asks for a passkey.
@@ -44,51 +36,6 @@
 		expired: { label: 'истёк', cls: 'dim' },
 	};
 	const GIB = 2 ** 30;
-
-	// Testers are the hub's users today: installs of the client in tester mode,
-	// not subscriptions sold or issued, so they come from the tester stream.
-	let installs = $state<TesterInstall[]>([]);
-	let rounds = $state<Record<string, TesterRelays>>({});
-	// Minutes the tunnel was on and carried nothing, last 24 h (ROADMAP 3.3).
-	let lost = $state<Record<string, number>>({});
-
-	async function loadTesters() {
-		try {
-			const [list, relays, down] = await Promise.all([
-				fetchTesterInstalls(),
-				fetchTesterRelays('24h'),
-				fetchProductDowntime('24h').catch(() => null),
-			]);
-			installs = [...list.installs].sort((a, b) => Number(b.online) - Number(a.online) || b.last_seen.localeCompare(a.last_seen));
-			rounds = Object.fromEntries(relays.installs.map((r) => [r.install_id, r]));
-			lost = Object.fromEntries((down?.people ?? []).map((p) => [p.install, p.lostTotal]));
-		} catch {
-			// the subscriptions below still load; a missing tester list is not an error of theirs
-		}
-	}
-	// Rename in place: the name is how the owner says who to look at
-	// («посмотри у Леши»), and the agent finds the logs by it.
-	let editing = $state<string | null>(null);
-	let draftAlias = $state('');
-
-	function startRename(i: TesterInstall) {
-		editing = i.install_id;
-		draftAlias = i.alias;
-	}
-
-	async function commitRename(i: TesterInstall) {
-		const name = draftAlias.trim();
-		editing = null;
-		if (!name || name === i.alias) return;
-		try {
-			await renameTester(i.install_id, name, i.note);
-			await loadTesters();
-		} catch (e) {
-			error = describeApiError(e);
-		}
-	}
-
-	const alive = (id: string) => rounds[id]?.relays.filter((r) => r.up).length ?? null;
 
 	let overview = $state<Overview | null>(null);
 	let subs = $state<Subscription[]>([]);
@@ -134,7 +81,6 @@
 
 	onMount(() => {
 		load();
-		loadTesters();
 	});
 
 	let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -244,51 +190,6 @@
 			<code>{tester.url}</code>
 			<button class="btn" onclick={() => copy(tester!.url)}>скопировать</button>
 		</div>
-	{/if}
-</section>
-
-<section class="card">
-	<div class="top">
-		<h2>тестеры</h2>
-	</div>
-	{#if installs.length === 0}
-		<p class="empty">ни один тестер ещё не выходил на связь</p>
-	{:else}
-		<table class="rows testers">
-			<tbody>
-				{#each installs as i (i.install_id)}
-					<tr>
-						<td>
-							{#if editing === i.install_id}
-								<input
-									class="field rename"
-									bind:value={draftAlias}
-									onblur={() => commitRename(i)}
-									onkeydown={(e) => {
-										if (e.key === 'Enter') e.currentTarget.blur();
-										if (e.key === 'Escape') {
-											draftAlias = i.alias;
-											editing = null;
-										}
-									}}
-									{@attach (el: HTMLInputElement) => el.select()}
-								/>
-							{:else}
-								<i class="status" class:on={i.online}></i><button class="name" title="переименовать" onclick={() => startRename(i)}>{i.alias}</button>
-							{/if}
-						</td>
-						<td class="mono dim">{i.platform} {i.version}</td>
-						<td class="mono">
-							{#if alive(i.install_id) === null}-{:else}{alive(i.install_id)} из {rounds[i.install_id].relays.length} профилей{/if}
-						</td>
-						<td class="mono" class:dim={!lost[i.install_id]} title="простой за 24 ч">
-							{#if lost[i.install_id] === undefined}-{:else}{num(lost[i.install_id])} мин простоя{/if}
-						</td>
-						<td class="r mono dim">{ago(new Date(i.last_seen).getTime())}</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
 	{/if}
 </section>
 
@@ -505,65 +406,6 @@
 {/if}
 
 <style>
-	.testers {
-		table-layout: fixed;
-	}
-
-	.testers td:nth-child(1) {
-		width: 28%;
-	}
-
-	.testers td:nth-child(2) {
-		width: 20%;
-	}
-
-	.testers td:nth-child(3) {
-		width: 22%;
-	}
-
-	.testers td:nth-child(4) {
-		width: 18%;
-	}
-
-	.testers td:nth-child(5) {
-		width: 12%;
-	}
-
-	.name {
-		padding: 0;
-		border: 0;
-		background: none;
-		color: var(--text);
-		font-family: var(--mono);
-		font-size: inherit;
-		cursor: text;
-		text-align: left;
-	}
-
-	.name:hover {
-		text-decoration: underline dotted;
-		text-underline-offset: 3px;
-	}
-
-	.status {
-		display: inline-block;
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		margin-right: 10px;
-		background: var(--text-3);
-		opacity: 0.5;
-	}
-
-	.status.on {
-		background: oklch(0.75 0.18 155);
-		opacity: 1;
-	}
-
-	.rename {
-		width: 160px;
-	}
-
 	.top {
 		display: flex;
 		align-items: center;

@@ -75,3 +75,42 @@ func TestChartIsPerPerson(t *testing.T) {
 		t.Fatalf("second person: %+v", b)
 	}
 }
+
+func TestParseRuLine(t *testing.T) {
+	got, ok := ParseRuLine(`[rureach] minutes from=1800000000 ms=31,x,-,44`, "t-1")
+	if !ok || len(got) != 3 {
+		t.Fatalf("read %v %d minutes", ok, len(got))
+	}
+	if got[0].MS != 31 || got[1].MS != 0 || got[2].MS != 44 || got[2].At.Unix() != 1800000180 {
+		t.Fatalf("minutes %+v", got)
+	}
+	for _, bad := range []string{
+		"[rureach] minutes from=1800000000 ms=31,abc",
+		"[rureach] minutes from=1800000000 ms=0",
+		"[rureach] minutes from=1800000000 ms=",
+	} {
+		if _, ok := ParseRuLine(bad, "t-1"); ok {
+			t.Errorf("read %q", bad)
+		}
+	}
+}
+
+func TestTesterChartKeepsTunnelAndNetworkApart(t *testing.T) {
+	since := time.Unix(1800000000/3600*3600, 0).UTC()
+	c := assembleTesters("24h", since, since.Add(2*time.Hour), time.Hour,
+		[]Count{
+			{Install: "t-a", Bucket: since, State: Flowing, Minutes: 55},
+			{Install: "t-a", Bucket: since, State: Down, Minutes: 5},
+		},
+		[]RuCount{
+			{Install: "t-a", Bucket: since, MedianMS: 30, Answered: 58, Missed: 2},
+			{Install: "t-b", Bucket: since.Add(time.Hour), Answered: 0, Missed: 60},
+		})
+	a, b := c.Testers["t-a"], c.Testers["t-b"]
+	if *a.Lost[0] != 5 || *a.RuMS[0] != 30 || *a.RuMissed[0] != 2 || a.Lost[1] != nil {
+		t.Fatalf("t-a: %+v", a)
+	}
+	if b.Lost[1] != nil || b.RuMS[1] != nil || *b.RuMissed[1] != 60 {
+		t.Fatalf("t-b: a dead home network is no answer, not a latency and not downtime: %+v", b)
+	}
+}
