@@ -59,6 +59,7 @@
 		'/antiblock': 'антиблок · обзор',
 		'/protocols': 'протоколы',
 		'/protocols/servers': 'протоколы · серверы',
+		'/protocols/hikkari': 'протоколы · hikkari изнутри',
 		'/autopilot': 'автопилот',
 		'/entry': 'машины',
 		'/incidents': 'инциденты',

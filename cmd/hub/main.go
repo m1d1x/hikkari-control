@@ -386,6 +386,9 @@ func run() error {
 		// agent's view of both ends (tool hikkari).
 		go hikkariobs.NewIngester(&hikkariobs.Recorder{Sink: store, Accounts: subs}, pool).Run(ctx, 2*time.Minute)
 		hikkariobs.RegisterOpsRoutes(adminMux, store, hikkariSubjects(pool, testerStore), hikkariNames(pool, testerStore), opsGate)
+		hikkariobs.RegisterAdminRoutes(adminMux, store, func(h http.HandlerFunc) http.HandlerFunc {
+			return admin.RequireAdmin(adminKeys.Public, pool, h)
+		})
 	}
 	// The stand on the hub's schedule: every active observation point runs
 	// every enabled knob over every relay of the fleet, rows into relayRuns.
