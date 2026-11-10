@@ -11,14 +11,21 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/applog"
 )
 
-// Chart is the product overview's downtime card: per person, over the
-// window's buckets, the minutes lost. A sum over everyone would hide the one
-// person whose tunnel carried nothing for an hour behind everyone else's zero.
+// Chart is the product overview's downtime card: the minutes lost per
+// person, averaged over the people whose tunnel was on. A sum would grow with
+// the number of people and say nothing about any one of them.
 type Chart struct {
 	Window        string   `json:"window"`
 	BucketSeconds int64    `json:"bucketSeconds"`
 	Buckets       []string `json:"buckets"`
-	People        []Person `json:"people"`
+	// Average is a bucket's lost minutes over the people whose tunnel was on in
+	// it; null where nobody's was.
+	Average []*float64 `json:"average"`
+	// AverageTotal is the window's lost minutes over the people whose tunnel
+	// was on in it at all; null when nobody's was.
+	AverageTotal *float64 `json:"averageTotal"`
+	// People are the lines behind the average, the most lost first.
+	People []Person `json:"people"`
 }
 
 // Person is one install's lines. A bucket the tunnel was never on in is null:
@@ -113,8 +120,29 @@ func assemble(win string, since, until time.Time, step time.Duration, counts []C
 			add(p.Net, i, k.Minutes)
 		}
 	}
+	c.Average = make([]*float64, len(c.Buckets))
+	var lostAll float64
 	for _, p := range people {
 		c.People = append(c.People, *p)
+		lostAll += p.LostTotal
+	}
+	if len(people) > 0 {
+		v := lostAll / float64(len(people))
+		c.AverageTotal = &v
+	}
+	for i := range c.Buckets {
+		var lost float64
+		on := 0
+		for _, p := range people {
+			if p.On[i] != nil {
+				lost += *p.Lost[i]
+				on++
+			}
+		}
+		if on > 0 {
+			v := lost / float64(on)
+			c.Average[i] = &v
+		}
 	}
 	sort.Slice(c.People, func(a, b int) bool {
 		if c.People[a].LostTotal != c.People[b].LostTotal {

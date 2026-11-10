@@ -1,6 +1,5 @@
 <script lang="ts">
 	import WinChips from '$components/product/WinChips.svelte';
-	import DowntimeCard from '$components/product/DowntimeCard.svelte';
 	import TrendChart from '$components/entry/TrendChart.svelte';
 	import { fetchProductDowntime, fetchProductMetrics, type MetricsShare } from '$lib/api/product';
 	import { num, pct, secs } from '$lib/product/format';
@@ -35,6 +34,7 @@
 	};
 
 	const count = (v: number) => String(Math.round(v));
+	const minutes = (v: number) => `${v < 10 ? v.toFixed(1) : Math.round(v)} мин`;
 	const percent = (v: number) => `${v.toFixed(1)}%`;
 
 	/** A daily/weekly/monthly series as the chart wants it: ISO buckets and one value each. */
@@ -66,10 +66,24 @@
 {/if}
 
 {#if down.error}
-	<div class="error-banner">Простой туннеля не загрузился: {down.error}</div>
+	<div class="error-banner">Ошибка загрузки простоя: {down.error}</div>
 {/if}
+
 {#if down.data}
-	<DowntimeCard data={down.data} />
+	<!-- 0. Главная метрика: минуты простоя туннеля в среднем на человека -->
+	<div class="chart-card downtime-card">
+		<div class="card-header">
+			<h3 class="card-title">Простой на человека</h3>
+			<span class="card-value mono">{or(down.data.averageTotal, minutes)}</span>
+		</div>
+		<TrendChart
+			buckets={down.data.buckets}
+			bucketSeconds={down.data.bucketSeconds}
+			formatAxis={minutes}
+			height={135}
+			series={[{ key: 'downtime', label: 'Простой на человека', color: C.orange, primary: true, values: down.data.average, format: minutes }]}
+		/>
+	</div>
 {/if}
 
 {#if d}
@@ -401,6 +415,10 @@
 		display: grid;
 		grid-template-columns: repeat(4, 1fr);
 		gap: 16px;
+	}
+
+	.downtime-card {
+		margin-bottom: 24px;
 	}
 
 	.chart-card {

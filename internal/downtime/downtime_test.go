@@ -65,6 +65,12 @@ func TestChartIsPerPerson(t *testing.T) {
 	if *a.Lost[0] != 10 || *a.On[0] != 60 || a.Lost[1] != nil {
 		t.Fatalf("tester-001 lines: lost %v on %v", a.Lost, a.On)
 	}
+	if c.AverageTotal == nil || *c.AverageTotal != 5 {
+		t.Fatalf("window average %v, want 5 (10 lost over 2 people)", c.AverageTotal)
+	}
+	if *c.Average[0] != 10 || *c.Average[1] != 0 || *c.Average[2] != 0 {
+		t.Fatalf("bucket averages %v %v %v, want 10 0 0 (only those on count)", *c.Average[0], *c.Average[1], *c.Average[2])
+	}
 	if b.Name != "t-b" || *b.Lost[1] != 0 || *b.Lost[2] != 0 || *b.Net[2] != 4 || b.Lost[0] != nil {
 		t.Fatalf("second person: %+v", b)
 	}

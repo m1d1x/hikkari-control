@@ -129,6 +129,10 @@ export interface ProductDowntime {
 	bucketSeconds: number;
 	/** bucket starts, ISO, oldest first; the last one is still filling */
 	buckets: string[];
+	/** lost minutes over the people whose tunnel was on in the bucket */
+	average: (number | null)[];
+	/** the window's lost minutes over the people whose tunnel was on in it */
+	averageTotal: number | null;
 	/** the most lost first */
 	people: DowntimePerson[];
 }
