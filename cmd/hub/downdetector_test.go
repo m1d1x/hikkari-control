@@ -12,7 +12,7 @@ import (
 // node's slug, and the totals count the install once.
 func TestIntakeLineShowsReportsOnOurNodes(t *testing.T) {
 	now := time.Now().UTC()
-	window := now.Truncate(dd.WindowSec*time.Second).Add(-dd.WindowSec * time.Second).Unix()
+	window := now.Truncate(dd.WindowSec * time.Second).Add(-dd.WindowSec * time.Second).Unix()
 	node := entry.FleetNode{Slug: "ams-1", Host: "1.2.3.4", Port: 8443, Proto: entry.ProtoVlessRealityVision}
 	quiet := entry.FleetNode{Slug: "ams-2", Host: "1.2.3.4", Port: 9443, Proto: entry.ProtoVlessRealityVision}
 	store := dd.NewStore()
