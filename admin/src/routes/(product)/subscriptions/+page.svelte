@@ -25,6 +25,7 @@
 		type TesterInstall,
 		type TesterRelays,
 	} from '$lib/api/support';
+	import { fetchProductDowntime } from '$lib/api/product';
 	import { ago, num, rub } from '$lib/product/format';
 
 	// Subscriptions sold through the landing (internal/billing) and issued by
@@ -48,12 +49,19 @@
 	// not subscriptions sold or issued, so they come from the tester stream.
 	let installs = $state<TesterInstall[]>([]);
 	let rounds = $state<Record<string, TesterRelays>>({});
+	// Minutes the tunnel was on and carried nothing, last 24 h (ROADMAP 3.3).
+	let lost = $state<Record<string, number>>({});
 
 	async function loadTesters() {
 		try {
-			const [list, relays] = await Promise.all([fetchTesterInstalls(), fetchTesterRelays('24h')]);
+			const [list, relays, down] = await Promise.all([
+				fetchTesterInstalls(),
+				fetchTesterRelays('24h'),
+				fetchProductDowntime('24h').catch(() => null),
+			]);
 			installs = [...list.installs].sort((a, b) => Number(b.online) - Number(a.online) || b.last_seen.localeCompare(a.last_seen));
 			rounds = Object.fromEntries(relays.installs.map((r) => [r.install_id, r]));
+			lost = Object.fromEntries((down?.people ?? []).map((p) => [p.install, p.lostTotal]));
 		} catch {
 			// the subscriptions below still load; a missing tester list is not an error of theirs
 		}
@@ -272,6 +280,9 @@
 						<td class="mono dim">{i.platform} {i.version}</td>
 						<td class="mono">
 							{#if alive(i.install_id) === null}-{:else}{alive(i.install_id)} из {rounds[i.install_id].relays.length} профилей{/if}
+						</td>
+						<td class="mono" class:dim={!lost[i.install_id]} title="простой за 24 ч">
+							{#if lost[i.install_id] === undefined}-{:else}{num(lost[i.install_id])} мин простоя{/if}
 						</td>
 						<td class="r mono dim">{ago(new Date(i.last_seen).getTime())}</td>
 					</tr>
@@ -499,18 +510,22 @@
 	}
 
 	.testers td:nth-child(1) {
-		width: 34%;
-	}
-
-	.testers td:nth-child(2) {
-		width: 26%;
-	}
-
-	.testers td:nth-child(3) {
 		width: 28%;
 	}
 
+	.testers td:nth-child(2) {
+		width: 20%;
+	}
+
+	.testers td:nth-child(3) {
+		width: 22%;
+	}
+
 	.testers td:nth-child(4) {
+		width: 18%;
+	}
+
+	.testers td:nth-child(5) {
 		width: 12%;
 	}
 

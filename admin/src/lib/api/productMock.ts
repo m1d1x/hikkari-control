@@ -92,10 +92,10 @@ export function mockProductDowntime(win: Win): ProductDowntime {
 	const n = win === '24h' ? 24 : win === '7d' ? 28 : 30;
 	const end = Math.floor(Date.now() / 1000 / step) * step;
 	const buckets = Array.from({ length: n }, (_, i) => new Date((end - (n - 1 - i) * step) * 1000).toISOString());
-	const person = (name: string, f: (i: number) => number | null): DowntimePerson => {
+	const person = (name: string, install: string, f: (i: number) => number | null): DowntimePerson => {
 		const lost = buckets.map((_, i) => f(i));
 		return {
-			install: `t-${name}`,
+			install,
 			name,
 			lost,
 			on: lost.map((v) => (v === null ? null : step / 60)),
@@ -104,9 +104,9 @@ export function mockProductDowntime(win: Win): ProductDowntime {
 		};
 	};
 	const people = [
-		person('tester-002', (i) => (i === n - 5 ? 23 : i === n - 4 ? 9 : i % 7 === 3 ? 1 : 0)),
-		person('tester-001', (i) => (i % 9 === 4 ? 2 : 0)),
-		person('tester-003', (i) => (i < n / 3 ? null : 0)),
+		person('tester-002', 't-cbfed41c', (i) => (i === n - 5 ? 23 : i === n - 4 ? 9 : i % 7 === 3 ? 1 : 0)),
+		person('tester-001', 't-3a9c71d2', (i) => (i % 9 === 4 ? 2 : 0)),
+		person('tester-003', 't-71e0b9a4', (i) => (i < n / 3 ? null : 0)),
 	];
 	const average = buckets.map((_, i) => {
 		const on = people.filter((p) => p.lost[i] !== null);
