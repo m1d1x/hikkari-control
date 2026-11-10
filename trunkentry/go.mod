@@ -3,7 +3,7 @@ module github.com/m1d1x/hikkari-control/trunkentry
 go 1.27
 
 require (
-	github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261110180047-33d0a22d79aa
+	github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261110182653-2cc111d1ba33
 	github.com/m1d1x/hikkari-protocol/trunk/chromium v0.0.0-20261109035446-c773c6a37f81
 )
 

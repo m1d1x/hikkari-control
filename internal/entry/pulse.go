@@ -103,6 +103,9 @@ type PulseReport struct {
 	// "<path>/<key>" over HikkariS seconds.
 	Hikkari  map[string]json.RawMessage
 	HikkariS int64
+	// Drain is a Hikkari relay's old generation still finishing its
+	// sessions after a handoff: no relay row from it.
+	Drain bool
 }
 
 // HikkariObs files a Hikkari relay's v1.04 periods (internal/hikkariobs):
@@ -227,7 +230,10 @@ func (s *Service) RecordPulse(ctx context.Context, master, bearer string, p Puls
 			return err
 		}
 	}
-	if s.pulses == nil {
+	// A generation a newer one took over (edge handoff.go): its keys and
+	// periods are filed above, the relay's row is the newest generation's,
+	// or two processes' totals and uptimes would interleave in it.
+	if s.pulses == nil || p.Drain {
 		return nil
 	}
 	return s.pulses.InsertEntryRelayStats(ctx, []PulseRecord{{

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -49,6 +50,10 @@ type naiveConfig struct {
 	// Trunk is the cascade trunk's exit on a Hikkari relay (trunk_exit.go);
 	// no keys, no trunk.
 	Trunk trunkExitConfig
+	// network, when set, is the Caddy network the listener comes from:
+	// relayNetwork for a Hikkari relay, whose listener outlives a process
+	// (handoff.go).
+	network string
 }
 
 func naiveFromEnv(get func(string) string) (naiveConfig, error) {
@@ -112,13 +117,17 @@ func (n naiveConfig) document() ([]byte, error) {
 		}
 	}
 
+	listen := n.Listen
+	if n.network != "" {
+		listen = n.network + "/" + n.Listen
+	}
 	return json.Marshal(map[string]any{
 		"admin":   map[string]any{"disabled": true, "config": map[string]any{"persist": false}},
 		"storage": map[string]any{"module": "file_system", "root": n.Storage},
 		"apps": map[string]any{
 			"tls": map[string]any{"certificates": map[string]any{"automate": []string{n.Host}}},
 			"http": map[string]any{"servers": map[string]any{"naive": n.withWrappers(map[string]any{
-				"listen": []string{n.Listen}, "protocols": protocols, "tls_connection_policies": []any{map[string]any{}},
+				"listen": []string{listen}, "protocols": protocols, "tls_connection_policies": []any{map[string]any{}},
 				"routes": []any{map[string]any{"handle": []any{
 					map[string]any{"handler": "hikkari_naive"},
 					map[string]any{"handler": "hikkari_proxy", "hide_ip": true, "hide_via": true, "probe_resistance": map[string]any{}, "auth_credentials": [][]byte{credential}, "acl": []any{map[string]any{"subjects": deny, "allow": false}}},
@@ -171,6 +180,8 @@ type naiveRuntime struct {
 	// pathOf tells the trunk's connections from clients' (tcpwatch.go);
 	// tests on loopback replace it.
 	pathOf func(remote string) string
+	// draining is set once a newer generation took over (handoff.go).
+	draining atomic.Bool
 }
 
 func newNaiveRuntime(cfg naiveConfig) *naiveRuntime {
@@ -428,6 +439,25 @@ func runNaive() error {
 	if err != nil {
 		return err
 	}
+	// A Hikkari relay owns its sockets, so that a rollout hands them to the
+	// next generation (handoff.go); a Naive relay leaves its listener to
+	// Caddy.
+	var socks *sockets
+	if cfg.UDP {
+		if socks, err = openSockets(cfg.Listen); err != nil {
+			return err
+		}
+		relayListener.Store(&listenerSlot{socks.tcp})
+		cfg.network = relayNetwork
+	}
+	err = serveNaive(cfg, socks)
+	if err != nil && socks != nil {
+		socks.failed(err)
+	}
+	return err
+}
+
+func serveNaive(cfg naiveConfig, socks *sockets) error {
 	runtime := newNaiveRuntime(cfg)
 	if !activeNaive.CompareAndSwap(nil, runtime) {
 		return errors.New("naive controller already running")
@@ -439,27 +469,122 @@ func runNaive() error {
 	if err != nil {
 		return err
 	}
+	if documentHook != nil {
+		document = documentHook(document)
+	}
 	if err = caddy.Load(document, true); err != nil {
 		return fmt.Errorf("naive Caddy: %w", err)
 	}
-	defer caddy.Stop()
+	stopCaddy := sync.OnceFunc(func() { _ = caddy.Stop() })
+	defer stopCaddy()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	runtime.startTrunkExit(ctx)
+	var udp *hikkariUDP
 	if cfg.UDP {
-		udp, err := startHikkariUDP(ctx, runtime)
-		if err != nil {
+		if udp, err = startHikkariUDP(ctx, runtime, socks); err != nil {
 			return err
 		}
 		defer udp.Close()
 	}
+	var ctl *controller
+	if socks != nil {
+		if ctl, err = listenControl(socks, cfg.Listen); err != nil {
+			return err
+		}
+	}
 	if pc, ok := pulseFromEnv(osEnv); ok {
 		spawnPulse(ctx, runtime, pc, runtime)
 	}
-	<-ctx.Done()
+	if socks != nil {
+		socks.up()
+		log.Printf("nekko-edge: generation %d up", socks.gen)
+	}
+	var handedTo <-chan byte
+	if ctl != nil {
+		go ctl.serve(ctx)
+		handedTo = ctl.handedTo
+	}
+	select {
+	case <-ctx.Done():
+	case next := <-handedTo:
+		runtime.drain(ctx, next, udp, stopCaddy)
+	}
 	runtime.Close()
 	return nil
 }
 
+// drain is this generation's end after a handoff to next: everything new is
+// the next one's, what this one carries goes on until it ends or drainLimit.
+func (n *naiveRuntime) drain(ctx context.Context, next byte, udp *hikkariUDP, stopCaddy func()) {
+	n.draining.Store(true)
+	if udp != nil {
+		udp.conn.Drain(next)
+	}
+	n.mu.Lock()
+	x := n.trunk
+	n.mu.Unlock()
+	if x != nil {
+		x.Drain()
+	}
+	go stopCaddy() // no more accepts; HTTP/2 says GOAWAY, open tunnels go on
+	started := time.Now()
+	limit := time.NewTimer(drainLimit)
+	defer limit.Stop()
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-limit.C:
+			n.mu.Lock()
+			left := len(n.sessions)
+			n.mu.Unlock()
+			log.Printf("nekko-edge: drained for %s, %d session(s) left end now", drainLimit, left)
+			return
+		case <-tick.C:
+			n.mu.Lock()
+			left := len(n.sessions)
+			n.mu.Unlock()
+			// Not in the first seconds: systemd hears of the new main
+			// process before this one leaves.
+			if left == 0 && time.Since(started) >= drainMinimum {
+				log.Printf("nekko-edge: drained in %s", time.Since(started).Round(time.Second))
+				return
+			}
+		}
+	}
+}
+
+// drainMinimum is the least an old generation stays after a handoff.
+const drainMinimum = 3 * time.Second
+
+// documentHook, when set, rewrites the Caddy document before it loads: the
+// handoff test's processes use it for their certificate and loopback.
+var documentHook func([]byte) []byte
+
+// relayNetwork is the Caddy network a Hikkari relay's listener comes from:
+// the socket this process owns (bound or inherited, handoff.go), so that
+// Caddy closing it closes only this process's descriptor.
+const relayNetwork = "hikkari"
+
+type listenerSlot struct{ ln net.Listener }
+
+var relayListener atomic.Pointer[listenerSlot]
+
+func init() {
+	caddy.RegisterNetwork(relayNetwork, func(_ context.Context, _, _, _ string, _ uint, _ net.ListenConfig) (any, error) {
+		slot := relayListener.Load()
+		if slot == nil {
+			return nil, errors.New("hikkari: no relay listener")
+		}
+		return slot.ln, nil
+	})
+}
+
 var _ caddy.Provisioner = (*naiveGate)(nil)
 var _ caddyhttp.MiddlewareHandler = (*naiveGate)(nil)
+
+// drained says a newer generation took over (pulse.go).
+func (n *naiveRuntime) drained() bool { return n.draining.Load() }

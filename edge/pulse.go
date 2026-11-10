@@ -135,6 +135,10 @@ type pulseBody struct {
 	// last delivered pulse; absent on other protocols.
 	Hikkari  map[string]*observe.Period `json:"hikkari,omitempty"`
 	HikkariS int64                      `json:"hikkariS,omitempty"`
+	// Drain is set by a generation a newer one took over (handoff.go): its
+	// keys and periods count, but the relay's own row is the newest
+	// generation's, or two processes' totals would interleave.
+	Drain bool `json:"drain,omitempty"`
 }
 
 type pulseKey struct {
@@ -253,6 +257,9 @@ func readPulse(source pulseSource, cfg pulseConfig, started time.Time) pulseBody
 	}
 	if s, ok := source.(observedSource); ok {
 		body.Hikkari, body.HikkariS = s.periods()
+	}
+	if s, ok := source.(interface{ drained() bool }); ok {
+		body.Drain = s.drained()
 	}
 	return body
 }

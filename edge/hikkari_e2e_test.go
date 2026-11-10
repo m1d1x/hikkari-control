@@ -113,7 +113,7 @@ func TestHikkariRealCoreTwoChannels(t *testing.T) {
 	defer caddy.Stop()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	udp, err := startHikkariUDP(ctx, n)
+	udp, err := startHikkariUDP(ctx, n, udpSockets(t, address))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,4 +392,19 @@ func socksUDPEcho(t *testing.T, socks string, target *net.UDPAddr, count int) (i
 		answered++
 	}
 	return count, answered, gap
+}
+
+// udpSockets is a relay's UDP socket for a test that runs Caddy on its own
+// listener: one generation, no handoff.
+func udpSockets(t *testing.T, address string) *sockets {
+	t.Helper()
+	addr, err := net.ResolveUDPAddr("udp", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	udp, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &sockets{udp: udp, gen: 1}
 }

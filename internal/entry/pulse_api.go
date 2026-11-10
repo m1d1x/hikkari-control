@@ -55,6 +55,8 @@ type pulseBody struct {
 	// (edge/pulse.go, hikkari-protocol observe.Period).
 	Hikkari  map[string]json.RawMessage `json:"hikkari,omitempty"`
 	HikkariS int64                      `json:"hikkariS,omitempty"`
+	// Drain: a Hikkari generation a newer one took over (edge handoff.go).
+	Drain bool `json:"drain,omitempty"`
 }
 
 type pulseKeyBody struct {
@@ -103,6 +105,7 @@ func RegisterPulseRoutes(mux *http.ServeMux, svc *Service, token string) {
 			Hellos:    body.Hellos,
 			Hikkari:   body.Hikkari,
 			HikkariS:  body.HikkariS,
+			Drain:     body.Drain,
 		})
 		switch {
 		case errors.Is(err, ErrPulseRefused):

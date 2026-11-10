@@ -96,12 +96,25 @@ func main() {
 			log.Fatalf("nekko-edge: %v", err)
 		}
 		fmt.Println("config OK")
+	case "handoff-version":
+		// The swap script asks before it makes the unit a notify unit with
+		// a reload: a build without handoff.go would never say it is up.
+		fmt.Println(handoffVersion)
+	case "reload":
+		// systemd's ExecReload of a Hikkari relay (handoff.go).
+		relay := ""
+		if len(os.Args) > 2 {
+			relay = os.Args[2]
+		}
+		if err := reloadCommand(relay); err != nil {
+			log.Fatalf("nekko-edge: reload: %v", err)
+		}
 	case "keygen":
 		if err := keygen(); err != nil {
 			log.Fatalf("nekko-edge: %v", err)
 		}
 	default:
-		fmt.Fprintf(os.Stderr, "usage: nekko-edge [run|check|keygen]\n")
+		fmt.Fprintf(os.Stderr, "usage: nekko-edge [run|check|reload <relay>|keygen]\n")
 		os.Exit(2)
 	}
 }

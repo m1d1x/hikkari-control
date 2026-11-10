@@ -90,9 +90,17 @@ func (n *naiveRuntime) roster() []string {
 	return sortedKeys(n.keys)
 }
 
-// startHikkariUDP opens the datagram channel on udp/<port> of n's listener
-// with the relay's ACME certificate (Caddy's storage) and the roster n admits.
-func startHikkariUDP(ctx context.Context, n *naiveRuntime) (*hkserver.Datagram, error) {
+// hikkariUDP is the datagram channel and this generation's view of its
+// socket.
+type hikkariUDP struct {
+	*hkserver.Datagram
+	conn *hkserver.GenerationConn
+}
+
+// startHikkariUDP opens the datagram channel on the relay's UDP socket (this
+// generation's, handoff.go) with the relay's ACME certificate (Caddy's
+// storage) and the roster n admits.
+func startHikkariUDP(ctx context.Context, n *naiveRuntime, socks *sockets) (*hikkariUDP, error) {
 	// v1.02: one hub for both channels, so the carriers of a session share
 	// one exit socket. Set before the datagram channel admits anyone.
 	n.mu.Lock()
@@ -100,8 +108,13 @@ func startHikkariUDP(ctx context.Context, n *naiveRuntime) (*hkserver.Datagram, 
 	n.dup.Observe(n.book)
 	hub := n.dup
 	n.mu.Unlock()
+	conn, err := hkserver.NewGenerationConn(socks.udp, socks.gen, socks.dir)
+	if err != nil {
+		return nil, fmt.Errorf("hikkari udp: %w", err)
+	}
 	d, err := hkserver.ListenDatagram(ctx, hkserver.DatagramOptions{
-		Listen:        n.cfg.Listen,
+		Conn:          conn,
+		ConnectionIDs: hkserver.GenerationIDs{Gen: socks.gen},
 		Certificate:   hkserver.CaddyCertificate(n.cfg.Storage, n.cfg.Host),
 		Masquerade:    http.FileServer(http.Dir(n.cfg.Root)),
 		ProbePassword: n.cfg.Pass,
@@ -114,6 +127,7 @@ func startHikkariUDP(ctx context.Context, n *naiveRuntime) (*hkserver.Datagram, 
 		},
 	})
 	if err != nil {
+		_ = conn.Close()
 		return nil, fmt.Errorf("hikkari udp: %w", err)
 	}
 	n.mu.Lock()
@@ -121,5 +135,5 @@ func startHikkariUDP(ctx context.Context, n *naiveRuntime) (*hkserver.Datagram, 
 	n.mu.Unlock()
 	d.SetKeys(n.roster())
 	log.Printf("nekko-edge: hikkari datagram channel on udp %s", n.cfg.Listen)
-	return d, nil
+	return &hikkariUDP{Datagram: d, conn: conn}, nil
 }

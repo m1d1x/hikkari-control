@@ -199,7 +199,6 @@ func start(ctx context.Context, c Config, dial trunk.Dial) (*trunk.Entry, error)
 	if err != nil {
 		return nil, err
 	}
-	s := entry.Session()
 	var closers []func()
 	fail := func(err error) (*trunk.Entry, error) {
 		for _, close := range closers {
@@ -226,7 +225,10 @@ func start(ctx context.Context, c Config, dial trunk.Dial) (*trunk.Entry, error)
 				if tc, ok := conn.(*net.TCPConn); ok {
 					_ = tc.SetKeepAlive(true)
 				}
-				go s.Carry(conn, to)
+				// The current session: after the exit drained (a hitless
+				// rollout of its relay) that is a new one, while what the
+				// old one carries stays on it.
+				go entry.Session().Carry(conn, to)
 			}
 		}()
 	}
@@ -240,7 +242,7 @@ func start(ctx context.Context, c Config, dial trunk.Dial) (*trunk.Entry, error)
 		if c.OneCopy[port] {
 			copies = 1
 		}
-		go serveUDP(ctx, s, pc, to, copies)
+		go serveUDP(ctx, entry.Session, pc, to, copies)
 	}
 	go func() {
 		<-ctx.Done()
@@ -252,9 +254,10 @@ func start(ctx context.Context, c Config, dial trunk.Dial) (*trunk.Entry, error)
 	return entry, nil
 }
 
-// serveUDP gives each client address on pc its own flow, each datagram
-// carried by copies members (0: the session's).
-func serveUDP(ctx context.Context, s *trunk.Session, pc net.PacketConn, to uint16, copies int) {
+// serveUDP gives each client address on pc its own flow on the session
+// current when it opens, each datagram carried by copies members (0: the
+// session's).
+func serveUDP(ctx context.Context, session func() *trunk.Session, pc net.PacketConn, to uint16, copies int) {
 	var mu sync.Mutex
 	flows := map[string]*trunk.Flow{}
 	buf := make([]byte, trunk.MaxPayload)
@@ -271,7 +274,7 @@ func serveUDP(ctx context.Context, s *trunk.Session, pc net.PacketConn, to uint1
 		f := flows[key]
 		if f == nil {
 			client := from
-			f = s.OpenFlowCopies(to, copies, func(p []byte) { _, _ = pc.WriteTo(p, client) }, func() {
+			f = session().OpenFlowCopies(to, copies, func(p []byte) { _, _ = pc.WriteTo(p, client) }, func() {
 				mu.Lock()
 				delete(flows, key)
 				mu.Unlock()

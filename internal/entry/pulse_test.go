@@ -49,6 +49,27 @@ func TestPulseTakesTheProtocolFromTheBoxNotFromTheRelay(t *testing.T) {
 	}
 }
 
+// An old generation of a Hikkari relay still finishing its sessions after a
+// handoff (edge handoff.go) pulses with drain: the relay's row is the newest
+// generation's, so the old one's totals and uptime stay out of it.
+func TestADrainingGenerationLeavesTheRelayRowAlone(t *testing.T) {
+	h := newHarness(t)
+	box, _ := h.box()
+	relay := h.relay(box, KindPersonal)
+	rec := &pulseRecorder{}
+	h.svc.SetPulseSink(rec)
+	for _, drain := range []bool{false, true} {
+		if err := h.svc.RecordPulse(context.Background(), "s", PulseToken("s", box), PulseReport{
+			Relay: relay, UptimeS: 900, BytesUp: 1 << 20, Drain: drain,
+		}); err != nil {
+			t.Fatalf("record pulse (drain %v): %v", drain, err)
+		}
+	}
+	if len(rec.rows) != 1 {
+		t.Fatalf("sink took %d rows, want only the newest generation's", len(rec.rows))
+	}
+}
+
 // A pulse from a name the pool does not hold is refused, not swallowed: it
 // comes from a machine we provisioned and handed a token to, so an unknown
 // name means the deployment is wrong and the box's log must say so.

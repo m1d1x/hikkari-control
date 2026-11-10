@@ -650,6 +650,7 @@ done
 rm -rf /etc/nekko-edge
 rm -f /usr/local/bin/nekko-edge /usr/local/bin/nekko-edge.new /usr/local/bin/nekko-edge.prev
 rm -f /etc/systemd/system/nekko-edge@.service
+rm -rf /etc/systemd/system/nekko-edge@*.service.d
 systemctl daemon-reload
 echo "$n"
 if [ -f ~/.ssh/authorized_keys ]; then
@@ -1898,7 +1899,14 @@ WantedBy=multi-user.target
 
 // edgeSwapScript validates the new binary against the new env BEFORE either
 // replaces anything — a bad env never takes down a working relay — then
-// restarts the instance and waits until it listens.
+// puts it in and waits until it listens.
+//
+// A Hikkari relay whose build can hand over (edge/handoff.go) runs as a
+// notify unit with a reload (edgeHandoffDropIn), and goes in by `systemctl
+// reload`: the running generation starts the new binary on its own sockets
+// and drains, no session is cut. A restart is left for what a reload cannot
+// do: the first time (the drop-in is new), a build that cannot hand over, a
+// generation that is not running or a reload that failed.
 const edgeSwapScript = `set -eu
 name="$1"; port="$2"; net="$3"
 case "$net" in tcp) ssf=-tln ;; udp) ssf=-uln ;; *) echo "transport $net" >&2; exit 2 ;; esac
@@ -1906,23 +1914,70 @@ bin=/usr/local/bin/nekko-edge
 [ -f "$bin.new" ] || cp "$bin" "$bin.new"
 chmod 600 "/etc/nekko-edge/$name.env.new"
 ( set -a; . "/etc/nekko-edge/$name.env.new"; set +a; "$bin.new" check ) >/dev/null
+proto=$(sed -n 's/^EDGE_PROTO=//p' "/etc/nekko-edge/$name.env.new" | tail -n 1)
+handoff=0
+if [ "$proto" = hikkari ] && "$bin.new" handoff-version >/dev/null 2>&1; then handoff=1; fi
 # The build being replaced is kept: the hub's image carries only the new one,
 # and a rollback needs the old one from somewhere (П6.14).
 if [ -f "$bin" ] && ! cmp -s "$bin" "$bin.new"; then cp -p "$bin" "$bin.prev"; fi
 mv "$bin.new" "$bin"
 mv "/etc/nekko-edge/$name.env.new" "/etc/nekko-edge/$name.env"
+dropdir="/etc/systemd/system/nekko-edge@$name.service.d"
+dropin="$dropdir/handoff.conf"
+unit_changed=0
+if [ "$handoff" = 1 ]; then
+	want=$(cat <<'DROPIN'
+` + edgeHandoffDropIn + `DROPIN
+)
+	if [ ! -f "$dropin" ] || [ "$(cat "$dropin")" != "$want" ]; then
+		mkdir -p "$dropdir"
+		printf '%s\n' "$want" > "$dropin"
+		unit_changed=1
+	fi
+elif [ -f "$dropin" ]; then
+	rm -f "$dropin"
+	unit_changed=1
+fi
 systemctl daemon-reload
 systemctl enable "nekko-edge@$name" >/dev/null 2>&1
-systemctl restart "nekko-edge@$name"
+how=restart
+if [ "$handoff" = 1 ] && [ "$unit_changed" = 0 ] && systemctl is-active --quiet "nekko-edge@$name" && [ -S "/run/nekko-edge-$name/control.sock" ]; then
+	if systemctl reload "nekko-edge@$name"; then
+		how=reload
+	else
+		echo "nekko-edge@$name: передача не прошла, перезапуск" >&2
+		journalctl -u "nekko-edge@$name" -n 20 --no-pager >&2
+	fi
+fi
+if [ "$how" = restart ]; then systemctl restart "nekko-edge@$name"; fi
 for _ in $(seq 1 40); do
 	if systemctl is-active --quiet "nekko-edge@$name" && ss $ssf | grep ":$port " >/dev/null; then
-		echo "nekko-edge@$name слушает $net/$port"
+		if [ "$how" = reload ]; then
+			echo "nekko-edge@$name слушает $net/$port, передан без обрыва"
+		else
+			echo "nekko-edge@$name слушает $net/$port"
+		fi
 		exit 0
 	fi
 	sleep 0.5
 done
 journalctl -u "nekko-edge@$name" -n 20 --no-pager >&2
 exit 1
+`
+
+// edgeHandoffDropIn makes a Hikkari relay's instance a generation unit
+// (edge/handoff.go): the process says when it is up, a newer generation
+// takes over as the main process, and a reload hands over to the binary on
+// disk. Timeouts cover a child's 30 s to come up and the old generations'
+// quick end on a stop.
+const edgeHandoffDropIn = `# Installed by the nekko hub: hitless rollout of a Hikkari relay.
+[Service]
+Type=notify
+NotifyAccess=all
+ExecReload=+/usr/local/bin/nekko-edge reload %i
+RuntimeDirectory=nekko-edge-%i
+TimeoutStartSec=90
+TimeoutStopSec=30
 `
 
 // probe asks a vantage to probe the relays and waits for its verdicts.

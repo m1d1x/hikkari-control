@@ -278,6 +278,7 @@ while [ $# -ge 2 ]; do
 	[ -f "/etc/nekko-edge/$relay.env" ] || continue
 	systemctl disable --now "nekko-edge@$relay" >/dev/null 2>&1 || true
 	rm -f "/etc/nekko-edge/$relay.env"
+	rm -rf "/etc/systemd/system/nekko-edge@$relay.service.d"
 	if [ "$port" != "0" ] && command -v ufw >/dev/null; then
 		ufw delete allow "$port/$proto" >/dev/null 2>&1 || true
 	fi
