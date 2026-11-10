@@ -1,7 +1,7 @@
 import { get } from './client';
 import type { Win } from '$lib/product/format';
 import { USE_MOCK } from '$lib/config/mock';
-import { mockProductMetrics } from './productMock';
+import { mockProductDowntime, mockProductMetrics } from './productMock';
 
 // The product section's screens, counted by the hub from the clients'
 // telemetry (internal/admin/product_metrics.go, product_errors.go). A person
@@ -105,4 +105,35 @@ export function fetchProductMetrics(win: Win): Promise<ProductMetrics> {
 
 export function fetchProductErrors(win: Win): Promise<ProductErrors> {
 	return get('/api/v1/admin/product/errors', { window: win });
+}
+
+/**
+ * The product's main metric per person (hub internal/downtime): minutes the
+ * tunnel was on and carried nothing. Every array has a value per bucket, null
+ * where the person's tunnel was not on at all.
+ */
+export interface DowntimePerson {
+	install: string;
+	name: string;
+	/** minutes on with nothing going: asked and no answer, or the core down */
+	lost: (number | null)[];
+	/** minutes the tunnel was on, any state */
+	on: (number | null)[];
+	/** minutes nothing went and the person's own network was down too; not lost */
+	net: (number | null)[];
+	lostTotal: number;
+}
+
+export interface ProductDowntime {
+	window: Win;
+	bucketSeconds: number;
+	/** bucket starts, ISO, oldest first; the last one is still filling */
+	buckets: string[];
+	/** the most lost first */
+	people: DowntimePerson[];
+}
+
+export function fetchProductDowntime(win: Win): Promise<ProductDowntime> {
+	if (USE_MOCK) return Promise.resolve(mockProductDowntime(win));
+	return get('/api/v1/admin/product/downtime', { window: win });
 }

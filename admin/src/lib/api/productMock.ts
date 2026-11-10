@@ -1,4 +1,4 @@
-import type { MetricsShare, ProductMetrics, TimeSeries } from './product';
+import type { DowntimePerson, MetricsShare, ProductDowntime, ProductMetrics, TimeSeries } from './product';
 import type { Win } from '$lib/product/format';
 
 // Fixture for `VITE_USE_MOCK=true`: product overview with believable figures.
@@ -67,5 +67,34 @@ export function mockProductMetrics(win: Win): ProductMetrics {
 		},
 		platforms: share([['windows', 8], ['macos', 4], ['android', 1], ['linux', 1]]),
 		versions: share([['1.0.58', 7], ['1.0.57', 4], ['1.0.55', 2], ['1.0.52', 1]]),
+	};
+}
+
+/** Three people over the window, one with a bad evening; demo data for VITE_USE_MOCK. */
+export function mockProductDowntime(win: Win): ProductDowntime {
+	const step = win === '24h' ? 3600 : win === '7d' ? 6 * 3600 : 86400;
+	const n = win === '24h' ? 24 : win === '7d' ? 28 : 30;
+	const end = Math.floor(Date.now() / 1000 / step) * step;
+	const buckets = Array.from({ length: n }, (_, i) => new Date((end - (n - 1 - i) * step) * 1000).toISOString());
+	const person = (name: string, f: (i: number) => number | null): DowntimePerson => {
+		const lost = buckets.map((_, i) => f(i));
+		return {
+			install: `t-${name}`,
+			name,
+			lost,
+			on: lost.map((v) => (v === null ? null : step / 60)),
+			net: lost.map((v) => (v === null ? null : 0)),
+			lostTotal: lost.reduce<number>((a, v) => a + (v ?? 0), 0),
+		};
+	};
+	return {
+		window: win,
+		bucketSeconds: step,
+		buckets,
+		people: [
+			person('tester-002', (i) => (i === n - 5 ? 23 : i === n - 4 ? 9 : i % 7 === 3 ? 1 : 0)),
+			person('tester-001', (i) => (i % 9 === 4 ? 2 : 0)),
+			person('tester-003', (i) => (i < n / 3 ? null : 0)),
+		],
 	};
 }

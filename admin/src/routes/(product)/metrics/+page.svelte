@@ -1,12 +1,18 @@
 <script lang="ts">
 	import WinChips from '$components/product/WinChips.svelte';
+	import DowntimeCard from '$components/product/DowntimeCard.svelte';
 	import TrendChart from '$components/entry/TrendChart.svelte';
-	import { fetchProductMetrics, type MetricsShare } from '$lib/api/product';
+	import { fetchProductDowntime, fetchProductMetrics, type MetricsShare } from '$lib/api/product';
 	import { num, pct, secs } from '$lib/product/format';
 	import { Windowed } from '$lib/product/windowed.svelte';
 
 	const m = new Windowed('7d', fetchProductMetrics);
 	const d = $derived(m.data);
+	// The main metric rides the screen's window.
+	const down = new Windowed('7d', fetchProductDowntime);
+	$effect(() => {
+		down.win = m.win;
+	});
 
 	const OS_COLOR: Record<string, string> = {
 		windows: '#6192d4',
@@ -57,6 +63,13 @@
 
 {#if m.error}
 	<div class="error-banner">Ошибка загрузки: {m.error}</div>
+{/if}
+
+{#if down.error}
+	<div class="error-banner">Простой туннеля не загрузился: {down.error}</div>
+{/if}
+{#if down.data}
+	<DowntimeCard data={down.data} />
 {/if}
 
 {#if d}

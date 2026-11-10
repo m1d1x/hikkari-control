@@ -26,6 +26,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/config"
 	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 	"github.com/m1d1x/hikkari-control/internal/db"
+	"github.com/m1d1x/hikkari-control/internal/downtime"
 	"github.com/m1d1x/hikkari-control/internal/entry"
 	"github.com/m1d1x/hikkari-control/internal/geoip"
 	"github.com/m1d1x/hikkari-control/internal/hikkariobs"
@@ -381,6 +382,13 @@ func run() error {
 		return id, err
 	}, testerAliases(testerStore), opsGate)
 	go voiceruns.NewIngester(voiceRuns, pool).Run(ctx, 2*time.Minute)
+	// The product's main metric (ROADMAP 3.3): each minute a tester's tunnel
+	// was on and what it was, per person on the product overview.
+	tunnelMinutes := downtime.NewStore(pool)
+	go downtime.NewIngester(tunnelMinutes, pool).Run(ctx, 2*time.Minute)
+	downtime.RegisterAdminRoutes(adminMux, tunnelMinutes, downtime.Namer(testerAliases(testerStore)), func(h http.HandlerFunc) http.HandlerFunc {
+		return admin.RequireAdmin(adminKeys.Public, pool, h)
+	})
 	if store != nil {
 		// Hikkari v1.04: clients' periods from testers' logs, and the
 		// agent's view of both ends (tool hikkari).
