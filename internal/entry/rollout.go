@@ -1246,7 +1246,7 @@ func (o *Orchestrator) UpdateNow(ctx context.Context, box string) error {
 		if target.sha == build.SHA {
 			return fmt.Errorf("%s уже на сборке %s", box, build.SHA[:12])
 		}
-		return o.prov.execJob(ctx, JobUpdate, box, uuid.Nil, func(j *jobRun) error {
+		return o.prov.execJob(ctx, JobUpgrade, box, uuid.Nil, func(j *jobRun) error {
 			return j.update(o, build)
 		})
 	}
