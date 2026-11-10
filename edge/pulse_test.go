@@ -1,0 +1,72 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+type fixedSource struct{}
+
+func (fixedSource) read() (int64, int64, int64, map[string]pulseKey) { return 0, 0, 0, nil }
+
+type recordedKeys struct {
+	mu   sync.Mutex
+	sets [][]string
+	at   []time.Time
+}
+
+func (r *recordedKeys) Set(_ context.Context, keys []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sets = append(r.sets, keys)
+	r.at = append(r.at, time.Now())
+	return nil
+}
+
+// A restarted edge asks the hub for its keys at once, and again soon while
+// the hub has not answered, instead of a whole pulse interval later.
+func TestFirstPulseBringsTheKeysAtOnce(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			http.Error(w, "busy", http.StatusServiceUnavailable) // the hub missed the first one
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string][]string{"keys": {"k1", "k2"}})
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	keys := &recordedKeys{}
+	start := time.Now()
+	spawnPulse(ctx, fixedSource{}, pulseConfig{url: srv.URL, token: "t", relay: "r"}, keys)
+	deadline := time.Now().Add(pulseBootRetry + 3*time.Second)
+	for time.Now().Before(deadline) {
+		keys.mu.Lock()
+		n := len(keys.sets)
+		keys.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	keys.mu.Lock()
+	defer keys.mu.Unlock()
+	if len(keys.sets) != 1 || len(keys.sets[0]) != 2 {
+		t.Fatalf("keys %v after %d pulses", keys.sets, calls.Load())
+	}
+	if took := keys.at[0].Sub(start); took > pulseBootRetry+time.Second {
+		t.Fatalf("keys arrived %v after the start", took)
+	}
+	// Keyed: the next pulse waits the full interval.
+	time.Sleep(500 * time.Millisecond)
+	if n := calls.Load(); n != 2 {
+		t.Fatalf("%d pulses, want 2 before the interval", n)
+	}
+}

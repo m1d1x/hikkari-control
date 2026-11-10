@@ -145,33 +145,52 @@ type pulseAnswer struct {
 // maxPulseAnswer bounds the reply: a key list of some thousands of keys.
 const maxPulseAnswer = 1 << 20
 
+// pulseBootRetry is how soon a pulse is sent again while the hub's key list
+// has not arrived since the start.
+const pulseBootRetry = 2 * time.Second
+
 // spawnPulse starts the reporting loop, if the box was given one. It returns
 // at once; the loop stops with ctx.
+//
+// The first pulse goes at once, and again every pulseBootRetry until the hub
+// answers with the key list: the key list comes back on a pulse, and an edge
+// that waited a whole pulseEvery after its start refused every key added
+// since the box was provisioned for that long. Rollout 09.11 22:11 UTC: ams3
+// restarted at :58, its holders got 707 «invalid request user id» until the
+// first pulse at +30 s, and the watch rolled the box back.
 func spawnPulse(ctx context.Context, source pulseSource, cfg pulseConfig, keys keySetter) {
 	started := time.Now()
 	boot := newBoot()
 	client := &http.Client{Timeout: pulseTimeout}
 
 	go func() {
-		t := time.NewTicker(pulseEvery)
-		defer t.Stop()
+		keyed := false
 		for {
+			body := readPulse(source, cfg, started)
+			body.Boot = boot
+			answer, err := sendPulse(ctx, client, cfg, body)
+			switch {
+			case err != nil:
+				if ctx.Err() == nil {
+					log.Printf("nekko-edge: pulse not delivered: %v", err)
+				}
+			case answer.Keys != nil:
+				if err := keys.Set(ctx, *answer.Keys); err != nil {
+					log.Printf("nekko-edge: %v", err)
+				} else {
+					keyed = true
+				}
+			default:
+				keyed = true // a hub that sends no list leaves the keys as they are
+			}
+			wait := pulseEvery
+			if !keyed {
+				wait = pulseBootRetry
+			}
 			select {
 			case <-ctx.Done():
 				return
-			case <-t.C:
-				body := readPulse(source, cfg, started)
-				body.Boot = boot
-				answer, err := sendPulse(ctx, client, cfg, body)
-				if err != nil {
-					log.Printf("nekko-edge: pulse not delivered: %v", err)
-					continue
-				}
-				if answer.Keys != nil {
-					if err := keys.Set(ctx, *answer.Keys); err != nil {
-						log.Printf("nekko-edge: %v", err)
-					}
-				}
+			case <-time.After(wait):
 			}
 		}
 	}()
