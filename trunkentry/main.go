@@ -183,6 +183,7 @@ func run(c Config) error {
 		return err
 	}
 	go logStats(ctx, entry)
+	runCalls(ctx, entry)
 	log.Printf("nekko-trunk-entry: up: exit %s (%s), %d members, Chromium %s, tcp %v, udp %v, udp one copy %v",
 		c.Exit, c.SNI, c.Members, chromium.Version(), forwardList(c.TCP), forwardList(c.UDP), portList(c.OneCopy))
 	<-ctx.Done()
@@ -195,7 +196,9 @@ func start(ctx context.Context, c Config, dial trunk.Dial) (*trunk.Entry, error)
 	if err != nil {
 		return nil, err
 	}
-	entry, err := trunk.NewEntry(trunk.Config{Stall: c.Stall}, c.Members, dial, ports, log.Printf)
+	// Observe: the exit marks testers' streams, the entry logs them
+	// (observe.go); the hello says so to the exit.
+	entry, err := trunk.NewEntry(trunk.Config{Stall: c.Stall, Observe: logObserved}, c.Members, dial, ports, log.Printf)
 	if err != nil {
 		return nil, err
 	}

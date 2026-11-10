@@ -182,6 +182,12 @@ type naiveRuntime struct {
 	pathOf func(remote string) string
 	// draining is set once a newer generation took over (handoff.go).
 	draining atomic.Bool
+	// observed are the testers' keys the hub named, targets the trunk's
+	// loopback connections by stream, legs the exit's reports waiting for
+	// a pulse (trunk_observe.go).
+	observed map[string]bool
+	targets  *trunkTargets
+	legs     []legRow
 }
 
 func newNaiveRuntime(cfg naiveConfig) *naiveRuntime {
@@ -365,6 +371,9 @@ func (g *naiveGate) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		n.watches.claim(r.RemoteAddr, group)
 	}
 	ctx = observe.WithGroup(ctx, group)
+	if path == observe.PathEntry {
+		n.observeTrunk("tcp", r.RemoteAddr, key)
+	}
 	if n.cfg.UDP && hkserver.IsUoTHost(r.Host) {
 		ctx = n.withUoT(ctx, r.Host)
 	}

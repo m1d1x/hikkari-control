@@ -232,7 +232,15 @@ type layerAcc struct {
 	n, ok, red, skipped int
 	metrics             map[string][]float64
 	whys                map[string]int
+	// The call's: its silence over the window, and its longest pauses with
+	// their time, to lay beside the pool's deaths and the entry's pauses.
+	silentMs float64
+	worst    []map[string]any
 }
+
+// callWorstKept is how many of the window's longest pauses of a call the
+// summary lists.
+const callWorstKept = 10
 
 // What each layer's summary keeps, by median and worst.
 var layerMetrics = map[string][]string{
@@ -240,6 +248,7 @@ var layerMetrics = map[string][]string{
 	LayerPath:     {"opened", "connect_p50_ms", "ping_avg_ms", "ping_max_ms", "ping_recv"},
 	LayerTrunk:    {"delivered", "first_ok", "attempts", "chunk_p50_ms", "chunk_p99_ms", "goodput_mbps"},
 	LayerProtocol: {"dl", "burst", "after", "voice_got", "gaps60", "gaps150", "gap_max_ms", "voice_rtt_p50_ms", "voice_jitter_ms"},
+	LayerCall:     {"sent", "lost", "rtt_p50_ms", "rtt_p99_ms", "rtt_max_ms", "gaps60", "gaps150", "gap_max_ms", "silent_ms"},
 }
 
 func (l *layerAcc) add(r Run) {
@@ -258,6 +267,22 @@ func (l *layerAcc) add(r Run) {
 			if len(l.whys) < 20 {
 				l.whys[why]++
 			}
+		}
+	}
+	if r.Layer == LayerCall {
+		l.silentMs += num(r.Data, "silent_ms")
+		if ws, ok := r.Data["worst"].([]any); ok {
+			for _, g := range ws {
+				if m, ok := g.(map[string]any); ok {
+					l.worst = append(l.worst, m)
+				}
+			}
+		} else if ws, ok := r.Data["worst"].([]map[string]any); ok {
+			l.worst = append(l.worst, ws...)
+		}
+		sort.SliceStable(l.worst, func(i, j int) bool { return num(l.worst[i], "ms") > num(l.worst[j], "ms") })
+		if len(l.worst) > callWorstKept {
+			l.worst = l.worst[:callWorstKept]
 		}
 	}
 	mode, _ := r.Data["mode"].(string)
@@ -284,6 +309,10 @@ func (l *layerAcc) summary() map[string]any {
 	}
 	if len(l.whys) > 0 {
 		s["why_red"] = l.whys
+	}
+	if l.silentMs > 0 || len(l.worst) > 0 {
+		s["silent_ms_total"] = l.silentMs
+		s["worst"] = l.worst
 	}
 	return s
 }

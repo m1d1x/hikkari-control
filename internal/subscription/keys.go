@@ -151,6 +151,31 @@ func (s *Service) KeysOf(ctx context.Context, relay, proto string) ([]string, er
 	return keys, nil
 }
 
+// ObservedKeysOf is the keys among KeysOf that are testers' (an account
+// holding the whole fleet, hub_accounts.all_relays, is a tester's): the relay
+// marks their streams through the cascade for both ends to report
+// ([entry.ObservedKeys]; owner's decision 10.11, testers are observed in
+// full, other users not at all).
+func (s *Service) ObservedKeysOf(ctx context.Context, relay, proto string) ([]string, error) {
+	keys, err := s.KeysOf(ctx, relay, proto)
+	if err != nil || len(keys) == 0 {
+		return []string{}, err
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT q.key FROM unnest($1::text[]) AS q(key)
+		JOIN hub_access_keys k ON k.hy2_auth = q.key OR k.vless_id::text = q.key
+		JOIN hub_accounts a ON a.id = k.account_id AND a.all_relays
+		ORDER BY 1`, keys)
+	if err != nil {
+		return nil, err
+	}
+	out, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if out == nil {
+		out = []string{}
+	}
+	return out, err
+}
+
 var bootRe = regexp.MustCompile(`^[0-9a-f]{16,64}$`)
 
 // Totals only ever grow within one run of an edge; GREATEST keeps a pulse that

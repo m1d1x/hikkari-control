@@ -414,3 +414,66 @@ func TestPulseHandsHikkariPeriodsOverAndNeverFailsForThem(t *testing.T) {
 		t.Fatalf("a failing period store failed the pulse: %v", err)
 	}
 }
+
+// observedKeysFake is relayKeysFake that names the testers' keys.
+type observedKeysFake struct {
+	relayKeysFake
+	observed []string
+}
+
+func (f *observedKeysFake) ObservedKeysOf(context.Context, string, string) ([]string, error) {
+	return f.observed, nil
+}
+
+type testerLegsFake struct {
+	relay string
+	rows  []json.RawMessage
+}
+
+func (f *testerLegsFake) RecordExit(_ context.Context, relay string, rows []json.RawMessage, _ time.Time) error {
+	f.relay, f.rows = relay, rows
+	return nil
+}
+
+// A pulse carries the trunk exit's rows of testers' streams to their store,
+// and is answered with the testers' keys among the relay's, always (empty
+// when none), so a key that stops being a tester's stops being observed.
+func TestAPulseCarriesTestersLegs(t *testing.T) {
+	h := newHarness(t)
+	box, _ := h.box()
+	relay := h.relay(box, KindPersonal)
+	keys := &observedKeysFake{relayKeysFake: relayKeysFake{keys: []string{"k1", "k2"}}}
+	legs := &testerLegsFake{}
+	h.svc.SetRelayKeys(keys)
+	h.svc.SetTesterLegs(legs)
+	post := func() pulseAnswer {
+		mux := http.NewServeMux()
+		RegisterPulseRoutes(mux, h.svc, "s")
+		body := `{"relay":"` + relay + `","uptimeS":60,"legs":[{"id":"14c4c8b037d9dc9e","side":"exit","kind":"stream","phase":"mark","key":"k2"}]}`
+		req := httptest.NewRequest("POST", "/api/v1/internal/entry-pulse", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+PulseToken("s", box))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d %s", rec.Code, rec.Body)
+		}
+		var answer pulseAnswer
+		if err := json.Unmarshal(rec.Body.Bytes(), &answer); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(rec.Body.String(), `"observe":`) {
+			t.Fatalf("no observe list in %s", rec.Body)
+		}
+		return answer
+	}
+	if a := post(); len(a.Observe) != 0 {
+		t.Fatalf("no testers, observed %v", a.Observe)
+	}
+	keys.observed = []string{"k2"}
+	if a := post(); len(a.Observe) != 1 || a.Observe[0] != "k2" {
+		t.Fatalf("observed %v", a.Observe)
+	}
+	if legs.relay != relay || len(legs.rows) != 1 {
+		t.Fatalf("legs filed %+v", legs)
+	}
+}

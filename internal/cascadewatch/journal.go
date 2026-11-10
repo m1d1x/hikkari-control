@@ -42,6 +42,7 @@ func parseJournal(out string) []journalLine {
 
 var (
 	reStats      = regexp.MustCompile(`nekko-trunk-entry: (members=\d+ .*)$`)
+	reCall       = regexp.MustCompile(`nekko-trunk-entry: call (copies=\d+ .*)$`)
 	reMemberDown = regexp.MustCompile(`trunk: member (\d+): down after (\S+): (.*)$`)
 	reMemberFail = regexp.MustCompile(`trunk: member (\d+): (dial|hello): (.*)$`)
 	rePaused     = regexp.MustCompile(`trunk: paused (\S+)$`)
@@ -56,6 +57,9 @@ var (
 func classify(l journalLine) (layer string, data map[string]any, ok bool) {
 	if m := reStats.FindStringSubmatch(l.Msg); m != nil {
 		return LayerEntry, statsFields(m[1]), true
+	}
+	if m := reCall.FindStringSubmatch(l.Msg); m != nil {
+		return LayerCall, callFields(m[1]), true
 	}
 	if m := reMemberDown.FindStringSubmatch(l.Msg); m != nil {
 		d, _ := time.ParseDuration(m[2])
@@ -117,6 +121,45 @@ func statsFields(s string) map[string]any {
 			}
 		}
 	}
+	return out
+}
+
+// callFields reads the call's minute line (trunkentry call.go): counts as
+// numbers, rtt_* and the pauses in ms (rtt_* absent when nothing came back),
+// lost added, worst as a list of {at, ms}.
+func callFields(s string) map[string]any {
+	out := map[string]any{}
+	for _, kv := range strings.Fields(s) {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		switch {
+		case k == "worst":
+			var worst []map[string]any
+			for _, g := range strings.Split(v, ",") {
+				at, ms, ok := strings.Cut(g, ":")
+				if !ok {
+					continue
+				}
+				worst = append(worst, map[string]any{"at": time.UnixMilli(atoi64(at)).UTC(), "ms": atoi64(ms)})
+			}
+			if len(worst) > 0 {
+				out["worst"] = worst
+			}
+		case strings.HasPrefix(k, "rtt_"):
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				out[k+"_ms"] = f
+			}
+		case k == "gap_max":
+			out["gap_max_ms"] = atoi64(v)
+		default:
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				out[k] = n
+			}
+		}
+	}
+	out["lost"] = num(out, "sent") - num(out, "got")
 	return out
 }
 

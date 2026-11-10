@@ -138,6 +138,7 @@ type Service struct {
 	// drops them.
 	edgeHellos EdgeHellos
 	hikkariObs HikkariObs
+	testerLegs TesterLegs
 	// subscribers sizes the stream pools by subscriptions (subscribers.go).
 	subscribers SubscriberCount
 	// traffic takes the gateway's per-socket byte counts into the dataset

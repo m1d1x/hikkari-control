@@ -57,6 +57,9 @@ type pulseBody struct {
 	HikkariS int64                      `json:"hikkariS,omitempty"`
 	// Drain: a Hikkari generation a newer one took over (edge handoff.go).
 	Drain bool `json:"drain,omitempty"`
+	// Legs: the trunk exit's reports of testers' streams (edge
+	// trunk_observe.go, internal/testerlegs).
+	Legs []json.RawMessage `json:"legs,omitempty"`
 }
 
 type pulseKeyBody struct {
@@ -69,6 +72,11 @@ type pulseKeyBody struct {
 // up on the next one. No answer body (204) leaves the relay's list as it is.
 type pulseAnswer struct {
 	Keys []string `json:"keys"`
+	// Observe: the testers' keys among Keys, whose streams through the
+	// cascade the relay marks (edge trunk_observe.go). Always sent with the
+	// keys, empty when none, so a key that stops being a tester's stops
+	// being observed.
+	Observe []string `json:"observe"`
 }
 
 // RegisterPulseRoutes mounts the relay pulse on the public mux, behind a
@@ -106,6 +114,7 @@ func RegisterPulseRoutes(mux *http.ServeMux, svc *Service, token string) {
 			Hikkari:   body.Hikkari,
 			HikkariS:  body.HikkariS,
 			Drain:     body.Drain,
+			Legs:      body.Legs,
 		})
 		switch {
 		case errors.Is(err, ErrPulseRefused):
@@ -126,7 +135,14 @@ func RegisterPulseRoutes(mux *http.ServeMux, svc *Service, token string) {
 				applog.Error(r.Context(), "entry", "relay keys not read", applog.F("relay", body.Relay), applog.F("err", err.Error()))
 				w.WriteHeader(http.StatusNoContent)
 			case ok:
-				writeJSON(w, http.StatusOK, pulseAnswer{Keys: keys})
+				observed, err := svc.PulseObserved(r.Context(), body.Relay)
+				if err != nil {
+					applog.Error(r.Context(), "entry", "relay observed keys not read", applog.F("relay", body.Relay), applog.F("err", err.Error()))
+				}
+				if observed == nil {
+					observed = []string{}
+				}
+				writeJSON(w, http.StatusOK, pulseAnswer{Keys: keys, Observe: observed})
 			default:
 				w.WriteHeader(http.StatusNoContent)
 			}

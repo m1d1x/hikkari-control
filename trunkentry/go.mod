@@ -3,8 +3,9 @@ module github.com/m1d1x/hikkari-control/trunkentry
 go 1.27
 
 require (
-	github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261110182653-2cc111d1ba33
+	github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261110205225-0b4e1840c60a
 	github.com/m1d1x/hikkari-protocol/trunk/chromium v0.0.0-20261109035446-c773c6a37f81
+	golang.org/x/sys v0.39.0
 )
 
 require (
@@ -18,6 +19,5 @@ require (
 	golang.org/x/mod v0.31.0 // indirect
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/tools v0.40.0 // indirect
 )

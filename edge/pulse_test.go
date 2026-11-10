@@ -70,3 +70,69 @@ func TestFirstPulseBringsTheKeysAtOnce(t *testing.T) {
 		t.Fatalf("%d pulses, want 2 before the interval", n)
 	}
 }
+
+// legKeys is a relay that keeps the trunk exit's rows and takes the testers'
+// keys, as naiveRuntime does.
+type legKeys struct {
+	recordedKeys
+	observed []string
+	legs     []legRow
+	sent     [][]legRow
+}
+
+func (l *legKeys) read() (int64, int64, int64, map[string]pulseKey) { return 0, 0, 0, nil }
+func (l *legKeys) setObserved(keys []string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.observed = keys
+}
+func (l *legKeys) takeLegs() []legRow {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := l.legs
+	l.legs = nil
+	return out
+}
+func (l *legKeys) legsSent(rows []legRow, ok bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if ok {
+		l.sent = append(l.sent, rows)
+	}
+}
+
+// A pulse carries the exit's rows of testers' streams, and its answer names
+// the testers' keys to observe.
+func TestPulseCarriesLegsAndTakesObserved(t *testing.T) {
+	got := make(chan []legRow, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body pulseBody
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		got <- body.Legs
+		_ = json.NewEncoder(w).Encode(map[string][]string{"keys": {"k1", "k2"}, "observe": {"k2"}})
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	relay := &legKeys{legs: []legRow{{ID: "14c4c8b037d9dc9e", Side: "exit", Kind: "stream", Phase: "mark", Key: "k2"}}}
+	spawnPulse(ctx, relay, pulseConfig{url: srv.URL, token: "t", relay: "r"}, relay)
+	select {
+	case rows := <-got:
+		if len(rows) != 1 || rows[0].Key != "k2" {
+			t.Fatalf("legs in the pulse %+v", rows)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no pulse")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		relay.mu.Lock()
+		done := len(relay.observed) == 1 && len(relay.sent) == 1
+		relay.mu.Unlock()
+		if done {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("observed %v, delivered %v", relay.observed, relay.sent)
+}

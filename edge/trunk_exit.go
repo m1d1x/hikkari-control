@@ -78,7 +78,11 @@ func (c trunkExitConfig) admits(key string) bool {
 
 // trunkLocal dials this box's own services for the trunk's streams and
 // flows.
-type trunkLocal struct{ ports map[uint16]bool }
+// Each connection is tracked as its stream's or flow's (trunk_observe.go).
+type trunkLocal struct {
+	ports   map[uint16]bool
+	targets *trunkTargets
+}
 
 var errTrunkPort = errors.New("trunk: port not open to the trunk")
 
@@ -87,7 +91,8 @@ func (l trunkLocal) DialStream(ctx context.Context, port uint16) (net.Conn, erro
 		return nil, errTrunkPort
 	}
 	d := net.Dialer{Timeout: 5 * time.Second}
-	return d.DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port))))
+	c, err := d.DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port))))
+	return l.track(ctx, "tcp", c, err)
 }
 
 func (l trunkLocal) DialFlow(ctx context.Context, port uint16) (net.Conn, error) {
@@ -95,7 +100,18 @@ func (l trunkLocal) DialFlow(ctx context.Context, port uint16) (net.Conn, error)
 		return nil, errTrunkPort
 	}
 	var d net.Dialer
-	return d.DialContext(ctx, "udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port))))
+	c, err := d.DialContext(ctx, "udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port))))
+	return l.track(ctx, "udp", c, err)
+}
+
+func (l trunkLocal) track(ctx context.Context, network string, c net.Conn, err error) (net.Conn, error) {
+	if err != nil || l.targets == nil {
+		return c, err
+	}
+	if tg, ok := trunk.TargetFrom(ctx); ok {
+		return l.targets.track(network, c, tg), nil
+	}
+	return c, nil
 }
 
 // isTrunkHost reports whether a CONNECT asks for a trunk member.
@@ -114,9 +130,11 @@ func (n *naiveRuntime) startTrunkExit(ctx context.Context) {
 	if len(n.cfg.Trunk.Keys) == 0 {
 		return
 	}
-	x := trunk.NewExit(trunk.Config{}, trunkLocal{n.cfg.Trunk.Ports})
+	targets := newTrunkTargets()
+	x := trunk.NewExit(trunk.Config{Observe: n.trunkObserved}, trunkLocal{n.cfg.Trunk.Ports, targets})
 	n.mu.Lock()
 	n.trunk = x
+	n.targets = targets
 	n.mu.Unlock()
 	go x.Run(ctx)
 	go func() {

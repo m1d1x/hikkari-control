@@ -139,6 +139,9 @@ type pulseBody struct {
 	// keys and periods count, but the relay's own row is the newest
 	// generation's, or two processes' totals would interleave.
 	Drain bool `json:"drain,omitempty"`
+	// Legs are the trunk exit's reports of testers' streams and flows
+	// (trunk_observe.go).
+	Legs []legRow `json:"legs,omitempty"`
 }
 
 type pulseKey struct {
@@ -150,6 +153,9 @@ type pulseKey struct {
 // internal/entry/pulse_api.go.
 type pulseAnswer struct {
 	Keys *[]string `json:"keys"`
+	// Observe are the testers' keys among Keys: their streams through the
+	// cascade are observed leg by leg (trunk_observe.go).
+	Observe *[]string `json:"observe,omitempty"`
 }
 
 // maxPulseAnswer bounds the reply: a key list of some thousands of keys.
@@ -180,6 +186,12 @@ func spawnPulse(ctx context.Context, source pulseSource, cfg pulseConfig, keys k
 			body.Boot = boot
 			answer, err := sendPulse(ctx, client, cfg, body)
 			periodsSent(source, body.Hikkari, err == nil)
+			if s, ok := source.(legSource); ok {
+				s.legsSent(body.Legs, err == nil)
+			}
+			if s, ok := keys.(interface{ setObserved([]string) }); ok && err == nil && answer.Observe != nil {
+				s.setObserved(*answer.Observe)
+			}
 			switch {
 			case err != nil:
 				if ctx.Err() == nil {
@@ -261,7 +273,16 @@ func readPulse(source pulseSource, cfg pulseConfig, started time.Time) pulseBody
 	if s, ok := source.(interface{ drained() bool }); ok {
 		body.Drain = s.drained()
 	}
+	if s, ok := source.(legSource); ok {
+		body.Legs = s.takeLegs()
+	}
 	return body
+}
+
+// legSource is a source with a trunk exit's reports (naiveRuntime).
+type legSource interface {
+	takeLegs() []legRow
+	legsSent([]legRow, bool)
 }
 
 // observedSource is a source that keeps a v1.04 book (naiveRuntime on a

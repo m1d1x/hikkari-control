@@ -446,3 +446,42 @@ func TestDBSilentEntryAndDownBox(t *testing.T) {
 		t.Fatalf("a box down is not the vps layer's red: %+v", vps)
 	}
 }
+
+// The trunk's call: a minute per call, its start its time, its pauses kept
+// with their time for the summary.
+func TestCallMinuteIsALayer(t *testing.T) {
+	out := `1794213660.100000 spb nekko-trunk-entry[812]: 2026/11/11 00:01:02 nekko-trunk-entry: call copies=1 from=1794213600 sent=3000 got=2990 rtt_p50=48.1 rtt_p99=61.0 rtt_max=130.0 gaps60=3 gaps150=1 gap_max=540 silent_ms=700 sessions=1 worst=1794213601500:540,1794213609000:80
+1794213660.200000 spb nekko-trunk-entry[812]: 2026/11/11 00:01:02 nekko-trunk-entry: call copies=2 from=1794213600 sent=3000 got=0 rtt_p50=- rtt_p99=- rtt_max=- gaps60=1 gaps150=1 gap_max=60000 silent_ms=59980 sessions=1 worst=1794213600000:60000`
+	lines := parseJournal(out)
+	if len(lines) != 2 {
+		t.Fatalf("%d lines", len(lines))
+	}
+	layer, one, ok := classify(lines[0])
+	if !ok || layer != LayerCall {
+		t.Fatalf("not a call: %v %v", layer, ok)
+	}
+	if num(one, "copies") != 1 || num(one, "lost") != 10 || num(one, "rtt_p50_ms") != 48.1 || num(one, "gap_max_ms") != 540 || num(one, "silent_ms") != 700 {
+		t.Fatalf("call %v", one)
+	}
+	worst, _ := one["worst"].([]map[string]any)
+	if len(worst) != 2 || !worst[0]["at"].(time.Time).Equal(time.UnixMilli(1794213601500)) || num(worst[0], "ms") != 540 {
+		t.Fatalf("worst %v", one["worst"])
+	}
+	_, two, _ := classify(lines[1])
+	if has(two, "rtt_p50_ms") || num(two, "lost") != 3000 || callOK(two) || !callOK(map[string]any{"gaps150": 0.0}) {
+		t.Fatalf("a silent minute %v", two)
+	}
+	from := time.Unix(1794213600, 0).UTC()
+	rows := []Run{
+		{TS: from, Entry: "spb", Exit: "unl1", Layer: LayerCall, Vantage: "entry", Target: "copies1", OK: boolp(callOK(one)), Data: one},
+		{TS: from.Add(time.Minute), Entry: "spb", Exit: "unl1", Layer: LayerCall, Vantage: "entry", Target: "copies1", OK: boolp(true),
+			Data: map[string]any{"sent": 3000.0, "lost": 0.0, "gaps150": 0.0, "gap_max_ms": 40.0, "silent_ms": 0.0}},
+	}
+	sum := Summarize(rows)["spb → unl1"].(map[string]any)["layers"].(map[string]any)["call entry copies1"].(map[string]any)
+	if sum["n"] != 2 || sum["red"] != 1 || sum["silent_ms_total"] != 700.0 {
+		t.Fatalf("summary %v", sum)
+	}
+	if w := sum["worst"].([]map[string]any); len(w) != 2 || num(w[0], "ms") != 540 {
+		t.Fatalf("summary worst %v", sum["worst"])
+	}
+}

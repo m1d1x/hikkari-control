@@ -7,7 +7,7 @@ require (
 	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/m1d1x/hikkari-protocol v0.0.0-20261110182653-2cc111d1ba33
 	github.com/m1d1x/hikkari-protocol/server/naive v0.0.0-20261108155522-c8322b5caadd
-	github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261110182653-2cc111d1ba33
+	github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261110205225-0b4e1840c60a
 	github.com/sagernet/sing v0.9.7-0.20260929150544-0ad23b637bd4
 	github.com/xtls/xray-core v1.260327.1-0.20261010092107-701af60772cd
 	golang.org/x/crypto v0.58.0

@@ -123,7 +123,11 @@ func startHikkariUDP(ctx context.Context, n *naiveRuntime, socks *sockets) (*hik
 		Dup:           hub,
 		Book:          n.book,
 		Group: func(key string, remote M.Socksaddr) string {
-			return observe.RelayGroup(n.pathOf(remote.String()), key)
+			path := n.pathOf(remote.String())
+			if path == observe.PathEntry {
+				n.observeTrunk("udp", remote.String(), key)
+			}
+			return observe.RelayGroup(path, key)
 		},
 	})
 	if err != nil {

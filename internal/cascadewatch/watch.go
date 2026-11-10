@@ -47,6 +47,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/stand"
 	"github.com/m1d1x/hikkari-control/internal/subscription"
 	"github.com/m1d1x/hikkari-control/internal/telemetry"
+	"github.com/m1d1x/hikkari-control/internal/testerlegs"
 )
 
 // Account is the hub's own account whose key the protocol layer dials with.
@@ -65,7 +66,14 @@ const (
 	alertEvery   = 30 * time.Minute
 	stallWindow  = 10 * time.Minute
 	stallAlert   = 5
+	// callAlertMs: a pause of the trunk's call this long is a call broken
+	// for whoever is on one, not a frame lost.
+	callAlertMs = 500
 )
+
+// callOK: a minute of the trunk's call in which no call would have heard a
+// word go missing.
+func callOK(data map[string]any) bool { return num(data, "gaps150") == 0 }
 
 // Fleet is the fleet as the watch needs it (entry.Service).
 type Fleet interface {
@@ -99,6 +107,7 @@ type Watch struct {
 	links Links
 	queue Queue
 	errs  telemetry.Sink
+	legs  *testerlegs.Recorder
 	now   func() time.Time
 
 	mu      sync.Mutex
@@ -109,6 +118,10 @@ type Watch struct {
 	started time.Time
 	rounds  sync.WaitGroup
 }
+
+// SetTesterLegs files the entries' observed lines (internal/testerlegs);
+// nil leaves them in the journal.
+func (w *Watch) SetTesterLegs(r *testerlegs.Recorder) { w.legs = r }
 
 func New(pool db.Pool, fleet Fleet, boxes Boxes, links Links, queue Queue, errs telemetry.Sink) *Watch {
 	return &Watch{
@@ -185,6 +198,7 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 		return fmt.Errorf("journalctl: %w", err)
 	}
 	var runs []Run
+	var legs []testerlegs.Row
 	newest := since
 	for _, l := range parseJournal(out) {
 		if !l.TS.After(since) {
@@ -193,18 +207,40 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 		if l.TS.After(newest) {
 			newest = l.TS
 		}
+		if testerlegs.IsEntryLine(l.Msg) {
+			if row, err := testerlegs.ParseEntryLine(p.Entry, l.TS, l.Msg); err == nil {
+				legs = append(legs, row)
+			}
+			continue
+		}
 		layer, data, ok := classify(l)
 		if !ok {
 			continue
 		}
 		run := Run{TS: l.TS, Entry: p.Entry, Exit: p.Exit, Layer: layer, Vantage: "entry", Data: data}
-		if layer == LayerEntry {
+		switch layer {
+		case LayerEntry:
 			run.OK = boolp(num(data, "members") >= minMembers)
+		case LayerCall:
+			// A minute of the trunk's call: its start is its time, so the
+			// rows of both calls and the entry's minute line up.
+			run.TS = time.Unix(int64(num(data, "from")), 0).UTC()
+			run.Target = fmt.Sprintf("copies%d", int(num(data, "copies")))
+			run.OK = boolp(callOK(data))
+			if num(data, "gap_max_ms") >= callAlertMs {
+				w.alert(ctx, p, "cascade.call_gap", fmt.Sprintf("звонок магистрали %s → %s (%s): тишина %d мс в минуту %s, всего %d мс, потеряно %d из %d",
+					p.Entry, p.Exit, run.Target, int(num(data, "gap_max_ms")), run.TS.Format("15:04"), int(num(data, "silent_ms")), int(num(data, "lost")), int(num(data, "sent"))))
+			}
 		}
 		runs = append(runs, run)
 	}
 	if err := w.store.Insert(ctx, runs...); err != nil {
 		return err
+	}
+	if w.legs != nil {
+		if err := w.legs.RecordEntry(ctx, legs); err != nil {
+			return err
+		}
 	}
 	w.mu.Lock()
 	w.cursor[p.Entry] = newest

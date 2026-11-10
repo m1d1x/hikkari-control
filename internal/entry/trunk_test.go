@@ -41,6 +41,33 @@ func TestTrunkEntryEnv(t *testing.T) {
 	}
 }
 
+// TestTrunkEntryEnvIsBlind: the entry is told the exit, its trunk key and
+// its ports, nothing else. No subscriber's key, no relay's own secret (the
+// relay's identity is never an input here), nothing that opens a client's
+// TLS (roadmap 3.2, «вход слепой»). A new key in this env is a decision
+// to take with the owner, not a test to update.
+func TestTrunkEntryEnvIsBlind(t *testing.T) {
+	env := trunkEntryEnv("203.0.113.8:443", "hk.example", "trunk-key", TrunkEntryOptions{Members: 32, Forward: map[int]int{8443: 443, 8053: 2053}})
+	allowed := map[string]bool{
+		"EDGE_TRUNK_EXIT": true, "EDGE_TRUNK_SNI": true, "EDGE_TRUNK_KEY": true, "EDGE_TRUNK_MEMBERS": true,
+		"EDGE_TRUNK_FORWARD": true, "EDGE_TRUNK_UDP": true, "EDGE_TRUNK_UDP_ONE_COPY": true,
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(env, "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, _, ok := strings.Cut(line, "=")
+		if !ok || !allowed[k] {
+			t.Fatalf("the entry is told %q", line)
+		}
+		seen[k] = true
+	}
+	if len(seen) != len(allowed) {
+		t.Fatalf("keys %v", seen)
+	}
+}
+
 // TestStandTrunkEntry: the binary and libcronet.so are staged beside the
 // running copy, the env is written private, and the swap gets the ports.
 func TestStandTrunkEntry(t *testing.T) {

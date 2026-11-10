@@ -201,24 +201,35 @@ func freeAddr(t *testing.T) string {
 // frames each way.
 func goMember(relay string, roots *x509.CertPool, key string, port int) (io.ReadWriteCloser, error) {
 	d := net.Dialer{Timeout: 5 * time.Second, LocalAddr: &net.TCPAddr{Port: port}}
-	raw, err := tls.DialWithDialer(&d, "tcp", relay, &tls.Config{ServerName: "hk.example", RootCAs: roots, NextProtos: []string{"h2"}})
+	raw, err := d.Dial("tcp", relay)
 	if err != nil {
 		return nil, err
 	}
-	cc, err := (&http2.Transport{}).NewClientConn(raw)
-	if err != nil {
+	return goConnect(raw, roots, trunk.User, key, trunk.Host)
+}
+
+// goConnect is one padded Naive CONNECT to host over raw, a connection to
+// the relay (direct, or carried by the trunk as a client's would be).
+func goConnect(raw net.Conn, roots *x509.CertPool, user, pass, host string) (io.ReadWriteCloser, error) {
+	tc := tls.Client(raw, &tls.Config{ServerName: "hk.example", RootCAs: roots, NextProtos: []string{"h2"}})
+	if err := tc.Handshake(); err != nil {
 		raw.Close()
+		return nil, err
+	}
+	cc, err := (&http2.Transport{}).NewClientConn(tc)
+	if err != nil {
+		tc.Close()
 		return nil, err
 	}
 	body, feed := io.Pipe()
-	req := &http.Request{Method: http.MethodConnect, URL: &url.URL{Host: trunk.Host}, Host: trunk.Host, Body: body, ContentLength: -1,
-		Header: http.Header{"Proxy-Authorization": {basicAuth(trunk.User, key)}, "Padding": {strings.Repeat("~", 40)}}}
+	req := &http.Request{Method: http.MethodConnect, URL: &url.URL{Host: host}, Host: host, Body: body, ContentLength: -1,
+		Header: http.Header{"Proxy-Authorization": {basicAuth(user, pass)}, "Padding": {strings.Repeat("~", 40)}}}
 	resp, err := cc.RoundTrip(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
-		raw.Close()
+		tc.Close()
 		return nil, fmt.Errorf("connect: %v %v", resp, err)
 	}
-	return &goTunnel{r: &unpadReader{r: resp.Body}, w: &padWriter{w: feed}, closers: []io.Closer{feed, resp.Body, raw}}, nil
+	return &goTunnel{r: &unpadReader{r: resp.Body}, w: &padWriter{w: feed}, closers: []io.Closer{feed, resp.Body, tc}}, nil
 }
 
 type goTunnel struct {

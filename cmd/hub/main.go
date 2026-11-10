@@ -39,6 +39,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/subscription"
 	"github.com/m1d1x/hikkari-control/internal/support"
 	"github.com/m1d1x/hikkari-control/internal/telemetry"
+	"github.com/m1d1x/hikkari-control/internal/testerlegs"
 	"github.com/m1d1x/hikkari-control/internal/voiceruns"
 )
 
@@ -200,6 +201,8 @@ func run() error {
 	mux.HandleFunc("GET /sub/{token}", subs.Handler())
 	// Relays learn subscribers' access keys from the answer to their pulse.
 	svc.SetRelayKeys(subs)
+	// legs files testers' legs through the cascade when analytics is on.
+	var legs *testerlegs.Recorder
 	// Stream pools hold enough machines for every live subscription's batch
 	// (internal/entry/subscribers.go).
 	svc.SetSubscribers(subs)
@@ -267,6 +270,11 @@ func run() error {
 		svc.SetPulseSink(pulseSink{store})
 		// Hikkari v1.04: what each relay saw of its sessions, by account.
 		svc.SetHikkariObs(&hikkariobs.Recorder{Sink: store, Accounts: subs})
+		// Testers' paths through the cascade leg by leg: the exits' rows
+		// from their pulses here, the entries' from their journals in the
+		// cascade watch below.
+		legs = &testerlegs.Recorder{Sink: store, Accounts: subs}
+		svc.SetTesterLegs(legs)
 		svc.SetUserTrafficSink(userTrafficSink{store})
 		svc.SetLoadSource(loadSource{store})
 		svc.SetVerdicts(verdictSource{store})
@@ -394,6 +402,7 @@ func run() error {
 		// agent's view of both ends (tool hikkari).
 		go hikkariobs.NewIngester(&hikkariobs.Recorder{Sink: store, Accounts: subs}, pool).Run(ctx, 2*time.Minute)
 		hikkariobs.RegisterOpsRoutes(adminMux, store, hikkariSubjects(pool, testerStore), hikkariNames(pool, testerStore), opsGate)
+		testerlegs.RegisterOpsRoutes(adminMux, store, legsSubjects(pool, testerStore), legsNames(pool, testerStore), opsGate)
 		hikkariobs.RegisterAdminRoutes(adminMux, store, func(h http.HandlerFunc) http.HandlerFunc {
 			return admin.RequireAdmin(adminKeys.Public, pool, h)
 		})
@@ -408,6 +417,9 @@ func run() error {
 	// of every layer every 10 minutes, the protocol layer as the points'
 	// cascade tasks (internal/cascadewatch).
 	cascadeWatch := cascadewatch.New(pool, svc, prov, subs, standRuns, knobErrs)
+	if legs != nil {
+		cascadeWatch.SetTesterLegs(legs)
+	}
 	standRuns.SetCascade(cascadeWatch)
 	cascadewatch.RegisterOpsRoutes(adminMux, cascadeWatch, opsGate)
 	go cascadeWatch.Run(ctx)

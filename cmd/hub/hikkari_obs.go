@@ -32,6 +32,24 @@ func hikkariSubjects(pool db.Pool, testers support.TesterStore) func(ctx context
 	}
 }
 
+// legsSubjects and legsNames are hikkariSubjects and hikkariNames for the
+// exits' rows of testers' legs, which name accounts only.
+func legsSubjects(pool db.Pool, testers support.TesterStore) func(ctx context.Context, ref string) (string, error) {
+	resolve := hikkariSubjects(pool, testers)
+	return func(ctx context.Context, ref string) (string, error) { return resolve(ctx, hikkariobs.SideRelay, ref) }
+}
+
+func legsNames(pool db.Pool, testers support.TesterStore) func(ctx context.Context) (func(subject string) string, error) {
+	names := hikkariNames(pool, testers)
+	return func(ctx context.Context) (func(subject string) string, error) {
+		name, err := names(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return func(subject string) string { return name(hikkariobs.SideRelay, subject) }, nil
+	}
+}
+
 // hikkariNames names subjects: installs by alias, accounts by name.
 func hikkariNames(pool db.Pool, testers support.TesterStore) hikkariobs.Namer {
 	aliases := testerAliases(testers)

@@ -106,6 +106,38 @@ type PulseReport struct {
 	// Drain is a Hikkari relay's old generation still finishing its
 	// sessions after a handoff: no relay row from it.
 	Drain bool
+	// Legs are the trunk exit's reports of testers' streams and flows
+	// (edge trunk_observe.go, internal/testerlegs).
+	Legs []json.RawMessage
+}
+
+// TesterLegs files the exit's reports of testers' streams through the
+// cascade (internal/testerlegs).
+type TesterLegs interface {
+	RecordExit(ctx context.Context, relay string, rows []json.RawMessage, now time.Time) error
+}
+
+// SetTesterLegs wires the store of testers' legs; nil drops them.
+func (s *Service) SetTesterLegs(t TesterLegs) { s.testerLegs = t }
+
+// ObservedKeys names the testers' keys among a relay's (internal/
+// subscription): their streams through the cascade are observed leg by leg.
+type ObservedKeys interface {
+	ObservedKeysOf(ctx context.Context, relay, proto string) ([]string, error)
+}
+
+// PulseObserved is the testers' keys a relay's pulse is answered with; nil
+// when the hub keeps no access keys or names no testers' keys.
+func (s *Service) PulseObserved(ctx context.Context, relay string) ([]string, error) {
+	o, ok := s.relayKeys.(ObservedKeys)
+	if !ok {
+		return nil, nil
+	}
+	src, err := s.repo.pulseSource(ctx, relay)
+	if err != nil {
+		return nil, err
+	}
+	return o.ObservedKeysOf(ctx, relay, src.proto)
 }
 
 // HikkariObs files a Hikkari relay's v1.04 periods (internal/hikkariobs):
@@ -223,6 +255,11 @@ func (s *Service) RecordPulse(ctx context.Context, master, bearer string, p Puls
 		// list rides on the answer.
 		if err := s.hikkariObs.RecordRelayPeriods(ctx, p.Relay, p.HikkariS, p.Hikkari); err != nil {
 			applog.Error(ctx, "entry", "hikkari periods not recorded", applog.F("relay", p.Relay), applog.F("err", err.Error()))
+		}
+	}
+	if s.testerLegs != nil && len(p.Legs) > 0 {
+		if err := s.testerLegs.RecordExit(ctx, p.Relay, p.Legs, time.Now().UTC()); err != nil {
+			applog.Error(ctx, "entry", "tester legs not recorded", applog.F("relay", p.Relay), applog.F("err", err.Error()))
 		}
 	}
 	if s.relayKeys != nil && len(p.Keys) > 0 {

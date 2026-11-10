@@ -9,6 +9,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/m1d1x/hikkari-control/internal/hikkariobs"
+	"github.com/m1d1x/hikkari-control/internal/testerlegs"
 )
 
 // Store manages ClickHouse connections and event writes.
@@ -227,6 +228,47 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 	`); err != nil {
 		return fmt.Errorf("fleet analytics schema 11: %w", err)
 	}
+	// Testers' paths through the cascade leg by leg (internal/testerlegs):
+	// one row per report of one end of an observed stream or flow, joined
+	// by id. Only testers' streams are ever reported.
+	if err := s.conn.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS tester_legs (
+			ts              DateTime64(3) CODEC(Delta, ZSTD(1)),
+			id              String,
+			side            LowCardinality(String),
+			box             LowCardinality(String),
+			subject         String CODEC(ZSTD(1)),
+			kind            LowCardinality(String),
+			phase           LowCardinality(String),
+			port            UInt16,
+			age_ms          Int64,
+			up              Int64,
+			down            Int64,
+			chunks          Int64,
+			resent          Int64,
+			carriers        UInt32,
+			deaths          UInt32,
+			max_wait_ms     Int64,
+			dg_out          Int64,
+			dg_in           Int64,
+			dg_copy         Int64,
+			end_reason      LowCardinality(String),
+			have_tcp        UInt8,
+			client_rtt_ms   Float64,
+			client_rttvar   Float64,
+			client_retrans  Int64,
+			client_lost     Int64,
+			client_unacked  Int64,
+			client_cwnd     Int64,
+			client_segs_out Int64,
+			client_segs_in  Int64
+		) ENGINE = MergeTree()
+		PARTITION BY toYYYYMM(ts)
+		ORDER BY (id, side, phase, ts)
+		TTL toDateTime(ts) + INTERVAL 180 DAY
+	`); err != nil {
+		return fmt.Errorf("fleet analytics schema 12: %w", err)
+	}
 	return s.migrateTelemetry(ctx)
 }
 
@@ -248,6 +290,36 @@ func (s *Store) InsertHikkariObs(ctx context.Context, rows []hikkariobs.Row) err
 	for _, r := range rows {
 		if err := batch.Append(r.TS, r.Side, r.Relay, r.Path, r.Subject, r.PeriodS, r.Metric, r.Value); err != nil {
 			return fmt.Errorf("append hikkari_obs: %w", err)
+		}
+	}
+	return batch.Send()
+}
+
+// InsertTesterLegs writes reports of testers' streams through the cascade.
+func (s *Store) InsertTesterLegs(ctx context.Context, rows []testerlegs.Row) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
+		"async_insert":          1,
+		"wait_for_async_insert": 0,
+	}))
+	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO tester_legs (ts, id, side, box, subject, kind, phase, port, age_ms,
+		up, down, chunks, resent, carriers, deaths, max_wait_ms, dg_out, dg_in, dg_copy, end_reason, have_tcp,
+		client_rtt_ms, client_rttvar, client_retrans, client_lost, client_unacked, client_cwnd, client_segs_out, client_segs_in)`)
+	if err != nil {
+		return fmt.Errorf("prepare tester_legs batch: %w", err)
+	}
+	for _, r := range rows {
+		var tcp uint8
+		if r.HaveTCP {
+			tcp = 1
+		}
+		if err := batch.Append(r.TS, r.ID, r.Side, r.Box, r.Subject, r.Kind, r.Phase, r.Port, r.AgeMs,
+			r.Up, r.Down, r.Chunks, r.Resent, r.Carriers, r.Deaths, r.MaxWaitMs, r.DgOut, r.DgIn, r.DgCopy, r.End, tcp,
+			r.ClientRTTMs, r.ClientRTTVar, r.ClientRetrans, r.ClientLost, r.ClientUnacked, r.ClientCwnd,
+			r.ClientSegsOut, r.ClientSegsIn); err != nil {
+			return fmt.Errorf("append tester_legs: %w", err)
 		}
 	}
 	return batch.Send()
