@@ -10,7 +10,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/db"
 )
 
-// Ingester moves clients' minutes from testers' log stream into tunnel_minutes.
+// Ingester moves clients' minutes from testers' log stream into product_tunnel_minutes.
 type Ingester struct {
 	store *Store
 	pool  db.Pool

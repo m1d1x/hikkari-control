@@ -3,7 +3,7 @@
 //
 // The client decides each minute (hikkari-client engine/core/downtime) and
 // writes runs of them to the tester's log; the ingester moves them into
-// tunnel_minutes, and the admin's product overview draws them per person.
+// product_tunnel_minutes, and the admin's product overview draws them per person.
 package downtime
 
 import (
@@ -72,7 +72,7 @@ func ParseLine(line, install string) ([]Minute, bool) {
 	return out, true
 }
 
-// Store is tunnel_minutes.
+// Store is product_tunnel_minutes.
 type Store struct{ pool db.Pool }
 
 // NewStore keeps minutes in pool.
@@ -91,7 +91,7 @@ func (s *Store) Insert(ctx context.Context, minutes []Minute) (int, error) {
 		installs[i], ats[i], states[i] = m.Install, m.At, string(m.State)
 	}
 	tag, err := s.pool.Exec(ctx, `
-		INSERT INTO tunnel_minutes (install_id, minute, state)
+		INSERT INTO product_tunnel_minutes (install_id, minute, state)
 		SELECT * FROM unnest($1::text[], $2::timestamptz[], $3::text[])
 		ON CONFLICT (install_id, minute) DO UPDATE SET state = EXCLUDED.state`,
 		installs, ats, states)
@@ -115,7 +115,7 @@ func (s *Store) Counts(ctx context.Context, since, until time.Time, step time.Du
 		SELECT install_id,
 		       to_timestamp(floor(extract(epoch FROM minute) / $3) * $3) AS bucket,
 		       state, count(*)
-		FROM tunnel_minutes
+		FROM product_tunnel_minutes
 		WHERE minute >= $1 AND minute < $2
 		GROUP BY 1, 2, 3`,
 		since.UTC(), until.UTC(), int64(step/time.Second))
