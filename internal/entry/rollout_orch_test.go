@@ -347,9 +347,12 @@ func TestACanaryHasTimeForItsBenches(t *testing.T) {
 	rh := newRolloutHarness(t)
 	other := rh.boxOnV1()
 	canary := rh.boxOnV1()
-	rh.v2.jobTimeout = 50 * time.Millisecond
+	// The bare budget still has to carry a box's own steps (login, drain,
+	// deploy, probe, watch) on a slow CI runner: 50 ms did not, 10.11 01:10
+	// UTC, the box after the canary ran out of it. Every bench outlasts it.
+	rh.v2.jobTimeout = 300 * time.Millisecond
 	rh.bench = func(string, string) BenchResult {
-		time.Sleep(100 * time.Millisecond) // every bench outlasts the bare budget
+		time.Sleep(600 * time.Millisecond)
 		return goodRun
 	}
 	rh.orchestrator().round(context.Background())
