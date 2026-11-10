@@ -177,13 +177,15 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 	since := w.cursor[p.Entry]
 	w.mu.Unlock()
 	if since.IsZero() {
-		last, err := w.store.last(ctx, p.Entry, LayerEntry, "")
+		// A hub just up goes on from where the last one stopped reading;
+		// from the last minute line it would file the events after it twice.
+		read, err := w.store.journalCursor(ctx, p.Entry)
 		if err != nil {
 			return err
 		}
 		since = w.now().Add(-15 * time.Minute)
-		if last != nil && last.TS.After(since) {
-			since = last.TS
+		if read.After(since) {
+			since = read
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
@@ -234,13 +236,15 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 		}
 		runs = append(runs, run)
 	}
-	if err := w.store.Insert(ctx, runs...); err != nil {
-		return err
-	}
+	// The legs first: if they fail, nothing is filed and the next minute
+	// reads the same lines again; the rows and the cursor go in at once.
 	if w.legs != nil {
 		if err := w.legs.RecordEntry(ctx, legs); err != nil {
 			return err
 		}
+	}
+	if err := w.store.InsertJournal(ctx, p.Entry, newest, runs); err != nil {
+		return err
 	}
 	w.mu.Lock()
 	w.cursor[p.Entry] = newest

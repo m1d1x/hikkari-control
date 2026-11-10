@@ -485,3 +485,41 @@ func TestCallMinuteIsALayer(t *testing.T) {
 		t.Fatalf("summary worst %v", sum["worst"])
 	}
 }
+
+// A hub that restarts goes on reading the entry's journal from where the last
+// one stopped. It used to start over from the last minute line and file the
+// events after it twice (10.11 19:20 UTC: six member deaths in two rows each).
+func TestDBARestartedHubFilesTheEntrysEventsOnce(t *testing.T) {
+	ctx := context.Background()
+	pool := dbPool(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	minute := now.Add(-90 * time.Second)
+	death := now.Add(-30 * time.Second)
+	boxes := &fakeBoxes{journal: journalAt(minute, 32) +
+		fmt.Sprintf("%d.477807 spb nekko-trunk-entry[1]: x trunk: member 27: down after 9m57s: EOF\n", death.Unix())}
+	w, _, _, _ := newTestWatch(t, pool, boxes, &now)
+	pair := w.fleet.(fakeFleet).pair
+	if err := w.collect(ctx, pair); err != nil {
+		t.Fatal(err)
+	}
+	// The next hub: a cursor of its own, empty, and the same journal.
+	again := New(pool, fakeFleet{pair}, boxes, &fakeLinks{}, &fakeQueue{}, &fakeErrs{})
+	again.now = func() time.Time { return now.Add(time.Minute) }
+	if err := again.collect(ctx, pair); err != nil {
+		t.Fatal(err)
+	}
+	for layer, want := range map[string]int{LayerEvent: 1, LayerEntry: 1} {
+		rows, err := w.store.Rows(ctx, Query{Since: now.Add(-time.Hour), Layer: layer})
+		if err != nil || len(rows) != want {
+			t.Fatalf("%s: %d rows, want %d (%v)", layer, len(rows), want, err)
+		}
+	}
+	// A line logged after the restart is still read.
+	boxes.journal += fmt.Sprintf("%d.100000 spb nekko-trunk-entry[1]: x trunk: member 9: down after 6m14s: EOF\n", now.Add(20*time.Second).Unix())
+	if err := again.collect(ctx, pair); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ := w.store.Rows(ctx, Query{Since: now.Add(-time.Hour), Layer: LayerEvent}); len(rows) != 2 {
+		t.Fatalf("events after the restart: %d rows, want 2", len(rows))
+	}
+}

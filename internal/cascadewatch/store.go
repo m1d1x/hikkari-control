@@ -50,6 +50,10 @@ type Store struct{ pool db.Pool }
 func NewStore(pool db.Pool) *Store { return &Store{pool: pool} }
 
 func (s *Store) Insert(ctx context.Context, runs ...Run) error {
+	return insertRuns(ctx, s.pool, runs)
+}
+
+func insertRuns(ctx context.Context, q db.DBTX, runs []Run) error {
 	for _, r := range runs {
 		data := r.Data
 		if data == nil {
@@ -59,7 +63,7 @@ func (s *Store) Insert(ctx context.Context, runs ...Run) error {
 		if err != nil {
 			return err
 		}
-		if _, err := s.pool.Exec(ctx, `
+		if _, err := q.Exec(ctx, `
 			INSERT INTO trunk_runs (ts, round_ts, entry_box, exit_box, layer, vantage, target, ok, data)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 			r.TS, r.Round, r.Entry, r.Exit, r.Layer, r.Vantage, r.Target, r.OK, raw); err != nil {
@@ -67,6 +71,50 @@ func (s *Store) Insert(ctx context.Context, runs ...Run) error {
 		}
 	}
 	return nil
+}
+
+// InsertJournal files the rows read from an entry's journal together with
+// how far it was read, so a hub that restarts goes on from there and does not
+// file the same lines twice (migration 057).
+func (s *Store) InsertJournal(ctx context.Context, entry string, readTo time.Time, runs []Run) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := insertRuns(ctx, tx, runs); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO trunk_journal_cursor (entry_box, read_to) VALUES ($1, $2)
+		ON CONFLICT (entry_box) DO UPDATE SET read_to = GREATEST(trunk_journal_cursor.read_to, EXCLUDED.read_to)`,
+		entry, readTo); err != nil {
+		return fmt.Errorf("trunk_journal_cursor: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+// journalCursor is how far the entry's journal was read. With no cursor
+// filed yet (a hub from before migration 057), it is the newest row read
+// from the journal with its own time: the entry's minute line or an event.
+func (s *Store) journalCursor(ctx context.Context, entry string) (time.Time, error) {
+	var t *time.Time
+	err := s.pool.QueryRow(ctx, `SELECT read_to FROM trunk_journal_cursor WHERE entry_box = $1`, entry).Scan(&t)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, err
+	}
+	if t != nil {
+		return t.UTC(), nil
+	}
+	if err := s.pool.QueryRow(ctx, `
+		SELECT max(ts) FROM trunk_runs WHERE entry_box = $1 AND vantage = 'entry' AND layer IN ('entry', 'event')`,
+		entry).Scan(&t); err != nil {
+		return time.Time{}, err
+	}
+	if t == nil {
+		return time.Time{}, nil
+	}
+	return t.UTC(), nil
 }
 
 // Query selects rows.
