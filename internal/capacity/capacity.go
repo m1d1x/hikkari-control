@@ -37,6 +37,23 @@ func Key(link string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// MeasuredKey is the Key a link's numbers are measured under. A Hikkari link's
+// dup=1 (the client speaks v1.02) changes how voice is copied, not the path's
+// latency or rate, and the capacity run dials without it: a subscriber's link
+// with dup=1 is looked up under its key without dup, and handed back under its
+// own Key, the one the client matches on.
+func MeasuredKey(link string) string {
+	if strings.HasPrefix(strings.ToLower(link), "hikkari+") {
+		if u, err := url.Parse(link); err == nil {
+			q := u.Query()
+			q.Del("dup")
+			u.RawQuery = q.Encode()
+			link = u.String()
+		}
+	}
+	return Key(link)
+}
+
 // NodeOf is the logical node a link names (hikkari-node=n:<slug>, put there
 // by the subscription's namedLink); empty when the link names none.
 func NodeOf(link string) string {

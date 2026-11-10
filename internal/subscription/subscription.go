@@ -460,16 +460,33 @@ func (s *Service) Handler() http.HandlerFunc {
 		var relayMetrics []capacity.Metric
 		if s.Capacity != nil {
 			keys := make([]string, 0, len(links))
+			// The client matches numbers on its link's Key; they are measured
+			// under its MeasuredKey (no dup on a Hikkari link).
+			served := map[string][]string{}
 			for _, link := range links {
-				if key := capacity.Key(link); key != "" {
-					keys = append(keys, key)
+				key, measured := capacity.Key(link), capacity.MeasuredKey(link)
+				if key == "" || measured == "" {
+					continue
+				}
+				if served[measured] == nil {
+					keys = append(keys, measured)
+				}
+				if !slices.Contains(served[measured], key) {
+					served[measured] = append(served[measured], key)
 				}
 			}
 			metricContext, cancelMetrics := context.WithTimeout(r.Context(), 250*time.Millisecond)
 			metrics, capacityErr := s.Capacity.Metrics(metricContext, keys)
 			cancelMetrics()
 			if capacityErr == nil {
-				relayMetrics = metrics
+				relayMetrics = make([]capacity.Metric, 0, len(metrics))
+				for _, m := range metrics {
+					for _, key := range served[m.Key] {
+						m.Key = key
+						relayMetrics = append(relayMetrics, m)
+					}
+				}
+				metrics = relayMetrics
 				w.Header().Set(capacity.Header, capacity.Encode(metrics))
 			} else {
 				applog.Error(r.Context(), "capacity", "subscription summary unavailable")

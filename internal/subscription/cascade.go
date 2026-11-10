@@ -63,6 +63,11 @@ func (s *Service) cascadeOf(ctx context.Context, account uuid.UUID) (*cascade, e
 	if err != nil {
 		return nil, fmt.Errorf("subscription: cascade: %w", err)
 	}
+	return s.cascadeVia(ctx, exitBox, entryBox, port, exitLocation)
+}
+
+// cascadeVia is the cascade from entryBox at port to exitBox's relays.
+func (s *Service) cascadeVia(ctx context.Context, exitBox, entryBox string, port int, exitLocation string) (*cascade, error) {
 	via, ok := s.batch.(CascadeVia)
 	if !ok {
 		return nil, ErrNoCascadeSource

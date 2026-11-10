@@ -62,6 +62,15 @@ func (s *Service) CapacityFleetLinks(ctx context.Context, fleet Fleet, slot stri
 	if err != nil {
 		return nil, err
 	}
+	// A cascade account dials the exit through the entry, a link of its own
+	// key (capacity.Key holds the entry's address and port): unmeasured, its
+	// profile showed no ping and no speed. Not having them costs the cards a
+	// number, not the run the fleet's links.
+	cascaded, err := s.capacityCascadeLinks(ctx, fleet)
+	if err != nil {
+		applog.Error(ctx, "capacity", "cascade links not rendered", applog.F("err", err.Error()))
+	}
+	links = append(links, cascaded...)
 	// The run's samples come back keyed by configuration only; the pair is
 	// what lets the fleet screen draw them on the node's card. Not having it
 	// costs the screen a line, not the run its links.

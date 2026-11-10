@@ -16,6 +16,24 @@ func TestKeyIgnoresCredentialsAndLabelsButNotTransport(t *testing.T) {
 		t.Fatal("different transport settings reused capacity")
 	}
 }
+
+// A dup client's Hikkari link is measured under the link without dup, and
+// only a Hikkari link drops it.
+func TestMeasuredKeyDropsOnlyHikkariDup(t *testing.T) {
+	plain := "hikkari+v1://u:p@192.0.2.10:8443?sni=exit.example#a"
+	dup := "hikkari+v1://v:q@192.0.2.10:8443?dup=1&sni=exit.example#b"
+	if Key(dup) == Key(plain) {
+		t.Fatal("dup no longer part of the client's key: the client matches on it")
+	}
+	if MeasuredKey(dup) != Key(plain) || MeasuredKey(plain) != Key(plain) {
+		t.Fatal("a dup link is not looked up under the measured link")
+	}
+	other := "vless://u@example.test:443?dup=1&security=reality"
+	if MeasuredKey(other) != Key(other) {
+		t.Fatal("a non-Hikkari link lost a parameter")
+	}
+}
+
 func TestSampleRejectsInventedSpeedAndClock(t *testing.T) {
 	valid := Sample{Key: strings.Repeat("a", 64), MeasuredAt: time.Now().Unix(), Bytes: 1000000, DurationMS: 1000, Mbps: 8}
 	if err := valid.Validate(time.Now()); err != nil {
