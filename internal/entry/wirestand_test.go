@@ -141,14 +141,15 @@ func TestWireBenchWindow(t *testing.T) {
 }
 
 // TestWireLoadPlans: steps interleaved over the wires in five minutes each,
-// from the first :x1 at least 5 minutes away, load in the four quiet minutes.
+// from the first :x2 at least 5 minutes away, load in the four minutes
+// before the idle one that holds the hub's round (:x1:15).
 func TestWireLoadPlans(t *testing.T) {
 	l := WireLoad{Wires: []string{"h3", "quic"}, Steps: []string{"u1", "g4"}}
 	if err := l.Check(); err != nil {
 		t.Fatal(err)
 	}
 	plans, from, until := l.plans(time.Date(2026, 11, 12, 10, 3, 0, 0, time.UTC))
-	if !from.Equal(time.Date(2026, 11, 12, 10, 11, 0, 0, time.UTC)) || !until.Equal(from.Add(20*time.Minute)) {
+	if !from.Equal(time.Date(2026, 11, 12, 10, 12, 0, 0, time.UTC)) || !until.Equal(from.Add(20*time.Minute)) {
 		t.Fatalf("%v %v", from, until)
 	}
 	f := strconv.FormatInt(from.Unix(), 10) + ":"
