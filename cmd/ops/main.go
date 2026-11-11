@@ -33,7 +33,7 @@ const usage = `usage: ops <command>
                                     one knob of a profile, measured from Russia and outside
   stand [--limit 20]                the hub's scheduled stand: what it measures, its latest runs
   trunk [--last 6h] [--layer L] [--entry BOX] [--rows 1]
-  cascade-load --slot ru-eurodir --entry BOX --users 2 --minutes 10 --game_pps 200 --echo IP:2053
+  cascade-load --slot ru-eurodir --entry BOX --users 2 --minutes 10 --game_pps 200 --echo IP:2053 [--path entry|direct|raw]
                                     the cascade's dataset by layer, with a summary per entry
   knobs [--profile X] [--days 7]    the knob controller: policy, nodes' values, its journal
   edge-hellos [--relay X] [--last 24h]

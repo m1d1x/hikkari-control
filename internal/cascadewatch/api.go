@@ -29,6 +29,7 @@ type loadRequest struct {
 	Minutes int    `json:"minutes"`
 	GamePPS int    `json:"game_pps"`
 	Echo    string `json:"echo"`
+	Path    string `json:"path"`
 }
 
 // loadHandler queues a synthetic users task (stand/load.go) on a point in
@@ -45,7 +46,10 @@ func (w *Watch) loadHandler(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, http.StatusBadRequest, map[string]string{"error": "echo: нужен адрес ip:port"})
 		return
 	}
-	spec := stand.LoadSpec{Users: req.Users, Minutes: req.Minutes, GamePPS: req.GamePPS, Echo: echo}
+	if req.Path == "" {
+		req.Path = stand.LoadPathEntry
+	}
+	spec := stand.LoadSpec{Users: req.Users, Minutes: req.Minutes, GamePPS: req.GamePPS, Echo: echo, Path: req.Path}
 	if err := spec.Validate(); err != nil {
 		writeJSON(rw, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return

@@ -15,13 +15,22 @@ import (
 // A task's vals carry the spec there and back, and a spec out of bounds or
 // with an echo that is not a public IPv4 is refused.
 func TestLoadSpecValues(t *testing.T) {
-	spec := LoadSpec{Users: 2, Minutes: 10, GamePPS: 200, Echo: netip.MustParseAddrPort("203.0.113.7:2053")}
+	spec := LoadSpec{Users: 2, Minutes: 10, GamePPS: 200, Echo: netip.MustParseAddrPort("203.0.113.7:2053"), Path: LoadPathEntry}
 	if err := spec.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ParseLoadSpec(spec.Values())
-	if err != nil || got != spec {
-		t.Fatalf("round trip %+v %v", got, err)
+	for _, path := range []string{LoadPathEntry, LoadPathDirect, LoadPathRaw} {
+		s := spec
+		s.Path = path
+		got, err := ParseLoadSpec(s.Values())
+		if err != nil || got != s {
+			t.Fatalf("round trip %+v %v", got, err)
+		}
+	}
+	// A task queued before paths runs through the entry.
+	old, err := ParseLoadSpec([]string{"users=2", "minutes=10", "game_pps=200", "echo=203.0.113.7:2053"})
+	if err != nil || old.Path != LoadPathEntry {
+		t.Fatalf("task with no path: %+v %v", old, err)
 	}
 	bad := []LoadSpec{
 		{Users: 0, Minutes: 10, Echo: spec.Echo},
@@ -33,6 +42,7 @@ func TestLoadSpecValues(t *testing.T) {
 		{Users: 2, Minutes: 10, Echo: netip.MustParseAddrPort("127.0.0.1:2053")},
 		{Users: 2, Minutes: 10, Echo: netip.MustParseAddrPort("[2001:db8::1]:2053")},
 		{Users: 2, Minutes: 10, Echo: netip.MustParseAddrPort("203.0.113.7:0")},
+		{Users: 2, Minutes: 10, Echo: spec.Echo, Path: "tunnel"},
 	}
 	for _, b := range bad {
 		if b.Validate() == nil {
@@ -115,7 +125,7 @@ func TestLiveStreamHearsTheEchosPause(t *testing.T) {
 	start := time.Now().Add(200 * time.Millisecond)
 	end := start.Add(2 * time.Second)
 	pauseAt.Store(start.Add(time.Second).UnixNano())
-	v := liveStream(context.Background(), door, "user1/voice", 50, loadVoiceBytes, start, end)
+	v := liveStream(context.Background(), &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: door}, "user1/voice", 50, loadVoiceBytes, start, end)
 	if v.Error != "" {
 		t.Fatal(v.Error)
 	}
@@ -141,7 +151,7 @@ func TestLiveStreamWithNoEcho(t *testing.T) {
 	}
 	defer dead.Close()
 	start := time.Now()
-	v := liveStream(context.Background(), dead.LocalAddr().(*net.UDPAddr).Port, "user1/game", 100, loadGameBytes, start, start.Add(time.Second))
+	v := liveStream(context.Background(), dead.LocalAddr().(*net.UDPAddr), "user1/game", 100, loadGameBytes, start, start.Add(time.Second))
 	if v.Error == "" || v.Got != 0 || v.LossRun != v.Sent {
 		t.Fatalf("%+v", v)
 	}
@@ -157,7 +167,7 @@ func TestDBLoadTaskReachesTheWatch(t *testing.T) {
 	s := newTestScheduler(pool, fakeSlots{"ru-eurodir"}, relayruns.NewStore(pool))
 	watch := &fakeCascade{links: []string{"hikkari+v1://hikkari:k@192.0.2.1:8443?sni=x.example#cascade-entry-unl1-2"}}
 	s.SetCascade(watch)
-	spec := LoadSpec{Users: 2, Minutes: 10, GamePPS: 200, Echo: netip.MustParseAddrPort("203.0.113.7:2053")}
+	spec := LoadSpec{Users: 2, Minutes: 10, GamePPS: 200, Echo: netip.MustParseAddrPort("203.0.113.7:2053"), Path: LoadPathEntry}
 	id, err := s.QueueLoad(ctx, "ru-eurodir", "ru-entry", spec)
 	if err != nil {
 		t.Fatal(err)

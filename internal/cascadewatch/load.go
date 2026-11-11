@@ -10,8 +10,8 @@ import (
 // LoadFinished writes a synthetic users task (stand/load.go) as rows of layer
 // load, one per stream: target is the stream (user1/voice), the task's spec
 // rides on every row, and ok says the stream carried with no pause a call
-// hears (over 150 ms). Round is when the task was queued, so a task's rows
-// read together.
+// hears (over 150 ms), path which way the streams went (entry, direct, raw).
+// Round is when the task was queued, so a task's rows read together.
 func (w *Watch) LoadFinished(ctx context.Context, slot, entryBox string, spec stand.LoadSpec, queued time.Time, res stand.Result) error {
 	p, err := w.pair(ctx, entryBox)
 	if err != nil {
@@ -20,7 +20,7 @@ func (w *Watch) LoadFinished(ctx context.Context, slot, entryBox string, spec st
 	rt := queued.UTC()
 	base := func() map[string]any {
 		return map[string]any{"synthetic": true, "core": res.Core, "users": spec.Users, "minutes": spec.Minutes,
-			"game_pps": spec.GamePPS, "echo": spec.Echo.String()}
+			"game_pps": spec.GamePPS, "echo": spec.Echo.String(), "path": spec.Path}
 	}
 	var runs []Run
 	for _, v := range res.Voice {

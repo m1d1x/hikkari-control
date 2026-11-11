@@ -14,6 +14,13 @@ package stand
 // jitter, and the pauses over 60 ms of each minute. This is a simulation of
 // users, named so in every row it writes; the trunk's own call (layer call)
 // says in the same minutes what the entry did to everyone.
+//
+// The same streams run on two control paths past the entry, so a run through
+// it reads against what the legs around it give on their own (Path): direct,
+// the core on the Hikkari profile straight to the exit's relay (the client's
+// core, the border, the exit and the exit to the echo); raw, the streams from
+// the point straight to the echo with no core and no tunnel (the point and
+// its network to the echo).
 
 import (
 	"context"
@@ -46,6 +53,27 @@ type LoadSpec struct {
 	GamePPS int
 	// Echo is the UDP echo's address beyond the exit, ip:port.
 	Echo netip.AddrPort
+	// Path is the way the streams go: LoadPathEntry, LoadPathDirect or
+	// LoadPathRaw; "" reads as LoadPathEntry (a task queued before paths).
+	Path string
+}
+
+// The paths a synthetic users task runs on.
+const (
+	// LoadPathEntry: a core on the profile through the entry.
+	LoadPathEntry = "entry"
+	// LoadPathDirect: a core on the Hikkari profile straight to the exit.
+	LoadPathDirect = "direct"
+	// LoadPathRaw: plain UDP from the point to the echo, no core.
+	LoadPathRaw = "raw"
+)
+
+// path is s.Path with the default filled in.
+func (s LoadSpec) path() string {
+	if s.Path == "" {
+		return LoadPathEntry
+	}
+	return s.Path
 }
 
 const (
@@ -68,6 +96,7 @@ func (s LoadSpec) Values() []string {
 		"minutes=" + strconv.Itoa(s.Minutes),
 		"game_pps=" + strconv.Itoa(s.GamePPS),
 		"echo=" + s.Echo.String(),
+		"path=" + s.path(),
 	}
 }
 
@@ -84,6 +113,11 @@ func (s LoadSpec) Validate() error {
 		return errors.New("echo: нужен адрес ip:port")
 	case !s.Echo.Addr().Is4() || !s.Echo.Addr().IsGlobalUnicast() || s.Echo.Addr().IsPrivate():
 		return errors.New("echo: нужен публичный IPv4")
+	}
+	switch s.path() {
+	case LoadPathEntry, LoadPathDirect, LoadPathRaw:
+	default:
+		return fmt.Errorf("path: %s, %s или %s", LoadPathEntry, LoadPathDirect, LoadPathRaw)
 	}
 	// The run must end well inside the claim it holds (claimTTL).
 	if time.Duration(s.Minutes)*time.Minute+time.Duration(s.Users)*loadDoorStagger+5*time.Minute > claimTTL {
@@ -112,6 +146,8 @@ func ParseLoadSpec(vals []string) (LoadSpec, error) {
 			s.GamePPS, err = strconv.Atoi(val)
 		case "echo":
 			s.Echo, err = netip.ParseAddrPort(val)
+		case "path":
+			s.Path = val
 		default:
 			return s, fmt.Errorf("значение задачи %q", v)
 		}
@@ -124,6 +160,9 @@ func ParseLoadSpec(vals []string) (LoadSpec, error) {
 			return s, fmt.Errorf("в задаче нет %s", k)
 		}
 	}
+	if s.Path == "" {
+		s.Path = LoadPathEntry
+	}
 	return s, s.Validate()
 }
 
@@ -132,7 +171,8 @@ func LoadStreamLabel(user int, stream string) string {
 	return "user" + strconv.Itoa(user) + "/" + stream
 }
 
-// runLoad runs the spec's users on the task's profile through the entry.
+// runLoad runs the spec's users on its path: a core each on the task's
+// profile through the entry or straight to the exit, or plain UDP to the echo.
 func (r Runner) runLoad(ctx context.Context, t Task, profiles []Profile) Result {
 	res := Result{Core: r.Kit.Label}
 	spec, err := ParseLoadSpec(t.Values)
@@ -141,15 +181,23 @@ func (r Runner) runLoad(ctx context.Context, t Task, profiles []Profile) Result 
 		return res
 	}
 	var through *Profile
-	for i := range profiles {
-		if strings.HasPrefix(profiles[i].Label, cascadeEntryLabelPrefix) {
-			through = &profiles[i]
-			break
+	if spec.Path != LoadPathRaw {
+		prefix := cascadeEntryLabelPrefix
+		if spec.Path == LoadPathDirect {
+			prefix = cascadeDirectLabelPrefix
 		}
-	}
-	if through == nil {
-		res.Error = "в задаче нет профиля через вход"
-		return res
+		for i := range profiles {
+			if strings.HasPrefix(profiles[i].Label, prefix) {
+				through = &profiles[i]
+				break
+			}
+		}
+		if through == nil {
+			res.Error = "в задаче нет профиля " + prefix + "*"
+			return res
+		}
+	} else {
+		res.Core = "none"
 	}
 	echo := spec.Echo.String()
 	var (
@@ -162,15 +210,21 @@ func (r Runner) runLoad(ctx context.Context, t Task, profiles []Profile) Result 
 	start := time.Now().Add(loadWarmup + time.Duration(spec.Users)*loadDoorStagger)
 	end := start.Add(time.Duration(spec.Minutes) * time.Minute)
 	for u := 1; u <= spec.Users; u++ {
-		door, stop, err := startVoiceDoor(ctx, r.Kit.Core, through.Config, echo)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("user%d: %v", u, err))
-			continue
+		// raw: the streams go to the echo itself, each user from sockets of
+		// its own as a person's apps would.
+		to := net.UDPAddrFromAddrPort(spec.Echo)
+		if through != nil {
+			door, stop, err := startVoiceDoor(ctx, r.Kit.Core, through.Config, echo)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("user%d: %v", u, err))
+				continue
+			}
+			defer stop()
+			to = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: door}
 		}
-		defer stop()
 		run := func(name string, pps, size int) {
 			defer wg.Done()
-			v := liveStream(ctx, door, LoadStreamLabel(u, name), pps, size, start, end)
+			v := liveStream(ctx, to, LoadStreamLabel(u, name), pps, size, start, end)
 			mu.Lock()
 			streams = append(streams, v)
 			mu.Unlock()
@@ -199,15 +253,20 @@ func (r Runner) runLoad(ctx context.Context, t Task, profiles []Profile) Result 
 	return res
 }
 
-// cascadeEntryLabelPrefix is how a profile through the entry is labelled
-// (subscription.CascadeProbeLabel(subscription.CascadeProbeEntry, relay)).
-const cascadeEntryLabelPrefix = "cascade-entry-"
+// How the profiles through the entry and straight to the exit are labelled
+// (subscription.CascadeProbeLabel(subscription.CascadeProbeEntry and
+// CascadeProbeDirect, relay)).
+const (
+	cascadeEntryLabelPrefix  = "cascade-entry-"
+	cascadeDirectLabelPrefix = "cascade-direct-"
+)
 
-// liveStream sends pps packets of size bytes a second through the door from
-// start to end, after an answered warm-up, and reads them back as a call.
-func liveStream(ctx context.Context, door int, label string, pps, size int, start, end time.Time) CascadeVoice {
+// liveStream sends pps packets of size bytes a second to `to` (a core's door
+// or the echo itself) from start to end, after an answered warm-up, and reads
+// them back as a call.
+func liveStream(ctx context.Context, to *net.UDPAddr, label string, pps, size int, start, end time.Time) CascadeVoice {
 	v := CascadeVoice{Profile: label}
-	conn, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: door})
+	conn, err := net.DialUDP("udp4", nil, to)
 	if err != nil {
 		v.Error = err.Error()
 		return v

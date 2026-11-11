@@ -49,6 +49,16 @@ func TestDBTheLoadEndpointRefusesThePointOnTheEntry(t *testing.T) {
 		t.Fatalf("queued: %+v", queue.loads)
 	}
 
+	if queue.loads[0].spec.Path != "entry" {
+		t.Fatalf("a run with no path goes through the entry: %+v", queue.loads[0].spec)
+	}
+	if code, body := post(`{"slot":"ru-eurodir","path":"tunnel",` + tail); code != http.StatusBadRequest {
+		t.Fatalf("unknown path: %d %s", code, body)
+	}
+	if code, body := post(`{"slot":"ru-eurodir","path":"raw",` + tail); code != http.StatusAccepted || queue.loads[1].spec.Path != "raw" {
+		t.Fatalf("raw run: %d %s %+v", code, body, queue.loads)
+	}
+
 	queue.busy = true
 	if code, body := post(`{"slot":"ru-eurodir",` + tail); code != http.StatusConflict {
 		t.Fatalf("busy point: %d %s", code, body)
