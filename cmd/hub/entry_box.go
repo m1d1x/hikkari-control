@@ -50,6 +50,11 @@ package main
 //	                                    # the Hikkari relay's datagrams cross once
 //	                                    # (v1.02 copies them itself) unless =2
 //	cmd/server entry-box trunk-entry-off <box>
+//	cmd/server entry-box wire-stand <entry-box> <exit-box> [sni]
+//	                                    # the stand of the trunk's second wire
+//	                                    # (4.1): a process per wire on both
+//	                                    # boxes, synthetic only (internal/entry/wirestand.go)
+//	cmd/server entry-box wire-stand-off <entry-box> <exit-box>
 //	cmd/server entry-box lab-reality <box> [port] [cover]
 //	                                    # stand up or update the опыт 0 lab
 //	                                    # Reality relay on a recorded box
@@ -504,6 +509,35 @@ func runEntryBox(args []string) {
 				}
 			}
 			err = prov.StandProvoke(ctx, args[1], port)
+		}
+		if err != nil {
+			fail(err)
+		}
+		os.Exit(0)
+	}
+	if (len(args) >= 3 && len(args) <= 4 && args[0] == "wire-stand") || (len(args) == 3 && args[0] == "wire-stand-off") {
+		// entry-box wire-stand <entry-box> <exit-box> [sni] — the stand of the
+		// trunk's second wire on both boxes (internal/entry/wirestand.go);
+		// -off takes it away. Neither the entry nor the exit relay restarts.
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+		if args[0] == "wire-stand-off" {
+			err = prov.StopWireStand(ctx, args[1], args[2])
+		} else {
+			sni := entry.DefaultWireStandSNI
+			if len(args) == 4 {
+				sni = args[3]
+			}
+			err = prov.StandWireStand(ctx, args[1], args[2], sni)
 		}
 		if err != nil {
 			fail(err)

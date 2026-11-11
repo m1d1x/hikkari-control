@@ -195,7 +195,7 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 		return err
 	}
 	defer r.Close()
-	out, err := r.Run(ctx, fmt.Sprintf("journalctl -u nekko-trunk-entry -o short-unix --no-pager --since @%d", since.Unix()), nil)
+	out, err := r.Run(ctx, fmt.Sprintf("journalctl -u nekko-trunk-entry -u '%s' -o short-unix --no-pager --since @%d", wireStandUnits, since.Unix()), nil)
 	if err != nil {
 		return fmt.Errorf("journalctl: %w", err)
 	}
@@ -213,6 +213,11 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 			if row, err := testerlegs.ParseEntryLine(p.Entry, l.TS, l.Msg); err == nil {
 				legs = append(legs, row)
 			}
+			continue
+		}
+		if run, ok := classifyWire(l); ok {
+			run.Entry, run.Exit, run.Vantage = p.Entry, p.Exit, "entry"
+			runs = append(runs, run)
 			continue
 		}
 		layer, data, ok := classify(l)

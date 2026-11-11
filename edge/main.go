@@ -12,7 +12,8 @@
 // And one that is not a protocol: EDGE_PROTO=cascade (cascade.go), the
 // Russian entry of the РФ-каскад, which only hands TCP to an XHTTP exit. And
 // EDGE_PROTO=provoke (provoke.go), the receiving end of the cascade's опыт 0,
-// which answers stimuli and says what reached it. A Hikkari relay is also the
+// which answers stimuli and says what reached it. And EDGE_PROTO=wirestand
+// (wirestand.go), the stand of the trunk's second wire, synthetic only. A Hikkari relay is also the
 // exit of the cascade's trunk when its env gives it a trunk key
 // (trunk_exit.go); the entry is its own binary (trunkentry/).
 //
@@ -87,6 +88,13 @@ func main() {
 		}
 		if osEnv("EDGE_PROTO") == protoProvoke {
 			if _, err := ProvokeConfigFromEnv(osEnv); err != nil {
+				log.Fatalf("nekko-edge: %v", err)
+			}
+			fmt.Println("config OK")
+			return
+		}
+		if osEnv("EDGE_PROTO") == protoWireStand {
+			if _, err := WireStandConfigFromEnv(osEnv); err != nil {
 				log.Fatalf("nekko-edge: %v", err)
 			}
 			fmt.Println("config OK")
@@ -215,6 +223,9 @@ func run() error {
 	}
 	if osEnv("EDGE_PROTO") == protoProvoke {
 		return provoke()
+	}
+	if osEnv("EDGE_PROTO") == protoWireStand {
+		return wireStand()
 	}
 	e, err := load()
 	if err != nil {
