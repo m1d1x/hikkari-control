@@ -36,14 +36,16 @@ import (
 type trunkExitConfig struct {
 	Keys  []string
 	Ports map[uint16]bool
+	// Wires are the trunk's other wires, kind to UDP port (trunk_wires.go).
+	Wires map[string]int
 }
 
 func trunkExitFromEnv(get func(string) string) (trunkExitConfig, error) {
 	var c trunkExitConfig
 	raw := strings.TrimSpace(get("EDGE_HIKKARI_TRUNK_KEYS"))
 	if raw == "" {
-		if get("EDGE_HIKKARI_TRUNK_PORTS") != "" {
-			return c, errors.New("EDGE_HIKKARI_TRUNK_PORTS without EDGE_HIKKARI_TRUNK_KEYS")
+		if get("EDGE_HIKKARI_TRUNK_PORTS") != "" || get("EDGE_HIKKARI_TRUNK_WIRES") != "" {
+			return c, errors.New("EDGE_HIKKARI_TRUNK_PORTS or _WIRES without EDGE_HIKKARI_TRUNK_KEYS")
 		}
 		return c, nil
 	}
@@ -64,6 +66,10 @@ func trunkExitFromEnv(get func(string) string) (trunkExitConfig, error) {
 			return c, fmt.Errorf("EDGE_HIKKARI_TRUNK_PORTS: %q", p)
 		}
 		c.Ports[uint16(n)] = true
+	}
+	var err error
+	if c.Wires, err = trunkWiresFromEnv(get("EDGE_HIKKARI_TRUNK_WIRES")); err != nil {
+		return c, err
 	}
 	return c, nil
 }
@@ -137,6 +143,10 @@ func (n *naiveRuntime) startTrunkExit(ctx context.Context) {
 	n.targets = targets
 	n.mu.Unlock()
 	go x.Run(ctx)
+	if err := startTrunkWires(ctx, n.cfg.Trunk, n.cfg.Host, x); err != nil {
+		// The pool still serves: a wire that cannot bind is a wire less.
+		log.Printf("nekko-edge: trunk wires: %v", err)
+	}
 	go func() {
 		t := time.NewTicker(time.Minute)
 		defer t.Stop()

@@ -50,6 +50,13 @@ package main
 //	                                    # the Hikkari relay's datagrams cross once
 //	                                    # (v1.02 copies them itself) unless =2
 //	cmd/server entry-box trunk-entry-off <box>
+//	cmd/server entry-box trunk-wires <exit-box> udp=20447,quic=20448,salamander=20449|off
+//	                                    # the trunk's other wires at the exit
+//	                                    # (internal/entry/trunkwires.go): env,
+//	                                    # reconfigure (reload, no cut), ufw
+//	cmd/server entry-box trunk-entry-wires <entry-box> <exit-box> udp:2,quic:4|off [steer]
+//	                                    # the entry's wires and members, a file
+//	                                    # the running entry reads (no restart)
 //	cmd/server entry-box wire-stand <entry-box> <exit-box> [sni] [bench=<minutes>]
 //	                                    # the stand of the trunk's second wire
 //	                                    # (4.1): a process per wire on both
@@ -437,6 +444,71 @@ func runEntryBox(args []string) {
 			fail(fmt.Errorf("reconfigure %s: %w", args[1], err))
 		}
 		fmt.Printf("%s reconfigured\n", args[1])
+		os.Exit(0)
+	}
+	if len(args) == 3 && args[0] == "trunk-wires" {
+		// entry-box trunk-wires <exit-box> kind=port,...|off — the exit's
+		// relay with a trunk serves those wires (internal/entry/trunkwires.go).
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		wires, err := entry.ParseTrunkWires(args[2])
+		if err != nil {
+			fail(err)
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		before, _ := svc.TrunkWiresOf(ctx, args[1])
+		relays, err := svc.SetTrunkWires(ctx, args[1], wires)
+		if err != nil {
+			fail(err)
+		}
+		fmt.Printf("trunk wires %s: %s\n", args[2], strings.Join(relays, ", "))
+		prov := newProvisioner(svc)
+		jctx, jcancel := context.WithTimeout(context.Background(), 40*time.Minute)
+		defer jcancel()
+		if err := prov.OpenTrunkWirePorts(jctx, args[1], wires, before); err != nil {
+			fail(err)
+		}
+		if err := entry.NewOrchestrator(svc, prov).Reconfigure(jctx, args[1]); err != nil {
+			fail(fmt.Errorf("reconfigure %s: %w", args[1], err))
+		}
+		fmt.Printf("%s reconfigured\n", args[1])
+		os.Exit(0)
+	}
+	if (len(args) == 4 || len(args) == 5) && args[0] == "trunk-entry-wires" {
+		// entry-box trunk-entry-wires <entry-box> <exit-box> kind:members,...|off [steer]
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		members, err := entry.ParseTrunkEntryWires(args[3])
+		if err != nil {
+			fail(err)
+		}
+		steer := false
+		if len(args) == 5 {
+			if args[4] != "steer" {
+				fail(fmt.Errorf("%q: only steer", args[4]))
+			}
+			steer = true
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+		if err := prov.SetTrunkEntryWires(ctx, args[1], args[2], members, steer); err != nil {
+			fail(err)
+		}
+		fmt.Printf("%s: wires %s, steer=%v (the entry reads them within 10 s)\n", args[1], args[3], steer)
 		os.Exit(0)
 	}
 	if (len(args) >= 4 && len(args) <= 6 && args[0] == "trunk-entry") || (len(args) == 2 && args[0] == "trunk-entry-off") {

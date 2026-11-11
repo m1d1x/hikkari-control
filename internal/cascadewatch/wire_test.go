@@ -55,3 +55,19 @@ func TestWireStandLines(t *testing.T) {
 		t.Fatalf("summary %+v", layers)
 	}
 }
+
+// TestEntryWireLines: the entry's own wires say the stand's lines in its
+// journal; their rows go under trunk-<wire>, apart from the stand's.
+func TestEntryWireLines(t *testing.T) {
+	call, ok := classifyWire(journalLine{Msg: "nekko-trunk-entry: call wire=udp copies=1 from=1794355200 sent=3000 got=3000 rtt_p50=44.0 rtt_p99=51.0 rtt_max=60.0 gaps60=0 gaps150=0 gap_max=40 silent_ms=0 sessions=1 worst=-"})
+	if !ok || call.Layer != LayerCall || call.Target != "trunk-udp" || !*call.OK || call.Data["wire"] != "udp" {
+		t.Fatalf("call %+v", call)
+	}
+	bulk, ok := classifyWire(journalLine{Msg: "nekko-trunk-entry: bulk wire=quic kind=1m from=1794355485 bytes=1048576 want=1048576 ms=40 end=ok mbps=209.7"})
+	if !ok || bulk.Layer != LayerWire || bulk.Target != "trunk-quic" || !*bulk.OK || bulk.Data["mode"] != "bulk_1m" {
+		t.Fatalf("bulk %+v", bulk)
+	}
+	if _, ok := classifyWire(journalLine{Msg: "nekko-trunk-entry: call copies=1 from=1794355200 sent=3000 got=3000"}); ok {
+		t.Fatal("the trunk's own call taken for a wire's")
+	}
+}

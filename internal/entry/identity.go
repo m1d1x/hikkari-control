@@ -766,6 +766,9 @@ func (id Identity) EdgeEnv() (map[string]string, error) {
 			}
 			env["EDGE_HIKKARI_TRUNK_KEYS"] = h.TrunkKey
 			env["EDGE_HIKKARI_TRUNK_PORTS"] = strings.Join(ports, ",")
+			if w := trunkWiresEnv(h.TrunkWires); w != "" {
+				env["EDGE_HIKKARI_TRUNK_WIRES"] = w
+			}
 		}
 		return env, nil
 	}

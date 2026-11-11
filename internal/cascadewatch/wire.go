@@ -22,23 +22,37 @@ const LayerWire = "wire"
 // wireStandUnits is what journalctl reads beside the entry's unit.
 const wireStandUnits = "hikkari-wire-stand@*"
 
+// The entry's own wires (hikkari-control trunkentry/wires.go, stage 4) say
+// the same lines in its own journal: their rows go under target trunk-<wire>
+// (call layer) and trunk-<wire> (wire layer), apart from the stand's
+// wire-<wire> and <wire>, which may run beside them.
 var (
-	reWireCall = regexp.MustCompile(`hikkari-wire-stand: call wire=([a-z0-9]+) (copies=\d+ .*)$`)
-	reWireBulk = regexp.MustCompile(`hikkari-wire-stand: bulk wire=([a-z0-9]+) (.*)$`)
+	reWireCall = regexp.MustCompile(`(hikkari-wire-stand|nekko-trunk-entry): call wire=([a-z0-9]+) (copies=\d+ .*)$`)
+	reWireBulk = regexp.MustCompile(`(hikkari-wire-stand|nekko-trunk-entry): bulk wire=([a-z0-9]+) (.*)$`)
 	reWireCPU  = regexp.MustCompile(`hikkari-wire-stand: cpu wire=([a-z0-9]+) (.*)$`)
 )
+
+// wireTargets are a line's targets in the call and the wire layers.
+func wireTargets(source, wire string) (call, layer string) {
+	if source == "nekko-trunk-entry" {
+		return "trunk-" + wire, "trunk-" + wire
+	}
+	return "wire-" + wire, wire
+}
 
 // classifyWire turns a line of the stand into a row; false for any other line.
 func classifyWire(l journalLine) (Run, bool) {
 	l.Msg = unwrapLogJSON(l.Msg)
 	if m := reWireCall.FindStringSubmatch(l.Msg); m != nil {
-		data := callFields(m[2])
-		data["wire"] = m[1]
-		return Run{TS: time.Unix(int64(num(data, "from")), 0).UTC(), Layer: LayerCall, Target: "wire-" + m[1],
+		data := callFields(m[3])
+		data["wire"] = m[2]
+		target, _ := wireTargets(m[1], m[2])
+		return Run{TS: time.Unix(int64(num(data, "from")), 0).UTC(), Layer: LayerCall, Target: target,
 			OK: boolp(callOK(data)), Data: data}, true
 	}
 	if m := reWireBulk.FindStringSubmatch(l.Msg); m != nil {
-		data := wireFields(m[2])
+		_, target := wireTargets(m[1], m[2])
+		data := wireFields(m[3])
 		kind, _ := data["kind"].(string)
 		// A load holds 100 Mbit/s for its time: it is whole at 90% of
 		// what that pace gives; any other bulk only when every byte came.
@@ -53,7 +67,7 @@ func classifyWire(l journalLine) (Run, bool) {
 		if !ok {
 			data["why"] = fmt.Sprintf("%s: %d из %d байт, %v", bulkName(kind), int64(num(data, "bytes")), int64(num(data, "want")), data["end"])
 		}
-		return Run{TS: time.Unix(int64(num(data, "from")), 0).UTC(), Layer: LayerWire, Target: m[1], OK: boolp(ok), Data: data}, true
+		return Run{TS: time.Unix(int64(num(data, "from")), 0).UTC(), Layer: LayerWire, Target: target, OK: boolp(ok), Data: data}, true
 	}
 	if m := reWireCPU.FindStringSubmatch(l.Msg); m != nil {
 		data := wireFields(m[2])

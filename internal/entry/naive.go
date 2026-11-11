@@ -31,6 +31,9 @@ type HikkariParams struct {
 	// loopback ports of the box. Empty: no trunk.
 	TrunkKey   string `json:"trunk_key,omitempty"`
 	TrunkPorts []int  `json:"trunk_ports,omitempty"`
+	// TrunkWires are the trunk's other wires at this exit, kind (udp, quic,
+	// salamander) to its UDP port (trunkwires.go, edge/trunk_wires.go).
+	TrunkWires map[string]int `json:"trunk_wires,omitempty"`
 }
 
 func domainProtocol(proto string) bool {

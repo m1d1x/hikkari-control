@@ -292,6 +292,11 @@ func startOn(ctx context.Context, c Config, dial trunk.Dial, s *sockets) (*node,
 	if err != nil {
 		return nil, err
 	}
+	// The trunk's other wires, from the hub's file (wires.go). One that
+	// cannot be read leaves the pool alone: a wire less, not an entry less.
+	if err := addWires(c, entry); err != nil {
+		log.Printf("nekko-trunk-entry: wires: %v (the pool alone)", err)
+	}
 	n := &node{c: c, s: s, entry: entry, ctx: ctx, ports: map[int]*udpPort{}, handed: make(chan struct{}), sendTo: map[string]*net.UnixConn{}}
 	for port, pc := range s.udp {
 		copies := 0 // the session's
@@ -355,6 +360,7 @@ func (n *node) startExtras() {
 	n.extras = cancel
 	go logStats(ctx, n.entry)
 	runCalls(ctx, n.entry)
+	go runWires(ctx, n.c, n.entry)
 }
 
 // comeUp serves: at once for the first generation, after the previous one
@@ -565,7 +571,13 @@ func (p *udpPort) datagram(from netip.AddrPort, data []byte) {
 // p.mu is held.
 func (p *udpPort) open(client netip.AddrPort, key string) *trunk.Flow {
 	var f *trunk.Flow
-	f = p.n.entry.Session().OpenFlowCopies(p.to, p.copies, func(b []byte) { _, _ = p.pc.WriteToUDPAddrPort(b, client) }, func() {
+	// A port whose sender copies its datagrams (Hikkari v1.02's calls) is
+	// the voice class (wires.go): its route is the wire ranked for calls.
+	class := trunk.ClassBulk
+	if p.copies == 1 {
+		class = trunk.ClassVoice
+	}
+	f = p.n.entry.Session().OpenFlowWith(p.to, trunk.FlowOptions{Copies: p.copies, Class: class, Pin: trunk.AnyWire}, func(b []byte) { _, _ = p.pc.WriteToUDPAddrPort(b, client) }, func() {
 		p.mu.Lock()
 		mine := p.flows[key] == f
 		if mine {
