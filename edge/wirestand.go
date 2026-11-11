@@ -103,6 +103,10 @@ const (
 	standLog = "hikkari-wire-stand: "
 )
 
+// standOut writes the stand's lines as they are: the edge's own log goes
+// through Caddy's JSON logger, and the hub reads these lines as plain text.
+var standOut = log.New(os.Stderr, "", 0)
+
 var (
 	awgStandExit  = netip.MustParseAddr("10.77.0.1")
 	awgStandEntry = netip.MustParseAddr("10.77.0.2")
@@ -172,7 +176,7 @@ func wireStand() error {
 		if err := serveWire(ctx, cfg); err != nil {
 			return err
 		}
-		log.Printf(standLog+"exit of wire %s on udp/%d", cfg.Wire, cfg.Port)
+		standOut.Printf(standLog+"exit of wire %s on udp/%d", cfg.Wire, cfg.Port)
 		<-ctx.Done()
 		return nil
 	}
@@ -180,9 +184,9 @@ func wireStand() error {
 	if err != nil {
 		return err
 	}
-	log.Printf(standLog+"entry of wire %s to %s udp/%d", cfg.Wire, cfg.Exit, cfg.Port)
+	standOut.Printf(standLog+"entry of wire %s to %s udp/%d", cfg.Wire, cfg.Exit, cfg.Port)
 	go runStandBulks(ctx, cfg.Wire, w)
-	runStandCall(ctx, cfg.Wire, w.call, func(s string) { log.Print(standLog + s) })
+	runStandCall(ctx, cfg.Wire, w.call, func(s string) { standOut.Print(standLog + s) })
 	return nil
 }
 
@@ -306,7 +310,7 @@ func runStandBulks(ctx context.Context, wire string, w standWire) {
 		case got < standBulk:
 			end = "closed"
 		}
-		log.Printf(standLog+"bulk wire=%s from=%d bytes=%d want=%d ms=%d end=%s", wire, start.Unix(), got, standBulk, time.Since(start).Milliseconds(), end)
+		standOut.Printf(standLog+"bulk wire=%s from=%d bytes=%d want=%d ms=%d end=%s", wire, start.Unix(), got, standBulk, time.Since(start).Milliseconds(), end)
 	}
 }
 
@@ -641,7 +645,7 @@ func reportCPU(ctx context.Context, wire string) {
 		if err != nil {
 			return
 		}
-		log.Print(standLog + cpuLine(wire, from, prev, cur))
+		standOut.Print(standLog + cpuLine(wire, from, prev, cur))
 		prev, from = cur, next
 	}
 }
@@ -874,7 +878,7 @@ func startStandAwg(cfg WireStandConfig, exit bool) (*netstack.Net, error) {
 	if err != nil {
 		return nil, err
 	}
-	logger := &device.Logger{Verbosef: device.DiscardLogf, Errorf: func(f string, a ...any) { log.Printf(standLog+"awg: "+f, a...) }}
+	logger := &device.Logger{Verbosef: device.DiscardLogf, Errorf: func(f string, a ...any) { standOut.Printf(standLog+"awg: "+f, a...) }}
 	dev := device.NewDevice(tunDev, conn.NewDefaultBind(), logger)
 	uapi, err := standAwgUAPI(cfg, exit)
 	if err != nil {

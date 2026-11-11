@@ -1,6 +1,7 @@
 package cascadewatch
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -29,6 +30,7 @@ var (
 
 // classifyWire turns a line of the stand into a row; false for any other line.
 func classifyWire(l journalLine) (Run, bool) {
+	l.Msg = unwrapLogJSON(l.Msg)
 	if m := reWireCall.FindStringSubmatch(l.Msg); m != nil {
 		data := callFields(m[2])
 		data["wire"] = m[1]
@@ -50,6 +52,22 @@ func classifyWire(l journalLine) (Run, bool) {
 		return Run{TS: time.Unix(int64(num(data, "from")), 0).UTC(), Layer: LayerWire, Target: m[1], OK: boolp(true), Data: data}, true
 	}
 	return Run{}, false
+}
+
+// unwrapLogJSON is the message of a line the edge's JSON logger wrote (its
+// first builds of the stand logged that way), the line itself otherwise.
+func unwrapLogJSON(msg string) string {
+	i := strings.Index(msg, `{"level":`)
+	if i < 0 {
+		return msg
+	}
+	var v struct {
+		Msg string `json:"msg"`
+	}
+	if json.Unmarshal([]byte(msg[i:]), &v) != nil || v.Msg == "" {
+		return msg
+	}
+	return v.Msg
 }
 
 // wireFields reads key=value pairs: numbers as numbers, the rest as text.

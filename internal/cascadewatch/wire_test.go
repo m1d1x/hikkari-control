@@ -10,7 +10,7 @@ import (
 func TestWireStandLines(t *testing.T) {
 	lines := parseJournal(`1794355262.100000 nekko-spb nekko-edge[812]: hikkari-wire-stand: call wire=awg copies=1 from=1794355200 sent=3000 got=2990 rtt_p50=45.1 rtt_p99=60.2 rtt_max=88.0 gaps60=3 gaps150=1 gap_max=180 silent_ms=240 sessions=1 worst=1794355210000:180,1794355230000:70
 1794355291.000000 nekko-spb nekko-edge[812]: hikkari-wire-stand: bulk wire=awg from=1794355290 bytes=1048576 want=1048576 ms=812 end=ok
-1794355591.000000 nekko-spb nekko-edge[812]: hikkari-wire-stand: bulk wire=udp from=1794355590 bytes=880000 want=1048576 ms=1400 end=closed
+1794355591.000000 nekko-spb hikkari-wire-stand[812]: {"level":"info","ts":1794355591.4,"msg":"hikkari-wire-stand: bulk wire=udp from=1794355590 bytes=880000 want=1048576 ms=1400 end=closed"}
 1794355320.000000 nekko-spb nekko-edge[812]: hikkari-wire-stand: cpu wire=awg from=1794355260 cpu_ms=1500 steal_pct=12.5 busy_pct=20.0
 1794355320.000000 nekko-spb nekko-trunk-entry[90]: nekko-trunk-entry: call copies=1 from=1794355200 sent=3000 got=3000 rtt_p50=47 rtt_p99=80 rtt_max=99 gaps60=1 gaps150=0 gap_max=64 silent_ms=44 sessions=1 worst=-`)
 	var runs []Run
