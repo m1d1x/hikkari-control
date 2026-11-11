@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -147,14 +148,18 @@ func echoUDP(t *testing.T, c net.Conn, what string) {
 // TestHandoffKeepsWhatTheEntryCarries (roadmap 2.2б): real processes, the
 // test binary itself is the entry. Two handoffs in a row: after each, a TCP
 // connection and a UDP flow the first generation took still echo, and new
-// ones go to the newest; the first generation leaves at its drain limit, and
-// its UDP client goes on with the newest.
+// ones go to the newest. Then the exit drains too, while the first
+// generation still carries: only the newest opens a new pool, the old ones
+// take nothing new. The first generation leaves at its drain limit and says
+// what it cut, and its UDP client goes on with the newest.
 func TestHandoffKeepsWhatTheEntryCarries(t *testing.T) {
 	tcpEcho, udpEcho := echoes(t)
 	x := trunk.NewExit(trunk.Config{}, loop{tcpEcho, udpEcho})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go x.Run(ctx)
+	var exit atomic.Pointer[trunk.Exit] // where new members go
+	exit.Store(x)
 	members, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +171,8 @@ func TestHandoffKeepsWhatTheEntryCarries(t *testing.T) {
 			if err != nil {
 				return
 			}
-			go func() { _ = x.ServeMember(c) }()
+			to := exit.Load()
+			go func() { _ = to.ServeMember(c) }()
 		}
 	}()
 
@@ -194,7 +200,7 @@ func TestHandoffKeepsWhatTheEntryCarries(t *testing.T) {
 		}
 	}()
 	first := exec.Command(os.Args[0], "run")
-	first.Env = append(os.Environ(), envChild+"=1", envExit+"="+members.Addr().String(), envDrain+"=4s", "RUNTIME_DIRECTORY="+dir)
+	first.Env = append(os.Environ(), envChild+"=1", envExit+"="+members.Addr().String(), envDrain+"=6s", "RUNTIME_DIRECTORY="+dir)
 	for k, v := range env {
 		first.Env = append(first.Env, k+"="+v)
 	}
@@ -267,6 +273,33 @@ func TestHandoffKeepsWhatTheEntryCarries(t *testing.T) {
 		t.Fatalf("no handoff to generation 3 in the journal")
 	}
 
+	// The exit's process is replaced too, while the first generation still
+	// carries. Only the newest generation opens a session on the new one.
+	next := trunk.NewExit(trunk.Config{}, loop{tcpEcho, udpEcho})
+	go next.Run(ctx)
+	exit.Store(next)
+	x.Drain()
+	for deadline := time.Now().Add(10 * time.Second); next.Sessions() < 1; {
+		if time.Now().After(deadline) {
+			t.Fatal("the newest generation opened no session on the exit's new process")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if n := next.Sessions(); n != 1 {
+		t.Fatalf("the exit's new process holds %d sessions, want the newest generation's only", n)
+	}
+	if n := strings.Count(journal(), "exit drains: new session"); n != 1 {
+		t.Fatalf("%d generations answered the exit's drain with a new pool, want 1", n)
+	}
+	echoTCP(t, oldTCP, "the first generation's connection after the exit drained")
+	nc, err := net.Dial("tcp", entryAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	echoTCP(t, nc, "new connection after the exit drained")
+	nc.Close()
+
 	// The first generation leaves at its limit; its UDP client goes on with
 	// the newest, which takes the address once the mailbox is gone.
 	select {
@@ -274,8 +307,8 @@ func TestHandoffKeepsWhatTheEntryCarries(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("the first generation did not leave at its drain limit")
 	}
-	if !strings.Contains(journal(), "generation 1 leaves after 4s") {
-		t.Fatalf("the first generation did not say why it left")
+	if !strings.Contains(journal(), "generation 1 leaves after 6s with 1 stream(s)") {
+		t.Fatalf("the first generation did not say why it left and what it cut")
 	}
 	echoUDP(t, oldUDP, "first-udp-after-it-left")
 
@@ -288,7 +321,7 @@ func TestHandoffKeepsWhatTheEntryCarries(t *testing.T) {
 	if _, err := requestHandoff(filepath.Join(dir, controlName), handoffRequest{Env: bad, Binary: os.Args[0]}); err == nil || !strings.Contains(err.Error(), "restart") {
 		t.Fatalf("a handoff that moves a port: %v", err)
 	}
-	nc, err := net.Dial("tcp", entryAddr)
+	nc, err = net.Dial("tcp", entryAddr)
 	if err != nil {
 		t.Fatal(err)
 	}

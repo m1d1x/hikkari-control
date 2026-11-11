@@ -16,6 +16,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -147,7 +148,7 @@ func TestEntryIsBlind(t *testing.T) {
 		t.Fatalf("the entry's config grew: %s; anything that holds a client's secret breaks 3.2", got)
 	}
 
-	var journal bytes.Buffer
+	var journal lockedBuffer // the entry logs from its own goroutines, Run's end too
 	log.SetOutput(&journal)
 	defer log.SetOutput(os.Stderr)
 
@@ -219,6 +220,24 @@ func TestEntryIsBlind(t *testing.T) {
 	if !strings.Contains(out, "members=") {
 		t.Fatalf("no minute line, the check saw nothing:\n%s", out)
 	}
+}
+
+// lockedBuffer is a journal written from many goroutines.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
 
 func selfSigned(t *testing.T, name string) tls.Certificate {

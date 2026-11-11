@@ -455,10 +455,13 @@ func (n *node) busy() bool {
 	return n.entry.Session().Busy() || n.entry.Retired() > 0
 }
 
-// drain waits until this old generation carries nothing, or drainLimit.
+// drain waits until this old generation carries nothing, or drainLimit. Its
+// sessions retire first: a drain of the exit opens no new pool here, since
+// this generation takes no new clients.
 func (n *node) drain() {
-	st := n.entry.Session().Stats()
-	log.Printf("nekko-trunk-entry: generation %d drains with %d stream(s) and %d flow(s)", n.s.gen, st.Streams, st.Flows)
+	n.entry.Retire()
+	streams, flows := n.entry.Carrying()
+	log.Printf("nekko-trunk-entry: generation %d drains with %d stream(s) and %d flow(s)", n.s.gen, streams, flows)
 	limit := time.After(drainLimit)
 	t := time.NewTicker(drainEvery)
 	defer t.Stop()
@@ -467,8 +470,8 @@ func (n *node) drain() {
 		case <-n.ctx.Done():
 			return
 		case <-limit:
-			st := n.entry.Session().Stats()
-			log.Printf("nekko-trunk-entry: generation %d leaves after %s with %d stream(s) and %d flow(s)", n.s.gen, drainLimit, st.Streams, st.Flows)
+			streams, flows := n.entry.Carrying()
+			log.Printf("nekko-trunk-entry: generation %d leaves after %s with %d stream(s) and %d flow(s)", n.s.gen, drainLimit, streams, flows)
 			return
 		case <-t.C:
 			if !n.busy() {
