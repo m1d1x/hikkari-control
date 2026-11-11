@@ -60,7 +60,9 @@ jobs:
         env:
           CGO_ENABLED: '0'
         run: |
+          go mod download github.com/sagernet/cronet-go/lib/linux_amd64
           export LD_LIBRARY_PATH="$(go list -m -f '{{.Dir}}' github.com/sagernet/cronet-go/lib/linux_amd64)"
+          test -f "$LD_LIBRARY_PATH/libcronet.so"
           go vet -tags with_purego,wirestand_h3 . && go test -tags with_purego,wirestand_h3 -count=1 -run 'TestWireStandH3$' .
       - name: trunk entry
         working-directory: trunkentry
