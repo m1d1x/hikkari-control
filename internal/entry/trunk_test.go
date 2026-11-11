@@ -89,8 +89,18 @@ func TestStandTrunkEntry(t *testing.T) {
 			t.Fatalf("no %q in:\n%s", want, all)
 		}
 	}
-	if !strings.Contains(r.stdin["cat > /etc/systemd/system/"+trunkEntryUnit+".service"], "ExecStart="+trunkEntryBinary+" run") {
-		t.Fatal("unit does not run the staged binary")
+	unit := r.stdin["cat > /etc/systemd/system/"+trunkEntryUnit+".service.new"]
+	for _, want := range []string{"ExecStart=" + trunkEntryBinary + " run", "Type=notify", "NotifyAccess=all",
+		"ExecReload=+" + trunkEntryBinary + " reload", "RuntimeDirectory=" + trunkEntryUnit} {
+		if !strings.Contains(unit, want) {
+			t.Fatalf("the unit has no %q:\n%s", want, unit)
+		}
+	}
+	// The swap reloads into a build that can hand over, on an unchanged unit.
+	for _, want := range []string{"handoff-version", "systemctl reload " + trunkEntryUnit, "/run/" + trunkEntryUnit + "/control.sock", "передан без обрыва"} {
+		if !strings.Contains(trunkEntrySwapScript, want) {
+			t.Fatalf("the swap has no %q", want)
+		}
 	}
 }
 

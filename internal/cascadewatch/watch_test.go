@@ -523,3 +523,36 @@ func TestDBARestartedHubFilesTheEntrysEventsOnce(t *testing.T) {
 		t.Fatalf("events after the restart: %d rows, want 2", len(rows))
 	}
 }
+
+// A hitless rollout of the entry is told by its journal: who took over, what
+// the old generation drained with, and what it still carried when it left.
+func TestJournalReadsTheEntrysHandoff(t *testing.T) {
+	const j = `1794213568.844108 spb-3 nekko-trunk-entry[19617]: 2026/11/09 11:39:28 nekko-trunk-entry: generation 2 (pid 4242) is up, generation 1 drains
+1794213568.900000 spb-3 nekko-trunk-entry[19617]: 2026/11/09 11:39:28 nekko-trunk-entry: generation 1 drains with 3 stream(s) and 2 flow(s)
+1794213569.100000 spb-3 nekko-trunk-entry[4242]: 2026/11/09 11:39:29 nekko-trunk-entry: up: generation 2, exit 203.0.113.8:443 (hk.example), 32 members, tcp [8443→443], udp [8443→443], udp one copy [8443]
+1794215368.000000 spb-3 nekko-trunk-entry[19617]: 2026/11/09 12:09:28 nekko-trunk-entry: generation 1 leaves after 30m0s with 1 stream(s) and 0 flow(s)
+1794215369.000000 spb-3 nekko-trunk-entry[4300]: 2026/11/09 12:09:29 nekko-trunk-entry: generation 2 carries nothing more and leaves
+`
+	want := []map[string]any{
+		{"kind": "entry_handoff", "gen": 2, "was": 1},
+		{"kind": "entry_drains", "gen": 1, "streams": 3, "flows": 2},
+		{"kind": "entry_up"},
+		{"kind": "entry_generation_left", "gen": 1, "cut_streams": 1, "cut_flows": 0},
+		{"kind": "entry_generation_left", "gen": 2, "cut_streams": 0, "cut_flows": 0},
+	}
+	lines := parseJournal(j)
+	if len(lines) != len(want) {
+		t.Fatalf("%d lines", len(lines))
+	}
+	for i, l := range lines {
+		layer, d, ok := classify(l)
+		if !ok || layer != LayerEvent {
+			t.Fatalf("line %d not an event: %q", i, l.Msg)
+		}
+		for k, v := range want[i] {
+			if fmt.Sprint(d[k]) != fmt.Sprint(v) {
+				t.Fatalf("line %d: %s=%v, want %v (%v)", i, k, d[k], v, d)
+			}
+		}
+	}
+}

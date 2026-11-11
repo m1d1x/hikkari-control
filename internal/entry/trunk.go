@@ -193,8 +193,18 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+# Generations (trunkentry/handoff.go): the process says when it is up, a
+# newer one takes over as the main process, and a reload hands over to the
+# binary on disk without cutting what the entry carries. Timeouts cover a
+# child's 30 s to come up and the old generations' quick end on a stop.
+Type=notify
+NotifyAccess=all
 EnvironmentFile=` + trunkEntryEnvFile + `
 ExecStart=` + trunkEntryBinary + ` run
+ExecReload=+` + trunkEntryBinary + ` reload
+RuntimeDirectory=` + trunkEntryUnit + `
+TimeoutStartSec=90
+TimeoutStopSec=30
 Restart=always
 RestartSec=2
 DynamicUser=yes
@@ -213,8 +223,14 @@ WantedBy=multi-user.target
 // trunkEntrySwapScript takes the staged directory (dir.new: the running
 // copy plus the files that changed, as file.new), refuses a listen port
 // another process holds, checks the new binary with the new library against
-// the new env, swaps the directory, opens the ports in ufw, restarts the unit
-// and waits until it listens on all of them.
+// the new env, swaps the directory, opens the ports in ufw, puts the entry on
+// the new build and waits until it listens on all of them.
+//
+// The entry goes in by `systemctl reload` (trunkentry/handoff.go): the running
+// generation starts the new binary on its own sockets and drains, nothing
+// is cut. A restart is left for what a reload cannot do: a unit file that
+// changed (the first time, too), a build or a running process that cannot
+// hand over, ports that move, a reload that failed.
 const trunkEntrySwapScript = `set -eu
 dir=` + trunkEntryDir + `
 env=` + trunkEntryEnvFile + `
@@ -222,7 +238,7 @@ for port in "$@"; do
 	holder=$(ss -tlnpH "sport = :$port" | grep -v nekko-trunk-en || true)
 	if [ -n "$holder" ]; then
 		echo "порт $port занят: $holder" >&2
-		rm -rf "$dir.new" "$env.new"
+		rm -rf "$dir.new" "$env.new" /etc/systemd/system/` + trunkEntryUnit + `.service.new
 		exit 3
 	fi
 done
@@ -238,6 +254,11 @@ if [ -d "$dir" ]; then mv "$dir" "$dir.old"; fi
 mv "$dir.new" "$dir"
 rm -rf "$dir.old"
 mv "$env.new" "$env"
+unit=/etc/systemd/system/` + trunkEntryUnit + `.service
+unit_changed=0
+if [ -f "$unit.new" ]; then
+	if cmp -s "$unit.new" "$unit"; then rm -f "$unit.new"; else mv "$unit.new" "$unit"; unit_changed=1; fi
+fi
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
 	for port in "$@"; do
 		ufw allow "$port/tcp" comment ` + trunkEntryUnit + ` >/dev/null
@@ -247,7 +268,17 @@ if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
 fi
 systemctl daemon-reload
 systemctl enable ` + trunkEntryUnit + ` >/dev/null 2>&1
-systemctl restart ` + trunkEntryUnit + `
+how=restart
+if [ "$unit_changed" = 0 ] && "$dir/nekko-trunk-entry" handoff-version >/dev/null 2>&1 \
+	&& systemctl is-active --quiet ` + trunkEntryUnit + ` && [ -S /run/` + trunkEntryUnit + `/control.sock ]; then
+	if systemctl reload ` + trunkEntryUnit + `; then
+		how=reload
+	else
+		echo "` + trunkEntryUnit + `: передача не прошла, перезапуск" >&2
+		journalctl -u ` + trunkEntryUnit + ` -n 20 --no-pager >&2
+	fi
+fi
+if [ "$how" = restart ]; then systemctl restart ` + trunkEntryUnit + `; fi
 for _ in $(seq 1 40); do
 	up=1
 	systemctl is-active --quiet ` + trunkEntryUnit + ` || up=0
@@ -255,7 +286,11 @@ for _ in $(seq 1 40); do
 		ss -tln | grep ":$port " >/dev/null || up=0
 	done
 	if [ $up = 1 ]; then
-		echo "` + trunkEntryUnit + ` слушает $*"
+		if [ "$how" = reload ]; then
+			echo "` + trunkEntryUnit + ` слушает $*, передан без обрыва"
+		else
+			echo "` + trunkEntryUnit + ` слушает $*"
+		fi
 		exit 0
 	fi
 	sleep 0.5
@@ -276,7 +311,7 @@ if [ -n "$ports" ] && command -v ufw >/dev/null 2>&1 && ufw status | grep -q "St
 		ufw delete allow "$port/udp" >/dev/null 2>&1 || true
 	done
 fi
-rm -f /etc/systemd/system/` + trunkEntryUnit + `.service ` + trunkEntryEnvFile + `
+rm -f /etc/systemd/system/` + trunkEntryUnit + `.service /etc/systemd/system/` + trunkEntryUnit + `.service.new ` + trunkEntryEnvFile + `
 rm -rf ` + trunkEntryDir + ` ` + trunkEntryDir + `.new
 systemctl daemon-reload
 echo "` + trunkEntryUnit + ` снят${ports:+, порты $ports закрыты}"
@@ -343,7 +378,9 @@ func standTrunkEntry(ctx context.Context, r Remote, bins, libs map[string]EdgeBu
 	if err := stageLabBinary(ctx, r, libs, staged+"/libcronet.so", logf); err != nil {
 		return err
 	}
-	if _, err := r.Run(ctx, "cat > /etc/systemd/system/"+trunkEntryUnit+".service", strings.NewReader(trunkEntryUnitFile)); err != nil {
+	// Beside the running unit: the swap compares, and a unit that changed
+	// is a restart, not a reload.
+	if _, err := r.Run(ctx, "cat > /etc/systemd/system/"+trunkEntryUnit+".service.new", strings.NewReader(trunkEntryUnitFile)); err != nil {
 		return fmt.Errorf("unit-файл: %w", err)
 	}
 	if _, err := r.Run(ctx, "umask 077; cat > "+trunkEntryEnvFile+".new", strings.NewReader(env)); err != nil {

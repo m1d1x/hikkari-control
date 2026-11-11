@@ -50,6 +50,11 @@ var (
 	reEpoch      = regexp.MustCompile(`trunk: exit epoch ([0-9a-f]+)$`)
 	reUp         = regexp.MustCompile(`nekko-trunk-entry: up: (.*)$`)
 	reUnit       = regexp.MustCompile(`nekko-trunk-entry\.service: (.*)$`)
+	// A hitless rollout of the entry (trunkentry/handoff.go): the new
+	// generation took over, an old one drains, an old one left.
+	reHandoff = regexp.MustCompile(`nekko-trunk-entry: generation (\d+) \(pid \d+\) is up, generation (\d+) drains$`)
+	reDrains  = regexp.MustCompile(`nekko-trunk-entry: generation (\d+) drains with (\d+) stream\(s\) and (\d+) flow\(s\)$`)
+	reLeft    = regexp.MustCompile(`nekko-trunk-entry: generation (\d+) (?:leaves after \S+ with (\d+) stream\(s\) and (\d+) flow\(s\)|carries nothing more and leaves)$`)
 )
 
 // classify turns a journal line into a row of the entry or event layer;
@@ -83,6 +88,17 @@ func classify(l journalLine) (layer string, data map[string]any, ok bool) {
 	}
 	if m := reEpoch.FindStringSubmatch(l.Msg); m != nil {
 		return LayerEvent, map[string]any{"kind": "exit_epoch", "epoch": m[1]}, true
+	}
+	if m := reHandoff.FindStringSubmatch(l.Msg); m != nil {
+		return LayerEvent, map[string]any{"kind": "entry_handoff", "gen": atoi(m[1]), "was": atoi(m[2])}, true
+	}
+	if m := reDrains.FindStringSubmatch(l.Msg); m != nil {
+		return LayerEvent, map[string]any{"kind": "entry_drains", "gen": atoi(m[1]), "streams": atoi(m[2]), "flows": atoi(m[3])}, true
+	}
+	if m := reLeft.FindStringSubmatch(l.Msg); m != nil {
+		// Cut is what the old generation still carried at its limit: those
+		// streams and flows ended there.
+		return LayerEvent, map[string]any{"kind": "entry_generation_left", "gen": atoi(m[1]), "cut_streams": atoi(m[2]), "cut_flows": atoi(m[3])}, true
 	}
 	if m := reUp.FindStringSubmatch(l.Msg); m != nil {
 		return LayerEvent, map[string]any{"kind": "entry_up", "detail": clip(m[1])}, true

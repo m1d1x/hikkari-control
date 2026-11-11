@@ -18,8 +18,10 @@
 //
 // Usage:
 //
-//	nekko-trunk-entry          run with EDGE_TRUNK_* from the environment
-//	nekko-trunk-entry check    validate the environment and load libcronet, then exit
+//	nekko-trunk-entry                  run with EDGE_TRUNK_* from the environment
+//	nekko-trunk-entry check            validate the environment and load libcronet, then exit
+//	nekko-trunk-entry reload           hand the running entry over to this binary (handoff.go)
+//	nekko-trunk-entry handoff-version  the handoff contract this build speaks
 package main
 
 import (
@@ -29,12 +31,9 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
-	"syscall"
 	"time"
 
 	"github.com/m1d1x/hikkari-protocol/trunk"
@@ -45,6 +44,16 @@ func main() {
 	cmd := "run"
 	if len(os.Args) > 1 {
 		cmd = os.Args[1]
+	}
+	switch cmd {
+	case "handoff-version":
+		fmt.Println(handoffVersion)
+		return
+	case "reload":
+		if err := reloadCommand(); err != nil {
+			log.Fatalf("nekko-trunk-entry: reload: %v", err)
+		}
+		return
 	}
 	c, err := ConfigFromEnv(os.Getenv)
 	if err != nil {
@@ -57,11 +66,12 @@ func main() {
 	case "check":
 		fmt.Printf("config OK, Chromium %s\n", chromium.Version())
 	case "run":
-		if err := run(c); err != nil {
+		log.Printf("nekko-trunk-entry: Chromium %s", chromium.Version())
+		if err := runGeneration(c, chromium.Dialer{Exit: c.Exit, SNI: c.SNI, Key: c.Key}.Dial); err != nil {
 			log.Fatalf("nekko-trunk-entry: %v", err)
 		}
 	default:
-		fmt.Fprintf(os.Stderr, "usage: nekko-trunk-entry [run|check]\n")
+		fmt.Fprintf(os.Stderr, "usage: nekko-trunk-entry [run|check|reload|handoff-version]\n")
 		os.Exit(2)
 	}
 }
@@ -174,125 +184,22 @@ func forwards(raw, name string) (map[int]uint16, error) {
 	return out, nil
 }
 
-func run(c Config) error {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	dial := chromium.Dialer{Exit: c.Exit, SNI: c.SNI, Key: c.Key}.Dial
-	entry, err := start(ctx, c, dial)
-	if err != nil {
-		return err
-	}
-	go logStats(ctx, entry)
-	runCalls(ctx, entry)
-	log.Printf("nekko-trunk-entry: up: exit %s (%s), %d members, Chromium %s, tcp %v, udp %v, udp one copy %v",
-		c.Exit, c.SNI, c.Members, chromium.Version(), forwardList(c.TCP), forwardList(c.UDP), portList(c.OneCopy))
-	<-ctx.Done()
-	return nil
-}
-
-// start opens the listeners and the pool.
+// start binds c's ports and serves them with a pool, as the first and only
+// generation (tests, and a process run by hand).
 func start(ctx context.Context, c Config, dial trunk.Dial) (*trunk.Entry, error) {
-	ports, err := trunk.NewPortBook(c.PortLo, c.PortHi, 0)
+	s, err := bindSockets(c)
 	if err != nil {
 		return nil, err
 	}
-	// Observe: the exit marks testers' streams, the entry logs them
-	// (observe.go); the hello says so to the exit.
-	entry, err := trunk.NewEntry(trunk.Config{Stall: c.Stall, Observe: logObserved}, c.Members, dial, ports, log.Printf)
+	n, err := startOn(ctx, c, dial, s)
 	if err != nil {
+		s.close()
 		return nil, err
 	}
-	var closers []func()
-	fail := func(err error) (*trunk.Entry, error) {
-		for _, close := range closers {
-			close()
-		}
+	if err := n.serve(nil); err != nil {
 		return nil, err
 	}
-	for port, to := range c.TCP {
-		ln, err := net.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.Itoa(port)))
-		if err != nil {
-			return fail(fmt.Errorf("tcp :%d: %w", port, err))
-		}
-		closers = append(closers, func() { ln.Close() })
-		go func() {
-			for {
-				conn, err := ln.Accept()
-				if err != nil {
-					if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
-						return
-					}
-					time.Sleep(100 * time.Millisecond)
-					continue
-				}
-				if tc, ok := conn.(*net.TCPConn); ok {
-					_ = tc.SetKeepAlive(true)
-				}
-				// The current session: after the exit drained (a hitless
-				// rollout of its relay) that is a new one, while what the
-				// old one carries stays on it.
-				go entry.Session().Carry(conn, to)
-			}
-		}()
-	}
-	for port, to := range c.UDP {
-		pc, err := net.ListenPacket("udp", net.JoinHostPort("0.0.0.0", strconv.Itoa(port)))
-		if err != nil {
-			return fail(fmt.Errorf("udp :%d: %w", port, err))
-		}
-		closers = append(closers, func() { pc.Close() })
-		copies := 0 // the session's
-		if c.OneCopy[port] {
-			copies = 1
-		}
-		go serveUDP(ctx, entry.Session, pc, to, copies)
-	}
-	go func() {
-		<-ctx.Done()
-		for _, close := range closers {
-			close()
-		}
-	}()
-	go entry.Run(ctx)
-	return entry, nil
-}
-
-// serveUDP gives each client address on pc its own flow on the session
-// current when it opens, each datagram carried by copies members (0: the
-// session's).
-func serveUDP(ctx context.Context, session func() *trunk.Session, pc net.PacketConn, to uint16, copies int) {
-	var mu sync.Mutex
-	flows := map[string]*trunk.Flow{}
-	buf := make([]byte, trunk.MaxPayload)
-	for {
-		n, from, err := pc.ReadFrom(buf)
-		if err != nil {
-			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
-				return
-			}
-			continue
-		}
-		key := from.String()
-		mu.Lock()
-		f := flows[key]
-		if f == nil {
-			client := from
-			f = session().OpenFlowCopies(to, copies, func(p []byte) { _, _ = pc.WriteTo(p, client) }, func() {
-				mu.Lock()
-				delete(flows, key)
-				mu.Unlock()
-			})
-			flows[key] = f
-		}
-		mu.Unlock()
-		if !f.Send(buf[:n]) {
-			mu.Lock()
-			if flows[key] == f {
-				delete(flows, key)
-			}
-			mu.Unlock()
-		}
-	}
+	return n.entry, nil
 }
 
 // logStats writes the pool's counters once a minute. The hub reads the line
