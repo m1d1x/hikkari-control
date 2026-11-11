@@ -131,12 +131,19 @@ func (s Store) Metrics(ctx context.Context, keys []string) ([]Metric, error) {
 	return out, nil
 }
 
+// aggregate is the median of the points' latest reports. It is as fresh as its
+// newest point: Metrics already drops a point past FreshFor, and dating the
+// whole by its oldest one handed a subscriber numbers that expired minutes
+// after an hourly refresh whenever one point had gone quiet for a while, so
+// the profile showed no ping and no speed until the next refresh (11.11,
+// нидерланды-102: a point of 02:43 and one of 04:00, served at 04:10,
+// expired at 04:13).
 func aggregate(key string, samples []Sample) Metric {
 	m := Metric{Key: key, Points: len(samples)}
 	rates := []float64{}
 	rtts := []int{}
 	for _, s := range samples {
-		if m.MeasuredAt == 0 || s.MeasuredAt < m.MeasuredAt {
+		if s.MeasuredAt > m.MeasuredAt {
 			m.MeasuredAt = s.MeasuredAt
 		}
 		if s.Error == "" && s.Mbps > 0 {

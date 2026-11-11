@@ -49,7 +49,7 @@ func TestAggregateKeepsLatencyIndependentOfDownloadFailure(t *testing.T) {
 	now := time.Now().Unix()
 	samples := []Sample{{MeasuredAt: now, RTTMS: 120, Mbps: 100}, {MeasuredAt: now - 10, RTTMS: 80, Error: "control_unavailable"}, {MeasuredAt: now, RTTMS: 140, Mbps: 200, Limited: true}}
 	got := aggregate(strings.Repeat("a", 64), samples)
-	if got.RTTMS != 120 || got.Mbps != 100 || got.Points != 3 || !got.Limited || got.ExpiresAt != now-10+int64(FreshFor.Seconds()) {
+	if got.RTTMS != 120 || got.Mbps != 100 || got.Points != 3 || !got.Limited || got.ExpiresAt != now+int64(FreshFor.Seconds()) {
 		t.Fatalf("bad aggregate: %+v", got)
 	}
 	got = aggregate("key", []Sample{{MeasuredAt: now, Error: "unreachable"}})
@@ -61,5 +61,19 @@ func TestLegacyHeaderNeverIncludesHistory(t *testing.T) {
 	raw := Encode([]Metric{{Key: "key", History: []Point{{Ts: 123, Mbps: 100}}}})
 	if strings.Contains(raw, "history") {
 		t.Fatal("history leaked into response header")
+	}
+}
+
+// A point that went quiet does not cut short the numbers of one that just
+// reported: a subscriber refreshing hourly keeps them until the newest expires.
+func TestAQuietPointDoesNotExpireAFreshOnesNumbers(t *testing.T) {
+	now := time.Now().Unix()
+	quiet, fresh := now-77*60, now-10*60
+	got := aggregate(strings.Repeat("a", 64), []Sample{{MeasuredAt: quiet, RTTMS: 144, Mbps: 300}, {MeasuredAt: fresh, RTTMS: 184, Mbps: 65}})
+	if got.MeasuredAt != fresh || got.ExpiresAt != fresh+int64(FreshFor.Seconds()) {
+		t.Fatalf("dated by the quiet point: %+v", got)
+	}
+	if got.ExpiresAt <= now+60*60 {
+		t.Fatal("numbers expired before the next hourly refresh")
 	}
 }
