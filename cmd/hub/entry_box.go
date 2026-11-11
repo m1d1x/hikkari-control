@@ -57,7 +57,7 @@ package main
 //	cmd/server entry-box trunk-entry-wires <entry-box> <exit-box> udp:2,quic:4|off [steer]
 //	                                    # the entry's wires and members, a file
 //	                                    # the running entry reads (no restart)
-//	cmd/server entry-box wire-stand <entry-box> <exit-box> [sni] [bench=<minutes>]
+//	cmd/server entry-box wire-stand <entry-box> <exit-box> [sni] [bench=<minutes>] [load=<wires>] [steps=<steps>] [cc=<h3 congestion>]
 //	                                    # the stand of the trunk's second wire
 //	                                    # (4.1): a process per wire on both
 //	                                    # boxes, synthetic only (internal/entry/wirestand.go);
@@ -588,7 +588,7 @@ func runEntryBox(args []string) {
 		}
 		os.Exit(0)
 	}
-	if (len(args) >= 3 && len(args) <= 5 && args[0] == "wire-stand") || (len(args) == 3 && args[0] == "wire-stand-off") {
+	if (len(args) >= 3 && len(args) <= 8 && args[0] == "wire-stand") || (len(args) == 3 && args[0] == "wire-stand-off") {
 		// entry-box wire-stand <entry-box> <exit-box> [sni] — the stand of the
 		// trunk's second wire on both boxes (internal/entry/wirestand.go);
 		// -off takes it away. Neither the entry nor the exit relay restarts.
@@ -607,7 +607,21 @@ func runEntryBox(args []string) {
 			err = prov.StopWireStand(ctx, args[1], args[2])
 		} else {
 			sni, bench := entry.DefaultWireStandSNI, time.Duration(0)
+			var load *entry.WireLoad
+			steps, cc := entry.DefaultWireLoadSteps, ""
 			for _, a := range args[3:] {
+				if m, ok := strings.CutPrefix(a, "load="); ok {
+					load = &entry.WireLoad{Wires: strings.Split(m, ",")}
+					continue
+				}
+				if m, ok := strings.CutPrefix(a, "steps="); ok {
+					steps = strings.Split(m, ",")
+					continue
+				}
+				if m, ok := strings.CutPrefix(a, "cc="); ok {
+					cc = m
+					continue
+				}
 				if m, ok := strings.CutPrefix(a, "bench="); ok {
 					n, err := strconv.Atoi(m)
 					if err != nil || n < 10 || n > 24*60 {
@@ -618,7 +632,10 @@ func runEntryBox(args []string) {
 				}
 				sni = a
 			}
-			err = prov.StandWireStand(ctx, args[1], args[2], sni, bench)
+			if load != nil {
+				load.Steps, load.CC = steps, cc
+			}
+			err = prov.StandWireStand(ctx, args[1], args[2], sni, bench, load)
 		}
 		if err != nil {
 			fail(err)
