@@ -328,6 +328,9 @@ func runLoadStep(ctx context.Context, wire string, w standWire, s loadStep, end 
 	for {
 		select {
 		case <-ctx.Done():
+			if gluedFrames > 0 {
+				write(0, glued, gluedFrames, time.Now())
+			}
 			return
 		case <-t.C:
 		}
