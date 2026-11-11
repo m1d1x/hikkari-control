@@ -5,7 +5,7 @@ go 1.27
 require (
 	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828
 	github.com/caddyserver/caddy/v2 v2.11.7
-	github.com/m1d1x/hikkari-protocol v0.0.0-20261110182653-2cc111d1ba33
+	github.com/m1d1x/hikkari-protocol v0.0.0-20261111022549-1f1e3c889c51
 	github.com/m1d1x/hikkari-protocol/server/naive v0.0.0-20261108155522-c8322b5caadd
 	github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261110205225-0b4e1840c60a
 	github.com/sagernet/sing v0.9.7-0.20260929150544-0ad23b637bd4
