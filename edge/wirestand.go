@@ -21,7 +21,12 @@ package main
 //   - salamander: the same channel with salamander, the Hysteria2 shape;
 //   - awg: AmneziaWG 3.1 in the process (amneziawg-go, gVisor) on both ends,
 //     UDP and TCP inside the tunnel;
-//   - udp: our own bare datagram, ChaCha20-Poly1305 and nothing else.
+//   - udp: our own bare datagram, ChaCha20-Poly1305 and nothing else;
+//   - h3: Naive over HTTP/3, Chromium's own QUIC (cronet) on the entry,
+//     Caddy on the exit, streams only (wirestand_h3.go).
+//
+// WIRESTAND_LOAD (the entry's only) puts synthetic users over the wire
+// (wirestand_load.go).
 //
 // Both ends derive every key from one secret (WIRESTAND_SECRET), which the hub
 // writes to both. The exit's TLS certificate is self-signed and the entry does
@@ -47,6 +52,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"os/exec"
 	"os/signal"
 	"sort"
 	"strconv"
@@ -123,16 +129,28 @@ type WireStandConfig struct {
 	// BenchFrom and BenchUntil are the bench window (WIRESTAND_BENCH
 	// "<unix>-<unix>", the entry's only): bigger bulks and a load inside it.
 	BenchFrom, BenchUntil time.Time
+	// Load is WIRESTAND_LOAD, the synthetic users' plan (the entry's only).
+	Load *loadPlan
+	// H3Congestion is Chromium's QUIC congestion controller on the wire h3
+	// (WIRESTAND_H3_CC: "" Chromium's default, bbr, bbr2, cubic, reno).
+	H3Congestion string
+	// Cronet is libcronet.so's path for the wire h3's entry
+	// (WIRESTAND_CRONET); empty, cronet looks beside the executable.
+	Cronet string
+	// Unit is the process's systemd unit (WIRESTAND_UNIT), whose IP
+	// accounting gives the wire's packets in the minute's CPU line.
+	Unit string
 }
 
 // WireStandConfigFromEnv reads WIRESTAND_*.
 func WireStandConfigFromEnv(getenv func(string) string) (WireStandConfig, error) {
-	c := WireStandConfig{Role: getenv("WIRESTAND_ROLE"), Wire: getenv("WIRESTAND_WIRE"), Exit: getenv("WIRESTAND_EXIT"), SNI: getenv("WIRESTAND_SNI")}
+	c := WireStandConfig{Role: getenv("WIRESTAND_ROLE"), Wire: getenv("WIRESTAND_WIRE"), Exit: getenv("WIRESTAND_EXIT"), SNI: getenv("WIRESTAND_SNI"),
+		H3Congestion: getenv("WIRESTAND_H3_CC"), Unit: getenv("WIRESTAND_UNIT"), Cronet: getenv("WIRESTAND_CRONET")}
 	if c.Role != "entry" && c.Role != "exit" {
 		return c, fmt.Errorf("WIRESTAND_ROLE: %q is not entry or exit", c.Role)
 	}
 	if _, ok := standSlot[c.Wire]; !ok {
-		return c, fmt.Errorf("WIRESTAND_WIRE: %q is not %s, %s, %s or %s", c.Wire, wireQUIC, wireSalamander, wireAwg, wireUDP)
+		return c, fmt.Errorf("WIRESTAND_WIRE: %q is not %s, %s, %s, %s or %s", c.Wire, wireQUIC, wireSalamander, wireAwg, wireUDP, wireH3)
 	}
 	port, err := strconv.Atoi(getenv("WIRESTAND_PORT"))
 	if err != nil || port < 1 || port > 65535 {
@@ -159,6 +177,21 @@ func WireStandConfigFromEnv(getenv func(string) string) (WireStandConfig, error)
 		}
 		c.BenchFrom, c.BenchUntil = time.Unix(from, 0), time.Unix(until, 0)
 	}
+	if load := getenv("WIRESTAND_LOAD"); load != "" {
+		p, err := parseLoadPlan(load)
+		if err != nil {
+			return c, err
+		}
+		c.Load = &p
+	}
+	switch c.H3Congestion {
+	case "", "bbr", "bbr2", "cubic", "reno":
+	default:
+		return c, fmt.Errorf("WIRESTAND_H3_CC: %q is not bbr, bbr2, cubic or reno", c.H3Congestion)
+	}
+	if c.Wire == wireH3 && c.Role == "entry" && !h3Built {
+		return c, errors.New("WIRESTAND_WIRE=h3: this edge is built without cronet (-tags with_purego,wirestand_h3)")
+	}
 	return c, nil
 }
 
@@ -180,7 +213,7 @@ func wireStand() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	go reportCPU(ctx, cfg.Wire)
+	go reportCPU(ctx, cfg.Wire, cfg.Unit)
 	if cfg.Role == "exit" {
 		if err := serveWire(ctx, cfg); err != nil {
 			return err
@@ -196,6 +229,10 @@ func wireStand() error {
 	standOut.Printf(standLog+"entry of wire %s to %s udp/%d", cfg.Wire, cfg.Exit, cfg.Port)
 	if !cfg.BenchUntil.IsZero() {
 		standOut.Printf(standLog+"bench %s from %s until %s", cfg.Wire, cfg.BenchFrom.UTC().Format(time.RFC3339), cfg.BenchUntil.UTC().Format(time.RFC3339))
+	}
+	if cfg.Load != nil {
+		standOut.Printf(standLog+"load %s from %s until %s", cfg.Wire, cfg.Load.From.UTC().Format(time.RFC3339), cfg.Load.Until().UTC().Format(time.RFC3339))
+		go runStandLoad(ctx, cfg.Wire, w, *cfg.Load)
 	}
 	go runStandBulks(ctx, cfg.Wire, w, cfg.BenchFrom, cfg.BenchUntil)
 	runStandCall(ctx, cfg.Wire, w.call, func(s string) { standOut.Print(standLog + s) })
@@ -252,6 +289,8 @@ func dialWire(ctx context.Context, cfg WireStandConfig) (standWire, error) {
 				})
 			},
 		}, nil
+	case wireH3:
+		return dialStandH3(ctx, cfg)
 	case wireUDP:
 		aead, err := chacha20poly1305.New(cfg.key("udp", chacha20poly1305.KeySize))
 		if err != nil {
@@ -315,6 +354,9 @@ var standSlot = map[string]time.Duration{
 	wireSalamander: 3*time.Minute + 30*time.Second,
 	wireAwg:        6 * time.Minute,
 	wireUDP:        8*time.Minute + 30*time.Second,
+	// h3 takes no load in a bench (no 90 s left free in the ten minutes):
+	// its 1 MiB, or 12 MiB, only.
+	wireH3: 7*time.Minute + 40*time.Second,
 }
 
 // standWireOrder is the order the wires take their load in a bench hour.
@@ -685,7 +727,19 @@ func standCallLine(wire string, w standWindowStats) string {
 type cpuSample struct {
 	proc               time.Duration
 	total, steal, idle uint64
+	// threads is each thread's CPU (tid: comm, time): Go's threads carry the
+	// process's name, Chromium's their own.
+	threads map[int]threadCPU
+	// ip is the unit's IP accounting, when there is one.
+	ip *ipAccount
 }
+
+type threadCPU struct {
+	comm string
+	cpu  time.Duration
+}
+
+type ipAccount struct{ inPkts, outPkts, inBytes, outBytes uint64 }
 
 func readCPU() (cpuSample, error) {
 	var s cpuSample
@@ -702,7 +756,108 @@ func readCPU() (cpuSample, error) {
 		return s, err
 	}
 	s.total, s.steal, s.idle, err = boxCPU(string(stat))
+	s.threads = readThreads()
 	return s, err
+}
+
+// readThreads is every thread's CPU from /proc/self/task.
+func readThreads() map[int]threadCPU {
+	out := map[int]threadCPU{}
+	tasks, err := os.ReadDir("/proc/self/task")
+	if err != nil {
+		return out
+	}
+	for _, t := range tasks {
+		tid, err := strconv.Atoi(t.Name())
+		if err != nil {
+			continue
+		}
+		raw, err := os.ReadFile("/proc/self/task/" + t.Name() + "/stat")
+		if err != nil {
+			continue
+		}
+		cpu, err := procCPU(string(raw))
+		if err != nil {
+			continue
+		}
+		comm := ""
+		if i, j := strings.IndexByte(string(raw), '('), strings.LastIndexByte(string(raw), ')'); i >= 0 && j > i {
+			comm = string(raw[i+1 : j])
+		}
+		out[tid] = threadCPU{comm: comm, cpu: cpu}
+	}
+	return out
+}
+
+// readIPAccount is the unit's IP accounting (IPAccounting=yes): packets and
+// bytes in and out of the process's cgroup, which is the wire's own.
+func readIPAccount(unit string) *ipAccount {
+	if unit == "" {
+		return nil
+	}
+	raw, err := exec.Command("systemctl", "show", "-p", "IPIngressPackets", "-p", "IPEgressPackets", "-p", "IPIngressBytes", "-p", "IPEgressBytes", unit).Output()
+	if err != nil {
+		return nil
+	}
+	return parseIPAccount(string(raw))
+}
+
+// parseIPAccount reads systemctl show's Key=value lines; nil when any is
+// missing or not set (no accounting).
+func parseIPAccount(raw string) *ipAccount {
+	v := map[string]uint64{}
+	for _, line := range strings.Split(raw, "\n") {
+		k, val, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		n, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return nil
+		}
+		v[k] = n
+	}
+	if len(v) != 4 {
+		return nil
+	}
+	return &ipAccount{inPkts: v["IPIngressPackets"], outPkts: v["IPEgressPackets"], inBytes: v["IPIngressBytes"], outBytes: v["IPEgressBytes"]}
+}
+
+// threadSplit is the minute's CPU of Go's threads (named as the process) and
+// of the others (Chromium's), and the three busiest others by name.
+func threadSplit(main string, a, b map[int]threadCPU) (goCPU, other time.Duration, top string) {
+	byName := map[string]time.Duration{}
+	for tid, t := range b {
+		d := t.cpu - a[tid].cpu
+		if _, ok := a[tid]; !ok {
+			d = t.cpu
+		}
+		if d <= 0 {
+			continue
+		}
+		if t.comm == main {
+			goCPU += d
+			continue
+		}
+		other += d
+		byName[t.comm] += d
+	}
+	names := make([]string, 0, len(byName))
+	for n := range byName {
+		names = append(names, n)
+	}
+	sort.Slice(names, func(i, j int) bool { return byName[names[i]] > byName[names[j]] })
+	parts := []string{}
+	for i, n := range names {
+		if i == 3 {
+			break
+		}
+		parts = append(parts, strings.ReplaceAll(n, " ", "_")+":"+strconv.FormatInt(byName[n].Milliseconds(), 10))
+	}
+	if len(parts) == 0 {
+		return goCPU, other, "-"
+	}
+	return goCPU, other, strings.Join(parts, ",")
 }
 
 // procCPU is utime+stime of a /proc/<pid>/stat line, at 100 ticks a second.
@@ -751,15 +906,34 @@ func cpuLine(wire string, from time.Time, a, b cpuSample) string {
 		return strconv.FormatFloat(100*float64(x)/dt, 'f', 1, 64)
 	}
 	busy := (b.total - a.total) - (b.idle - a.idle) - (b.steal - a.steal)
-	return fmt.Sprintf("cpu wire=%s from=%d cpu_ms=%d steal_pct=%s busy_pct=%s",
+	line := fmt.Sprintf("cpu wire=%s from=%d cpu_ms=%d steal_pct=%s busy_pct=%s",
 		wire, from.Unix(), (b.proc - a.proc).Milliseconds(), pct(b.steal-a.steal), pct(busy))
+	if len(b.threads) > 0 {
+		goCPU, other, top := threadSplit(mainComm(), a.threads, b.threads)
+		line += fmt.Sprintf(" go_ms=%d other_ms=%d other_top=%s", goCPU.Milliseconds(), other.Milliseconds(), top)
+	}
+	if a.ip != nil && b.ip != nil {
+		line += fmt.Sprintf(" pkts_in=%d pkts_out=%d bytes_in=%d bytes_out=%d", b.ip.inPkts-a.ip.inPkts, b.ip.outPkts-a.ip.outPkts, b.ip.inBytes-a.ip.inBytes, b.ip.outBytes-a.ip.outBytes)
+	}
+	return line + h3SocketsLine()
 }
 
-func reportCPU(ctx context.Context, wire string) {
+// mainComm is the name Go's threads carry: the process's, as the kernel
+// cuts it (15 bytes).
+func mainComm() string {
+	raw, err := os.ReadFile("/proc/self/comm")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+func reportCPU(ctx context.Context, wire, unit string) {
 	prev, err := readCPU()
 	if err != nil {
 		return // not Linux: nothing to say
 	}
+	prev.ip = readIPAccount(unit)
 	from := time.Now().Truncate(time.Minute)
 	for {
 		next := from.Add(time.Minute)
@@ -772,6 +946,7 @@ func reportCPU(ctx context.Context, wire string) {
 		if err != nil {
 			return
 		}
+		cur.ip = readIPAccount(unit)
 		standOut.Print(standLog + cpuLine(wire, from, prev, cur))
 		prev, from = cur, next
 	}
@@ -783,6 +958,8 @@ func serveWire(ctx context.Context, cfg WireStandConfig) error {
 	switch cfg.Wire {
 	case wireQUIC, wireSalamander:
 		return serveStandDatagram(ctx, cfg)
+	case wireH3:
+		return serveStandH3(ctx, cfg)
 	case wireAwg:
 		tnet, err := startStandAwg(cfg, true)
 		if err != nil {

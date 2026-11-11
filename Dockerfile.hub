@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # The fleet hub (cmd/hub), carrying what it deploys to the boxes it runs:
-# linux-<arch>/{nekko-edge,nekko-entry-prober,nekko-trunk-entry,nekko-cascade-probe,libcronet.so}
+# linux-<arch>/{nekko-edge,nekko-entry-prober,nekko-trunk-entry,nekko-cascade-probe,libcronet.so,hikkari-wire-stand-h3}
 # under the artifact directory
 # (internal/entry DefaultArtifactDir). The image is the version: a box runs the
 # current build when its binary's digest equals the one in here.
@@ -57,6 +57,24 @@ RUN --mount=type=cache,target=/go/pkg/mod \
         /out/relay/linux-$arch/libcronet.so || exit 1; \
     done
 
+# ── The stand's entry with Chromium's QUIC (edge/, -tags wirestand_h3) ──────
+# The wire stand's entry (internal/entry/wirestand.go) runs the edge built
+# with cronet, for its wire h3; the relays' edge above has none. Pure Go with
+# purego, on Debian for the same reason as the trunk entry; the hub stages the
+# trunk entry's libcronet.so beside it.
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS stand-builder
+WORKDIR /src/edge
+COPY edge/go.mod edge/go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY edge/ ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    for arch in amd64 arm64; do \
+      mkdir -p /out/relay/linux-$arch && \
+      CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -tags with_purego,wirestand_h3 -trimpath -ldflags="-s -w" \
+        -o /out/relay/linux-$arch/hikkari-wire-stand-h3 . || exit 1; \
+    done
+
 # ── Runtime ──────────────────────────────────────────────────────────────────
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 1000 hub
@@ -64,6 +82,7 @@ COPY --from=builder /out/hub /usr/local/bin/hub
 COPY --from=builder /out/relay/ /usr/local/share/nekko/relay/
 COPY --from=edge-builder /out/relay/ /usr/local/share/nekko/relay/
 COPY --from=trunk-builder /out/relay/ /usr/local/share/nekko/relay/
+COPY --from=stand-builder /out/relay/ /usr/local/share/nekko/relay/
 RUN mkdir -p /data && chown hub:hub /data
 USER hub
 EXPOSE 8090

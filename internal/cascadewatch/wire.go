@@ -30,6 +30,9 @@ var (
 	reWireCall = regexp.MustCompile(`(hikkari-wire-stand|nekko-trunk-entry): call wire=([a-z0-9]+) (copies=\d+ .*)$`)
 	reWireBulk = regexp.MustCompile(`(hikkari-wire-stand|nekko-trunk-entry): bulk wire=([a-z0-9]+) (.*)$`)
 	reWireCPU  = regexp.MustCompile(`hikkari-wire-stand: cpu wire=([a-z0-9]+) (.*)$`)
+	// reWireLoad is a minute of the stand's synthetic users over a wire
+	// (edge wirestand_load.go).
+	reWireLoad = regexp.MustCompile(`hikkari-wire-stand: load wire=([a-z0-9]+) (from=.*)$`)
 )
 
 // wireTargets are a line's targets in the call and the wire layers.
@@ -68,6 +71,17 @@ func classifyWire(l journalLine) (Run, bool) {
 			data["why"] = fmt.Sprintf("%s: %d из %d байт, %v", bulkName(kind), int64(num(data, "bytes")), int64(num(data, "want")), data["end"])
 		}
 		return Run{TS: time.Unix(int64(num(data, "from")), 0).UTC(), Layer: LayerWire, Target: target, OK: boolp(ok), Data: data}, true
+	}
+	if m := reWireLoad.FindStringSubmatch(l.Msg); m != nil {
+		data := wireFields(m[2])
+		mode, _ := data["mode"].(string)
+		data["mode"] = "load_" + mode
+		lost := num(data, "voice_sent") + num(data, "game_sent") - num(data, "voice_got") - num(data, "game_got")
+		ok := num(data, "write_errs") == 0 && lost <= 0.01*(num(data, "voice_sent")+num(data, "game_sent")) && num(data, "gaps150") == 0
+		if !ok {
+			data["why"] = fmt.Sprintf("нагрузка %s%d: потеряно %d кадров, пауз больше 150 мс %d, ошибок записи %d", mode, int(num(data, "users")), int(lost), int(num(data, "gaps150")), int(num(data, "write_errs")))
+		}
+		return Run{TS: time.Unix(int64(num(data, "from")), 0).UTC(), Layer: LayerWire, Target: m[1], OK: boolp(ok), Data: data}, true
 	}
 	if m := reWireCPU.FindStringSubmatch(l.Msg); m != nil {
 		data := wireFields(m[2])

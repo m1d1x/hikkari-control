@@ -120,3 +120,19 @@ func TestSelectorRouteLines(t *testing.T) {
 		}
 	}
 }
+
+// TestWireLoadLine: a minute of the stand's synthetic users is a wire row
+// by its mode, red when frames were lost or a word.
+func TestWireLoadLine(t *testing.T) {
+	r, ok := classifyWire(journalLine{Msg: "hikkari-wire-stand: load wire=h3 from=1794355260 mode=g users=4 glue_max=1200 writes=12000 backs=12000 frames=60000 bytes_up=7000000 voice_sent=12000 voice_got=12000 game_sent=48000 game_got=48000 voice_rtt_p50=45.0 voice_rtt_p99=60.0 game_rtt_p50=45.0 gaps60=3 gaps150=0 gap_max=80 write_errs=0"})
+	if !ok || r.Layer != LayerWire || r.Target != "h3" || !*r.OK || r.Data["mode"] != "load_g" || !r.TS.Equal(time.Unix(1794355260, 0)) {
+		t.Fatalf("%+v", r)
+	}
+	r, _ = classifyWire(journalLine{Msg: "hikkari-wire-stand: load wire=h3 from=1794355260 mode=u users=1 voice_sent=3000 voice_got=2990 game_sent=12000 game_got=11000 gaps150=1 write_errs=0"})
+	if *r.OK || r.Data["why"] == nil {
+		t.Fatalf("%+v", r)
+	}
+	if _, ok := classifyWire(journalLine{Msg: "hikkari-wire-stand: load wire=h3 step u1 until 10:15:00"}); ok {
+		t.Fatal("the step's word is not a row")
+	}
+}

@@ -144,6 +144,9 @@ type Provisioner struct {
 	// (linux-<arch>/nekko-trunk-entry) and the libcronet.so it loads
 	// (trunk.go).
 	trunkBuilds, cronetBuilds map[string]EdgeBuild
+	// wireStandH3Builds are the edge built with cronet
+	// (linux-<arch>/hikkari-wire-stand-h3): the stand's entry (wirestand.go).
+	wireStandH3Builds map[string]EdgeBuild
 	// probeBuilds are the cascade watch's measuring binary
 	// (linux-<arch>/nekko-cascade-probe, cascade_watch.go).
 	probeBuilds  map[string]EdgeBuild
@@ -177,12 +180,13 @@ func (p *Provisioner) CanDeployProber() bool {
 func NewProvisioner(svc *Service, dial Dialer, artifacts string) *Provisioner {
 	return &Provisioner{
 		svc: svc, dial: dial,
-		builds:       loadEdgeBuilds(artifacts),
-		proberBuilds: loadProberBuilds(artifacts),
-		trunkBuilds:  loadNamedBuilds(artifacts, "nekko-trunk-entry"),
-		cronetBuilds: loadNamedBuilds(artifacts, "libcronet.so"),
-		probeBuilds:  loadNamedBuilds(artifacts, "nekko-cascade-probe"),
-		probeTimeout: 5 * time.Minute, probePoll: 2 * time.Second, drainPoll: drainPoll,
+		builds:            loadEdgeBuilds(artifacts),
+		proberBuilds:      loadProberBuilds(artifacts),
+		trunkBuilds:       loadNamedBuilds(artifacts, "nekko-trunk-entry"),
+		cronetBuilds:      loadNamedBuilds(artifacts, "libcronet.so"),
+		wireStandH3Builds: loadNamedBuilds(artifacts, WireStandH3Build),
+		probeBuilds:       loadNamedBuilds(artifacts, "nekko-cascade-probe"),
+		probeTimeout:      5 * time.Minute, probePoll: 2 * time.Second, drainPoll: drainPoll,
 		jobTimeout:   30 * time.Minute,
 		bootWait:     bootWait,
 		dnsResolvers: []string{"1.1.1.1:53", "8.8.8.8:53"},

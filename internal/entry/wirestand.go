@@ -22,7 +22,7 @@ import (
 // exit. Standing it up or taking it down restarts neither the entry's
 // nekko-trunk-entry nor the exit's relay.
 //
-//	cmd/server entry-box wire-stand <entry-box> <exit-box> [sni] [bench=<minutes>]   # stand up or update
+//	cmd/server entry-box wire-stand <entry-box> <exit-box> [sni] [bench=<minutes>] [load=<wires>] [steps=<steps>] [cc=<h3 congestion>]   # stand up or update
 //	cmd/server entry-box wire-stand-off <entry-box> <exit-box>     # take it down
 
 const (
@@ -30,6 +30,13 @@ const (
 	wireStandBinary  = "/usr/local/bin/hikkari-wire-stand"
 	wireStandDir     = "/etc/hikkari-wire-stand"
 	wireStandSecretF = wireStandDir + "/secret"
+	// wireStandLibDir holds the libcronet.so the entry's wire h3 loads
+	// (Chromium's QUIC); the entry's stand runs the edge built with cronet
+	// (linux-<arch>/hikkari-wire-stand-h3), the exit's the relay's edge.
+	wireStandLibDir = "/usr/local/lib/hikkari-wire-stand"
+	wireStandCronet = wireStandLibDir + "/libcronet.so"
+	// WireStandH3Build is the cronet edge's name in the hub's image.
+	WireStandH3Build = "hikkari-wire-stand-h3"
 	// DefaultWireStandSNI is the QUIC wires' server name when none is given.
 	DefaultWireStandSNI = "www.example.com"
 )
@@ -39,7 +46,7 @@ const (
 var WireStandPorts = []struct {
 	Wire string
 	Port int
-}{{"quic", 20443}, {"salamander", 20444}, {"awg", 20445}, {"udp", 20446}}
+}{{"quic", 20443}, {"salamander", 20444}, {"awg", 20445}, {"udp", 20446}, {"h3", 20450}}
 
 const wireStandUnitFile = `# Installed by the nekko hub: the stand of the trunk's second wire (4.1).
 [Unit]
@@ -49,6 +56,9 @@ Wants=network-online.target
 
 [Service]
 EnvironmentFile=` + wireStandDir + `/%i.env
+Environment=WIRESTAND_UNIT=%n
+# The wire's packets in and out, read by the process for its CPU line.
+IPAccounting=yes
 ExecStart=` + wireStandBinary + ` run
 Restart=always
 RestartSec=5
@@ -121,15 +131,17 @@ for pair in "$@"; do
 		ufw delete allow "$port/udp" >/dev/null 2>&1 || true
 	fi
 done
-rm -rf ` + wireStandDir + ` ` + wireStandBinary + ` /etc/systemd/system/` + wireStandUnit + `@.service
+rm -rf ` + wireStandDir + ` ` + wireStandBinary + ` ` + wireStandLibDir + ` /etc/systemd/system/` + wireStandUnit + `@.service
 systemctl daemon-reload
 echo "` + wireStandUnit + ` снят ($role)"
 `
 
 var wireStandSecretRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// wireStandEnv is one process's environment.
-func wireStandEnv(role, wire string, port int, exitAddr, sni, secret, bench string) string {
+// wireStandEnv is one process's environment; load is the wire's synthetic
+// users' plan (WIRESTAND_LOAD, the entry's only), cc Chromium's congestion
+// controller on h3.
+func wireStandEnv(role, wire string, port int, exitAddr, sni, secret, bench, load, cc string) string {
 	env := fmt.Sprintf("# Written by the nekko hub: trunk second wire stand, synthetic only.\nEDGE_PROTO=wirestand\nWIRESTAND_ROLE=%s\nWIRESTAND_WIRE=%s\nWIRESTAND_PORT=%d\nWIRESTAND_SNI=%s\nWIRESTAND_SECRET=%s\n",
 		role, wire, port, sni, secret)
 	if role == "entry" {
@@ -137,8 +149,91 @@ func wireStandEnv(role, wire string, port int, exitAddr, sni, secret, bench stri
 		if bench != "" {
 			env += "WIRESTAND_BENCH=" + bench + "\n"
 		}
+		if load != "" {
+			env += "WIRESTAND_LOAD=" + load + "\n"
+		}
+		if wire == "h3" {
+			env += "WIRESTAND_CRONET=" + wireStandCronet + "\n"
+			if cc != "" {
+				env += "WIRESTAND_H3_CC=" + cc + "\n"
+			}
+		}
 	}
 	return env
+}
+
+// WireLoad is the synthetic users' bench of the stand (edge
+// wirestand_load.go): each step of Steps on each of Wires, interleaved, in
+// slots of five minutes from the clock's :x1 (four minutes of load, the
+// fifth, :x5 or :x0, idle: the hub's own round). Steps are u<N> (each frame
+// its own write), g<N> (glued) or n<N> (no wire).
+type WireLoad struct {
+	Wires []string
+	Steps []string
+	// CC is Chromium's congestion controller on h3 ("" its default).
+	CC string
+}
+
+// DefaultWireLoadSteps price a wire as it is, glued, and without it.
+var DefaultWireLoadSteps = []string{"u1", "u2", "u4", "g4", "g16", "n4", "n16"}
+
+var wireLoadStepRe = regexp.MustCompile(`^[ugn]([1-9]|1[0-6])$`)
+
+// Check says what is wrong with the bench.
+func (l WireLoad) Check() error {
+	if len(l.Wires) == 0 || len(l.Steps) == 0 {
+		return fmt.Errorf("%w: load: no wires or steps", ErrRejected)
+	}
+	seen := map[string]bool{}
+	for _, w := range l.Wires {
+		ok := false
+		for _, p := range WireStandPorts {
+			ok = ok || p.Wire == w
+		}
+		if !ok || w == "awg" || seen[w] {
+			return fmt.Errorf("%w: load: wire %q (h3, quic, salamander, udp, each once)", ErrRejected, w)
+		}
+		seen[w] = true
+	}
+	for _, s := range l.Steps {
+		if !wireLoadStepRe.MatchString(s) {
+			return fmt.Errorf("%w: load: step %q is not u|g|n and 1–16 users", ErrRejected, s)
+		}
+	}
+	switch l.CC {
+	case "", "bbr", "bbr2", "cubic", "reno":
+	default:
+		return fmt.Errorf("%w: cc %q is not bbr, bbr2, cubic or reno", ErrRejected, l.CC)
+	}
+	return nil
+}
+
+const wireLoadSlot = 5 * time.Minute
+
+// plans are each wire's WIRESTAND_LOAD: the first :x1 at least 5 minutes
+// after now, then slot k·len(wires)+j to step k on wire j.
+func (l WireLoad) plans(now time.Time) (map[string]string, time.Time, time.Time) {
+	from := now.Add(5 * time.Minute).Truncate(10 * time.Minute).Add(time.Minute)
+	for from.Before(now.Add(5 * time.Minute)) {
+		from = from.Add(wireLoadSlot)
+	}
+	out := map[string]string{}
+	for j, w := range l.Wires {
+		var parts []string
+		idle := j * 5 // minutes before this wire's first slot
+		for k, s := range l.Steps {
+			if k > 0 {
+				idle = (len(l.Wires) - 1) * 5
+			}
+			if idle > 0 {
+				parts = append(parts, fmt.Sprintf("0x%d", idle))
+			}
+			parts = append(parts, s+"x4", "0x1")
+		}
+		out[w] = fmt.Sprintf("%d:%s", from.Unix(), strings.Join(parts, ","))
+	}
+	until := from.Add(time.Duration(len(l.Wires)*len(l.Steps)) * wireLoadSlot)
+	return out, from, until
 }
 
 func wireStandPairs() []string {
@@ -157,7 +252,7 @@ func wireStandPairs() []string {
 // at the first ten minutes of the clock at least 5 minutes away (the stand is
 // up by then) and gives each wire 12 MiB every ten minutes and one load of
 // 100 Mbit/s for 90 s (edge wirestand.go nextBulk).
-func (p *Provisioner) StandWireStand(ctx context.Context, entryBox, exitBox, sni string, bench time.Duration) error {
+func (p *Provisioner) StandWireStand(ctx context.Context, entryBox, exitBox, sni string, bench time.Duration, load *WireLoad) error {
 	if sni == "" || strings.ContainsAny(sni, " \n=,/:") {
 		return fmt.Errorf("%w: sni %q", ErrRejected, sni)
 	}
@@ -186,8 +281,25 @@ func (p *Provisioner) StandWireStand(ctx context.Context, entryBox, exitBox, sni
 		window = fmt.Sprintf("%d-%d", from.Unix(), until.Unix())
 		logf(entryBox)("wire stand: бенч %s – %s UTC", from.UTC().Format("15:04"), until.UTC().Format("15:04"))
 	}
+	var plans map[string]string
+	cc := ""
+	if load != nil {
+		if err := load.Check(); err != nil {
+			return err
+		}
+		var from, until time.Time
+		plans, from, until = load.plans(time.Now())
+		cc = load.CC
+		logf(entryBox)("wire stand: нагрузка %s × %s, %s – %s UTC", strings.Join(load.Wires, ","), strings.Join(load.Steps, ","), from.UTC().Format("15:04"), until.UTC().Format("15:04"))
+	}
 	applog.Info(ctx, "entry", "operator wire stand", applog.F("entry", entryBox), applog.F("exit", exitBox), applog.F("sni", sni), applog.F("bench", window))
-	return standWireStand(ctx, ex, en, p.builds, exitAddr, sni, window, logf(exitBox), logf(entryBox))
+	return standWireStand(ctx, ex, en, wireStandKit{edge: p.builds, h3: p.wireStandH3Builds, cronet: p.cronetBuilds}, exitAddr, sni, window, plans, cc, logf(exitBox), logf(entryBox))
+}
+
+// wireStandKit is what the stand stages: the relay's edge on the exit, the
+// cronet edge and libcronet.so on the entry (its wire h3 is Chromium's).
+type wireStandKit struct {
+	edge, h3, cronet map[string]EdgeBuild
 }
 
 // wireBenchWindow starts at the first ten minutes of the clock at least
@@ -201,7 +313,7 @@ func wireBenchWindow(now time.Time, d time.Duration) (time.Time, time.Time) {
 }
 
 // standWireStand is StandWireStand's work on the two open boxes.
-func standWireStand(ctx context.Context, ex, en Remote, builds map[string]EdgeBuild, exitAddr netip.Addr, sni, bench string, exitLog, entryLog func(string, ...any)) error {
+func standWireStand(ctx context.Context, ex, en Remote, kit wireStandKit, exitAddr netip.Addr, sni, bench string, plans map[string]string, cc string, exitLog, entryLog func(string, ...any)) error {
 	have, _ := ex.Run(ctx, "cat "+wireStandSecretF+" 2>/dev/null || true", nil)
 	secret := strings.TrimSpace(have)
 	if !wireStandSecretRe.MatchString(secret) {
@@ -217,6 +329,19 @@ func standWireStand(ctx context.Context, ex, en Remote, builds map[string]EdgeBu
 		r    Remote
 		say  func(string, ...any)
 	}{{"exit", ex, exitLog}, {"entry", en, entryLog}} {
+		builds := kit.edge
+		if side.role == "entry" {
+			builds = kit.h3
+			if _, err := side.r.Run(ctx, "mkdir -p "+wireStandLibDir, nil); err != nil {
+				return fmt.Errorf("%s: %w", side.role, err)
+			}
+			if err := stageLabBinary(ctx, side.r, kit.cronet, wireStandCronet, side.say); err != nil {
+				return fmt.Errorf("%s: libcronet: %w", side.role, err)
+			}
+			if _, err := side.r.Run(ctx, "if [ -f "+wireStandCronet+".new ]; then chmod 644 "+wireStandCronet+".new && mv "+wireStandCronet+".new "+wireStandCronet+"; fi", nil); err != nil {
+				return fmt.Errorf("%s: libcronet: %w", side.role, err)
+			}
+		}
 		if err := stageLabBinary(ctx, side.r, builds, wireStandBinary, side.say); err != nil {
 			return fmt.Errorf("%s: %w", side.role, err)
 		}
@@ -229,7 +354,7 @@ func standWireStand(ctx context.Context, ex, en Remote, builds map[string]EdgeBu
 			}
 		}
 		for _, w := range WireStandPorts {
-			env := wireStandEnv(side.role, w.Wire, w.Port, exitAddr.String(), sni, secret, bench)
+			env := wireStandEnv(side.role, w.Wire, w.Port, exitAddr.String(), sni, secret, bench, plans[w.Wire], cc)
 			if _, err := side.r.Run(ctx, "umask 077; cat > "+wireStandDir+"/"+w.Wire+".env.new", strings.NewReader(env)); err != nil {
 				return fmt.Errorf("%s: env %s: %w", side.role, w.Wire, err)
 			}

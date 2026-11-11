@@ -55,6 +55,13 @@ jobs:
       - name: edge
         working-directory: edge
         run: go vet ./... && go test -count=1 ./...
+      - name: wire stand h3 (edge with cronet)
+        working-directory: edge
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          export LD_LIBRARY_PATH="$(go list -m -f '{{.Dir}}' github.com/sagernet/cronet-go/lib/linux_amd64)"
+          go vet -tags with_purego,wirestand_h3 . && go test -tags with_purego,wirestand_h3 -count=1 -run 'TestWireStandH3$' .
       - name: trunk entry
         working-directory: trunkentry
         env:
