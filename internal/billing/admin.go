@@ -20,6 +20,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/audit"
 	"github.com/m1d1x/hikkari-control/internal/auth"
 	"github.com/m1d1x/hikkari-control/internal/db"
+	"github.com/m1d1x/hikkari-control/internal/entry"
 	"github.com/m1d1x/hikkari-control/internal/subscription"
 )
 
@@ -29,10 +30,23 @@ const gib = 1 << 30
 type Admin struct {
 	svc   *Service
 	audit db.DBTX
+	nodes NodeRegistry
+}
+
+// NodeRegistry is the fleet's logical nodes, what a subscription's fleet is
+// picked from (entry.Service in production).
+type NodeRegistry interface {
+	FleetChoices(ctx context.Context) ([]entry.FleetChoice, error)
 }
 
 func NewAdmin(svc *Service, auditDB db.DBTX) *Admin {
 	return &Admin{svc: svc, audit: auditDB}
+}
+
+// WithNodes lets the console pick a subscription's fleet from nodes.
+func (h *Admin) WithNodes(nodes NodeRegistry) *Admin {
+	h.nodes = nodes
+	return h
 }
 
 // RegisterAdminRoutes mounts the console's routes. Everything here touches
@@ -46,6 +60,9 @@ func RegisterAdminRoutes(mux *http.ServeMux, h *Admin, owner, ownerStepUp func(h
 	mux.HandleFunc("GET /api/v1/admin/billing/subscriptions/{name}", owner(h.Subscription))
 	mux.HandleFunc("POST /api/v1/admin/billing/subscriptions/{name}/renew", owner(h.Renew))
 	mux.HandleFunc("POST /api/v1/admin/billing/subscriptions/{name}/revoke", ownerStepUp(h.Revoke))
+	mux.HandleFunc("PUT /api/v1/admin/billing/subscriptions/{name}/title", owner(h.PutTitle))
+	mux.HandleFunc("PUT /api/v1/admin/billing/subscriptions/{name}/fleet", owner(h.PutFleet))
+	mux.HandleFunc("GET /api/v1/admin/billing/nodes", owner(h.Nodes))
 	mux.HandleFunc("PUT /api/v1/admin/billing/plans/{id}", owner(h.PutPlan))
 	mux.HandleFunc("POST /api/v1/admin/billing/plans/{id}/retire", owner(h.RetirePlan))
 }
@@ -64,12 +81,19 @@ type subscriptionJSON struct {
 	UsedBytes    int64      `json:"usedBytes"`
 	Relays       []string   `json:"relays"`
 	Tester       bool       `json:"tester"`
+	Title        string     `json:"title"`
+	// Nodes is the fleet picked by hand, slugs; empty for the pool's batch.
+	Nodes []string `json:"nodes"`
 }
 
 func toSubscriptionJSON(v subscription.Summary) subscriptionJSON {
 	out := subscriptionJSON{
 		Name: v.Name, Email: v.Email, Plan: v.Plan, State: string(v.State), CreatedAt: v.CreatedAt,
 		TrafficBytes: v.TrafficBytes, UsedBytes: v.Used, Relays: v.Relays, Tester: v.Tester,
+		Title: v.Title, Nodes: v.Nodes,
+	}
+	if out.Nodes == nil {
+		out.Nodes = []string{}
 	}
 	if !v.ExpiresAt.IsZero() {
 		out.ExpiresAt = &v.ExpiresAt
@@ -212,37 +236,102 @@ func (h *Admin) orders(r *http.Request, where, status string, args ...any) ([]or
 // ---------- writes ----------
 
 // Issue gives a subscription by hand (a gift, a tester, a refund made good):
-// {name, plan}. The link is answered once, as from the CLI.
+// {name, plan, tester, title, nodes}. No name: a random one, tst- for a
+// tester, sub- otherwise. The link is answered once, as from the CLI.
 func (h *Admin) Issue(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name   string `json:"name"`
-		Plan   string `json:"plan"`
-		Tester bool   `json:"tester"`
+		Name   string   `json:"name"`
+		Plan   string   `json:"plan"`
+		Tester bool     `json:"tester"`
+		Title  string   `json:"title"`
+		Nodes  []string `json:"nodes"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	var token string
-	var err error
-	if in.Tester {
-		// A tester's link carries the whole fleet. No name asked: a random one.
-		if in.Name == "" {
-			var raw [3]byte
-			if _, err := rand.Read(raw[:]); err != nil {
-				h.failed(w, err)
-				return
-			}
-			in.Name = "tst-" + hex.EncodeToString(raw[:])
+	if in.Name == "" {
+		var raw [3]byte
+		if _, err := rand.Read(raw[:]); err != nil {
+			h.failed(w, err)
+			return
 		}
-		token, err = h.svc.subs.AddTester(r.Context(), in.Name, in.Plan)
-	} else {
-		token, err = h.svc.subs.Add(r.Context(), in.Name, in.Plan)
+		prefix := "sub-"
+		if in.Tester {
+			prefix = "tst-"
+		}
+		in.Name = prefix + hex.EncodeToString(raw[:])
 	}
+	token, err := h.svc.subs.Issue(r.Context(), subscription.Issue{
+		Name: in.Name, Plan: in.Plan, Tester: in.Tester, Title: in.Title, Nodes: in.Nodes,
+	})
 	if h.failed(w, err) {
 		return
 	}
-	h.log(r, "subscription.issue", in.Name, map[string]any{"plan": in.Plan, "tester": in.Tester})
+	h.log(r, "subscription.issue", in.Name, map[string]any{
+		"plan": in.Plan, "tester": in.Tester, "title": in.Title, "nodes": in.Nodes,
+	})
 	writeJSON(w, http.StatusCreated, map[string]string{"name": in.Name, "url": subscription.LinkURL(token)})
+}
+
+// PutTitle changes what the client shows for the subscription: {title}, ""
+// for «hikkari».
+func (h *Admin) PutTitle(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Title string `json:"title"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	name := r.PathValue("name")
+	if h.failed(w, h.svc.subs.SetTitle(r.Context(), name, in.Title)) {
+		return
+	}
+	h.log(r, "subscription.title", name, map[string]any{"title": in.Title})
+	h.writeSubscription(w, r, name)
+}
+
+// PutFleet sets the subscription's fleet picked by hand: {nodes}, none for
+// the pool's batch. Works on a subscription already handed out: the client
+// gets the new links on its next fetch.
+func (h *Admin) PutFleet(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Nodes []string `json:"nodes"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	name := r.PathValue("name")
+	if h.failed(w, h.svc.subs.SetFleet(r.Context(), name, in.Nodes)) {
+		return
+	}
+	h.log(r, "subscription.fleet", name, map[string]any{"nodes": in.Nodes})
+	h.writeSubscription(w, r, name)
+}
+
+type nodeJSON struct {
+	Slug   string `json:"slug"`
+	Label  string `json:"label"`
+	Proto  string `json:"proto"`
+	Region string `json:"region"`
+	Box    string `json:"box"`
+	Alive  bool   `json:"alive"`
+}
+
+// Nodes is what a subscription's fleet is picked from.
+func (h *Admin) Nodes(w http.ResponseWriter, r *http.Request) {
+	if h.nodes == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"nodes": []nodeJSON{}})
+		return
+	}
+	choices, err := h.nodes.FleetChoices(r.Context())
+	if h.failed(w, err) {
+		return
+	}
+	out := make([]nodeJSON, 0, len(choices))
+	for _, c := range choices {
+		out = append(out, nodeJSON{Slug: c.Slug, Label: c.Label, Proto: c.Proto, Region: c.Region, Box: c.Box, Alive: c.Alive})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"nodes": out})
 }
 
 // Renew starts the next period on {plan}, free of charge.
@@ -348,6 +437,10 @@ func (h *Admin) failed(w http.ResponseWriter, err error) bool {
 		status, msg = http.StatusNotFound, "подписка не найдена или уже отозвана"
 	case errors.Is(err, subscription.ErrUnknownPlan):
 		status, msg = http.StatusUnprocessableEntity, "такого тарифа нет в продаже"
+	case errors.Is(err, subscription.ErrTitle):
+		status, msg = http.StatusUnprocessableEntity, "название: до 64 символов, без управляющих"
+	case errors.Is(err, entry.ErrUnknownNode):
+		status, msg = http.StatusUnprocessableEntity, "в флоте узел, которого нет в реестре"
 	case errors.Is(err, subscription.ErrName):
 		status, msg = http.StatusUnprocessableEntity, "имя: латиница, цифры, - и _, до 32 символов, и не занято"
 	default:

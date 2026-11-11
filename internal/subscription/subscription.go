@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -64,34 +66,114 @@ var ErrName = errors.New("subscription: account name")
 // Add creates an account for name and a subscription for it on plan's first
 // period, and returns the token — shown once, never stored in the clear.
 func (s *Service) Add(ctx context.Context, name, plan string) (string, error) {
-	return s.add(ctx, name, plan, false)
+	return s.Issue(ctx, Issue{Name: name, Plan: plan})
 }
 
 // AddTester is Add for a tester: the account holds every alive relay of the
 // fleet, not a batch (hub_accounts.all_relays). Issued by hand only.
 func (s *Service) AddTester(ctx context.Context, name, plan string) (string, error) {
-	return s.add(ctx, name, plan, true)
+	return s.Issue(ctx, Issue{Name: name, Plan: plan, Tester: true})
 }
 
-func (s *Service) add(ctx context.Context, name, plan string, allRelays bool) (string, error) {
+// Issue is a subscription given by hand from the admin console.
+type Issue struct {
+	Name string
+	Plan string
+	// Title is what the client shows for the subscription; "" for «hikkari».
+	Title string
+	// Tester: the account holds the whole fleet and the client that imports
+	// the link turns tester mode on (hub_accounts.all_relays).
+	Tester bool
+	// Nodes is the fleet picked by hand (entry.SetAccountNodes); none for
+	// the pool's batch.
+	Nodes []string
+}
+
+// ErrTitle: a title that is too long or holds control characters.
+var ErrTitle = errors.New("subscription: title")
+
+// MaxTitle is the longest title, in characters.
+const MaxTitle = 64
+
+// cleanTitle trims a title; "" stays "" (no title).
+func cleanTitle(t string) (string, error) {
+	t = strings.TrimSpace(t)
+	if !utf8.ValidString(t) || utf8.RuneCountInString(t) > MaxTitle || strings.ContainsFunc(t, unicode.IsControl) {
+		return "", fmt.Errorf("%w: up to %d characters, no control characters", ErrTitle, MaxTitle)
+	}
+	return t, nil
+}
+
+// Issue creates the account and subscription in one transaction and returns
+// the token — shown once, never stored in the clear.
+func (s *Service) Issue(ctx context.Context, in Issue) (string, error) {
+	title, err := cleanTitle(in.Title)
+	if err != nil {
+		return "", err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
-	if _, err := s.plan(ctx, tx, plan, true); err != nil {
+	if _, err := s.plan(ctx, tx, in.Plan, true); err != nil {
 		return "", err
 	}
-	token, account, err := s.AddIn(ctx, tx, name, plan, "")
+	token, account, err := s.AddIn(ctx, tx, in.Name, in.Plan, "")
 	if err != nil {
 		return "", err
 	}
-	if allRelays {
-		if _, err := tx.Exec(ctx, `UPDATE hub_accounts SET all_relays = true WHERE id = $1`, account); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE hub_accounts SET all_relays = $2, title = nullif($3, '') WHERE id = $1`,
+		account, in.Tester, title); err != nil {
+		return "", err
+	}
+	if len(in.Nodes) > 0 {
+		if err := entry.SetAccountNodes(ctx, tx, account, in.Nodes); err != nil {
 			return "", err
 		}
 	}
 	return token, tx.Commit(ctx)
+}
+
+// SetTitle changes what the client shows for name's subscription; "" for
+// «hikkari». The client reads it on its next fetch.
+func (s *Service) SetTitle(ctx context.Context, name, title string) error {
+	title, err := cleanTitle(title)
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, `UPDATE hub_accounts SET title = nullif($2, '') WHERE name = $1`, name, title)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrUnknown
+	}
+	return nil
+}
+
+// SetFleet makes slugs the fleet of name's subscription, already handed out
+// or not; none returns it to the pool's batch. The relays off the fleet stop
+// taking its key at their next pulse; the client gets the new links on its
+// next fetch.
+func (s *Service) SetFleet(ctx context.Context, name string, slugs []string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+	var account uuid.UUID
+	err = tx.QueryRow(ctx, `SELECT id FROM hub_accounts WHERE name = $1`, name).Scan(&account)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrUnknown
+	}
+	if err != nil {
+		return err
+	}
+	if err := entry.SetAccountNodes(ctx, tx, account, slugs); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // AddIn is Add inside the caller's transaction, so a payment and the
@@ -321,6 +403,13 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 	if err != nil {
 		return nil, err
 	}
+	// A fleet picked by hand: only its nodes are served. A tester's account
+	// holds grants on the whole fleet and is cut here; anyone else's grants
+	// already are the pick (entry.SetAccountNodes).
+	pinned, err := entry.AccountNodes(ctx, s.pool, account)
+	if err != nil {
+		return nil, err
+	}
 	now := s.now()
 	links := make([]string, 0, len(b.Relays))
 	for _, raw := range b.Relays {
@@ -329,6 +418,9 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 			// A record the hub cannot open is the hub's own fault, not the
 			// subscriber's: logged, and the rest of the batch still served.
 			applog.Error(ctx, "subscription", "relay record not opened", applog.F("err", err.Error()))
+			continue
+		}
+		if len(pinned) > 0 && !slices.Contains(pinned, nodes[rec.Name].Slug) {
 			continue
 		}
 		if via != nil {
@@ -437,6 +529,14 @@ func (s *Service) Handler() http.HandlerFunc {
 		}
 		account, err := s.account(r.Context(), token)
 		if errors.Is(err, ErrUnknown) {
+			if s.revoked(r.Context(), token) {
+				// Revoked for good: our client deletes the subscription and
+				// its profiles (hikkari-client engine/core/api). A token
+				// never issued stays a plain 404, like a wrong path.
+				w.Header().Set(revokedHeader, "revoked")
+				http.Error(w, "subscription revoked", http.StatusGone)
+				return
+			}
 			http.NotFound(w, r)
 			return
 		}
@@ -444,6 +544,10 @@ func (s *Service) Handler() http.HandlerFunc {
 		var terms Terms
 		if err == nil {
 			terms, err = s.terms(r.Context(), account)
+		}
+		var look look
+		if err == nil {
+			look, err = s.lookOf(r.Context(), account)
 		}
 		if err == nil && wantsSubscriptionPage(r) {
 			s.servePage(w, r, token)
@@ -494,7 +598,7 @@ func (s *Service) Handler() http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Profile-Title", "base64:"+base64.StdEncoding.EncodeToString([]byte("hikkari")))
+		w.Header().Set("Profile-Title", "base64:"+base64.StdEncoding.EncodeToString([]byte(look.title)))
 		w.Header().Set("Profile-Update-Interval", "1")
 		// The links stay served after the period ends or the traffic runs
 		// out: the relays no longer let the key through (keys.go), and the
@@ -504,11 +608,14 @@ func (s *Service) Handler() http.HandlerFunc {
 		// subscription to extend in the fragment, which reaches no server.
 		w.Header().Set("Profile-Web-Page-Url", RenewURL(token))
 		if slices.Contains(strings.FieldsFunc(r.Header.Get("Hikkari-Features"), func(r rune) bool { return r == ',' || r == ' ' }), "relay-metrics-v2") {
+			// tester rides inside the sealed body: only the token's holder
+			// reads it and nobody on the way can set it.
 			body, err := json.Marshal(struct {
 				Version int               `json:"version"`
 				Links   []string          `json:"links"`
 				Metrics []capacity.Metric `json:"metrics"`
-			}{2, links, relayMetrics})
+				Tester  bool              `json:"tester,omitempty"`
+			}{2, links, relayMetrics, look.tester})
 			if err == nil {
 				body, err = sealSubscription(token, body)
 			}
@@ -535,4 +642,31 @@ func hasFeature(h http.Header, want string) bool {
 		}
 	}
 	return false
+}
+
+// revokedHeader marks a 410 as the subscription's end, not a front's refusal.
+const revokedHeader = "Hikkari-Subscription"
+
+// revoked: token is a subscription that was revoked. A failed read answers
+// false, a plain 404: the client then keeps what it has.
+func (s *Service) revoked(ctx context.Context, token string) bool {
+	var gone bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM hub_subscriptions WHERE token_hash = $1 AND revoked_at IS NOT NULL)`,
+		tokenHash(token)).Scan(&gone)
+	return err == nil && gone
+}
+
+// look is how the client shows a subscription: its title and whether the
+// install that imports it is a tester's.
+type look struct {
+	title  string
+	tester bool
+}
+
+func (s *Service) lookOf(ctx context.Context, account uuid.UUID) (look, error) {
+	var l look
+	err := s.pool.QueryRow(ctx, `SELECT coalesce(title, 'hikkari'), all_relays FROM hub_accounts WHERE id = $1`, account).
+		Scan(&l.title, &l.tester)
+	return l, err
 }

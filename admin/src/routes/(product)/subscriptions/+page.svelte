@@ -1,16 +1,20 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { describeApiError } from '$lib/api/client';
+	import FleetPicker from '$components/product/FleetPicker.svelte';
 	import {
 		fetchBillingOverview,
+		fetchFleetNodes,
 		fetchSubscription,
 		fetchSubscriptions,
 		issueSubscription,
-		issueTesterSubscription,
 		renewSubscription,
 		retirePlan,
 		revokeSubscription,
 		savePlan,
+		setSubscriptionFleet,
+		setSubscriptionTitle,
+		type FleetNode,
 		type Overview,
 		type OrderStatus,
 		type Plan,
@@ -49,11 +53,27 @@
 	let renewPlan = $state('');
 	let busy = $state(false);
 
+	// One form for every subscription given by hand: a tester's (the whole
+	// fleet, and the client turns tester mode on) or an ordinary one, its
+	// title in the client, and a fleet from the pool or picked here.
+	let issueTester = $state(true);
+	let issueTitle = $state('');
 	let issueName = $state('');
 	let issuePlan = $state('');
-	let issued = $state('');
-	let testerPlan = $state('');
-	let tester = $state<{ name: string; url: string } | null>(null);
+	let issuePick = $state(false);
+	let issueNodes = $state<string[]>([]);
+	let issued = $state<{ name: string; url: string } | null>(null);
+
+	let nodes = $state<FleetNode[]>([]);
+	const nodeLabel = (slug: string) => {
+		const n = nodes.find((x) => x.slug === slug);
+		return n ? n.label || n.slug : slug;
+	};
+
+	// Edits on the open subscription.
+	let editTitle = $state('');
+	let editingFleet = $state(false);
+	let editNodes = $state<string[]>([]);
 
 	let draft = $state<Pick<Plan, 'id' | 'title' | 'days' | 'trafficGiB'> & { price: number }>({
 		id: '',
@@ -69,9 +89,12 @@
 		loading = true;
 		error = '';
 		try {
-			[overview, subs] = await Promise.all([fetchBillingOverview(orderStatus), fetchSubscriptions(query.trim())]);
+			[overview, subs, nodes] = await Promise.all([
+				fetchBillingOverview(orderStatus),
+				fetchSubscriptions(query.trim()),
+				fetchFleetNodes(),
+			]);
 			issuePlan ||= onSale[0]?.id ?? '';
-			testerPlan ||= onSale[0]?.id ?? '';
 		} catch (e) {
 			error = describeApiError(e);
 		} finally {
@@ -96,8 +119,10 @@
 		}
 		open = name;
 		detail = null;
+		editingFleet = false;
 		try {
 			detail = await fetchSubscription(name);
+			editTitle = detail.subscription.title;
 			renewPlan = onSale.find((p) => p.id === detail?.subscription.plan)?.id ?? onSale[0]?.id ?? '';
 		} catch (e) {
 			error = describeApiError(e);
@@ -121,20 +146,43 @@
 	const renew = (name: string) => act(() => renewSubscription(name, renewPlan));
 
 	function revoke(name: string) {
-		if (!confirm(`Отозвать ${name}? Ссылка перестанет работать на всех нодах за минуту.`)) return;
+		if (
+			!confirm(
+				`Отозвать ${name} навсегда? Ссылка перестанет работать на всех нодах за минуту, клиент удалит подписку и её профили при следующем обновлении. Вернуть нельзя.`,
+			)
+		)
+			return;
 		act(() => revokeSubscription(name));
 	}
 
 	function issue() {
 		act(async () => {
-			issued = (await issueSubscription(issueName.trim(), issuePlan)).url;
+			issued = await issueSubscription({
+				name: issueName.trim(),
+				plan: issuePlan,
+				tester: issueTester,
+				title: issueTitle.trim(),
+				nodes: issuePick ? issueNodes : [],
+			});
 			issueName = '';
+			issueTitle = '';
+			issueNodes = [];
+			issuePick = false;
 		});
 	}
 
-	function issueTester() {
+	const saveTitle = (name: string) => act(() => setSubscriptionTitle(name, editTitle.trim()));
+
+	function startFleet(s: Subscription) {
+		editNodes = [...s.nodes];
+		editingFleet = true;
+	}
+
+	function saveFleet(name: string, pick: string[]) {
+		if (pick.length === 0 && !confirm('Пустой выбор вернёт подписку на автоматический флот из пула. Продолжить?')) return;
 		act(async () => {
-			tester = await issueTesterSubscription(testerPlan);
+			await setSubscriptionFleet(name, pick);
+			editingFleet = false;
 		});
 	}
 
@@ -175,20 +223,57 @@
 
 {#if error}<p class="bad">{error}</p>{/if}
 
-<section class="card tester">
+<section class="card issue">
+	<h2>выдать подписку</h2>
 	<div class="line">
-		<button class="btn primary" disabled={busy || !testerPlan} onclick={issueTester}>
-			сгенерировать ссылку для тестера
-		</button>
-		<select class="field" bind:value={testerPlan} disabled={busy}>
+		<span class="dim">тип</span>
+		<div class="chips">
+			<button class="chip" class:on={issueTester} onclick={() => (issueTester = true)}>тестер</button>
+			<button class="chip" class:on={!issueTester} onclick={() => (issueTester = false)}>общая</button>
+		</div>
+		<span class="dim hint">
+			{issueTester
+				? 'весь флот, клиент сам включит режим тестера (с 1.0.81), логи и пробы идут на hub'
+				: 'обычный пользователь: батч из пула, ничего не пишется'}
+		</span>
+	</div>
+	<div class="line">
+		<span class="dim">название</span>
+		<input class="field" maxlength="64" placeholder="как подписка называется в клиенте, пусто: hikkari" bind:value={issueTitle} />
+	</div>
+	<div class="line">
+		<span class="dim">имя</span>
+		<input class="field" placeholder={issueTester ? 'пусто: tst-xxxxxx' : 'пусто: sub-xxxxxx'} bind:value={issueName} />
+		<select class="field" bind:value={issuePlan} disabled={busy}>
 			{#each onSale as p (p.id)}<option value={p.id}>{p.title || p.id}</option>{/each}
 		</select>
 	</div>
-	{#if tester}
+	<div class="line">
+		<span class="dim">флот</span>
+		<div class="chips">
+			<button class="chip" class:on={!issuePick} onclick={() => (issuePick = false)}>
+				{issueTester ? 'весь флот' : 'из пула'}
+			</button>
+			<button class="chip" class:on={issuePick} onclick={() => (issuePick = true)}>собрать</button>
+		</div>
+	</div>
+	{#if issuePick}
+		<FleetPicker {nodes} bind:selected={issueNodes} />
+	{/if}
+	<div class="line">
+		<button
+			class="btn primary"
+			disabled={busy || !issuePlan || (issuePick && issueNodes.length === 0)}
+			onclick={issue}
+		>
+			сгенерировать ссылку
+		</button>
+	</div>
+	{#if issued}
 		<div class="line">
-			<span class="mono">{tester.name}</span>
-			<code>{tester.url}</code>
-			<button class="btn" onclick={() => copy(tester!.url)}>скопировать</button>
+			<span class="mono">{issued.name}</span>
+			<code>{issued.url}</code>
+			<button class="btn" onclick={() => copy(issued!.url)}>скопировать</button>
 		</div>
 	{/if}
 </section>
@@ -214,8 +299,11 @@
 					<tr class="row" onclick={() => toggle(s.name)}>
 						<td>
 							<div class="mono">
-								{s.name}{#if s.tester}<span class="tag">тестер</span>{/if}
+								{s.name}{#if s.tester}<span class="tag">тестер</span>{/if}{#if s.nodes.length}<span class="tag"
+										>свой флот</span
+									>{/if}
 							</div>
+							{#if s.title}<div class="dim">«{s.title}»</div>{/if}
 							{#if s.email}<div class="dim">{s.email}</div>{/if}
 						</td>
 						<td class="mono">{s.plan || '-'}</td>
@@ -245,6 +333,43 @@
 												<span class="dim">не хранится (отозвана или выдана до оплаты)</span>
 											{/if}
 										</div>
+										{#if s.state !== 'revoked'}
+											<div class="line">
+												<span class="dim">название</span>
+												<input class="field" maxlength="64" placeholder="hikkari" bind:value={editTitle} />
+												<button
+													class="btn"
+													disabled={busy || editTitle.trim() === s.title}
+													onclick={() => saveTitle(s.name)}>сохранить</button
+												>
+											</div>
+										{/if}
+										<div class="line">
+											<span class="dim">флот</span>
+											{#if s.nodes.length}
+												<span class="mono">{s.nodes.map(nodeLabel).join(', ')}</span>
+											{:else}
+												<span class="dim">{s.tester ? 'весь флот' : 'из пула'}</span>
+											{/if}
+											{#if s.state !== 'revoked' && !editingFleet}
+												<button class="btn" disabled={busy} onclick={() => startFleet(s)}>изменить</button>
+												{#if s.nodes.length}
+													<button class="btn" disabled={busy} onclick={() => saveFleet(s.name, [])}>
+														{s.tester ? 'вернуть весь флот' : 'вернуть пул'}
+													</button>
+												{/if}
+											{/if}
+										</div>
+										{#if editingFleet}
+											<FleetPicker {nodes} bind:selected={editNodes} />
+											<div class="line">
+												<button class="btn primary" disabled={busy} onclick={() => saveFleet(s.name, editNodes)}>
+													сохранить флот
+												</button>
+												<button class="btn" onclick={() => (editingFleet = false)}>отмена</button>
+												<span class="dim hint">клиент получит новые ссылки при следующем обновлении подписки</span>
+											</div>
+										{/if}
 										<div class="line">
 											<span class="dim">ноды</span>
 											<span class="mono">{s.relays.join(', ') || 'не назначены'}</span>
@@ -260,7 +385,7 @@
 												<button class="btn primary" disabled={busy || !renewPlan} onclick={() => renew(s.name)}>
 													продлить бесплатно
 												</button>
-												<button class="btn danger" disabled={busy} onclick={() => revoke(s.name)}>отозвать</button>
+												<button class="btn danger" disabled={busy} onclick={() => revoke(s.name)}>отозвать навсегда</button>
 											</div>
 										{/if}
 										{#if detail.orders.length}
@@ -285,23 +410,6 @@
 				{/each}
 			</tbody>
 		</table>
-	{/if}
-</section>
-
-<section class="card">
-	<h2>выдать вручную</h2>
-	<div class="line">
-		<input class="field" placeholder="имя: латиница, цифры, - и _" bind:value={issueName} />
-		<select class="field" bind:value={issuePlan}>
-			{#each onSale as p (p.id)}<option value={p.id}>{p.title || p.id}</option>{/each}
-		</select>
-		<button class="btn primary" disabled={busy || !issueName.trim() || !issuePlan} onclick={issue}>выдать</button>
-	</div>
-	{#if issued}
-		<div class="line">
-			<code>{issued}</code>
-			<button class="btn" onclick={() => copy(issued)}>скопировать</button>
-		</div>
 	{/if}
 </section>
 
@@ -485,6 +593,15 @@
 
 	.line .dim {
 		min-width: 64px;
+	}
+
+	.line .hint {
+		font-size: 11px;
+	}
+
+	.issue .line > .field:not(select),
+	.detail .line > input.field {
+		max-width: 420px;
 	}
 
 	code {

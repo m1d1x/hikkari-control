@@ -1,4 +1,4 @@
-import type { Order, Overview, Plan, Subscription, SubscriptionDetail } from './billing';
+import type { FleetNode, Order, Overview, Plan, Subscription, SubscriptionDetail } from './billing';
 import type { TesterInstall, TesterRelayScreen } from './support';
 
 // Fixture for `VITE_USE_MOCK=true`: the subscriptions screen with plans,
@@ -16,13 +16,13 @@ const plans: Plan[] = [
 ];
 
 const subs: Subscription[] = [
-	{ name: 'anna-k', email: 'anna.k@example.com', plan: 'month', state: 'live', createdAt: ago(12), expiresAt: ahead(18), revokedAt: null, trafficBytes: 300 * GIB, usedBytes: 96 * GIB, relays: ['ams7', 'fra2'], tester: false },
-	{ name: 'denis-m', email: 'denis@example.com', plan: 'quarter', state: 'live', createdAt: ago(41), expiresAt: ahead(49), revokedAt: null, trafficBytes: 1000 * GIB, usedBytes: 412 * GIB, relays: ['ams7', 'hel1', 'fra2'], tester: false },
-	{ name: 'olga-s', email: 'olga.s@example.com', plan: 'year', state: 'live', createdAt: ago(130), expiresAt: ahead(235), revokedAt: null, trafficBytes: 4000 * GIB, usedBytes: 1210 * GIB, relays: ['ams7'], tester: false },
-	{ name: 'igor-v', email: 'igor.v@example.com', plan: 'month', state: 'spent', createdAt: ago(20), expiresAt: ahead(10), revokedAt: null, trafficBytes: 300 * GIB, usedBytes: 300 * GIB, relays: ['fra2'], tester: false },
-	{ name: 'maria-t', email: 'maria.t@example.com', plan: 'month', state: 'expired', createdAt: ago(63), expiresAt: ago(33), revokedAt: null, trafficBytes: 300 * GIB, usedBytes: 188 * GIB, relays: ['hel1'], tester: false },
-	{ name: 'pavel-r', email: 'pavel@example.com', plan: 'quarter', state: 'revoked', createdAt: ago(55), expiresAt: ahead(35), revokedAt: ago(6), trafficBytes: 1000 * GIB, usedBytes: 57 * GIB, relays: [], tester: false },
-	{ name: 'tst-9f31ab', email: '', plan: 'month', state: 'live', createdAt: ago(25), expiresAt: ahead(5), revokedAt: null, trafficBytes: 0, usedBytes: 74 * GIB, relays: ['ams7', 'ams3', 'fra2', 'hel1', 'euw1'], tester: true },
+	{ name: 'anna-k', email: 'anna.k@example.com', plan: 'month', state: 'live', createdAt: ago(12), expiresAt: ahead(18), revokedAt: null, trafficBytes: 300 * GIB, usedBytes: 96 * GIB, relays: ['ams7', 'fra2'], tester: false, title: '', nodes: [] },
+	{ name: 'denis-m', email: 'denis@example.com', plan: 'quarter', state: 'live', createdAt: ago(41), expiresAt: ahead(49), revokedAt: null, trafficBytes: 1000 * GIB, usedBytes: 412 * GIB, relays: ['ams7', 'hel1', 'fra2'], tester: false, title: '', nodes: [] },
+	{ name: 'olga-s', email: 'olga.s@example.com', plan: 'year', state: 'live', createdAt: ago(130), expiresAt: ahead(235), revokedAt: null, trafficBytes: 4000 * GIB, usedBytes: 1210 * GIB, relays: ['ams7'], tester: false, title: '', nodes: [] },
+	{ name: 'igor-v', email: 'igor.v@example.com', plan: 'month', state: 'spent', createdAt: ago(20), expiresAt: ahead(10), revokedAt: null, trafficBytes: 300 * GIB, usedBytes: 300 * GIB, relays: ['fra2'], tester: false, title: '', nodes: [] },
+	{ name: 'maria-t', email: 'maria.t@example.com', plan: 'month', state: 'expired', createdAt: ago(63), expiresAt: ago(33), revokedAt: null, trafficBytes: 300 * GIB, usedBytes: 188 * GIB, relays: ['hel1'], tester: false, title: '', nodes: [] },
+	{ name: 'pavel-r', email: 'pavel@example.com', plan: 'quarter', state: 'revoked', createdAt: ago(55), expiresAt: ahead(35), revokedAt: ago(6), trafficBytes: 1000 * GIB, usedBytes: 57 * GIB, relays: [], tester: false, title: '', nodes: [] },
+	{ name: 'tst-9f31ab', email: '', plan: 'month', state: 'live', createdAt: ago(25), expiresAt: ahead(5), revokedAt: null, trafficBytes: 0, usedBytes: 74 * GIB, relays: ['ams7', 'ams3', 'fra2', 'hel1', 'euw1'], tester: true, title: 'тест Пети', nodes: ['n-ams7', 'n-fra2'] },
 ];
 
 const orders: Order[] = [
@@ -89,3 +89,11 @@ export const mockTesterRelays: TesterRelayScreen = {
 		] },
 	],
 };
+
+export const mockFleetNodes: FleetNode[] = [
+	{ slug: 'n-ams7', label: 'нидерланды-101', proto: 'vless-reality-vision', region: '', box: 'ams7', alive: true },
+	{ slug: 'n-ams3', label: 'нидерланды-102', proto: 'hikkari', region: '', box: 'ams3', alive: true },
+	{ slug: 'n-fra2', label: 'германия-101', proto: 'vless-xhttp', region: '', box: 'fra2', alive: true },
+	{ slug: 'n-hel1', label: 'финляндия-101', proto: 'hysteria2', region: 'eu', box: 'hel1', alive: true },
+	{ slug: 'n-euw1', label: 'франция-101', proto: 'naive', region: '', box: 'euw1', alive: false },
+];

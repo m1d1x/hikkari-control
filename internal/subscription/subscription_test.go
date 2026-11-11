@@ -1,6 +1,7 @@
 package subscription
 
 import (
+	"errors"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -221,8 +222,13 @@ func TestASubscriptionServesTheBatchAndStopsWhenRevoked(t *testing.T) {
 	if err := s.Revoke(ctx, name); err != nil {
 		t.Fatal(err)
 	}
-	if rec := get(token); rec.Code != http.StatusNotFound {
-		t.Fatalf("a revoked token: %d", rec.Code)
+	// Revoked for good: a 410 our client reads as the end and deletes the
+	// subscription; a token never issued stays a 404.
+	if rec := get(token); rec.Code != http.StatusGone || rec.Header().Get(revokedHeader) != "revoked" {
+		t.Fatalf("a revoked token: %d %q", rec.Code, rec.Header().Get(revokedHeader))
+	}
+	if rec := get(wrong); rec.Code != http.StatusNotFound {
+		t.Fatalf("a wrong token after the revoke: %d", rec.Code)
 	}
 	if err := s.Revoke(ctx, name); err != ErrUnknown {
 		t.Fatalf("second revoke: %v", err)
@@ -370,5 +376,76 @@ func TestTheClientNamesItsNetwork(t *testing.T) {
 		if got := networkOf(h); got != want {
 			t.Errorf("%q: got %d, want %d", v, got, want)
 		}
+	}
+}
+
+// A subscription issued by hand carries its title to the client, and a
+// tester's says so inside the sealed body only, where nobody on the way can
+// set it.
+func TestAnIssuedSubscriptionCarriesItsTitleAndTesterFlag(t *testing.T) {
+	pool := livePool(t)
+	signer := entry.NewSigner("entry-1", bytes.Repeat([]byte{9}, 32))
+	s := New(pool, &fakeBatch{envelopes: [][]byte{signed(t, signer, realityRecord())}}, []entry.Key{signer.Key()})
+	ctx := context.Background()
+	fetch := func(token string) (*httptest.ResponseRecorder, string) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /sub/{token}", s.Handler())
+		req := httptest.NewRequest("GET", "/sub/"+token, nil)
+		req.Header.Set("Hikkari-Features", "relay-metrics-v2")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d", rec.Code)
+		}
+		body, err := openSubscription(token, rec.Body.Bytes())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rec, string(body)
+	}
+	title := func(rec *httptest.ResponseRecorder) string {
+		raw, _ := strings.CutPrefix(rec.Header().Get("Profile-Title"), "base64:")
+		b, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+
+	name := "t-" + uuid.NewString()[:8]
+	token, err := s.Issue(ctx, Issue{Name: name, Plan: unlimited(t, s), Title: "  Петя, тест  ", Tester: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, body := fetch(token)
+	if got := title(rec); got != "Петя, тест" {
+		t.Fatalf("title %q", got)
+	}
+	if !strings.Contains(body, `"tester":true`) {
+		t.Fatalf("a tester's sealed body says nothing: %s", body)
+	}
+	if err := s.SetTitle(ctx, name, ""); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := fetch(token); title(rec) != "hikkari" {
+		t.Fatalf("cleared title %q", title(rec))
+	}
+
+	plain, err := s.Issue(ctx, Issue{Name: "t-" + uuid.NewString()[:8], Plan: unlimited(t, s)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, body := fetch(plain); strings.Contains(body, "tester") {
+		t.Fatalf("an ordinary subscription is told it is a tester's: %s", body)
+	}
+
+	if err := s.SetTitle(ctx, name, strings.Repeat("я", MaxTitle+1)); !errors.Is(err, ErrTitle) {
+		t.Fatalf("a long title: %v", err)
+	}
+	if err := s.SetTitle(ctx, name, "a\x00b"); !errors.Is(err, ErrTitle) {
+		t.Fatalf("a control character: %v", err)
+	}
+	if err := s.SetFleet(ctx, name, []string{"no-such-node"}); !errors.Is(err, entry.ErrUnknownNode) {
+		t.Fatalf("an unknown node: %v", err)
 	}
 }

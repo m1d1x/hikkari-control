@@ -85,7 +85,8 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 	// stand (stand_*) that fills it on schedule, the check of testers'
 	// configs against the knobs handed out (knob_*), testers' voice series
 	// that decide whether the fleet needs a UDP leg (voice_*), the cascade's
-	// trunk entries and what the hub measures of them (trunk_*), and the
+	// trunk entries and what the hub measures of them (trunk_*), the fleet
+	// a subscription was given by hand (hub_account_nodes), and the
 	// product metrics the admin draws as series (product_*).
 	rows, err := pool.Query(ctx, `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`)
 	if err != nil {
@@ -99,7 +100,7 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 		}
 		if name != "schema_migrations" && name != "hub_accounts" && name != "hub_subscriptions" &&
 			name != "hub_access_keys" && name != "hub_key_usage" && name != "hub_plans" &&
-			name != "hub_orders" && name != "hub_mail_outbox" &&
+			name != "hub_orders" && name != "hub_mail_outbox" && name != "hub_account_nodes" &&
 			!strings.HasPrefix(name, "entry_") && !strings.HasPrefix(name, "census_") && !strings.HasPrefix(name, "relay_") && !strings.HasPrefix(name, "stand_") && !strings.HasPrefix(name, "knob_") && !strings.HasPrefix(name, "voice_") && !strings.HasPrefix(name, "trunk_") && !strings.HasPrefix(name, "admin_") && name != "admins" &&
 			name != "presets" && !strings.HasPrefix(name, "preset_") && !strings.HasPrefix(name, "support_") &&
 			!strings.HasPrefix(name, "product_") {
@@ -125,8 +126,8 @@ func TestBaselineAppliesToEmptyDatabase(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND confrelid = 'hub_accounts'::regclass`).Scan(&references); err != nil {
 		t.Fatal(err)
 	}
-	if references != 7 {
-		t.Errorf("account foreign keys: %d, want grants, fail reports, subscriptions, access keys, key usage, orders and cascades", references)
+	if references != 8 {
+		t.Errorf("account foreign keys: %d, want grants, fail reports, subscriptions, access keys, key usage, orders, cascades and fleets picked by hand", references)
 	}
 	var cap int
 	if err := pool.QueryRow(ctx, `SELECT sum(daily_cap_cents + monthly_cap_cents) FROM entry_spend_caps`).Scan(&cap); err != nil {

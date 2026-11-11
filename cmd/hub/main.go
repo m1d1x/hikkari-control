@@ -340,7 +340,7 @@ func run() error {
 			return admin.RequireAdmin(adminKeys.Public, pool, admin.RequireOwner(next))
 		})
 	// Subscriptions, plans and orders: money and access, the owner's alone.
-	billing.RegisterAdminRoutes(adminMux, billing.NewAdmin(billingSvc, pool),
+	billing.RegisterAdminRoutes(adminMux, billing.NewAdmin(billingSvc, pool).WithNodes(svc),
 		func(next http.HandlerFunc) http.HandlerFunc {
 			return admin.RequireAdmin(adminKeys.Public, pool, admin.RequireOwner(next))
 		},

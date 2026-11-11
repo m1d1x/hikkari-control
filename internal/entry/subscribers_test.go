@@ -2,7 +2,13 @@ package entry
 
 import (
 	"context"
+	"errors"
+	"slices"
+	"sort"
 	"testing"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type liveCount int64
@@ -133,5 +139,128 @@ func TestATesterHoldsTheWholeFleet(t *testing.T) {
 	// an ordinary account is still just a batch
 	if got := h.batch(testAccount(t, h.pool)); len(got) != 2 {
 		t.Fatalf("ordinary batch %v, want two", got)
+	}
+}
+
+// slugOf is the logical node a relay stands behind.
+func (h *harness) slugOf(relay string) string {
+	h.t.Helper()
+	if err := h.svc.syncFleetNodes(context.Background()); err != nil {
+		h.t.Fatal(err)
+	}
+	var slug string
+	if err := h.pool.QueryRow(context.Background(), `
+		SELECT n.slug FROM entry_nodes n JOIN entry_relays r ON r.id = n.relay_id WHERE r.name = $1`, relay).Scan(&slug); err != nil {
+		h.t.Fatalf("node of %s: %v", relay, err)
+	}
+	return slug
+}
+
+func (h *harness) setNodes(account uuid.UUID, slugs ...string) {
+	h.t.Helper()
+	ctx := context.Background()
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+	if err := SetAccountNodes(ctx, tx, account, slugs); err != nil {
+		h.t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// A fleet picked by hand: the account holds exactly the relays behind its
+// chosen nodes, a full machine and two on one box included; the batch it held
+// before goes with reason fleet the moment the fleet is set, and an empty
+// fleet hands it back to the pool.
+func TestAPickedFleetHoldsExactlyItsNodes(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	fleet := h.personal(5)
+	box, _ := h.box()
+	twin1, twin2 := h.relay(box, KindPersonal), h.relay(box, KindPersonal)
+	h.admit(twin1)
+	h.admit(twin2)
+
+	acc := testAccount(t, h.pool)
+	before := h.batch(acc)
+	if len(before) != 2 {
+		t.Fatalf("batch %v, want two", before)
+	}
+	want := []string{fleet[0], twin1, twin2}
+	slugs := make([]string, len(want))
+	for i, r := range want {
+		slugs[i] = h.slugOf(r)
+	}
+	h.setNodes(acc, slugs...)
+
+	var live int
+	if err := h.pool.QueryRow(ctx, `
+		SELECT count(*) FROM entry_grants g JOIN entry_relays r ON r.id = g.relay_id
+		WHERE g.account_id = $1 AND g.revoked_at IS NULL AND NOT (r.name = ANY($2))`, acc, want).Scan(&live); err != nil {
+		t.Fatal(err)
+	}
+	if live != 0 {
+		t.Fatalf("%d grants off the fleet stayed live after it was set", live)
+	}
+	got := h.batch(acc)
+	sort.Strings(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("pinned batch %v, want %v", got, want)
+	}
+	var reasons []string
+	rows, err := h.pool.Query(ctx, `SELECT DISTINCT revoke_reason FROM entry_grants WHERE account_id = $1 AND revoked_at IS NOT NULL`, acc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reasons, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range reasons {
+		if r != "fleet" {
+			t.Fatalf("an off-fleet grant went with reason %q, want fleet", r)
+		}
+	}
+
+	// narrowed: the dropped node's relay goes, the rest stays
+	h.setNodes(acc, h.slugOf(twin1))
+	if got := h.batch(acc); !slices.Equal(got, []string{twin1}) {
+		t.Fatalf("narrowed batch %v, want [%s]", got, twin1)
+	}
+
+	// back to the pool
+	h.setNodes(acc)
+	if got := h.batch(acc); len(got) < 1 || len(got) > 2 {
+		t.Fatalf("batch %v after the fleet was cleared, want the pool's", got)
+	}
+
+	// an unknown node is refused, the fleet untouched
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if err := SetAccountNodes(ctx, tx, acc, []string{"no-such-node"}); !errors.Is(err, ErrUnknownNode) {
+		t.Fatalf("unknown node: %v, want ErrUnknownNode", err)
+	}
+}
+
+// A tester's account keeps grants on the whole fleet whatever was picked:
+// its links are cut to the pick by the subscription, and the relays it does
+// not show still know its key.
+func TestATesterKeepsTheFleetUnderAPick(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	fleet := h.personal(3)
+	tester := testAccount(t, h.pool)
+	if _, err := h.pool.Exec(ctx, `UPDATE hub_accounts SET all_relays = true WHERE id = $1`, tester); err != nil {
+		t.Fatal(err)
+	}
+	h.setNodes(tester, h.slugOf(fleet[0]))
+	if got := h.batch(tester); len(got) < len(fleet) {
+		t.Fatalf("tester batch %v under a pick, want all of %v", got, fleet)
 	}
 }

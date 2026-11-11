@@ -40,6 +40,11 @@ type Summary struct {
 	Relays []string
 	// Tester: the account holds the whole fleet (hub_accounts.all_relays).
 	Tester bool
+	// Title is what the client shows; "" for «hikkari».
+	Title string
+	// Nodes is the fleet picked by hand (hub_account_nodes); none for the
+	// pool's batch.
+	Nodes []string
 }
 
 const summaries = `
@@ -57,7 +62,8 @@ const summaries = `
 	       END,
 	       coalesce((SELECT array_agg(r.name ORDER BY r.name) FROM entry_grants g JOIN entry_relays r ON r.id = g.relay_id
 	                 WHERE g.account_id = a.id AND g.revoked_at IS NULL), '{}'),
-	       a.all_relays
+	       a.all_relays, coalesce(a.title, ''),
+	       coalesce((SELECT array_agg(p.slug ORDER BY p.slug) FROM hub_account_nodes p WHERE p.account_id = a.id), '{}')
 	FROM hub_subscriptions s
 	JOIN hub_accounts a ON a.id = s.account_id
 	LEFT JOIN usage u ON u.account_id = a.id`
@@ -69,7 +75,7 @@ func scanSummary(r pgx.CollectableRow) (Summary, error) {
 		state            string
 	)
 	err := r.Scan(&v.Account, &v.Name, &v.Email, &v.Plan, &v.CreatedAt, &expires, &revoked,
-		&v.TrafficBytes, &v.Used, &state, &v.Relays, &v.Tester)
+		&v.TrafficBytes, &v.Used, &state, &v.Relays, &v.Tester, &v.Title, &v.Nodes)
 	if expires != nil {
 		v.ExpiresAt = *expires
 	}

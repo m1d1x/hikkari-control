@@ -1,6 +1,6 @@
 import { get, post, put } from './client';
 import { USE_MOCK } from '$lib/config/mock';
-import { mockBillingOverview, mockSubscription, mockSubscriptions } from './billingMock';
+import { mockBillingOverview, mockFleetNodes, mockSubscription, mockSubscriptions } from './billingMock';
 
 // Subscriptions, plans and orders (internal/billing/admin.go). All of it is
 // the owner's; revoking asks for a passkey touch (client.ts steps up).
@@ -19,8 +19,23 @@ export interface Subscription {
 	trafficBytes: number;
 	usedBytes: number;
 	relays: string[];
-	/** the account holds the whole fleet */
+	/** the account holds the whole fleet and the client turns tester mode on */
 	tester: boolean;
+	/** what the client shows for the subscription; '' for «hikkari» */
+	title: string;
+	/** the fleet picked by hand, node slugs; empty for the pool's batch */
+	nodes: string[];
+}
+
+/** A logical node of the fleet, what a subscription's fleet is picked from. */
+export interface FleetNode {
+	slug: string;
+	label: string;
+	proto: string;
+	region: string;
+	box: string;
+	/** a serving relay stands behind it now */
+	alive: boolean;
 }
 
 export interface Plan {
@@ -76,12 +91,31 @@ export interface SubscriptionDetail {
 export const fetchSubscription = (name: string): Promise<SubscriptionDetail> =>
 	USE_MOCK ? Promise.resolve(mockSubscription(name)) : get<SubscriptionDetail>(`/api/v1/admin/billing/subscriptions/${encodeURIComponent(name)}`);
 
-export const issueSubscription = (name: string, plan: string) =>
-	post<{ url: string }>('/api/v1/admin/billing/subscriptions', { name, plan });
+export interface IssueInput {
+	/** account name, [a-z0-9_-]; '' lets the hub pick sub-xxxxxx or tst-xxxxxx */
+	name: string;
+	plan: string;
+	/** a tester's link: the whole fleet, and the client turns tester mode on */
+	tester: boolean;
+	title: string;
+	/** node slugs; empty for the pool's batch */
+	nodes: string[];
+}
 
-/** A tester's link: the account holds every alive relay of the fleet. The hub picks the name (tst-xxxxxx) unless given. */
-export const issueTesterSubscription = (plan: string, name = '') =>
-	post<{ name: string; url: string }>('/api/v1/admin/billing/subscriptions', { name, plan, tester: true });
+export const issueSubscription = (input: IssueInput) =>
+	post<{ name: string; url: string }>('/api/v1/admin/billing/subscriptions', input);
+
+export const setSubscriptionTitle = (name: string, title: string) =>
+	put<{ subscription: Subscription }>(`/api/v1/admin/billing/subscriptions/${encodeURIComponent(name)}/title`, { title });
+
+/** Works on a subscription already handed out: the client gets the new links on its next fetch. */
+export const setSubscriptionFleet = (name: string, nodes: string[]) =>
+	put<{ subscription: Subscription }>(`/api/v1/admin/billing/subscriptions/${encodeURIComponent(name)}/fleet`, { nodes });
+
+export const fetchFleetNodes = (): Promise<FleetNode[]> =>
+	USE_MOCK
+		? Promise.resolve(mockFleetNodes)
+		: get<{ nodes: FleetNode[] }>('/api/v1/admin/billing/nodes').then((r) => r.nodes);
 
 export const renewSubscription = (name: string, plan: string) =>
 	post<{ subscription: Subscription }>(`/api/v1/admin/billing/subscriptions/${encodeURIComponent(name)}/renew`, {

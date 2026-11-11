@@ -1306,6 +1306,23 @@ func (s *Service) serve(ctx context.Context, account uuid.UUID, meta GrantMeta) 
 	if err := s.repo.lockBatch(ctx, tx, account); err != nil {
 		return nil, err
 	}
+	all, err := s.repo.allRelays(ctx, tx, account)
+	if err != nil {
+		return nil, err
+	}
+	// A fleet picked by hand (account_nodes.go) holds exactly its nodes'
+	// relays; a tester's keeps the whole fleet and has its links cut instead.
+	pinned := false
+	if !all {
+		if pinned, err = s.repo.pinned(ctx, tx, account); err != nil {
+			return nil, err
+		}
+	}
+	if pinned {
+		if _, err := tx.Exec(ctx, revokeOffFleet, account); err != nil {
+			return nil, err
+		}
+	}
 	held, err := s.repo.activeGrants(ctx, tx, account)
 	if err != nil {
 		return nil, err
@@ -1314,21 +1331,27 @@ func (s *Service) serve(ctx context.Context, account uuid.UUID, meta GrantMeta) 
 	// Asked every time, not only when the stream lane is short: a voice
 	// region the account holds nothing of yet shows up only among the
 	// candidates. One read of the alive pool under the batch lock.
-	all, err := s.repo.allRelays(ctx, tx, account)
+	var cands []candidate
+	if pinned {
+		cands, err = s.repo.pinnedCandidates(ctx, tx, account, now)
+	} else {
+		cands, err = s.repo.candidates(ctx, tx, account, now, all)
+	}
 	if err != nil {
 		return nil, err
 	}
-	cands, err := s.repo.candidates(ctx, tx, account, now, all)
-	if err != nil {
-		return nil, err
-	}
-	picked := s.pick(account, held, cands)
-	if all {
-		picked = cands
+	picked := cands
+	if !all && !pinned {
+		picked = s.pick(account, held, cands)
 	}
 	if len(picked) > 0 {
-		triggers, err := s.refillTriggers(ctx, tx, account, picked)
-		if err != nil {
+		var triggers []string
+		if pinned {
+			triggers = make([]string, len(picked))
+			for i := range triggers {
+				triggers[i] = triggerFleet
+			}
+		} else if triggers, err = s.refillTriggers(ctx, tx, account, picked); err != nil {
 			return nil, err
 		}
 		if meta.AccountCreated.IsZero() {
