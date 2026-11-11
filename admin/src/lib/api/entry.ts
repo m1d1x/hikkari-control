@@ -487,7 +487,8 @@ const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'май', 'июн'
 export function bucketLabel(iso: string, bucketSeconds: number): string {
 	const d = new Date(iso);
 	if (Number.isNaN(d.getTime())) return iso;
-	if (bucketSeconds < 86_400) return `${String(d.getHours()).padStart(2, '0')}:00`;
+	const mm = bucketSeconds < 3600 ? String(d.getMinutes()).padStart(2, '0') : '00';
+	if (bucketSeconds < 86_400) return `${String(d.getHours()).padStart(2, '0')}:${mm}`;
 	return `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]}`;
 }
 
@@ -498,7 +499,7 @@ export function bucketTitle(iso: string, bucketSeconds: number): string {
 	const day = `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]}`;
 	if (bucketSeconds >= 86_400) return `${day} ${d.getFullYear()}`;
 	const end = new Date(d.getTime() + bucketSeconds * 1000);
-	const hh = (x: Date) => `${String(x.getHours()).padStart(2, '0')}:00`;
+	const hh = (x: Date) => `${String(x.getHours()).padStart(2, '0')}:${String(x.getMinutes()).padStart(2, '0')}`;
 	return `${day}, ${hh(d)}–${hh(end)}`;
 }
 

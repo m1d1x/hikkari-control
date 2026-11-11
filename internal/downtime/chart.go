@@ -53,9 +53,9 @@ var errWindow = errors.New("window: 24h, 7d or 30d")
 func window(name string) (string, time.Duration, time.Duration, error) {
 	switch name {
 	case "24h":
-		return name, 24 * time.Hour, time.Hour, nil
+		return name, 24 * time.Hour, 10 * time.Minute, nil
 	case "7d", "":
-		return "7d", 7 * 24 * time.Hour, 6 * time.Hour, nil
+		return "7d", 7 * 24 * time.Hour, time.Hour, nil
 	case "30d":
 		return name, 30 * 24 * time.Hour, 24 * time.Hour, nil
 	}

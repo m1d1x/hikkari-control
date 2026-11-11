@@ -155,7 +155,7 @@
 						<td class="mono">
 							{#if alive(i.install_id) === null}-{:else}{alive(i.install_id)} из {rounds[i.install_id].relays.length}{/if}
 						</td>
-						<td class="r mono" title={lost ? `час с ${bucketTime(lost.at)}` : 'нет минут в окне'}>
+						<td class="r mono" title={lost ? `отрезок с ${bucketTime(lost.at)}` : 'туннель не включали за сутки'}>
 							{#if lost}<span class:warn={lost.v > 0}>{minutes(lost.v)}</span>{:else}<span class="dim">-</span>{/if}
 						</td>
 						<td class="r mono" title={ru ? `медиана за отрезок с ${bucketTime(ru.at)}` : 'нет замеров в окне'}>
@@ -177,7 +177,7 @@
 												bucketSeconds={charts.bucketSeconds}
 												formatAxis={minutes}
 												height={135}
-												series={[{ key: 'lost', label: 'Простой', color: C.orange, primary: true, values: l.lost, format: minutes }]}
+												series={[{ key: 'lost', label: 'Простой', color: C.orange, primary: true, values: l.lost, format: minutes, missing: 'туннель выключен' }]}
 											/>
 										</div>
 										<div class="chart-card">
@@ -188,7 +188,7 @@
 												formatAxis={ms}
 												height={135}
 												marks={missedMarks(l)}
-												series={[{ key: 'ru', label: 'Сеть до РФ', color: C.blue, primary: true, values: l.ruMs, format: ms }]}
+												series={[{ key: 'ru', label: 'Сеть до РФ', color: C.blue, primary: true, values: l.ruMs, format: ms, missing: 'не мерили' }]}
 											/>
 										</div>
 									</div>

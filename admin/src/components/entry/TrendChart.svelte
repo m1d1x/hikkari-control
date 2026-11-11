@@ -13,6 +13,8 @@
 		format: (v: number) => string;
 		/** the line the eye should follow first: thicker, with a soft fill under it */
 		primary?: boolean;
+		/** what the tooltip says for a bucket with no value; a dash when unset */
+		missing?: string;
 	}
 
 	/** A moment on the time axis: an event the lines should be read against. */
@@ -256,7 +258,7 @@
 				{@const v = s.values[hovered.i]}
 				<div class="tt-row" class:primary={s.primary}>
 					<span class="tt-name"><i style="background: {s.color}"></i>{s.label}</span>
-					<span class="tt-val">{v === null || v === undefined ? '-' : s.format(v)}</span>
+					<span class="tt-val">{v === null || v === undefined ? (s.missing ?? '-') : s.format(v)}</span>
 				</div>
 			{/each}
 		</div>
