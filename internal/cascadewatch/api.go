@@ -249,7 +249,7 @@ var layerMetrics = map[string][]string{
 	LayerTrunk:    {"delivered", "first_ok", "attempts", "chunk_p50_ms", "chunk_p99_ms", "goodput_mbps"},
 	LayerProtocol: {"dl", "burst", "after", "voice_got", "gaps60", "gaps150", "gap_max_ms", "voice_rtt_p50_ms", "voice_jitter_ms"},
 	LayerCall:     {"sent", "lost", "rtt_p50_ms", "rtt_p99_ms", "rtt_max_ms", "gaps60", "gaps150", "gap_max_ms", "silent_ms"},
-	LayerWire:     {"bytes", "ms", "cpu_ms", "steal_pct", "busy_pct"},
+	LayerWire:     {"bytes", "ms", "mbps", "cpu_ms", "steal_pct", "busy_pct"},
 }
 
 func (l *layerAcc) add(r Run) {

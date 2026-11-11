@@ -80,9 +80,20 @@ func TestWireStandWires(t *testing.T) {
 			if got < 45 {
 				t.Fatalf("echoed %d of 50", got)
 			}
-			n, err := w.bulk(ctx, standBulk)
-			if err != nil || n != standBulk {
-				t.Fatalf("bulk %d of %d: %v", n, standBulk, err)
+			for _, spec := range []standBulkSpec{{Kind: "1m", Bytes: standBulk, Rate: udpBulkRate}, {Kind: "12m", Bytes: standBenchBulk, Rate: standLoadRate}} {
+				if r := w.bulk(ctx, spec); r.End != "ok" || r.Bytes != spec.Bytes {
+					t.Fatalf("bulk %s: %+v", spec.Kind, r)
+				}
+			}
+			// A load holds its pace for its time: 3 s at 16 Mbit/s is 6 MB
+			// in slices of 10 s, and no more than the pace allows.
+			load := standBulkSpec{Kind: "load", Bytes: 16_000_000 / 8 * 3, Rate: 16_000_000, For: 3 * time.Second}
+			r := w.bulk(ctx, load)
+			if r.End != "ok" || r.Bytes < load.Bytes*8/10 || r.Bytes > load.Bytes || len(r.Slices) != 1 {
+				t.Fatalf("load: %+v", r)
+			}
+			if line := bulkLine(wire, time.Unix(60, 0), load, r); !strings.Contains(line, "kind=load from=60 ") || !strings.Contains(line, " slices=") {
+				t.Fatal(line)
 			}
 		})
 	}
@@ -162,5 +173,53 @@ func TestWireStandConfig(t *testing.T) {
 	env["WIRESTAND_WIRE"] = "wireguard"
 	if _, err := WireStandConfigFromEnv(func(k string) string { return env[k] }); err == nil {
 		t.Fatal("unknown wire")
+	}
+}
+
+// TestNextBulk: 1 MiB at the wire's slot outside a bench, 12 MiB inside, and
+// each wire's load in its own ten minutes, quic first.
+func TestNextBulk(t *testing.T) {
+	from := time.Date(2026, 11, 11, 2, 0, 0, 0, time.UTC)
+	until := from.Add(time.Hour)
+	at, b := nextBulk(wireAwg, from.Add(-time.Hour), from, until)
+	if !at.Equal(from.Add(-54*time.Minute)) || b.Kind != "1m" {
+		t.Fatalf("before: %v %+v", at, b)
+	}
+	loads := map[string]time.Time{}
+	for _, w := range standWireOrder {
+		now := from.Add(-time.Second)
+		for {
+			at, b := nextBulk(w, now, from, until)
+			if !at.Before(until) {
+				if b.Kind != "1m" {
+					t.Fatalf("%s after the window: %+v", w, b)
+				}
+				break
+			}
+			if b.Kind == "load" {
+				if !loads[w].IsZero() {
+					t.Fatalf("%s: two loads", w)
+				}
+				loads[w] = at
+			} else if b.Kind != "12m" {
+				t.Fatalf("%s in the window: %+v", w, b)
+			}
+			now = at
+		}
+	}
+	want := map[string]time.Time{
+		wireQUIC:       from.Add(11 * time.Minute),
+		wireSalamander: from.Add(23*time.Minute + 30*time.Second),
+		wireAwg:        from.Add(36 * time.Minute),
+		wireUDP:        from.Add(48*time.Minute + 30*time.Second),
+	}
+	for w, at := range want {
+		if !loads[w].Equal(at) {
+			t.Fatalf("%s load at %v, want %v", w, loads[w], at)
+		}
+	}
+	// A load (90 s) ends before the next wire's slot.
+	if standSlot[wireUDP]+standLoadFor > 10*time.Minute {
+		t.Fatal("udp's load runs into the hub's round")
 	}
 }

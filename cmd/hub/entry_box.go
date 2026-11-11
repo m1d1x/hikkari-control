@@ -50,10 +50,11 @@ package main
 //	                                    # the Hikkari relay's datagrams cross once
 //	                                    # (v1.02 copies them itself) unless =2
 //	cmd/server entry-box trunk-entry-off <box>
-//	cmd/server entry-box wire-stand <entry-box> <exit-box> [sni]
+//	cmd/server entry-box wire-stand <entry-box> <exit-box> [sni] [bench=<minutes>]
 //	                                    # the stand of the trunk's second wire
 //	                                    # (4.1): a process per wire on both
-//	                                    # boxes, synthetic only (internal/entry/wirestand.go)
+//	                                    # boxes, synthetic only (internal/entry/wirestand.go);
+//	                                    # bench= adds 12 MiB and a 90 s load per wire
 //	cmd/server entry-box wire-stand-off <entry-box> <exit-box>
 //	cmd/server entry-box lab-reality <box> [port] [cover]
 //	                                    # stand up or update the опыт 0 lab
@@ -515,7 +516,7 @@ func runEntryBox(args []string) {
 		}
 		os.Exit(0)
 	}
-	if (len(args) >= 3 && len(args) <= 4 && args[0] == "wire-stand") || (len(args) == 3 && args[0] == "wire-stand-off") {
+	if (len(args) >= 3 && len(args) <= 5 && args[0] == "wire-stand") || (len(args) == 3 && args[0] == "wire-stand-off") {
 		// entry-box wire-stand <entry-box> <exit-box> [sni] — the stand of the
 		// trunk's second wire on both boxes (internal/entry/wirestand.go);
 		// -off takes it away. Neither the entry nor the exit relay restarts.
@@ -533,11 +534,19 @@ func runEntryBox(args []string) {
 		if args[0] == "wire-stand-off" {
 			err = prov.StopWireStand(ctx, args[1], args[2])
 		} else {
-			sni := entry.DefaultWireStandSNI
-			if len(args) == 4 {
-				sni = args[3]
+			sni, bench := entry.DefaultWireStandSNI, time.Duration(0)
+			for _, a := range args[3:] {
+				if m, ok := strings.CutPrefix(a, "bench="); ok {
+					n, err := strconv.Atoi(m)
+					if err != nil || n < 10 || n > 24*60 {
+						fail(fmt.Errorf("bench=%q: minutes, 10 to 1440", m))
+					}
+					bench = time.Duration(n) * time.Minute
+					continue
+				}
+				sni = a
 			}
-			err = prov.StandWireStand(ctx, args[1], args[2], sni)
+			err = prov.StandWireStand(ctx, args[1], args[2], sni, bench)
 		}
 		if err != nil {
 			fail(err)

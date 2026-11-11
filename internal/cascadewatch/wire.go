@@ -39,10 +39,19 @@ func classifyWire(l journalLine) (Run, bool) {
 	}
 	if m := reWireBulk.FindStringSubmatch(l.Msg); m != nil {
 		data := wireFields(m[2])
+		kind, _ := data["kind"].(string)
+		// A load holds 100 Mbit/s for its time: it is whole at 90% of
+		// what that pace gives; any other bulk only when every byte came.
+		ok := data["end"] == "ok" && num(data, "bytes") >= num(data, "want")
 		data["mode"] = "bulk"
-		ok := num(data, "bytes") >= num(data, "want") && data["end"] == "ok"
+		if kind != "" {
+			data["mode"] = "bulk_" + kind
+		}
+		if kind == "load" {
+			ok = data["end"] == "ok" && num(data, "bytes") >= 0.9*num(data, "want")
+		}
 		if !ok {
-			data["why"] = fmt.Sprintf("1 МиБ: %d байт, %v", int64(num(data, "bytes")), data["end"])
+			data["why"] = fmt.Sprintf("%s: %d из %d байт, %v", bulkName(kind), int64(num(data, "bytes")), int64(num(data, "want")), data["end"])
 		}
 		return Run{TS: time.Unix(int64(num(data, "from")), 0).UTC(), Layer: LayerWire, Target: m[1], OK: boolp(ok), Data: data}, true
 	}
@@ -52,6 +61,17 @@ func classifyWire(l journalLine) (Run, bool) {
 		return Run{TS: time.Unix(int64(num(data, "from")), 0).UTC(), Layer: LayerWire, Target: m[1], OK: boolp(true), Data: data}, true
 	}
 	return Run{}, false
+}
+
+// bulkName says which bulk a red row was.
+func bulkName(kind string) string {
+	switch kind {
+	case "12m":
+		return "12 МиБ"
+	case "load":
+		return "нагрузка 100 Мбит/с"
+	}
+	return "1 МиБ"
 }
 
 // unwrapLogJSON is the message of a line the edge's JSON logger wrote (its

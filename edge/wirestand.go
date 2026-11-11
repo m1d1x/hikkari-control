@@ -112,9 +112,6 @@ var (
 	awgStandEntry = netip.MustParseAddr("10.77.0.2")
 )
 
-// standBulkMinute is the minute of every ten a wire takes its 1 MiB.
-var standBulkMinute = map[string]int{wireQUIC: 1, wireSalamander: 3, wireAwg: 6, wireUDP: 8}
-
 // WireStandConfig is one stand process's environment.
 type WireStandConfig struct {
 	Role   string // "entry" or "exit"
@@ -123,6 +120,9 @@ type WireStandConfig struct {
 	Exit   string // the exit's address, the entry's only
 	SNI    string // the QUIC wires' server name
 	Secret []byte // 32 bytes, both ends
+	// BenchFrom and BenchUntil are the bench window (WIRESTAND_BENCH
+	// "<unix>-<unix>", the entry's only): bigger bulks and a load inside it.
+	BenchFrom, BenchUntil time.Time
 }
 
 // WireStandConfigFromEnv reads WIRESTAND_*.
@@ -131,7 +131,7 @@ func WireStandConfigFromEnv(getenv func(string) string) (WireStandConfig, error)
 	if c.Role != "entry" && c.Role != "exit" {
 		return c, fmt.Errorf("WIRESTAND_ROLE: %q is not entry or exit", c.Role)
 	}
-	if _, ok := standBulkMinute[c.Wire]; !ok {
+	if _, ok := standSlot[c.Wire]; !ok {
 		return c, fmt.Errorf("WIRESTAND_WIRE: %q is not %s, %s, %s or %s", c.Wire, wireQUIC, wireSalamander, wireAwg, wireUDP)
 	}
 	port, err := strconv.Atoi(getenv("WIRESTAND_PORT"))
@@ -149,6 +149,15 @@ func WireStandConfigFromEnv(getenv func(string) string) (WireStandConfig, error)
 	}
 	if c.SNI == "" {
 		c.SNI = "www.example.com"
+	}
+	if bench := getenv("WIRESTAND_BENCH"); bench != "" {
+		a, b, _ := strings.Cut(bench, "-")
+		from, err1 := strconv.ParseInt(a, 10, 64)
+		until, err2 := strconv.ParseInt(b, 10, 64)
+		if err1 != nil || err2 != nil || until <= from {
+			return c, fmt.Errorf("WIRESTAND_BENCH: %q is not <unix>-<unix>", bench)
+		}
+		c.BenchFrom, c.BenchUntil = time.Unix(from, 0), time.Unix(until, 0)
 	}
 	return c, nil
 }
@@ -185,7 +194,10 @@ func wireStand() error {
 		return err
 	}
 	standOut.Printf(standLog+"entry of wire %s to %s udp/%d", cfg.Wire, cfg.Exit, cfg.Port)
-	go runStandBulks(ctx, cfg.Wire, w)
+	if !cfg.BenchUntil.IsZero() {
+		standOut.Printf(standLog+"bench %s from %s until %s", cfg.Wire, cfg.BenchFrom.UTC().Format(time.RFC3339), cfg.BenchUntil.UTC().Format(time.RFC3339))
+	}
+	go runStandBulks(ctx, cfg.Wire, w, cfg.BenchFrom, cfg.BenchUntil)
 	runStandCall(ctx, cfg.Wire, w.call, func(s string) { standOut.Print(standLog + s) })
 	return nil
 }
@@ -196,8 +208,8 @@ func wireStand() error {
 type standWire struct {
 	// call opens a datagram conversation with the exit's echo.
 	call func(ctx context.Context) (net.Conn, error)
-	// bulk takes n bytes from the exit and says how many came.
-	bulk func(ctx context.Context, n int) (int, error)
+	// bulk takes bytes from the exit as the spec says.
+	bulk func(ctx context.Context, b standBulkSpec) standBulkResult
 }
 
 func dialWire(ctx context.Context, cfg WireStandConfig) (standWire, error) {
@@ -221,8 +233,8 @@ func dialWire(ctx context.Context, cfg WireStandConfig) (standWire, error) {
 		echo, bulkAt := M.ParseSocksaddrHostPort("echo.stand.arpa", 7), M.ParseSocksaddrHostPort("bulk.stand.arpa", 9)
 		return standWire{
 			call: func(ctx context.Context) (net.Conn, error) { return dc.DialContext(ctx, N.NetworkUDP, echo) },
-			bulk: func(ctx context.Context, n int) (int, error) {
-				return streamBulk(ctx, n, func(ctx context.Context) (net.Conn, error) { return dc.DialContext(ctx, N.NetworkTCP, bulkAt) })
+			bulk: func(ctx context.Context, b standBulkSpec) standBulkResult {
+				return streamBulk(ctx, b, func(ctx context.Context) (net.Conn, error) { return dc.DialContext(ctx, N.NetworkTCP, bulkAt) })
 			},
 		}, nil
 	case wireAwg:
@@ -234,8 +246,8 @@ func dialWire(ctx context.Context, cfg WireStandConfig) (standWire, error) {
 			call: func(ctx context.Context) (net.Conn, error) {
 				return tnet.DialUDPAddrPort(netip.AddrPort{}, netip.AddrPortFrom(awgStandExit, awgEchoPort))
 			},
-			bulk: func(ctx context.Context, n int) (int, error) {
-				return streamBulk(ctx, n, func(ctx context.Context) (net.Conn, error) {
+			bulk: func(ctx context.Context, b standBulkSpec) standBulkResult {
+				return streamBulk(ctx, b, func(ctx context.Context) (net.Conn, error) {
 					return tnet.DialContextTCPAddrPort(ctx, netip.AddrPortFrom(awgStandExit, awgBulkPort))
 				})
 			},
@@ -253,64 +265,179 @@ func dialWire(ctx context.Context, cfg WireStandConfig) (standWire, error) {
 				}
 				return &sealedConn{UDPConn: c, aead: aead}, nil
 			},
-			bulk: func(ctx context.Context, n int) (int, error) { return udpBulk(ctx, aead, exit, n) },
+			bulk: func(ctx context.Context, b standBulkSpec) standBulkResult { return udpBulk(ctx, aead, exit, b) },
 		}, nil
 	}
 	return standWire{}, fmt.Errorf("wire %q", cfg.Wire)
 }
 
-// streamBulk asks a stream for n bytes (u64 big-endian) and reads until it
-// closes or the time is up.
-func streamBulk(ctx context.Context, n int, dial func(context.Context) (net.Conn, error)) (int, error) {
-	ctx, cancel := context.WithTimeout(ctx, standBulkTimeout)
+// ---- bulk: bytes from the exit over the wire ----
+//
+// Every 10 minutes a wire takes 1 MiB (does it arrive whole). In a bench
+// window (WIRESTAND_BENCH) it takes 12 MiB as fast as it goes instead, the
+// size of the hub's chunk round over the TCP pool (48 × 256 KiB), so goodputs
+// compare; and once in the hour it holds 100 Mbit/s for 90 s, in 10 s slices,
+// to find a cut by volume.
+
+// standBulkSpec is one bulk: Bytes to take; Rate, when set, the pace in bits
+// a second (the reader's for a stream, the exit's for the bare wire); For,
+// when set, how long a load lasts.
+type standBulkSpec struct {
+	Kind  string // "1m", "12m", "load"
+	Bytes int
+	Rate  int
+	For   time.Duration
+}
+
+// standBulkResult is what came.
+type standBulkResult struct {
+	Bytes  int
+	End    string // ok, timeout, closed, dial
+	Took   time.Duration
+	Slices []int // bytes per 10 s, a load's
+}
+
+const (
+	standBenchBulk = 12 << 20
+	standLoadRate  = 100_000_000
+	standLoadFor   = 90 * time.Second
+	standSlice     = 10 * time.Second
+	// standBulkMax is the most a stream or the bare wire hands out at once:
+	// a load's 90 s at 100 Mbit/s, with room.
+	standBulkMax = 2 << 30
+)
+
+// standSlot is a wire's place in every ten minutes: its own seconds, so no
+// two wires take bytes at once and a load (90 s) ends before the next wire's
+// slot. :x0 is the hub's own round.
+var standSlot = map[string]time.Duration{
+	wireQUIC:       1 * time.Minute,
+	wireSalamander: 3*time.Minute + 30*time.Second,
+	wireAwg:        6 * time.Minute,
+	wireUDP:        8*time.Minute + 30*time.Second,
+}
+
+// standWireOrder is the order the wires take their load in a bench hour.
+var standWireOrder = []string{wireQUIC, wireSalamander, wireAwg, wireUDP}
+
+// nextBulk is a wire's next bulk after now. Outside a bench window it is
+// 1 MiB at the wire's slot; inside it 12 MiB, except the cycle of ten minutes
+// whose number (from the window's start, from 1) is the wire's place in
+// standWireOrder plus one: then the load.
+func nextBulk(wire string, now, benchFrom, benchUntil time.Time) (time.Time, standBulkSpec) {
+	at := now.Truncate(10 * time.Minute).Add(standSlot[wire])
+	if !at.After(now) {
+		at = at.Add(10 * time.Minute)
+	}
+	if at.Before(benchFrom) || !at.Before(benchUntil) {
+		return at, standBulkSpec{Kind: "1m", Bytes: standBulk, Rate: udpBulkRate}
+	}
+	cycle := int(at.Sub(benchFrom) / (10 * time.Minute))
+	for i, w := range standWireOrder {
+		if w == wire && cycle == i+1 {
+			return at, standBulkSpec{Kind: "load", Bytes: int(int64(standLoadRate) * int64(standLoadFor/time.Second) / 8), Rate: standLoadRate, For: standLoadFor}
+		}
+	}
+	return at, standBulkSpec{Kind: "12m", Bytes: standBenchBulk, Rate: standLoadRate}
+}
+
+// streamBulk asks a stream for b.Bytes (u64 big-endian) and reads until they
+// came, the stream closes or the time is up; a load reads no faster than
+// b.Rate and stops after b.For.
+func streamBulk(ctx context.Context, b standBulkSpec, dial func(context.Context) (net.Conn, error)) standBulkResult {
+	limit := standBulkTimeout
+	if b.For > 0 {
+		limit = b.For + 30*time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
+	start := time.Now()
+	res := standBulkResult{End: "ok"}
 	c, err := dial(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("dial: %w", err)
+		res.End, res.Took = "dial", time.Since(start)
+		return res
 	}
 	defer c.Close()
 	context.AfterFunc(ctx, func() { _ = c.Close() })
 	var req [8]byte
-	binary.BigEndian.PutUint64(req[:], uint64(n))
+	binary.BigEndian.PutUint64(req[:], uint64(b.Bytes))
 	if _, err := c.Write(req[:]); err != nil {
-		return 0, fmt.Errorf("request: %w", err)
+		res.End, res.Took = "dial", time.Since(start)
+		return res
 	}
-	got, err := io.Copy(io.Discard, io.LimitReader(c, int64(n)))
-	if int(got) == n {
-		return n, nil // a stream that ends with its last bytes says EOF with them
+	buf := make([]byte, 64<<10)
+	for res.Bytes < b.Bytes {
+		if b.For > 0 && time.Since(start) >= b.For {
+			break
+		}
+		n, err := c.Read(buf[:min(len(buf), b.Bytes-res.Bytes)])
+		if n > 0 {
+			res.Bytes += n
+			if b.For > 0 {
+				res.Slices = addSlice(res.Slices, time.Since(start), n)
+				// The reader's pace: no faster than Rate.
+				if ahead := time.Duration(float64(res.Bytes*8)/float64(b.Rate)*float64(time.Second)) - time.Since(start); ahead > time.Millisecond {
+					time.Sleep(ahead)
+				}
+			}
+		}
+		if err != nil {
+			switch {
+			case ctx.Err() != nil:
+				res.End = "timeout"
+			case res.Bytes < b.Bytes:
+				res.End = "closed"
+			}
+			break
+		}
 	}
-	if ctx.Err() != nil {
-		return int(got), context.DeadlineExceeded
-	}
-	return int(got), err
+	res.Took = time.Since(start)
+	return res
 }
 
-// runStandBulks takes 1 MiB at the wire's minute of every ten.
-func runStandBulks(ctx context.Context, wire string, w standWire) {
-	minute := standBulkMinute[wire]
-	for {
-		now := time.Now()
-		next := now.Truncate(10 * time.Minute).Add(time.Duration(minute)*time.Minute + 30*time.Second)
-		if !next.After(now) {
-			next = next.Add(10 * time.Minute)
+// addSlice counts n bytes in the 10 s slice at elapsed.
+func addSlice(slices []int, elapsed time.Duration, n int) []int {
+	i := int(elapsed / standSlice)
+	for len(slices) <= i {
+		slices = append(slices, 0)
+	}
+	slices[i] += n
+	return slices
+}
+
+// bulkLine is one bulk. mbps is what came over the time it took; a load
+// adds its slices in Mbit/s.
+func bulkLine(wire string, from time.Time, b standBulkSpec, r standBulkResult) string {
+	want := b.Bytes
+	mbps := 0.0
+	if r.Took > 0 {
+		mbps = float64(r.Bytes*8) / r.Took.Seconds() / 1e6
+	}
+	line := fmt.Sprintf("bulk wire=%s kind=%s from=%d bytes=%d want=%d ms=%d end=%s mbps=%.1f",
+		wire, b.Kind, from.Unix(), r.Bytes, want, r.Took.Milliseconds(), r.End, mbps)
+	if len(r.Slices) > 0 {
+		parts := make([]string, len(r.Slices))
+		for i, n := range r.Slices {
+			parts[i] = strconv.FormatFloat(float64(n*8)/standSlice.Seconds()/1e6, 'f', 1, 64)
 		}
+		line += " slices=" + strings.Join(parts, ",")
+	}
+	return line
+}
+
+// runStandBulks takes the wire's bulks until ctx ends.
+func runStandBulks(ctx context.Context, wire string, w standWire, benchFrom, benchUntil time.Time) {
+	for {
+		at, spec := nextBulk(wire, time.Now(), benchFrom, benchUntil)
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(time.Until(next)):
+		case <-time.After(time.Until(at)):
 		}
 		start := time.Now()
-		got, err := w.bulk(ctx, standBulk)
-		end := "ok"
-		switch {
-		case errors.Is(err, context.DeadlineExceeded):
-			end = "timeout"
-		case err != nil && strings.HasPrefix(err.Error(), "dial"):
-			end = "dial"
-		case got < standBulk:
-			end = "closed"
-		}
-		standOut.Printf(standLog+"bulk wire=%s from=%d bytes=%d want=%d ms=%d end=%s", wire, start.Unix(), got, standBulk, time.Since(start).Milliseconds(), end)
+		res := w.bulk(ctx, spec)
+		standOut.Print(standLog + bulkLine(wire, start, spec, res))
 	}
 }
 
@@ -709,13 +836,15 @@ func serveBulk(l net.Listener) {
 		}
 		go func(c net.Conn) {
 			defer c.Close()
-			_ = c.SetDeadline(time.Now().Add(standBulkTimeout))
+			// A load reads 90 s at its own pace; the deadline only ends
+			// a stream its reader left.
+			_ = c.SetDeadline(time.Now().Add(standLoadFor + 2*standBulkTimeout))
 			var req [8]byte
 			if _, err := io.ReadFull(c, req[:]); err != nil {
 				return
 			}
 			n := binary.BigEndian.Uint64(req[:])
-			if n > 16*standBulk {
+			if n > standBulkMax {
 				return
 			}
 			_, _ = io.CopyN(c, zeroReader{}, int64(n))
@@ -982,52 +1111,65 @@ func serveSealed(c *net.UDPConn, aead sealingAEAD) {
 		case sealedCall:
 			_, _ = c.WriteToUDPAddrPort(seal(aead, sealedCall, body), from)
 		case sealedBulkAsk:
-			if len(body) >= 4 {
-				if want := int(binary.BigEndian.Uint32(body)); want <= 16*standBulk {
-					go sendSealedBulk(c, aead, from, want)
+			if len(body) >= 8 {
+				want, rate := int(binary.BigEndian.Uint32(body)), int(binary.BigEndian.Uint32(body[4:]))*1000
+				if want <= standBulkMax && rate > 0 && rate <= 2*standLoadRate {
+					go sendSealedBulk(c, aead, from, want, rate)
 				}
 			}
 		}
 	}
 }
 
-// sendSealedBulk sends want bytes in pieces, paced at udpBulkRate.
-func sendSealedBulk(c *net.UDPConn, aead sealingAEAD, to netip.AddrPort, want int) {
+// sendSealedBulk sends want bytes in pieces of udpBulkChunk, numbered,
+// paced at rate bits a second.
+func sendSealedBulk(c *net.UDPConn, aead sealingAEAD, to netip.AddrPort, want, rate int) {
 	piece := make([]byte, 4+udpBulkChunk)
-	every := time.Duration(float64(time.Second) * float64(udpBulkChunk*8) / udpBulkRate)
+	every := time.Duration(float64(time.Second) * float64(udpBulkChunk*8) / float64(rate))
 	next := time.Now()
-	for off := 0; off < want; off += udpBulkChunk {
+	for i, off := 0, 0; off < want; i, off = i+1, off+udpBulkChunk {
 		n := min(udpBulkChunk, want-off)
-		binary.BigEndian.PutUint32(piece, uint32(off))
+		binary.BigEndian.PutUint32(piece, uint32(i))
 		_, _ = c.WriteToUDPAddrPort(seal(aead, sealedBulkPart, piece[:4+n]), to)
 		next = next.Add(every)
-		if d := time.Until(next); d > 0 {
+		if d := time.Until(next); d > time.Millisecond {
 			time.Sleep(d)
 		}
 	}
 }
 
-// udpBulk asks the bare wire's exit for n bytes and counts the distinct
-// pieces that arrive within a second after the last one (or the timeout).
-func udpBulk(ctx context.Context, aead sealingAEAD, exit netip.AddrPort, n int) (int, error) {
+// udpBulk asks the bare wire's exit for b.Bytes at b.Rate and counts the
+// distinct pieces that arrive until a second passes without one (or the time
+// is up). The bare wire has no resend: what is missing was lost.
+func udpBulk(ctx context.Context, aead sealingAEAD, exit netip.AddrPort, b standBulkSpec) standBulkResult {
+	start := time.Now()
+	res := standBulkResult{End: "ok"}
 	c, err := net.DialUDP("udp", nil, net.UDPAddrFromAddrPort(exit))
 	if err != nil {
-		return 0, fmt.Errorf("dial: %w", err)
+		res.End = "dial"
+		return res
 	}
 	defer c.Close()
-	ask := make([]byte, 4)
-	binary.BigEndian.PutUint32(ask, uint32(n))
+	_ = c.SetReadBuffer(8 << 20)
+	ask := make([]byte, 8)
+	binary.BigEndian.PutUint32(ask, uint32(b.Bytes))
+	binary.BigEndian.PutUint32(ask[4:], uint32(b.Rate/1000))
 	if _, err := c.Write(seal(aead, sealedBulkAsk, ask)); err != nil {
-		return 0, fmt.Errorf("dial: %w", err)
+		res.End = "dial"
+		return res
 	}
-	deadline := time.Now().Add(standBulkTimeout)
-	seen := map[uint32]bool{}
-	got := 0
+	limit := standBulkTimeout
+	if b.For > 0 {
+		limit = b.For + 30*time.Second
+	}
+	deadline := start.Add(limit)
+	seen := make([]bool, (b.Bytes+udpBulkChunk-1)/udpBulkChunk)
 	buf := make([]byte, 2048)
 	wait := 5 * time.Second // the first piece; then a second of silence ends it
-	for got < n {
+	for res.Bytes < b.Bytes {
 		if ctx.Err() != nil {
-			return got, ctx.Err()
+			res.End = "timeout"
+			break
 		}
 		until := time.Now().Add(wait)
 		if until.After(deadline) {
@@ -1036,21 +1178,27 @@ func udpBulk(ctx context.Context, aead sealingAEAD, exit netip.AddrPort, n int) 
 		_ = c.SetReadDeadline(until)
 		k, err := c.Read(buf)
 		if err != nil {
-			if time.Now().After(deadline) {
-				return got, context.DeadlineExceeded
+			if !time.Now().Before(deadline) {
+				res.End = "timeout"
+			} else {
+				res.End = "closed" // silence: the rest was lost
 			}
-			return got, nil // silence: the rest was lost
+			break
 		}
 		kind, body, ok := unseal(aead, buf[:k])
 		if !ok || kind != sealedBulkPart || len(body) < 4 {
 			continue
 		}
-		off := binary.BigEndian.Uint32(body)
-		if !seen[off] {
-			seen[off] = true
-			got += len(body) - 4
+		i := int(binary.BigEndian.Uint32(body))
+		if i < len(seen) && !seen[i] {
+			seen[i] = true
+			res.Bytes += len(body) - 4
+			if b.For > 0 {
+				res.Slices = addSlice(res.Slices, time.Since(start), len(body)-4)
+			}
 		}
 		wait = time.Second
 	}
-	return got, nil
+	res.Took = time.Since(start)
+	return res
 }

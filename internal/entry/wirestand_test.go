@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 )
 
 // standRecorder answers like a box and keeps what was written to it.
@@ -47,7 +48,7 @@ func TestWireStandBothEnds(t *testing.T) {
 	ex, en := newStandRecorder(), newStandRecorder()
 	addr := netip.MustParseAddr("192.0.2.10")
 	nop := func(string, ...any) {}
-	if err := standWireStand(context.Background(), ex, en, builds, addr, "stand.example", nop, nop); err != nil {
+	if err := standWireStand(context.Background(), ex, en, builds, addr, "stand.example", "1794360000-1794363600", nop, nop); err != nil {
 		t.Fatal(err)
 	}
 	secret := strings.TrimSpace(ex.files[wireStandSecretF])
@@ -65,6 +66,10 @@ func TestWireStandBothEnds(t *testing.T) {
 			!strings.Contains(enEnv, "WIRESTAND_EXIT=192.0.2.10") || strings.Contains(exEnv, "WIRESTAND_EXIT") {
 			t.Fatalf("%s: roles:\nexit %s\nentry %s", w.Wire, exEnv, enEnv)
 		}
+	}
+	if !strings.Contains(en.files[wireStandDir+"/quic.env.new"], "WIRESTAND_BENCH=1794360000-1794363600") ||
+		strings.Contains(ex.files[wireStandDir+"/quic.env.new"], "WIRESTAND_BENCH") {
+		t.Fatal("the bench window is the entry's")
 	}
 	if _, ok := en.files[wireStandSecretF]; ok {
 		t.Fatal("the entry keeps no secret file of its own")
@@ -84,10 +89,22 @@ func TestWireStandBothEnds(t *testing.T) {
 		t.Fatalf("exit script:\n%s", strings.Join(ex.cmds, "\n"))
 	}
 	// An update keeps the secret: the running entry's keys stay.
-	if err := standWireStand(context.Background(), ex, en, builds, addr, "stand.example", nop, nop); err != nil {
+	if err := standWireStand(context.Background(), ex, en, builds, addr, "stand.example", "", nop, nop); err != nil {
 		t.Fatal(err)
 	}
 	if again := strings.TrimSpace(ex.files[wireStandSecretF]); again != secret {
 		t.Fatalf("secret changed on update")
+	}
+}
+
+func TestWireBenchWindow(t *testing.T) {
+	now := time.Date(2026, 11, 11, 1, 26, 0, 0, time.UTC)
+	from, until := wireBenchWindow(now, time.Hour)
+	if !from.Equal(time.Date(2026, 11, 11, 1, 40, 0, 0, time.UTC)) || !until.Equal(from.Add(time.Hour)) {
+		t.Fatalf("%v %v", from, until)
+	}
+	from, _ = wireBenchWindow(time.Date(2026, 11, 11, 1, 24, 0, 0, time.UTC), time.Hour)
+	if !from.Equal(time.Date(2026, 11, 11, 1, 30, 0, 0, time.UTC)) {
+		t.Fatal(from)
 	}
 }

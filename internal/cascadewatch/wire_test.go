@@ -30,11 +30,20 @@ func TestWireStandLines(t *testing.T) {
 	if b := runs[1]; b.Layer != LayerWire || b.Target != "awg" || !*b.OK || b.Data["mode"] != "bulk" || num(b.Data, "ms") != 812 {
 		t.Fatalf("bulk %+v", b)
 	}
-	if b := runs[2]; *b.OK || b.Data["why"] != "1 МиБ: 880000 байт, closed" {
+	if b := runs[2]; *b.OK || b.Data["why"] != "1 МиБ: 880000 из 1048576 байт, closed" {
 		t.Fatalf("short bulk %+v", b)
 	}
 	if c := runs[3]; c.Layer != LayerWire || c.Data["mode"] != "cpu" || num(c.Data, "steal_pct") != 12.5 || !c.TS.Equal(time.Unix(1794355260, 0)) {
 		t.Fatalf("cpu %+v", c)
+	}
+	// A load is whole at 90% of its pace; its slices stay as they came.
+	load, ok := classifyWire(journalLine{Msg: "hikkari-wire-stand: bulk wire=quic kind=load from=1794355260 bytes=1080000000 want=1125000000 ms=90000 end=ok mbps=96.0 slices=99.1,98.0,97.2"})
+	if !ok || !*load.OK || load.Data["mode"] != "bulk_load" || load.Data["slices"] != "99.1,98.0,97.2" {
+		t.Fatalf("load %+v", load)
+	}
+	short, _ := classifyWire(journalLine{Msg: "hikkari-wire-stand: bulk wire=udp kind=load from=1794355260 bytes=500000000 want=1125000000 ms=90000 end=ok mbps=44.4 slices=99.0,20.0"})
+	if *short.OK || short.Data["why"] != "нагрузка 100 Мбит/с: 500000000 из 1125000000 байт, ok" {
+		t.Fatalf("short load %+v", short)
 	}
 	// The summary keeps the wire's bulk and CPU by mode.
 	for i := range runs {

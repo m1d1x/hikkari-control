@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/m1d1x/hikkari-control/internal/applog"
 )
@@ -21,7 +22,7 @@ import (
 // exit. Standing it up or taking it down restarts neither the entry's
 // nekko-trunk-entry nor the exit's relay.
 //
-//	cmd/server entry-box wire-stand <entry-box> <exit-box> [sni]   # stand up or update
+//	cmd/server entry-box wire-stand <entry-box> <exit-box> [sni] [bench=<minutes>]   # stand up or update
 //	cmd/server entry-box wire-stand-off <entry-box> <exit-box>     # take it down
 
 const (
@@ -128,11 +129,14 @@ echo "` + wireStandUnit + ` снят ($role)"
 var wireStandSecretRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // wireStandEnv is one process's environment.
-func wireStandEnv(role, wire string, port int, exitAddr, sni, secret string) string {
+func wireStandEnv(role, wire string, port int, exitAddr, sni, secret, bench string) string {
 	env := fmt.Sprintf("# Written by the nekko hub: trunk second wire stand, synthetic only.\nEDGE_PROTO=wirestand\nWIRESTAND_ROLE=%s\nWIRESTAND_WIRE=%s\nWIRESTAND_PORT=%d\nWIRESTAND_SNI=%s\nWIRESTAND_SECRET=%s\n",
 		role, wire, port, sni, secret)
 	if role == "entry" {
 		env += "WIRESTAND_EXIT=" + exitAddr + "\n"
+		if bench != "" {
+			env += "WIRESTAND_BENCH=" + bench + "\n"
+		}
 	}
 	return env
 }
@@ -148,7 +152,12 @@ func wireStandPairs() []string {
 // StandWireStand stands up or updates the stand on both boxes: the exit's
 // first, so the entry finds it listening. The secret is kept from the exit's
 // last stand, so an update does not change keys under a running entry.
-func (p *Provisioner) StandWireStand(ctx context.Context, entryBox, exitBox, sni string) error {
+//
+// bench, when set, is a bench window of that length on the entry: it starts
+// at the first ten minutes of the clock at least 5 minutes away (the stand is
+// up by then) and gives each wire 12 MiB every ten minutes and one load of
+// 100 Mbit/s for 90 s (edge wirestand.go nextBulk).
+func (p *Provisioner) StandWireStand(ctx context.Context, entryBox, exitBox, sni string, bench time.Duration) error {
 	if sni == "" || strings.ContainsAny(sni, " \n=,/:") {
 		return fmt.Errorf("%w: sni %q", ErrRejected, sni)
 	}
@@ -171,12 +180,28 @@ func (p *Provisioner) StandWireStand(ctx context.Context, entryBox, exitBox, sni
 			applog.Info(ctx, "entry", fmt.Sprintf(format, args...), applog.F("box", box))
 		}
 	}
-	applog.Info(ctx, "entry", "operator wire stand", applog.F("entry", entryBox), applog.F("exit", exitBox), applog.F("sni", sni))
-	return standWireStand(ctx, ex, en, p.builds, exitAddr, sni, logf(exitBox), logf(entryBox))
+	window := ""
+	if bench > 0 {
+		from, until := wireBenchWindow(time.Now(), bench)
+		window = fmt.Sprintf("%d-%d", from.Unix(), until.Unix())
+		logf(entryBox)("wire stand: бенч %s – %s UTC", from.UTC().Format("15:04"), until.UTC().Format("15:04"))
+	}
+	applog.Info(ctx, "entry", "operator wire stand", applog.F("entry", entryBox), applog.F("exit", exitBox), applog.F("sni", sni), applog.F("bench", window))
+	return standWireStand(ctx, ex, en, p.builds, exitAddr, sni, window, logf(exitBox), logf(entryBox))
+}
+
+// wireBenchWindow starts at the first ten minutes of the clock at least
+// 5 minutes after now and lasts d.
+func wireBenchWindow(now time.Time, d time.Duration) (time.Time, time.Time) {
+	from := now.Add(5 * time.Minute).Truncate(10 * time.Minute)
+	if from.Before(now.Add(5 * time.Minute)) {
+		from = from.Add(10 * time.Minute)
+	}
+	return from, from.Add(d)
 }
 
 // standWireStand is StandWireStand's work on the two open boxes.
-func standWireStand(ctx context.Context, ex, en Remote, builds map[string]EdgeBuild, exitAddr netip.Addr, sni string, exitLog, entryLog func(string, ...any)) error {
+func standWireStand(ctx context.Context, ex, en Remote, builds map[string]EdgeBuild, exitAddr netip.Addr, sni, bench string, exitLog, entryLog func(string, ...any)) error {
 	have, _ := ex.Run(ctx, "cat "+wireStandSecretF+" 2>/dev/null || true", nil)
 	secret := strings.TrimSpace(have)
 	if !wireStandSecretRe.MatchString(secret) {
@@ -204,7 +229,7 @@ func standWireStand(ctx context.Context, ex, en Remote, builds map[string]EdgeBu
 			}
 		}
 		for _, w := range WireStandPorts {
-			env := wireStandEnv(side.role, w.Wire, w.Port, exitAddr.String(), sni, secret)
+			env := wireStandEnv(side.role, w.Wire, w.Port, exitAddr.String(), sni, secret, bench)
 			if _, err := side.r.Run(ctx, "umask 077; cat > "+wireStandDir+"/"+w.Wire+".env.new", strings.NewReader(env)); err != nil {
 				return fmt.Errorf("%s: env %s: %w", side.role, w.Wire, err)
 			}
