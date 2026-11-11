@@ -41,6 +41,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/m1d1x/hikkari-control/internal/applog"
 	"github.com/m1d1x/hikkari-control/internal/db"
 	"github.com/m1d1x/hikkari-control/internal/entry"
@@ -96,6 +98,8 @@ type Links interface {
 // Queue queues the protocol layer's tasks (stand.Scheduler).
 type Queue interface {
 	QueueCascade(ctx context.Context, entryBox string, round time.Time, slots []string) (int, error)
+	// QueueLoad queues a synthetic users task (stand/load.go).
+	QueueLoad(ctx context.Context, slot, entryBox string, spec stand.LoadSpec) (uuid.UUID, error)
 }
 
 // Watch is the watcher.

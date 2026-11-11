@@ -16,6 +16,8 @@ type fakeCascade struct {
 	round    time.Time
 	res      Result
 	finished int
+	load     LoadSpec
+	loads    int
 }
 
 func (f *fakeCascade) CascadeLinks(_ context.Context, entryBox string) ([]string, error) {
@@ -23,6 +25,12 @@ func (f *fakeCascade) CascadeLinks(_ context.Context, entryBox string) ([]string
 		return nil, errors.New("unknown entry")
 	}
 	return f.links, nil
+}
+
+func (f *fakeCascade) LoadFinished(_ context.Context, slot, entryBox string, spec LoadSpec, queued time.Time, res Result) error {
+	f.slot, f.entry, f.round, f.res, f.load = slot, entryBox, queued, res, spec
+	f.loads++
+	return nil
 }
 
 func (f *fakeCascade) CascadeFinished(_ context.Context, slot, entryBox string, round time.Time, res Result) error {

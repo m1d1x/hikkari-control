@@ -222,7 +222,7 @@ func (s *Scheduler) ClaimWithCapacity(ctx context.Context, slot string, capable 
 			return nil, fmt.Errorf("claim stand task: %w", err)
 		}
 		st, err := s.settings(ctx)
-		if err == nil && !st.Enabled && t.Knob != capacity.TaskKind && t.Knob != CascadeTaskKind {
+		if err == nil && !st.Enabled && t.Knob != capacity.TaskKind && t.Knob != CascadeTaskKind && t.Knob != LoadTaskKind {
 			err = errors.New("стенд выключен: stand_settings.enabled = false")
 		}
 		if err == nil && t.Knob == capacity.TaskKind {
@@ -299,6 +299,9 @@ func (s *Scheduler) Finish(ctx context.Context, slot string, id uuid.UUID, res R
 	}
 	if len(res.Capacity) > 0 {
 		return 0, fmt.Errorf("%w: capacity in diagnostic task", ErrNotAResult)
+	}
+	if knob == LoadTaskKind {
+		return 0, s.finishLoad(ctx, slot, id, res)
 	}
 	if knob != CascadeTaskKind && len(res.Voice) > 0 {
 		return 0, fmt.Errorf("%w: calls in a run of %q", ErrNotAResult, knob)
@@ -472,7 +475,7 @@ func (s *Scheduler) FleetLinks(ctx context.Context, token string) ([]string, err
 			return fleet.CapacityLinks(ctx, slot)
 		}
 	}
-	if knob == CascadeTaskKind {
+	if knob == CascadeTaskKind || knob == LoadTaskKind {
 		if s.cascade == nil {
 			return nil, errors.New("stand: cascade task with no cascade watch")
 		}

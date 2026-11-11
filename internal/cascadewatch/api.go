@@ -2,18 +2,89 @@ package cascadewatch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/m1d1x/hikkari-control/internal/stand"
 )
 
 // RegisterOpsRoutes mounts GET /api/v1/ops/trunk: the cascade dataset over a
 // window, with a summary per entry (scripts/ops trunk, MCP trunk).
 func RegisterOpsRoutes(mux *http.ServeMux, w *Watch, gate func(action string, h http.HandlerFunc) http.HandlerFunc) {
 	mux.HandleFunc("GET /api/v1/ops/trunk", gate("", w.opsHandler))
+	mux.HandleFunc("POST /api/v1/ops/cascade-load", gate("ops.cascade.load", w.loadHandler))
+}
+
+// loadRequest is a synthetic users run asked for by the operator.
+type loadRequest struct {
+	Slot    string `json:"slot"`
+	Entry   string `json:"entry"`
+	Users   int    `json:"users"`
+	Minutes int    `json:"minutes"`
+	GamePPS int    `json:"game_pps"`
+	Echo    string `json:"echo"`
+}
+
+// loadHandler queues a synthetic users task (stand/load.go) on a point in
+// Russia that is not the entry itself: a point on the entry's box would load
+// the very CPU the run is there to hear.
+func (w *Watch) loadHandler(rw http.ResponseWriter, r *http.Request) {
+	var req loadRequest
+	if err := json.NewDecoder(http.MaxBytesReader(rw, r.Body, 4096)).Decode(&req); err != nil {
+		writeJSON(rw, http.StatusBadRequest, map[string]string{"error": "тело запроса: " + err.Error()})
+		return
+	}
+	echo, err := netip.ParseAddrPort(req.Echo)
+	if err != nil {
+		writeJSON(rw, http.StatusBadRequest, map[string]string{"error": "echo: нужен адрес ip:port"})
+		return
+	}
+	spec := stand.LoadSpec{Users: req.Users, Minutes: req.Minutes, GamePPS: req.GamePPS, Echo: echo}
+	if err := spec.Validate(); err != nil {
+		writeJSON(rw, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	ctx := r.Context()
+	p, err := w.pair(ctx, req.Entry)
+	if err != nil {
+		writeJSON(rw, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	ru, err := w.ruSlots(ctx)
+	if err != nil {
+		writeJSON(rw, http.StatusInternalServerError, map[string]string{"error": "internal"})
+		return
+	}
+	if !ru[req.Slot] {
+		writeJSON(rw, http.StatusBadRequest, map[string]string{"error": "точка " + req.Slot + " не активна или не в РФ"})
+		return
+	}
+	box, err := w.fleet.VantageBox(ctx, req.Slot)
+	if err != nil {
+		writeJSON(rw, http.StatusInternalServerError, map[string]string{"error": "internal"})
+		return
+	}
+	if box == p.Entry {
+		writeJSON(rw, http.StatusBadRequest, map[string]string{"error": "точка " + req.Slot + " стоит на самом входе: нагрузка грузила бы тот процессор, который меряем"})
+		return
+	}
+	id, err := w.queue.QueueLoad(ctx, req.Slot, p.Entry, spec)
+	if errors.Is(err, stand.ErrLoadBusy) {
+		writeJSON(rw, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	if err != nil {
+		writeJSON(rw, http.StatusInternalServerError, map[string]string{"error": "internal"})
+		return
+	}
+	writeJSON(rw, http.StatusAccepted, map[string]any{"id": id, "slot": req.Slot, "entry": p.Entry, "values": spec.Values(),
+		"guide": "Точка возьмёт задачу в течение минуты; строки придут в слой load инструмента trunk через minutes плюс около минуты. Сравнивай с слоем call тех же минут."})
 }
 
 func (w *Watch) opsHandler(rw http.ResponseWriter, r *http.Request) {

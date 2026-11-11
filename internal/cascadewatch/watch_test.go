@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/m1d1x/hikkari-control/internal/db"
@@ -209,8 +210,11 @@ func (f fakeFleet) RelayStatuses(context.Context, string) (map[string]string, er
 	return map[string]string{"unl1-2": "testing"}, nil
 }
 func (f fakeFleet) VantageBox(_ context.Context, slot string) (string, error) {
-	if slot == "lv-main" {
+	switch slot {
+	case "lv-main":
 		return "lvbox", nil
+	case "ru-onentry":
+		return f.pair.Entry, nil
 	}
 	return "", nil
 }
@@ -278,7 +282,24 @@ func (f *fakeLinks) CascadeProbeLinks(_ context.Context, account, entryBox, exit
 	return []string{account + " " + entryBox + " " + exitBox}, nil
 }
 
-type fakeQueue struct{ slots []string }
+type fakeQueue struct {
+	slots []string
+	loads []fakeLoad
+	busy  bool
+}
+
+func (f *fakeQueue) QueueLoad(_ context.Context, slot, entryBox string, spec stand.LoadSpec) (uuid.UUID, error) {
+	if f.busy {
+		return uuid.Nil, stand.ErrLoadBusy
+	}
+	f.loads = append(f.loads, fakeLoad{slot, entryBox, spec})
+	return uuid.New(), nil
+}
+
+type fakeLoad struct {
+	slot, entry string
+	spec        stand.LoadSpec
+}
 
 func (f *fakeQueue) QueueCascade(_ context.Context, _ string, _ time.Time, slots []string) (int, error) {
 	f.slots = slots

@@ -41,6 +41,9 @@ type CascadeSource interface {
 	// CascadeFinished takes a cascade task's result: the point it ran on,
 	// the entry and round it was queued for.
 	CascadeFinished(ctx context.Context, slot, entryBox string, round time.Time, res Result) error
+	// LoadFinished takes a synthetic users task's result (load.go): the
+	// point it ran on, the entry, what it ran and when it was queued.
+	LoadFinished(ctx context.Context, slot, entryBox string, spec LoadSpec, queued time.Time, res Result) error
 }
 
 // SetCascade gives the scheduler the watch.
@@ -91,7 +94,10 @@ type CascadeVoice struct {
 	GapMax  float64 `json:"gap_max_ms"`
 	RTTp50  float64 `json:"rtt_p50_ms"`
 	Jitter  float64 `json:"jitter_ms"`
-	Error   string  `json:"error,omitempty"`
+	// Gaps60PerMinute are the pauses over 60 ms of each minute of a
+	// synthetic users stream (load.go), none for a cascade call.
+	Gaps60PerMinute []int  `json:"gaps60_per_min,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 const (
@@ -149,7 +155,7 @@ func joinErrs(errs []string) string {
 // STUN server and makes a 30 s call through it.
 func (r Runner) cascadeVoice(ctx context.Context, p Profile) CascadeVoice {
 	v := CascadeVoice{Profile: p.Label}
-	door, stop, err := startVoiceDoor(ctx, r.Kit.Core, p.Config)
+	door, stop, err := startVoiceDoor(ctx, r.Kit.Core, p.Config, cascadeVoiceTarget)
 	if err != nil {
 		v.Error = err.Error()
 		return v
@@ -160,8 +166,8 @@ func (r Runner) cascadeVoice(ctx context.Context, p Profile) CascadeVoice {
 }
 
 // startVoiceDoor is the core with the profile's outbound behind a direct UDP
-// inbound forwarded to the STUN server; a mixed inbound says when it is up.
-func startVoiceDoor(ctx context.Context, core string, outbound map[string]any) (int, func(), error) {
+// inbound forwarded to target (host:port); a mixed inbound says when it is up.
+func startVoiceDoor(ctx context.Context, core string, outbound map[string]any, target string) (int, func(), error) {
 	ob, err := clone(outbound)
 	if err != nil {
 		return 0, nil, err
@@ -170,7 +176,7 @@ func startVoiceDoor(ctx context.Context, core string, outbound map[string]any) (
 		delete(ob, k)
 	}
 	ob["tag"] = "probe"
-	host, port, err := net.SplitHostPort(cascadeVoiceTarget)
+	host, port, err := net.SplitHostPort(target)
 	if err != nil {
 		return 0, nil, err
 	}

@@ -418,6 +418,20 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 			return "", err
 		}
 		return prettyJSON(data), nil
+	case "cascade-load":
+		body := map[string]any{"slot": args["slot"], "entry": args["entry"], "echo": args["echo"]}
+		for _, k := range []string{"users", "minutes", "game_pps"} {
+			n, err := strconv.Atoi(args[k])
+			if err != nil {
+				return "", fmt.Errorf("%s: нужно число", k)
+			}
+			body[k] = n
+		}
+		data, err := c.request(http.MethodPost, "/api/v1/ops/cascade-load", nil, body)
+		if err != nil {
+			return "", err
+		}
+		return prettyJSON(data), nil
 	case "runs":
 		q := url.Values{}
 		for _, k := range []string{"profile", "source", "last", "limit"} {

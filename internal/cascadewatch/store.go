@@ -22,6 +22,7 @@ const (
 	LayerProtocol = "protocol" // the client core on the exit's Hikkari relay, straight and through the entry
 	LayerVerdict  = "verdict"  // which layer of a round went red first
 	LayerCall     = "call"     // the trunk's own call, a minute of it (migration 056)
+	LayerLoad     = "load"     // a synthetic user's stream through the entry (stand/load.go, migration 062)
 )
 
 // Order is the layers of a round from the bottom up: the first red one is
