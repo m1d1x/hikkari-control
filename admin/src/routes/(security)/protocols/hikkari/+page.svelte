@@ -170,6 +170,7 @@
 			<h1>hikkari изнутри</h1>
 			<div class="chips">
 				<a class="chip" href="/protocols">у тестеров</a>
+				<a class="chip" href="/protocols/trunk">провода магистрали</a>
 				{#each WINDOWS as w (w)}
 					<button class="chip" class:on={window === w} onclick={() => pick(w)}>{w}</button>
 				{/each}

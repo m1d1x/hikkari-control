@@ -120,3 +120,54 @@ func wireFields(s string) map[string]any {
 	}
 	return out
 }
+
+// The entry's selector (hikkari-protocol trunk/selector.go, Entry.Steer) says
+// when a class moves to another wire, "trunk: route: <part>; <part>", one
+// part per class, and when the set of red wires changes, "trunk: red wires
+// udp,quic" or "none". Each part is an event: kind route, the class, the wire
+// it left (none on the first choice) and the one it went to, and why: first
+// (nothing chosen before), red (the old wire went red) or better (the new one
+// was better by the margin for the hold).
+var (
+	reRoute       = regexp.MustCompile(`trunk: route: (.+)$`)
+	reRouteFirst  = regexp.MustCompile(`^(voice|bulk): on ([a-z0-9]+)$`)
+	reRouteRed    = regexp.MustCompile(`^(voice|bulk): ([a-z0-9]+) is red, to ([a-z0-9]+)$`)
+	reRouteBetter = regexp.MustCompile(`^(voice|bulk): ([a-z0-9]+) better than ([a-z0-9]+) for (\S+)$`)
+	reRedWires    = regexp.MustCompile(`trunk: red wires ([a-z0-9,]+)$`)
+)
+
+// classifyRoute turns a line of the selector into its events; false for any
+// other line.
+func classifyRoute(l journalLine) ([]Run, bool) {
+	if m := reRedWires.FindStringSubmatch(l.Msg); m != nil {
+		wires := []string{}
+		if m[1] != "none" {
+			wires = strings.Split(m[1], ",")
+		}
+		return []Run{{TS: l.TS, Layer: LayerEvent, Data: map[string]any{"kind": "wires_red", "wires": wires}}}, true
+	}
+	m := reRoute.FindStringSubmatch(l.Msg)
+	if m == nil {
+		return nil, false
+	}
+	var out []Run
+	for _, part := range strings.Split(m[1], "; ") {
+		data := map[string]any{"kind": "route"}
+		switch {
+		case reRouteFirst.MatchString(part):
+			p := reRouteFirst.FindStringSubmatch(part)
+			data["class"], data["from"], data["to"], data["why"] = p[1], "none", p[2], "first"
+		case reRouteRed.MatchString(part):
+			p := reRouteRed.FindStringSubmatch(part)
+			data["class"], data["from"], data["to"], data["why"] = p[1], p[2], p[3], "red"
+		case reRouteBetter.MatchString(part):
+			p := reRouteBetter.FindStringSubmatch(part)
+			data["class"], data["from"], data["to"], data["why"], data["hold"] = p[1], p[3], p[2], "better", p[4]
+		default:
+			// A part this hub does not know yet: kept as said.
+			data["detail"] = clip(part)
+		}
+		out = append(out, Run{TS: l.TS, Layer: LayerEvent, Data: data})
+	}
+	return out, true
+}

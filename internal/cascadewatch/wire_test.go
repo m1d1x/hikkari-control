@@ -1,6 +1,7 @@
 package cascadewatch
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -69,5 +70,49 @@ func TestEntryWireLines(t *testing.T) {
 	}
 	if _, ok := classifyWire(journalLine{Msg: "nekko-trunk-entry: call copies=1 from=1794355200 sent=3000 got=3000"}); ok {
 		t.Fatal("the trunk's own call taken for a wire's")
+	}
+}
+
+// TestSelectorRouteLines: each part of the selector's route line is an event
+// of its own, with the class, where it left and where it went; the red set is
+// one event with the wires' names.
+func TestSelectorRouteLines(t *testing.T) {
+	lines := parseJournal(`1794355262.100000 nekko-spb nekko-trunk-entry[90]: nekko-trunk-entry: trunk: route: voice: on udp; bulk: on quic
+1794355263.100000 nekko-spb nekko-trunk-entry[90]: nekko-trunk-entry: trunk: red wires udp,salamander
+1794355263.200000 nekko-spb nekko-trunk-entry[90]: nekko-trunk-entry: trunk: route: voice: udp is red, to pool
+1794355500.000000 nekko-spb nekko-trunk-entry[90]: nekko-trunk-entry: trunk: route: bulk: salamander better than quic for 3m0s
+1794355501.000000 nekko-spb nekko-trunk-entry[90]: nekko-trunk-entry: trunk: red wires none
+1794355502.000000 nekko-spb nekko-trunk-entry[90]: nekko-trunk-entry: trunk: member 3: down after 1m0s: EOF`)
+	var runs []Run
+	for _, l := range lines {
+		if rs, ok := classifyRoute(l); ok {
+			runs = append(runs, rs...)
+		}
+	}
+	want := []map[string]any{
+		{"kind": "route", "class": "voice", "from": "none", "to": "udp", "why": "first"},
+		{"kind": "route", "class": "bulk", "from": "none", "to": "quic", "why": "first"},
+		{"kind": "wires_red", "wires": "udp,salamander"},
+		{"kind": "route", "class": "voice", "from": "udp", "to": "pool", "why": "red"},
+		{"kind": "route", "class": "bulk", "from": "quic", "to": "salamander", "why": "better", "hold": "3m0s"},
+		{"kind": "wires_red", "wires": ""},
+	}
+	if len(runs) != len(want) {
+		t.Fatalf("%d events: %+v", len(runs), runs)
+	}
+	for i, w := range want {
+		r := runs[i]
+		if r.Layer != LayerEvent || r.TS.IsZero() {
+			t.Fatalf("event %d %+v", i, r)
+		}
+		for k, v := range w {
+			got := r.Data[k]
+			if ws, ok := got.([]string); ok {
+				got = strings.Join(ws, ",")
+			}
+			if got != v {
+				t.Fatalf("event %d: %s = %v, want %v (%+v)", i, k, got, v, r.Data)
+			}
+		}
 	}
 }

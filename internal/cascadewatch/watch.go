@@ -220,6 +220,13 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 			runs = append(runs, run)
 			continue
 		}
+		if moved, ok := classifyRoute(l); ok {
+			for _, run := range moved {
+				run.Entry, run.Exit, run.Vantage = p.Entry, p.Exit, "entry"
+				runs = append(runs, run)
+			}
+			continue
+		}
 		layer, data, ok := classify(l)
 		if !ok {
 			continue

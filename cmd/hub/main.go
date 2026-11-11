@@ -422,6 +422,11 @@ func run() error {
 	}
 	standRuns.SetCascade(cascadeWatch)
 	cascadewatch.RegisterOpsRoutes(adminMux, cascadeWatch, opsGate)
+	// Stage 4: every wire's call and downloads as history, the selector's
+	// moves as marks (admin /protocols/trunk).
+	cascadewatch.RegisterAdminRoutes(adminMux, cascadeWatch, func(h http.HandlerFunc) http.HandlerFunc {
+		return admin.RequireAdmin(adminKeys.Public, pool, h)
+	})
 	go cascadeWatch.Run(ctx)
 	// The knob controller: moves a node off a value Russia cuts onto a
 	// candidate the stand passes, and journals why (internal/stand controller.go).
