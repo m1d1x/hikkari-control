@@ -164,9 +164,10 @@ func wireStandEnv(role, wire string, port int, exitAddr, sni, secret, bench, loa
 
 // WireLoad is the synthetic users' bench of the stand (edge
 // wirestand_load.go): each step of Steps on each of Wires, interleaved, in
-// slots of five minutes from the clock's :x1 (four minutes of load, the
-// fifth, :x5 or :x0, idle: the hub's own round). Steps are u<N> (each frame
-// its own write), g<N> (glued) or n<N> (no wire).
+// slots of five minutes from the clock's :x2 (four minutes of load, the
+// fifth, :x6 or :x1, idle: the hub's round starts at :x1:15, cascadewatch
+// RoundAt). Steps are u<N> (each frame its own write), g<N> (glued) or
+// n<N> (no wire).
 type WireLoad struct {
 	Wires []string
 	Steps []string
@@ -210,10 +211,10 @@ func (l WireLoad) Check() error {
 
 const wireLoadSlot = 5 * time.Minute
 
-// plans are each wire's WIRESTAND_LOAD: the first :x1 at least 5 minutes
+// plans are each wire's WIRESTAND_LOAD: the first :x2 at least 5 minutes
 // after now, then slot k·len(wires)+j to step k on wire j.
 func (l WireLoad) plans(now time.Time) (map[string]string, time.Time, time.Time) {
-	from := now.Add(5 * time.Minute).Truncate(10 * time.Minute).Add(time.Minute)
+	from := now.Add(5 * time.Minute).Truncate(10 * time.Minute).Add(2 * time.Minute)
 	for from.Before(now.Add(5 * time.Minute)) {
 		from = from.Add(wireLoadSlot)
 	}
