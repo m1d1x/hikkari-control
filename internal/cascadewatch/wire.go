@@ -127,13 +127,17 @@ func wireFields(s string) map[string]any {
 // udp,quic" or "none". Each part is an event: kind route, the class, the wire
 // it left (none on the first choice) and the one it went to, and why: first
 // (nothing chosen before), red (the old wire went red) or better (the new one
-// was better by the margin for the hold).
+// was better by the margin for the hold). Since 12.11 the selector holds a
+// red wire within 10 s of the entry's own pause, or while every wire is red,
+// and says when the set of held ones changes: "trunk: held red wires udp:
+// <reason>" or "none: ...", an event wires_held.
 var (
 	reRoute       = regexp.MustCompile(`trunk: route: (.+)$`)
 	reRouteFirst  = regexp.MustCompile(`^(voice|bulk): on ([a-z0-9]+)$`)
 	reRouteRed    = regexp.MustCompile(`^(voice|bulk): ([a-z0-9]+) is red, to ([a-z0-9]+)$`)
 	reRouteBetter = regexp.MustCompile(`^(voice|bulk): ([a-z0-9]+) better than ([a-z0-9]+) for (\S+)$`)
 	reRedWires    = regexp.MustCompile(`trunk: red wires ([a-z0-9,]+)$`)
+	reHeldWires   = regexp.MustCompile(`trunk: held red wires ([a-z0-9,]+):`)
 )
 
 // classifyRoute turns a line of the selector into its events; false for any
@@ -145,6 +149,13 @@ func classifyRoute(l journalLine) ([]Run, bool) {
 			wires = strings.Split(m[1], ",")
 		}
 		return []Run{{TS: l.TS, Layer: LayerEvent, Data: map[string]any{"kind": "wires_red", "wires": wires}}}, true
+	}
+	if m := reHeldWires.FindStringSubmatch(l.Msg); m != nil {
+		wires := []string{}
+		if m[1] != "none" {
+			wires = strings.Split(m[1], ",")
+		}
+		return []Run{{TS: l.TS, Layer: LayerEvent, Data: map[string]any{"kind": "wires_held", "wires": wires}}}, true
 	}
 	m := reRoute.FindStringSubmatch(l.Msg)
 	if m == nil {

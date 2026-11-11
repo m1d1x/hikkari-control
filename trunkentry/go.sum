@@ -8,8 +8,8 @@ github.com/klauspost/compress v1.19.1 h1:VsB4HPswih7mmZ8WleSFQ75c/Ui1M4trX5oAsJn
 github.com/klauspost/compress v1.19.1/go.mod h1:cwPg85FWrGar70rWktvGQj8/hthj3wpl0PGDogxkrSQ=
 github.com/m1d1x/hikkari-protocol v0.0.0-20261111064314-55387882bce4 h1:UFTrE8Pve4B33pqb9/fgG2oKzlNiawy79fVBsawU34w=
 github.com/m1d1x/hikkari-protocol v0.0.0-20261111064314-55387882bce4/go.mod h1:n6g14ffrmydnUSkndaeZX7+B7y9NjK/EKIkmg7DuYh4=
-github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261111064314-55387882bce4 h1:PfxrzILfRM54IwQU0nwUfsraFagODgEwREy7/rkyx7s=
-github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261111064314-55387882bce4/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
+github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261111215219-2221e46a4aaf h1:vpN0BBQlSP8EFMZmRfFaSal6iwal+pVYrTVs3kroGNQ=
+github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261111215219-2221e46a4aaf/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
 github.com/m1d1x/hikkari-protocol/trunk/chromium v0.0.0-20261109035446-c773c6a37f81 h1:7A0+HzMBbJ7oT4gBhqyKODRh7w/A4/9lORYQbFPD1IE=
 github.com/m1d1x/hikkari-protocol/trunk/chromium v0.0.0-20261109035446-c773c6a37f81/go.mod h1:fbmJR/Vv5CCOk0KFUmW03yJnU/tnHTcWPbAn8Eps6I8=
 github.com/m1d1x/hikkari-protocol/trunk/quicwire v0.0.0-20261111070922-a2b0763eb54c h1:wbEDDbfwyAkjm/muALIcU60tUQGaiKxP16K8cS05zNA=

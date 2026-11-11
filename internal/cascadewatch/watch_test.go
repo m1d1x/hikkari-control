@@ -347,6 +347,7 @@ func newTestWatch(t *testing.T, pool *pgxpool.Pool, boxes *fakeBoxes, now *time.
 	q, l, e := &fakeQueue{}, &fakeLinks{}, &fakeErrs{}
 	w := New(pool, fakeFleet{pair}, boxes, l, q, e)
 	w.now = func() time.Time { return *now }
+	w.sleep = func(context.Context, time.Duration) bool { return true }
 	w.started = now.Add(-time.Hour)
 	return w, q, l, e
 }

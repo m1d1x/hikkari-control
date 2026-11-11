@@ -79,9 +79,11 @@ func TestEntryWireLines(t *testing.T) {
 func TestSelectorRouteLines(t *testing.T) {
 	lines := parseJournal(`1794355262.100000 nekko-spb nekko-trunk-entry[90]: nekko-trunk-entry: trunk: route: voice: on udp; bulk: on quic
 1794355263.100000 nekko-spb nekko-trunk-entry[90]: nekko-trunk-entry: trunk: red wires udp,salamander
+1794355263.150000 nekko-spb nekko-trunk-entry[90]: nekko-trunk-entry: trunk: held red wires udp: this box paused or every wire is red
 1794355263.200000 nekko-spb nekko-trunk-entry[90]: nekko-trunk-entry: trunk: route: voice: udp is red, to pool
 1794355500.000000 nekko-spb nekko-trunk-entry[90]: nekko-trunk-entry: trunk: route: bulk: salamander better than quic for 3m0s
 1794355501.000000 nekko-spb nekko-trunk-entry[90]: nekko-trunk-entry: trunk: red wires none
+1794355501.100000 nekko-spb nekko-trunk-entry[90]: nekko-trunk-entry: trunk: held red wires none: this box paused or every wire is red
 1794355502.000000 nekko-spb nekko-trunk-entry[90]: nekko-trunk-entry: trunk: member 3: down after 1m0s: EOF`)
 	var runs []Run
 	for _, l := range lines {
@@ -93,9 +95,11 @@ func TestSelectorRouteLines(t *testing.T) {
 		{"kind": "route", "class": "voice", "from": "none", "to": "udp", "why": "first"},
 		{"kind": "route", "class": "bulk", "from": "none", "to": "quic", "why": "first"},
 		{"kind": "wires_red", "wires": "udp,salamander"},
+		{"kind": "wires_held", "wires": "udp"},
 		{"kind": "route", "class": "voice", "from": "udp", "to": "pool", "why": "red"},
 		{"kind": "route", "class": "bulk", "from": "quic", "to": "salamander", "why": "better", "hold": "3m0s"},
 		{"kind": "wires_red", "wires": ""},
+		{"kind": "wires_held", "wires": ""},
 	}
 	if len(runs) != len(want) {
 		t.Fatalf("%d events: %+v", len(runs), runs)

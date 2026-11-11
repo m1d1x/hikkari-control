@@ -128,3 +128,31 @@ func TestWireLines(t *testing.T) {
 		t.Fatalf("bulk line %q", bulk)
 	}
 }
+
+// TestDownloadsAreOffTheSteal: no wire's 1 MiB is near :x0 or :x5 (the
+// neighbours' steal, opyt 1.1) nor in the hub's round (cascadewatch
+// RoundAt 1:15 to about 1:55, the points' protocol tasks about 3:00–4:10),
+// and no two wires take bytes in the same 15 s.
+func TestDownloadsAreOffTheSteal(t *testing.T) {
+	busy := [][2]time.Duration{
+		{9*time.Minute + 30*time.Second, 10*time.Minute + 45*time.Second},
+		{-30 * time.Second, 45 * time.Second},
+		{4*time.Minute + 30*time.Second, 5*time.Minute + 45*time.Second},
+		{75 * time.Second, 2 * time.Minute},
+		{3 * time.Minute, 4*time.Minute + 15*time.Second},
+	}
+	var ats []time.Duration
+	for wire, at := range downloadAt {
+		for _, b := range busy {
+			if at >= b[0] && at <= b[1] {
+				t.Fatalf("%s's 1 MiB at %s is in %s–%s", wire, at, b[0], b[1])
+			}
+		}
+		for _, o := range ats {
+			if d := at - o; d > -15*time.Second && d < 15*time.Second {
+				t.Fatalf("two wires' 1 MiB %s apart", d)
+			}
+		}
+		ats = append(ats, at)
+	}
+}

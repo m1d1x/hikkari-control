@@ -8,7 +8,8 @@
 // Every minute it reads the entry's journal over SSH (the hub's own key, as
 // every command on a box): the minute line of the pool's counters and the
 // members' round trips, and a row per member that died, per epoch of the
-// exit, per start. Every round (10 minutes), with one round time for all:
+// exit, per start. Every round (10 minutes, started at RoundAt in them), with
+// one round time for all:
 //
 //   - vps: the entry and the exit box, read by nekko-cascade-probe (CPU steal,
 //     load, memory, interface drops, conntrack, sockets);
@@ -62,7 +63,17 @@ const Account = "cascade-watch"
 const ProvokePort = 2053
 
 const (
-	Every        = 10 * time.Minute
+	Every = 10 * time.Minute
+	// RoundAt is where in its ten minutes a round starts; the round keeps
+	// the time of its ten minutes (:x0) as its name. Not :x0 nor :x5: there
+	// the entry's neighbours steal its CPU (opyt 1.1), and a round on top of
+	// that (the vps and path probes, 4 × 12 MiB of chunks from and through
+	// the entry) starved the entry into trains of pauses that buried members
+	// of its wires (11.11, hikkari-client plans/research/2026-11-12-selector-own-pause.md).
+	// At 1:15 its chunks end by about 1:55 and the points' protocol tasks,
+	// queued after them, run at about 3:00–4:10. The entry's own 1 MiB per
+	// wire is at 6:45–7:45 (trunkentry downloadAt).
+	RoundAt      = 75 * time.Second
 	verdictAfter = 15 * time.Minute
 	silentAfter  = 3 * time.Minute
 	alertEvery   = 30 * time.Minute
@@ -113,6 +124,8 @@ type Watch struct {
 	errs  telemetry.Sink
 	legs  *testerlegs.Recorder
 	now   func() time.Time
+	// sleep waits d or until ctx ends (false): the wait for RoundAt.
+	sleep func(ctx context.Context, d time.Duration) bool
 
 	mu      sync.Mutex
 	cursor  map[string]time.Time // entry box → last journal line read
@@ -131,7 +144,19 @@ func New(pool db.Pool, fleet Fleet, boxes Boxes, links Links, queue Queue, errs 
 	return &Watch{
 		pool: pool, store: NewStore(pool), fleet: fleet, boxes: boxes, links: links, queue: queue, errs: errs,
 		now:    time.Now,
+		sleep:  sleepCtx,
 		cursor: map[string]time.Time{}, busy: map[string]bool{}, last: map[string]time.Time{}, alerted: map[string]time.Time{},
+	}
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
 	}
 }
 
@@ -365,12 +390,23 @@ func (w *Watch) startRound(ctx context.Context, p entry.TrunkPair) {
 	go func() {
 		defer w.rounds.Done()
 		defer func() { w.mu.Lock(); w.busy[p.Entry] = false; w.mu.Unlock() }()
+		if !w.waitRoundAt(ctx, round) {
+			return
+		}
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 8*time.Minute)
 		defer cancel()
 		if err := w.Round(rctx, p, round); err != nil {
 			applog.Error(ctx, "cascade", "round", applog.F("entry", p.Entry), applog.F("err", err.Error()))
 		}
 	}()
+}
+
+// waitRoundAt waits until round's RoundAt; false when ctx ended first.
+func (w *Watch) waitRoundAt(ctx context.Context, round time.Time) bool {
+	if d := round.Add(RoundAt).Sub(w.now()); d > 0 {
+		return w.sleep(ctx, d)
+	}
+	return true
 }
 
 // box is an open box with the probe on it.

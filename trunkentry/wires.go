@@ -61,13 +61,17 @@ type wiresSpec struct {
 // numbers and the logs say the same wire across processes.
 var wireIDs = map[string]trunk.WireID{"quic": 1, "salamander": 2, "udp": 3}
 
-// downloadAt is each wire's second in every ten minutes for its 1 MiB: none
-// at :x0 (the hub's rounds) nor at the stand's (edge/wirestand.go standSlot,
-// 1:00, 3:30, 6:00, 8:30) while it runs beside.
+// downloadAt is each wire's second in every ten minutes for its 1 MiB: not
+// at :x0 nor :x5, where the box's neighbours steal its CPU (opyt 1.1; quic's
+// 4:45 ran into it), nor in the hub's round (cascadewatch RoundAt: 1:15,
+// its chunks to about 1:55, the points' protocol tasks about 3:00–4:10),
+// nor at the stand's (edge/wirestand.go standSlot, 1:00, 3:30, 6:00, 8:30,
+// a bench load 90 s from there) while it runs beside. One after another,
+// 15 s apart: a 1 MiB takes under a second on a live wire.
 var downloadAt = map[string]time.Duration{
-	"pool":       2*time.Minute + 15*time.Second,
-	"quic":       4*time.Minute + 45*time.Second,
-	"salamander": 7*time.Minute + 15*time.Second,
+	"pool":       7*time.Minute + 45*time.Second,
+	"quic":       8 * time.Minute,
+	"salamander": 8*time.Minute + 15*time.Second,
 }
 
 // downloadSize and downloadLimit are the 1 MiB and how long it may take.
