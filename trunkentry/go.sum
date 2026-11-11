@@ -4,8 +4,8 @@ github.com/ebitengine/purego v0.10.0 h1:QIw4xfpWT6GWTzaW5XEKy3HXoqrJGx1ijYHzTF0/
 github.com/ebitengine/purego v0.10.0/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
 github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=
 github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
-github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261111020642-22e852913422 h1:yXYmDDj1rnIrslI5rL4FJv7tZ72clpodB2W5yOcTOZw=
-github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261111020642-22e852913422/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
+github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261111033116-dc3306caa5e0 h1:ljH7Gt9nQ/qrC2XwVge8VYMDINxms0IowkBmU+XGERU=
+github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261111033116-dc3306caa5e0/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
 github.com/m1d1x/hikkari-protocol/trunk/chromium v0.0.0-20261109035446-c773c6a37f81 h1:7A0+HzMBbJ7oT4gBhqyKODRh7w/A4/9lORYQbFPD1IE=
 github.com/m1d1x/hikkari-protocol/trunk/chromium v0.0.0-20261109035446-c773c6a37f81/go.mod h1:fbmJR/Vv5CCOk0KFUmW03yJnU/tnHTcWPbAn8Eps6I8=
 github.com/miekg/dns v1.1.72 h1:vhmr+TF2A3tuoGNkLDFK9zi36F2LS+hKTRW0Uf8kbzI=

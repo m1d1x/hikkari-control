@@ -61,6 +61,7 @@ var (
 	// cut when it stopped.
 	reExitDrains = regexp.MustCompile(`trunk: exit drains: new session, the old one keeps (\d+) stream\(s\) and (\d+) flow\(s\)$`)
 	reRetiredCut = regexp.MustCompile(`trunk: retired session closed after \S+ with (\d+) stream\(s\) and (\d+) flow\(s\)$`)
+	reSlowPool   = regexp.MustCompile(`trunk: exit drains: the new session has (\d+) of (\d+) member\(s\) after (\S+), it takes over anyway$`)
 	reClosedCut  = regexp.MustCompile(`trunk: closed with (\d+) stream\(s\) and (\d+) flow\(s\) cut$`)
 )
 
@@ -109,6 +110,11 @@ func classify(l journalLine) (layer string, data map[string]any, ok bool) {
 	}
 	if m := reExitDrains.FindStringSubmatch(l.Msg); m != nil {
 		return LayerEvent, map[string]any{"kind": "exit_drains", "streams": atoi(m[1]), "flows": atoi(m[2])}, true
+	}
+	if m := reSlowPool.FindStringSubmatch(l.Msg); m != nil {
+		// The new session's pool did not come up in time: what is new
+		// waits for it from here on.
+		return LayerEvent, map[string]any{"kind": "exit_drain_slow_pool", "members": atoi(m[1]), "want": atoi(m[2])}, true
 	}
 	if m := reRetiredCut.FindStringSubmatch(l.Msg); m != nil {
 		// The exit's old process gave up its sessions at the same limit:
