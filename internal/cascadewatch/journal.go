@@ -55,6 +55,13 @@ var (
 	reHandoff = regexp.MustCompile(`nekko-trunk-entry: generation (\d+) \(pid \d+\) is up, generation (\d+) drains$`)
 	reDrains  = regexp.MustCompile(`nekko-trunk-entry: generation (\d+) drains with (\d+) stream\(s\) and (\d+) flow\(s\)$`)
 	reLeft    = regexp.MustCompile(`nekko-trunk-entry: generation (\d+) (?:leaves after \S+ with (\d+) stream\(s\) and (\d+) flow\(s\)|carries nothing more and leaves)$`)
+	// A hitless rollout of the exit as the entry's pool lives it (trunk
+	// entry.go): a new session on the exit's drain, a retired one closed at
+	// its limit with what it still carried, and what the entry's process
+	// cut when it stopped.
+	reExitDrains = regexp.MustCompile(`trunk: exit drains: new session, the old one keeps (\d+) stream\(s\) and (\d+) flow\(s\)$`)
+	reRetiredCut = regexp.MustCompile(`trunk: retired session closed after \S+ with (\d+) stream\(s\) and (\d+) flow\(s\)$`)
+	reClosedCut  = regexp.MustCompile(`trunk: closed with (\d+) stream\(s\) and (\d+) flow\(s\) cut$`)
 )
 
 // classify turns a journal line into a row of the entry or event layer;
@@ -99,6 +106,17 @@ func classify(l journalLine) (layer string, data map[string]any, ok bool) {
 		// Cut is what the old generation still carried at its limit: those
 		// streams and flows ended there.
 		return LayerEvent, map[string]any{"kind": "entry_generation_left", "gen": atoi(m[1]), "cut_streams": atoi(m[2]), "cut_flows": atoi(m[3])}, true
+	}
+	if m := reExitDrains.FindStringSubmatch(l.Msg); m != nil {
+		return LayerEvent, map[string]any{"kind": "exit_drains", "streams": atoi(m[1]), "flows": atoi(m[2])}, true
+	}
+	if m := reRetiredCut.FindStringSubmatch(l.Msg); m != nil {
+		// The exit's old process gave up its sessions at the same limit:
+		// these ended there.
+		return LayerEvent, map[string]any{"kind": "retired_session_cut", "cut_streams": atoi(m[1]), "cut_flows": atoi(m[2])}, true
+	}
+	if m := reClosedCut.FindStringSubmatch(l.Msg); m != nil {
+		return LayerEvent, map[string]any{"kind": "entry_closed_cut", "cut_streams": atoi(m[1]), "cut_flows": atoi(m[2])}, true
 	}
 	if m := reUp.FindStringSubmatch(l.Msg); m != nil {
 		return LayerEvent, map[string]any{"kind": "entry_up", "detail": clip(m[1])}, true
