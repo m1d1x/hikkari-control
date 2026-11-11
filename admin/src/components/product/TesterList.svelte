@@ -68,14 +68,17 @@
 		orange: 'oklch(0.78 0.16 65)',
 		blue: 'oklch(0.70 0.16 230)',
 		red: 'oklch(0.68 0.20 25)',
+		violet: 'oklch(0.70 0.15 300)',
 	};
 	const minutes = (v: number) => `${Number.isInteger(v) || v >= 10 ? Math.round(v) : v.toFixed(1)} мин`;
 	const ms = (v: number) => `${Math.round(v)} мс`;
+	/** a stall total: ms under ten seconds, seconds above */
+	const stall = (v: number) => (v < 10_000 ? `${Math.round(v)} мс` : `${(v / 1000).toFixed(v < 100_000 ? 1 : 0)} с`);
 
 	const linesOf = (id: string): TesterLines | null => {
 		if (!charts) return null;
 		const none = charts.buckets.map(() => null);
-		return charts.testers[id] ?? { lost: none, ruMs: none, ruMissed: none };
+		return charts.testers[id] ?? { lost: none, ruMs: none, ruMissed: none, stallMs: none, stallLongMs: none };
 	};
 
 	/** The latest bucket anything was measured in, with its time. */
@@ -178,6 +181,19 @@
 												formatAxis={minutes}
 												height={135}
 												series={[{ key: 'lost', label: 'Простой', color: C.orange, primary: true, values: l.lost, format: minutes, missing: 'туннель выключен' }]}
+											/>
+										</div>
+										<div class="chart-card">
+											<h3 class="card-title">Подвисания</h3>
+											<TrendChart
+												buckets={charts.buckets}
+												bucketSeconds={charts.bucketSeconds}
+												formatAxis={stall}
+												height={135}
+												series={[
+													{ key: 'stall', label: 'от 0,3 с', color: C.violet, primary: true, values: l.stallMs, format: stall, missing: 'не мерили' },
+													{ key: 'stall-long', label: 'от 1 с', color: C.red, values: l.stallLongMs, format: stall, missing: 'не мерили' },
+												]}
 											/>
 										</div>
 										<div class="chart-card">
@@ -290,7 +306,7 @@
 
 	.pair {
 		display: grid;
-		grid-template-columns: repeat(2, 1fr);
+		grid-template-columns: repeat(3, 1fr);
 		gap: 16px;
 	}
 

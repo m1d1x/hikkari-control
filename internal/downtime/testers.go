@@ -29,7 +29,18 @@ type TesterLines struct {
 	RuMS []*float64 `json:"ruMs"`
 	// RuMissed: minutes no Russian site answered.
 	RuMissed []*float64 `json:"ruMissed"`
+	// StallMS: the length in ms of the stalls the client's core timed that
+	// lasted at least StallShortMS; null where nothing was measured.
+	StallMS []*float64 `json:"stallMs"`
+	// StallLongMS: the same for the stalls of at least StallLongBoundMS.
+	StallLongMS []*float64 `json:"stallLongMs"`
 }
+
+// The thresholds the testers screen draws, of the ones the client counts.
+const (
+	StallShortMS     = 300
+	StallLongBoundMS = 1000
+)
 
 // BuildTesterChart reads the window into per-tester lines.
 func BuildTesterChart(ctx context.Context, s *Store, name string, now time.Time) (TesterChart, error) {
@@ -47,10 +58,14 @@ func BuildTesterChart(ctx context.Context, s *Store, name string, now time.Time)
 	if err != nil {
 		return TesterChart{}, err
 	}
-	return assembleTesters(win, since, until, step, counts, ru), nil
+	stalls, err := s.StallCounts(ctx, since, until, step)
+	if err != nil {
+		return TesterChart{}, err
+	}
+	return assembleTesters(win, since, until, step, counts, ru, stalls), nil
 }
 
-func assembleTesters(win string, since, until time.Time, step time.Duration, counts []Count, ru []RuCount) TesterChart {
+func assembleTesters(win string, since, until time.Time, step time.Duration, counts []Count, ru []RuCount, stalls []StallCount) TesterChart {
 	c := TesterChart{Window: win, BucketSeconds: int64(step / time.Second), Buckets: []string{}, Testers: map[string]TesterLines{}}
 	index := map[int64]int{}
 	for b := since; b.Before(until); b = b.Add(step) {
@@ -61,7 +76,10 @@ func assembleTesters(win string, since, until time.Time, step time.Duration, cou
 		l, ok := c.Testers[install]
 		if !ok {
 			n := len(c.Buckets)
-			l = TesterLines{Lost: make([]*float64, n), RuMS: make([]*float64, n), RuMissed: make([]*float64, n)}
+			l = TesterLines{
+				Lost: make([]*float64, n), RuMS: make([]*float64, n), RuMissed: make([]*float64, n),
+				StallMS: make([]*float64, n), StallLongMS: make([]*float64, n),
+			}
 			c.Testers[install] = l
 		}
 		return l
@@ -92,6 +110,18 @@ func assembleTesters(win string, since, until time.Time, step time.Duration, cou
 		add(l.RuMissed, i, float64(k.Missed))
 		if k.Answered > 0 {
 			add(l.RuMS, i, k.MedianMS)
+		}
+	}
+	for _, k := range stalls {
+		i, ok := index[k.Bucket.Unix()]
+		if !ok {
+			continue
+		}
+		switch k.BoundMS {
+		case StallShortMS:
+			add(lines(k.Install).StallMS, i, float64(k.MS))
+		case StallLongBoundMS:
+			add(lines(k.Install).StallLongMS, i, float64(k.MS))
 		}
 	}
 	return c

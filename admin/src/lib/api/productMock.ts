@@ -127,6 +127,8 @@ export function mockTesterCharts(win: Win): TesterCharts {
 			lost: p.lost.map((v, i) => (homeDown(i) ? 0 : v)),
 			ruMs: p.lost.map((v, i) => (v === null ? null : homeDown(i) ? 180 : 24 + ((i * 7) % 11))),
 			ruMissed: p.lost.map((v, i) => (v === null ? null : homeDown(i) ? 23 : 0)),
+			stallMs: p.lost.map((v, i) => (v === null ? null : 400 * ((i * 5) % 7) + (v ?? 0) * 5000)),
+			stallLongMs: p.lost.map((v, i) => (v === null ? null : 1100 * ((i * 3) % 2) + (v ?? 0) * 5000)),
 		};
 	}
 	return { window: win, bucketSeconds: down.bucketSeconds, buckets: down.buckets, testers };

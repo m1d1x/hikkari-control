@@ -105,12 +105,57 @@ func TestTesterChartKeepsTunnelAndNetworkApart(t *testing.T) {
 		[]RuCount{
 			{Install: "t-a", Bucket: since, MedianMS: 30, Answered: 58, Missed: 2},
 			{Install: "t-b", Bucket: since.Add(time.Hour), Answered: 0, Missed: 60},
+		},
+		[]StallCount{
+			{Install: "t-a", Bucket: since, BoundMS: 300, N: 4, MS: 2100},
+			{Install: "t-a", Bucket: since, BoundMS: 1000, N: 1, MS: 1200},
+			{Install: "t-a", Bucket: since, BoundMS: 3000},
 		})
 	a, b := c.Testers["t-a"], c.Testers["t-b"]
 	if *a.Lost[0] != 5 || *a.RuMS[0] != 30 || *a.RuMissed[0] != 2 || a.Lost[1] != nil {
 		t.Fatalf("t-a: %+v", a)
 	}
+	if *a.StallMS[0] != 2100 || *a.StallLongMS[0] != 1200 || a.StallMS[1] != nil {
+		t.Fatalf("t-a stalls: %+v", a)
+	}
+	if b.StallMS[1] != nil {
+		t.Fatalf("t-b: no stall line is not measured, not zero: %+v", b)
+	}
 	if b.Lost[1] != nil || b.RuMS[1] != nil || *b.RuMissed[1] != 60 {
 		t.Fatalf("t-b: a dead home network is no answer, not a latency and not downtime: %+v", b)
+	}
+}
+
+func TestAStallLineIsPerMinuteAndThreshold(t *testing.T) {
+	got, ok := ParseStallLine("2026-11-11 [downtime] stalls from=1800000000 bounds=300,1000,3000 v=.;2:1600,1:1200,0:0;-", "t-a")
+	if !ok {
+		t.Fatal("line not read")
+	}
+	at := func(k int64) time.Time { return time.Unix(1800000000+k*60, 0).UTC() }
+	want := []StallMinute{
+		{Install: "t-a", At: at(0), BoundMS: 300},
+		{Install: "t-a", At: at(0), BoundMS: 1000},
+		{Install: "t-a", At: at(0), BoundMS: 3000},
+		{Install: "t-a", At: at(1), BoundMS: 300, N: 2, MS: 1600},
+		{Install: "t-a", At: at(1), BoundMS: 1000, N: 1, MS: 1200},
+		{Install: "t-a", At: at(1), BoundMS: 3000},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("want %+v, got %+v", want, got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("minute %d: want %+v, got %+v", i, want[i], got[i])
+		}
+	}
+	for _, bad := range []string{
+		"[downtime] stalls from=1800000000 bounds=300,1000 v=1:400",
+		"[downtime] stalls from=1800000001 bounds=300 v=.",
+		"[downtime] stalls from=1800000000 bounds=300 v=-1:5",
+		"[downtime] minutes from=1800000000 states=oo",
+	} {
+		if _, ok := ParseStallLine(bad, "t-a"); ok {
+			t.Fatalf("read a bad line %q", bad)
+		}
 	}
 }

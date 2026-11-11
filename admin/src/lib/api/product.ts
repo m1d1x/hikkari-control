@@ -150,6 +150,10 @@ export interface TesterLines {
 	ruMs: (number | null)[];
 	/** minutes no Russian site answered */
 	ruMissed: (number | null)[];
+	/** ms of the stalls the client's core timed that lasted 300 ms or more; null where not measured */
+	stallMs: (number | null)[];
+	/** the same for the stalls of 1 s or more */
+	stallLongMs: (number | null)[];
 }
 
 export interface TesterCharts {
