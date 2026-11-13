@@ -41,6 +41,15 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "child:", err)
 		os.Exit(2)
 	}
+	if c.Pipe != "" {
+		// A brain over hk-pipe (brain_linux_test.go): the pipe dials its
+		// members itself.
+		if err := runPipeGeneration(c); err != nil {
+			fmt.Fprintln(os.Stderr, "child:", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	exit := os.Getenv(envExit)
 	dial := func(ctx context.Context, _ int) (io.ReadWriteCloser, error) {
 		var d net.Dialer

@@ -87,7 +87,9 @@ type sockets struct {
 	gen int
 	// ready and owners, for an inherited generation, are the pipes to the
 	// previous one: ready to say how it goes, owners to hear which client
-	// addresses the older generations keep.
+	// addresses the older generations keep. A brain over hk-pipe gets the
+	// new end of the pipes' handoff link in owners' place: the pipes tell
+	// each other whose flows stay (brain_linux.go).
 	ready  *os.File
 	owners *os.File
 	// dir is the unit's runtime directory; empty means no handoff (a
@@ -159,11 +161,17 @@ func openSockets(c Config) (*sockets, error) {
 	return s, nil
 }
 
-// bindSockets binds the listen ports of c.
+// bindSockets binds the listen ports of c. Over hk-pipe they are IPv4
+// alone: the pipe reads clients' addresses as IPv4 and refuses a
+// dual-stack socket (hikkari-sys udp_from_fd).
 func bindSockets(c Config) (*sockets, error) {
 	s := &sockets{tcp: map[int]*net.TCPListener{}, udp: map[int]*net.UDPConn{}, gen: 1}
+	tcp, udp := "tcp", "udp"
+	if c.Pipe != "" {
+		tcp, udp = "tcp4", "udp4"
+	}
 	for port := range c.TCP {
-		ln, err := net.ListenTCP("tcp", &net.TCPAddr{Port: port})
+		ln, err := net.ListenTCP(tcp, &net.TCPAddr{Port: port})
 		if err != nil {
 			s.close()
 			return nil, fmt.Errorf("tcp :%d: %w", port, err)
@@ -171,7 +179,7 @@ func bindSockets(c Config) (*sockets, error) {
 		s.tcp[port] = ln
 	}
 	for port := range c.UDP {
-		pc, err := net.ListenUDP("udp", &net.UDPAddr{Port: port})
+		pc, err := net.ListenUDP(udp, &net.UDPAddr{Port: port})
 		if err != nil {
 			s.close()
 			return nil, fmt.Errorf("udp :%d: %w", port, err)
@@ -279,6 +287,9 @@ type node struct {
 	sendMu sync.Mutex
 	sendTo map[string]*net.UnixConn
 }
+
+func (n *node) context() context.Context { return n.ctx }
+func (n *node) sockets() *sockets        { return n.s }
 
 // startOn opens the pool on s. Nothing is served yet (serve).
 func startOn(ctx context.Context, c Config, dial trunk.Dial, s *sockets) (*node, error) {
@@ -775,20 +786,33 @@ type handoffReply struct {
 	Error string `json:"error,omitempty"`
 }
 
+// generation is what the control socket hands over from: a Go entry's
+// (node) or a brain's over hk-pipe (brain_linux.go).
+type generation interface {
+	context() context.Context
+	sockets() *sockets
+	// spawn starts the next generation with req's env and waits until it
+	// is up; on any failure the child is killed and this one serves on.
+	spawn(req handoffRequest) (pid, gen int, err error)
+	// handOver makes this generation an old one: no new clients, no minute
+	// line, no call; what it carries goes on.
+	handOver()
+}
+
 // controller is the newest generation's control socket.
 type controller struct {
-	n    *node
+	n    generation
 	ln   *net.UnixListener
 	once sync.Once
 }
 
 // listenControl binds the control socket, taking the path over from the
 // previous generation. Nil without a runtime directory.
-func listenControl(n *node) (*controller, error) {
-	if n.s.dir == "" {
+func listenControl(n generation) (*controller, error) {
+	if n.sockets().dir == "" {
 		return nil, nil
 	}
-	path := filepath.Join(n.s.dir, controlName)
+	path := filepath.Join(n.sockets().dir, controlName)
 	_ = os.Remove(path)
 	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
@@ -800,7 +824,7 @@ func listenControl(n *node) (*controller, error) {
 
 // serve answers handoff requests until one succeeds or the process ends.
 func (c *controller) serve() {
-	go func() { <-c.n.ctx.Done(); c.close() }()
+	go func() { <-c.n.context().Done(); c.close() }()
 	for {
 		conn, err := c.ln.Accept()
 		if err != nil {
@@ -835,7 +859,7 @@ func (c *controller) answer(conn net.Conn) bool {
 	// Said again from here: whichever message systemd reads first, the
 	// child is the main process before this one leaves.
 	sdNotify(fmt.Sprintf("MAINPID=%d", pid))
-	log.Printf("nekko-trunk-entry: generation %d (pid %d) is up, generation %d drains", gen, pid, c.n.s.gen)
+	log.Printf("nekko-trunk-entry: generation %d (pid %d) is up, generation %d drains", gen, pid, c.n.sockets().gen)
 	c.n.handOver()
 	reply(handoffReply{OK: true, PID: pid, Gen: gen})
 	return true
@@ -850,6 +874,9 @@ func (n *node) spawn(req handoffRequest) (int, int, error) {
 	}
 	if err := n.s.matches(cfg); err != nil {
 		return 0, 0, err
+	}
+	if cfg.Pipe != "" {
+		return 0, 0, errors.New("the next generation runs over hk-pipe, this one in Go: restart it")
 	}
 	binary := req.Binary
 	if binary == "" {
@@ -1004,10 +1031,16 @@ func requestHandoff(control string, req handoffRequest) (handoffReply, error) {
 	return reply, nil
 }
 
-// reloadCommand is `nekko-trunk-entry reload`, systemd's ExecReload (as
-// root): the entry's env, handed to the running generation with this binary.
-func reloadCommand() error {
-	env, err := readEnvFile(envFile)
+// reloadCommand is `nekko-trunk-entry reload [env file]`, systemd's
+// ExecReload (as root): the entry's env, handed to the running generation
+// with this binary. The env file is the unit's (envFile without one: the
+// stand over hk-pipe has its own), the control socket in the unit's runtime
+// directory, which systemd names to ExecReload as to ExecStart.
+func reloadCommand(file string) error {
+	if file == "" {
+		file = envFile
+	}
+	env, err := readEnvFile(file)
 	if err != nil {
 		return err
 	}
@@ -1015,7 +1048,11 @@ func reloadCommand() error {
 	if err != nil {
 		return err
 	}
-	reply, err := requestHandoff(filepath.Join(runtimeDir, controlName), handoffRequest{Env: env, Binary: binary})
+	dir := runtimeDirectory()
+	if dir == "" {
+		dir = runtimeDir
+	}
+	reply, err := requestHandoff(filepath.Join(dir, controlName), handoffRequest{Env: env, Binary: binary})
 	if err != nil {
 		return err
 	}

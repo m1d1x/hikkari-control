@@ -144,7 +144,9 @@ func TestEntryIsBlind(t *testing.T) {
 	for i := 0; i < cfg.NumField(); i++ {
 		fields = append(fields, cfg.Field(i).Name)
 	}
-	if got := strings.Join(fields, ","); got != "Exit,SNI,Key,Members,TCP,UDP,OneCopy,Stall,PortLo,PortHi" {
+	// Pipe is the hk-pipe binary's path, Roots the relay's certificate
+	// roots: nothing of a client.
+	if got := strings.Join(fields, ","); got != "Exit,SNI,Key,Members,TCP,UDP,OneCopy,Stall,PortLo,PortHi,Pipe,Roots" {
 		t.Fatalf("the entry's config grew: %s; anything that holds a client's secret breaks 3.2", got)
 	}
 

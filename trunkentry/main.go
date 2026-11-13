@@ -31,6 +31,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,7 +51,11 @@ func main() {
 		fmt.Println(handoffVersion)
 		return
 	case "reload":
-		if err := reloadCommand(); err != nil {
+		file := ""
+		if len(os.Args) > 2 {
+			file = os.Args[2]
+		}
+		if err := reloadCommand(file); err != nil {
 			log.Fatalf("nekko-trunk-entry: reload: %v", err)
 		}
 		return
@@ -58,6 +63,25 @@ func main() {
 	c, err := ConfigFromEnv(os.Getenv)
 	if err != nil {
 		log.Fatalf("nekko-trunk-entry: %v", err)
+	}
+	if c.Pipe != "" {
+		// Over hk-pipe the pipe loads libcronet and dials the members;
+		// this process links none of it.
+		switch cmd {
+		case "check":
+			if err := checkPipe(c); err != nil {
+				log.Fatalf("nekko-trunk-entry: %v", err)
+			}
+			fmt.Println("config OK, hk-pipe answers")
+		case "run":
+			if err := runPipeGeneration(c); err != nil {
+				log.Fatalf("nekko-trunk-entry: %v", err)
+			}
+		default:
+			fmt.Fprintf(os.Stderr, "usage: nekko-trunk-entry [run|check|reload|handoff-version]\n")
+			os.Exit(2)
+		}
+		return
 	}
 	if err := chromium.Load(); err != nil {
 		log.Fatalf("nekko-trunk-entry: %v", err)
@@ -89,6 +113,15 @@ type Config struct {
 	OneCopy        map[int]bool
 	Stall          time.Duration
 	PortLo, PortHi int
+	// Pipe, when set (EDGE_TRUNK_PIPE), is the hk-pipe binary: this
+	// process is the brain over it (brain_linux.go, roadmap 4.6) and every
+	// packet goes through the pipe; libcronet.so lies beside it. Empty is
+	// the Go entry.
+	Pipe string
+	// Roots, over hk-pipe (EDGE_TRUNK_ROOTS, a PEM file), replace the
+	// system's roots for the relay's certificate: a relay no public root
+	// signs, as the bench's. Empty is the system's.
+	Roots string
 }
 
 const (
@@ -137,6 +170,10 @@ func ConfigFromEnv(get func(string) string) (Config, error) {
 		}
 		c.PortLo, c.PortHi = a, b
 	}
+	if c.Pipe = strings.TrimSpace(get("EDGE_TRUNK_PIPE")); c.Pipe != "" && !filepath.IsAbs(c.Pipe) {
+		return c, fmt.Errorf("EDGE_TRUNK_PIPE: %q is not an absolute path", c.Pipe)
+	}
+	c.Roots = strings.TrimSpace(get("EDGE_TRUNK_ROOTS"))
 	if c.TCP, err = forwards(get("EDGE_TRUNK_FORWARD"), "EDGE_TRUNK_FORWARD"); err != nil {
 		return c, err
 	}
