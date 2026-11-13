@@ -23,6 +23,9 @@ import (
 const (
 	CascadeProbeDirect = "direct"
 	CascadeProbeEntry  = "entry"
+	// CascadeProbePipe is through the stand over hk-pipe beside the entry
+	// (internal/entry trunkpipe.go), when it stands.
+	CascadeProbePipe = "pipe"
 )
 
 // CascadeProbeLabel is the label, and the dataset's profile, of the link on
@@ -31,9 +34,10 @@ func CascadeProbeLabel(path, relay string) string { return "cascade-" + path + "
 
 // CascadeProbeLinks are account's links to exitBox's Hikkari relays (in the
 // pool or out of it), each
-// straight and through the trunk entry on entryBox at port, with v1.02's
+// straight and through the trunk entry on entryBox at port, and through the
+// stand over hk-pipe beside it at pipePort (0: none stands), with v1.02's
 // duplicated UDP as testers' clients get it.
-func (s *Service) CascadeProbeLinks(ctx context.Context, account, entryBox, exitBox string, port int) ([]string, error) {
+func (s *Service) CascadeProbeLinks(ctx context.Context, account, entryBox, exitBox string, port, pipePort int) ([]string, error) {
 	var id uuid.UUID
 	err := s.pool.QueryRow(ctx, `SELECT id FROM hub_accounts WHERE name = $1 AND all_relays`, account).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -83,10 +87,17 @@ func (s *Service) CascadeProbeLinks(ctx context.Context, account, entryBox, exit
 			continue
 		}
 		rec = withKey(rec, key)
-		for _, path := range []string{CascadeProbeDirect, CascadeProbeEntry} {
+		paths := []string{CascadeProbeDirect, CascadeProbeEntry}
+		if pipePort > 0 {
+			paths = append(paths, CascadeProbePipe)
+		}
+		for _, path := range paths {
 			r := rec
-			if path == CascadeProbeEntry {
+			switch path {
+			case CascadeProbeEntry:
 				r.Address, r.Port = address, port
+			case CascadeProbePipe:
+				r.Address, r.Port = address, pipePort
 			}
 			link, err := HikkariLink(r, true)
 			if err != nil {

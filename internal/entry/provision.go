@@ -144,6 +144,9 @@ type Provisioner struct {
 	// (linux-<arch>/nekko-trunk-entry) and the libcronet.so it loads
 	// (trunk.go).
 	trunkBuilds, cronetBuilds map[string]EdgeBuild
+	// pipeBuilds are the entry's Rust pipe (linux-<arch>/hk-pipe, glibc:
+	// it loads libcronet), for the stand over it (trunkpipe.go).
+	pipeBuilds map[string]EdgeBuild
 	// wireStandH3Builds are the edge built with cronet
 	// (linux-<arch>/hikkari-wire-stand-h3): the stand's entry (wirestand.go).
 	wireStandH3Builds map[string]EdgeBuild
@@ -184,6 +187,7 @@ func NewProvisioner(svc *Service, dial Dialer, artifacts string) *Provisioner {
 		proberBuilds:      loadProberBuilds(artifacts),
 		trunkBuilds:       loadNamedBuilds(artifacts, "nekko-trunk-entry"),
 		cronetBuilds:      loadNamedBuilds(artifacts, "libcronet.so"),
+		pipeBuilds:        loadNamedBuilds(artifacts, "hk-pipe"),
 		wireStandH3Builds: loadNamedBuilds(artifacts, WireStandH3Build),
 		probeBuilds:       loadNamedBuilds(artifacts, "nekko-cascade-probe"),
 		probeTimeout:      5 * time.Minute, probePoll: 2 * time.Second, drainPoll: drainPoll,

@@ -66,6 +66,9 @@ const (
 	LoadPathDirect = "direct"
 	// LoadPathRaw: plain UDP from the point to the echo, no core.
 	LoadPathRaw = "raw"
+	// LoadPathPipe: a core on the profile through the stand over hk-pipe
+	// beside the entry (roadmap 4.6, R5), the same hour as LoadPathEntry.
+	LoadPathPipe = "pipe"
 )
 
 // path is s.Path with the default filled in.
@@ -115,9 +118,9 @@ func (s LoadSpec) Validate() error {
 		return errors.New("echo: нужен публичный IPv4")
 	}
 	switch s.path() {
-	case LoadPathEntry, LoadPathDirect, LoadPathRaw:
+	case LoadPathEntry, LoadPathDirect, LoadPathRaw, LoadPathPipe:
 	default:
-		return fmt.Errorf("path: %s, %s или %s", LoadPathEntry, LoadPathDirect, LoadPathRaw)
+		return fmt.Errorf("path: %s, %s, %s или %s", LoadPathEntry, LoadPathPipe, LoadPathDirect, LoadPathRaw)
 	}
 	// The run must end well inside the claim it holds (claimTTL).
 	if time.Duration(s.Minutes)*time.Minute+time.Duration(s.Users)*loadDoorStagger+5*time.Minute > claimTTL {
@@ -183,8 +186,11 @@ func (r Runner) runLoad(ctx context.Context, t Task, profiles []Profile) Result 
 	var through *Profile
 	if spec.Path != LoadPathRaw {
 		prefix := cascadeEntryLabelPrefix
-		if spec.Path == LoadPathDirect {
+		switch spec.Path {
+		case LoadPathDirect:
 			prefix = cascadeDirectLabelPrefix
+		case LoadPathPipe:
+			prefix = cascadePipeLabelPrefix
 		}
 		for i := range profiles {
 			if strings.HasPrefix(profiles[i].Label, prefix) {
@@ -258,6 +264,7 @@ func (r Runner) runLoad(ctx context.Context, t Task, profiles []Profile) Result 
 // CascadeProbeDirect, relay)).
 const (
 	cascadeEntryLabelPrefix  = "cascade-entry-"
+	cascadePipeLabelPrefix   = "cascade-pipe-"
 	cascadeDirectLabelPrefix = "cascade-direct-"
 )
 

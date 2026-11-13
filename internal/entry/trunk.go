@@ -186,137 +186,6 @@ func trunkEntryEnv(addr, sni, key string, o TrunkEntryOptions) string {
 		addr, sni, key, o.Members, forward, forward, strings.Join(once, ","))
 }
 
-const trunkEntryUnitFile = `# Installed by the nekko hub: the cascade's trunk entry.
-[Unit]
-Description=Nekko trunk entry
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-# Generations (trunkentry/handoff.go): the process says when it is up, a
-# newer one takes over as the main process, and a reload hands over to the
-# binary on disk without cutting what the entry carries. Timeouts cover a
-# child's 30 s to come up and the old generations' quick end on a stop.
-Type=notify
-NotifyAccess=all
-EnvironmentFile=` + trunkEntryEnvFile + `
-ExecStart=` + trunkEntryBinary + ` run
-ExecReload=+` + trunkEntryBinary + ` reload
-RuntimeDirectory=` + trunkEntryUnit + `
-TimeoutStartSec=90
-TimeoutStopSec=30
-Restart=always
-RestartSec=2
-DynamicUser=yes
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
-LimitNOFILE=65536
-
-[Install]
-WantedBy=multi-user.target
-`
-
-// trunkEntrySwapScript takes the staged directory (dir.new: the running
-// copy plus the files that changed, as file.new), refuses a listen port
-// another process holds, checks the new binary with the new library against
-// the new env, swaps the directory, opens the ports in ufw, puts the entry on
-// the new build and waits until it listens on all of them.
-//
-// The entry goes in by `systemctl reload` (trunkentry/handoff.go): the running
-// generation starts the new binary on its own sockets and drains, nothing
-// is cut. A restart is left for what a reload cannot do: a unit file that
-// changed (the first time, too), a build or a running process that cannot
-// hand over, ports that move, a reload that failed.
-const trunkEntrySwapScript = `set -eu
-dir=` + trunkEntryDir + `
-env=` + trunkEntryEnvFile + `
-for port in "$@"; do
-	holder=$(ss -tlnpH "sport = :$port" | grep -v nekko-trunk-en || true)
-	if [ -n "$holder" ]; then
-		echo "порт $port занят: $holder" >&2
-		rm -rf "$dir.new" "$env.new" /etc/systemd/system/` + trunkEntryUnit + `.service.new
-		exit 3
-	fi
-done
-for f in nekko-trunk-entry libcronet.so; do
-	if [ -f "$dir.new/$f.new" ]; then mv "$dir.new/$f.new" "$dir.new/$f"; fi
-done
-chmod 755 "$dir.new" "$dir.new/nekko-trunk-entry"
-chmod 644 "$dir.new/libcronet.so"
-chmod 600 "$env.new"
-( set -a; . "$env.new"; set +a; "$dir.new/nekko-trunk-entry" check )
-rm -rf "$dir.old"
-if [ -d "$dir" ]; then mv "$dir" "$dir.old"; fi
-mv "$dir.new" "$dir"
-rm -rf "$dir.old"
-mv "$env.new" "$env"
-unit=/etc/systemd/system/` + trunkEntryUnit + `.service
-unit_changed=0
-if [ -f "$unit.new" ]; then
-	if cmp -s "$unit.new" "$unit"; then rm -f "$unit.new"; else mv "$unit.new" "$unit"; unit_changed=1; fi
-fi
-if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
-	for port in "$@"; do
-		ufw allow "$port/tcp" comment ` + trunkEntryUnit + ` >/dev/null
-		ufw allow "$port/udp" comment ` + trunkEntryUnit + ` >/dev/null
-	done
-	echo "ufw: $* открыты (tcp и udp)"
-fi
-systemctl daemon-reload
-systemctl enable ` + trunkEntryUnit + ` >/dev/null 2>&1
-how=restart
-if [ "$unit_changed" = 0 ] && "$dir/nekko-trunk-entry" handoff-version >/dev/null 2>&1 \
-	&& systemctl is-active --quiet ` + trunkEntryUnit + ` && [ -S /run/` + trunkEntryUnit + `/control.sock ]; then
-	if systemctl reload ` + trunkEntryUnit + `; then
-		how=reload
-	else
-		echo "` + trunkEntryUnit + `: передача не прошла, перезапуск" >&2
-		journalctl -u ` + trunkEntryUnit + ` -n 20 --no-pager >&2
-	fi
-fi
-if [ "$how" = restart ]; then systemctl restart ` + trunkEntryUnit + `; fi
-for _ in $(seq 1 40); do
-	up=1
-	systemctl is-active --quiet ` + trunkEntryUnit + ` || up=0
-	for port in "$@"; do
-		ss -tln | grep ":$port " >/dev/null || up=0
-	done
-	if [ $up = 1 ]; then
-		if [ "$how" = reload ]; then
-			echo "` + trunkEntryUnit + ` слушает $*, передан без обрыва"
-		else
-			echo "` + trunkEntryUnit + ` слушает $*"
-		fi
-		exit 0
-	fi
-	sleep 0.5
-done
-journalctl -u ` + trunkEntryUnit + ` -n 20 --no-pager >&2
-exit 1
-`
-
-const trunkEntryOffScript = `set -eu
-ports=""
-if [ -f ` + trunkEntryEnvFile + ` ]; then
-	ports=$(sed -n 's/^EDGE_TRUNK_FORWARD=//p' ` + trunkEntryEnvFile + ` | tr ',' '\n' | cut -d= -f1 | tr '\n' ' ')
-fi
-systemctl disable --now ` + trunkEntryUnit + ` >/dev/null 2>&1 || true
-if [ -n "$ports" ] && command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
-	for port in $ports; do
-		ufw delete allow "$port/tcp" >/dev/null 2>&1 || true
-		ufw delete allow "$port/udp" >/dev/null 2>&1 || true
-	done
-fi
-rm -f /etc/systemd/system/` + trunkEntryUnit + `.service /etc/systemd/system/` + trunkEntryUnit + `.service.new ` + trunkEntryEnvFile + `
-rm -rf ` + trunkEntryDir + ` ` + trunkEntryDir + `.new
-systemctl daemon-reload
-echo "` + trunkEntryUnit + ` снят${ports:+, порты $ports закрыты}"
-`
-
 // StandTrunkEntry stands up or updates the trunk entry on box. Running it
 // again is the update (a new exit or pool, a new build).
 func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEntryOptions) error {
@@ -357,45 +226,12 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 	}
 	applog.Info(ctx, "entry", "operator trunk entry on box", applog.F("box", box), applog.F("exit", o.Exit),
 		applog.F("members", o.Members), applog.F("listen", strings.Join(listen, ",")))
-	if err := standTrunkEntry(ctx, r, p.trunkBuilds, p.cronetBuilds, trunkEntryEnv(addr, sni, key, o), listen, logf); err != nil {
+	files := []trunkFile{{"nekko-trunk-entry", p.trunkBuilds}, {"libcronet.so", p.cronetBuilds}}
+	if err := standTrunkUnit(ctx, r, goEntryUnit, files, trunkEntryEnv(addr, sni, key, o), nil, listen, logf); err != nil {
 		return err
 	}
 	// The cascade watch takes its pairs from here (cascade_watch.go).
 	return p.svc.recordTrunkEntry(ctx, box, o)
-}
-
-// standTrunkEntry is StandTrunkEntry's work on an open box. A file the box
-// already has is not sent again; a failed check leaves the running entry as
-// it was.
-func standTrunkEntry(ctx context.Context, r Remote, bins, libs map[string]EdgeBuild, env string, listen []string, logf func(string, ...any)) error {
-	staged := trunkEntryDir + ".new"
-	if _, err := r.Run(ctx, "rm -rf "+staged+" && mkdir -p "+staged+" && (cp -a "+trunkEntryDir+"/. "+staged+"/ 2>/dev/null || true)", nil); err != nil {
-		return fmt.Errorf("каталог входа: %w", err)
-	}
-	if err := stageLabBinary(ctx, r, bins, staged+"/nekko-trunk-entry", logf); err != nil {
-		return err
-	}
-	if err := stageLabBinary(ctx, r, libs, staged+"/libcronet.so", logf); err != nil {
-		return err
-	}
-	// Beside the running unit: the swap compares, and a unit that changed
-	// is a restart, not a reload.
-	if _, err := r.Run(ctx, "cat > /etc/systemd/system/"+trunkEntryUnit+".service.new", strings.NewReader(trunkEntryUnitFile)); err != nil {
-		return fmt.Errorf("unit-файл: %w", err)
-	}
-	if _, err := r.Run(ctx, "umask 077; cat > "+trunkEntryEnvFile+".new", strings.NewReader(env)); err != nil {
-		return fmt.Errorf("env: %w", err)
-	}
-	out, err := r.Run(ctx, "bash -s -- "+strings.Join(listen, " "), strings.NewReader(trunkEntrySwapScript))
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if line != "" {
-			logf("%s", line)
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("запуск входа: %w", err)
-	}
-	return nil
 }
 
 // StopTrunkEntry takes the trunk entry off box.
@@ -406,7 +242,7 @@ func (p *Provisioner) StopTrunkEntry(ctx context.Context, box string) error {
 	}
 	defer r.Close()
 	applog.Info(ctx, "entry", "operator trunk entry off box", applog.F("box", box))
-	out, err := r.Run(ctx, "bash -s", strings.NewReader(trunkEntryOffScript))
+	out, err := r.Run(ctx, "bash -s", strings.NewReader(goEntryUnit.offScript()))
 	if err != nil {
 		return fmt.Errorf("снятие входа: %w", err)
 	}

@@ -277,7 +277,7 @@ func (f *fakeBoxes) StageCascadeProbe(context.Context, entry.Remote) (string, er
 
 type fakeLinks struct{ port int }
 
-func (f *fakeLinks) CascadeProbeLinks(_ context.Context, account, entryBox, exitBox string, port int) ([]string, error) {
+func (f *fakeLinks) CascadeProbeLinks(_ context.Context, account, entryBox, exitBox string, port, _ int) ([]string, error) {
 	f.port = port
 	return []string{account + " " + entryBox + " " + exitBox}, nil
 }

@@ -165,14 +165,14 @@ func TestCascadeProbeLinksAreTheExitStraightAndThroughTheEntry(t *testing.T) {
 	if _, err := s.Add(ctx, name, unlimited(t, s)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CascadeProbeLinks(ctx, name, "ruin1", "unl1", 8443); err == nil {
+	if _, err := s.CascadeProbeLinks(ctx, name, "ruin1", "unl1", 8443, 0); err == nil {
 		t.Fatal("an account without the whole fleet was given probe links")
 	}
 	if _, err := pool.Exec(ctx, `UPDATE hub_accounts SET all_relays = true WHERE name = $1`, name); err != nil {
 		t.Fatal(err)
 	}
 	asked := len(batch.asked)
-	links, err := s.CascadeProbeLinks(ctx, name, "ruin1", "unl1", 8443)
+	links, err := s.CascadeProbeLinks(ctx, name, "ruin1", "unl1", 8443, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,6 +193,23 @@ func TestCascadeProbeLinksAreTheExitStraightAndThroughTheEntry(t *testing.T) {
 			t.Fatalf("probe link %s", l)
 		}
 		delete(want, u.Fragment)
+	}
+	// With the stand over hk-pipe beside the entry, a third link per relay
+	// goes through it, on the entry's address at the stand's port.
+	links, err = s.CascadeProbeLinks(ctx, name, "ruin1", "unl1", 8443, 18443)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosts := map[string]string{}
+	for _, l := range links {
+		u, err := url.Parse(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hosts[u.Fragment] = u.Host
+	}
+	if len(links) != 3 || hosts["cascade-pipe-unl1-2"] != "192.0.2.10:18443" || hosts["cascade-entry-unl1-2"] != "192.0.2.10:8443" {
+		t.Fatalf("links with the stand %v", hosts)
 	}
 }
 

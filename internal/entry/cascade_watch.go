@@ -34,6 +34,21 @@ type TrunkPair struct {
 	RelayPort int
 	Forward   map[int]int
 	Members   int
+	// Pipe is the stand over hk-pipe beside the entry (trunkpipe.go): its
+	// listen ports to the exit's loopback ports; empty when there is none.
+	Pipe map[int]int
+}
+
+// PipeListen is the stand's listen port that reaches port at the exit, 0
+// when none does or there is no stand.
+func (p TrunkPair) PipeListen(port int) int {
+	best := 0
+	for l, to := range p.Pipe {
+		if to == port && (best == 0 || l < best) {
+			best = l
+		}
+	}
+	return best
 }
 
 // ProvokeListen is the entry's listen port that reaches the exit's provoke
@@ -72,19 +87,19 @@ func (s *Service) forgetTrunkEntry(ctx context.Context, box string) error {
 
 // TrunkPairs lists the trunk entries the hub stood, each with its exit.
 func (s *Service) TrunkPairs(ctx context.Context) ([]TrunkPair, error) {
-	rows, err := s.pool.Query(ctx, `SELECT entry_box, exit_box, forward, members FROM trunk_entries ORDER BY entry_box`)
+	rows, err := s.pool.Query(ctx, `SELECT entry_box, exit_box, forward, members, pipe_forward FROM trunk_entries ORDER BY entry_box`)
 	if err != nil {
 		return nil, err
 	}
 	type row struct {
 		entry, exit string
-		fwd         []byte
+		fwd, pipe   []byte
 		members     int
 	}
 	var list []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.entry, &r.exit, &r.fwd, &r.members); err != nil {
+		if err := rows.Scan(&r.entry, &r.exit, &r.fwd, &r.members, &r.pipe); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -96,17 +111,15 @@ func (s *Service) TrunkPairs(ctx context.Context) ([]TrunkPair, error) {
 	}
 	out := make([]TrunkPair, 0, len(list))
 	for _, r := range list {
-		p := TrunkPair{Entry: r.entry, Exit: r.exit, Members: r.members, Forward: map[int]int{}}
-		var fwd map[string]int
-		if err := json.Unmarshal(r.fwd, &fwd); err != nil {
+		p := TrunkPair{Entry: r.entry, Exit: r.exit, Members: r.members}
+		var err error
+		if p.Forward, err = forwardOf(r.fwd); err != nil {
 			return nil, fmt.Errorf("trunk entry %s: forward: %w", r.entry, err)
 		}
-		for l, to := range fwd {
-			n, err := strconv.Atoi(l)
-			if err != nil {
-				return nil, fmt.Errorf("trunk entry %s: forward port %q", r.entry, l)
+		if r.pipe != nil {
+			if p.Pipe, err = forwardOf(r.pipe); err != nil {
+				return nil, fmt.Errorf("trunk entry %s: pipe_forward: %w", r.entry, err)
 			}
-			p.Forward[n] = to
 		}
 		entry, err := s.boxAccess(ctx, r.entry)
 		if err != nil {
@@ -128,6 +141,23 @@ func (s *Service) TrunkPairs(ctx context.Context) ([]TrunkPair, error) {
 			p.RelayPort, _ = strconv.Atoi(port)
 		}
 		out = append(out, p)
+	}
+	return out, nil
+}
+
+// forwardOf reads a forward column: {"listen": exit port}.
+func forwardOf(raw []byte) (map[int]int, error) {
+	var fwd map[string]int
+	if err := json.Unmarshal(raw, &fwd); err != nil {
+		return nil, err
+	}
+	out := make(map[int]int, len(fwd))
+	for l, to := range fwd {
+		n, err := strconv.Atoi(l)
+		if err != nil {
+			return nil, fmt.Errorf("port %q", l)
+		}
+		out[n] = to
 	}
 	return out, nil
 }

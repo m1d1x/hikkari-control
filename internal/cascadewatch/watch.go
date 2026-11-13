@@ -103,7 +103,7 @@ type Boxes interface {
 
 // Links renders the protocol layer's links (subscription.Service).
 type Links interface {
-	CascadeProbeLinks(ctx context.Context, account, entryBox, exitBox string, port int) ([]string, error)
+	CascadeProbeLinks(ctx context.Context, account, entryBox, exitBox string, port, pipePort int) ([]string, error)
 }
 
 // Queue queues the protocol layer's tasks (stand.Scheduler).
@@ -653,7 +653,9 @@ func (w *Watch) CascadeLinks(ctx context.Context, entryBox string) ([]string, er
 	if port == 0 {
 		return nil, fmt.Errorf("вход %s не ведёт к порту релея %d", entryBox, p.RelayPort)
 	}
-	return w.links.CascadeProbeLinks(ctx, Account, p.Entry, p.Exit, port)
+	// The stand over hk-pipe beside the entry, when it stands, on the same
+	// relay port: the same rounds read the Rust pipe against the Go entry.
+	return w.links.CascadeProbeLinks(ctx, Account, p.Entry, p.Exit, port, p.PipeListen(p.RelayPort))
 }
 
 func (w *Watch) pair(ctx context.Context, entryBox string) (entry.TrunkPair, error) {
@@ -717,6 +719,8 @@ func (w *Watch) CascadeFinished(ctx context.Context, slot, entryBox string, roun
 			target = "direct"
 		case strings.HasPrefix(profile, subscription.CascadeProbeLabel(subscription.CascadeProbeEntry, "")):
 			target = "entry"
+		case strings.HasPrefix(profile, subscription.CascadeProbeLabel(subscription.CascadeProbePipe, "")):
+			target = "pipe"
 		default:
 			continue
 		}

@@ -19,7 +19,7 @@ func TestLoadSpecValues(t *testing.T) {
 	if err := spec.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{LoadPathEntry, LoadPathDirect, LoadPathRaw} {
+	for _, path := range []string{LoadPathEntry, LoadPathDirect, LoadPathRaw, LoadPathPipe} {
 		s := spec
 		s.Path = path
 		got, err := ParseLoadSpec(s.Values())

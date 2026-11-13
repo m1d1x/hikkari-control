@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # The fleet hub (cmd/hub), carrying what it deploys to the boxes it runs:
-# linux-<arch>/{nekko-edge,nekko-entry-prober,nekko-trunk-entry,nekko-cascade-probe,libcronet.so,hikkari-wire-stand-h3}
+# linux-<arch>/{nekko-edge,nekko-entry-prober,nekko-trunk-entry,nekko-cascade-probe,libcronet.so,hikkari-wire-stand-h3,hk-pipe}
 # under the artifact directory
 # (internal/entry DefaultArtifactDir). The image is the version: a box runs the
 # current build when its binary's digest equals the one in here.
@@ -56,6 +56,35 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       cp "$(go list -m -f '{{.Dir}}' github.com/sagernet/cronet-go/lib/linux_$arch)/libcronet.so" \
         /out/relay/linux-$arch/libcronet.so || exit 1; \
     done
+# The Rust pipe's source (rust/ of hikkari-protocol) at the version the
+# entry's brain speaks to: the root module of the same commit as its
+# trunk/pipectl, so the brain and the pipe share one socket version.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    v=$(go list -m -f '{{.Version}}' github.com/m1d1x/hikkari-protocol) && \
+    dir=$(go mod download -json github.com/m1d1x/hikkari-protocol@$v | sed -n 's/^\t"Dir": "\(.*\)",$/\1/p') && \
+    test -f "$dir/rust/Cargo.lock" && mkdir -p /out/protocol && cp -r "$dir/rust" /out/protocol/rust && \
+    chmod -R u+w /out/protocol
+
+# ── The entry's pipe in Rust (hk-pipe, roadmap 4.6) ──────────────────────────
+# For glibc, not musl: it loads libcronet.so (a glibc library) for the pool's
+# members. Cross-built from the build platform for both boxes' architectures;
+# it needs glibc 2.34 or later on the box (the stand's swap runs it first).
+FROM --platform=$BUILDPLATFORM rust:1.97.1-bookworm AS pipe-builder
+RUN host=$(dpkg --print-architecture) && pkgs="" && \
+    { [ "$host" = amd64 ] || pkgs="$pkgs gcc-x86-64-linux-gnu libc6-dev-amd64-cross"; } && \
+    { [ "$host" = arm64 ] || pkgs="$pkgs gcc-aarch64-linux-gnu libc6-dev-arm64-cross"; } && \
+    apt-get update && apt-get install -y --no-install-recommends $pkgs && rm -rf /var/lib/apt/lists/* && \
+    rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+COPY --from=trunk-builder /out/protocol/rust /src/rust
+WORKDIR /src/rust
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    for pair in amd64:x86_64 arm64:aarch64; do \
+      arch=${pair%%:*}; target=${pair#*:}-unknown-linux-gnu; \
+      cargo build --release --locked -p hikkari-pipe --target $target && \
+      mkdir -p /out/relay/linux-$arch && cp target/$target/release/hk-pipe /out/relay/linux-$arch/hk-pipe || exit 1; \
+    done
 
 # ── The stand's entry with Chromium's QUIC (edge/, -tags wirestand_h3) ──────
 # The wire stand's entry (internal/entry/wirestand.go) runs the edge built
@@ -83,6 +112,7 @@ COPY --from=builder /out/relay/ /usr/local/share/nekko/relay/
 COPY --from=edge-builder /out/relay/ /usr/local/share/nekko/relay/
 COPY --from=trunk-builder /out/relay/ /usr/local/share/nekko/relay/
 COPY --from=stand-builder /out/relay/ /usr/local/share/nekko/relay/
+COPY --from=pipe-builder /out/relay/ /usr/local/share/nekko/relay/
 RUN mkdir -p /data && chown hub:hub /data
 USER hub
 EXPOSE 8090

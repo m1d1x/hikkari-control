@@ -50,6 +50,11 @@ package main
 //	                                    # the Hikkari relay's datagrams cross once
 //	                                    # (v1.02 copies them itself) unless =2
 //	cmd/server entry-box trunk-entry-off <box>
+//	cmd/server entry-box trunk-pipe <box> <listen=port,...> [members] [hikkari-udp-copies=1|2]
+//	                                    # the stand over hk-pipe (the Rust pipe)
+//	                                    # beside the box's trunk entry, to its exit,
+//	                                    # on ports of its own (internal/entry/trunkpipe.go)
+//	cmd/server entry-box trunk-pipe-off <box>
 //	cmd/server entry-box trunk-wires <exit-box> udp=20447,quic=20448,salamander=20449|off
 //	                                    # the trunk's other wires at the exit
 //	                                    # (internal/entry/trunkwires.go): env,
@@ -509,6 +514,53 @@ func runEntryBox(args []string) {
 			fail(err)
 		}
 		fmt.Printf("%s: wires %s, steer=%v (the entry reads them within 10 s)\n", args[1], args[3], steer)
+		os.Exit(0)
+	}
+	if (len(args) >= 3 && len(args) <= 5 && args[0] == "trunk-pipe") || (len(args) == 2 && args[0] == "trunk-pipe-off") {
+		// entry-box trunk-pipe <box> <listen=port,...> [members] [hikkari-udp-copies=1|2]
+		// — the stand over hk-pipe beside the box's trunk entry, to its exit
+		// (internal/entry/trunkpipe.go, roadmap 4.6, R5).
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+		if args[0] == "trunk-pipe-off" {
+			if err := prov.StopTrunkPipe(ctx, args[1]); err != nil {
+				fail(err)
+			}
+			os.Exit(0)
+		}
+		o := entry.TrunkPipeOptions{Forward: map[int]int{}}
+		for _, pair := range strings.Split(args[2], ",") {
+			l, r, ok := strings.Cut(pair, "=")
+			a, e1 := strconv.Atoi(l)
+			b, e2 := strconv.Atoi(r)
+			if !ok || e1 != nil || e2 != nil {
+				fail(fmt.Errorf("forward %q is not listen=port", pair))
+			}
+			o.Forward[a] = b
+		}
+		for _, a := range args[3:] {
+			if v, ok := strings.CutPrefix(a, "hikkari-udp-copies="); ok {
+				if o.HikkariUDPCopies, err = strconv.Atoi(v); err != nil || o.HikkariUDPCopies < 1 || o.HikkariUDPCopies > 2 {
+					fail(fmt.Errorf("hikkari-udp-copies %q: 1 or 2", v))
+				}
+				continue
+			}
+			if o.Members, err = strconv.Atoi(a); err != nil {
+				fail(fmt.Errorf("members %q", a))
+			}
+		}
+		if err := prov.StandTrunkPipe(ctx, args[1], o); err != nil {
+			fail(err)
+		}
 		os.Exit(0)
 	}
 	if (len(args) >= 4 && len(args) <= 6 && args[0] == "trunk-entry") || (len(args) == 2 && args[0] == "trunk-entry-off") {
