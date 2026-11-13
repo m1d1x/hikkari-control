@@ -103,7 +103,7 @@ WantedBy=multi-user.target
 // changed (the first time, too), a build or a running process that cannot
 // hand over, ports that move, a reload that failed.
 const trunkSwapTemplate = `set -eu
-dir=@DIR@
+` + keepUnitsFromNeedrestartScript + `dir=@DIR@
 env=@ENV@
 unit=/etc/systemd/system/@UNIT@.service
 for port in "$@"; do

@@ -624,7 +624,7 @@ WantedBy=multi-user.target
 `
 
 const proberSwapScript = `set -eu
-bin=/usr/local/bin/nekko-entry-prober
+` + keepUnitsFromNeedrestartScript + `bin=/usr/local/bin/nekko-entry-prober
 if [ -f "$bin.new" ]; then
  mv "$bin.new" "$bin"
 fi
@@ -1916,7 +1916,7 @@ WantedBy=multi-user.target
 // do: the first time (the drop-in is new), a build that cannot hand over, a
 // generation that is not running or a reload that failed.
 const edgeSwapScript = `set -eu
-name="$1"; port="$2"; net="$3"
+` + keepUnitsFromNeedrestartScript + `name="$1"; port="$2"; net="$3"
 case "$net" in tcp) ssf=-tln ;; udp) ssf=-uln ;; *) echo "transport $net" >&2; exit 2 ;; esac
 bin=/usr/local/bin/nekko-edge
 [ -f "$bin.new" ] || cp "$bin" "$bin.new"
