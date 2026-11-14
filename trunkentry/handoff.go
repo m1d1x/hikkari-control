@@ -275,6 +275,9 @@ type node struct {
 	entry *trunk.Entry
 	ctx   context.Context
 	ports map[int]*udpPort
+	// legs adds up the clients' TCP sockets for the leg client → entry
+	// (clients.go).
+	legs *clientLegs
 
 	// extras stops the minute line and the call: the newest's alone.
 	extras context.CancelFunc
@@ -308,7 +311,7 @@ func startOn(ctx context.Context, c Config, dial trunk.Dial, s *sockets) (*node,
 	if err := addWires(c, entry); err != nil {
 		log.Printf("nekko-trunk-entry: wires: %v (the pool alone)", err)
 	}
-	n := &node{c: c, s: s, entry: entry, ctx: ctx, ports: map[int]*udpPort{}, handed: make(chan struct{}), sendTo: map[string]*net.UnixConn{}}
+	n := &node{c: c, s: s, entry: entry, ctx: ctx, ports: map[int]*udpPort{}, legs: newClientLegs(), handed: make(chan struct{}), sendTo: map[string]*net.UnixConn{}}
 	for port, pc := range s.udp {
 		copies := 0 // the session's
 		if c.OneCopy[port] {
@@ -357,19 +360,22 @@ func (n *node) accept(ln *net.TCPListener, to uint16) {
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
-		_ = conn.(*net.TCPConn).SetKeepAlive(true)
+		tc := conn.(*net.TCPConn)
+		_ = tc.SetKeepAlive(true)
 		// The current session: after the exit drained (a hitless rollout
 		// of its relay) that is a new one, while what the old one carries
 		// stays on it.
-		go n.entry.Session().Carry(conn, to)
+		go n.entry.Session().Carry(n.legs.track(tc), to)
 	}
 }
 
-// startExtras starts the minute line and the trunk's call.
+// startExtras starts the minute lines (the pool's, the clients') and the
+// trunk's call.
 func (n *node) startExtras() {
 	ctx, cancel := context.WithCancel(n.ctx)
 	n.extras = cancel
 	go logStats(ctx, n.entry)
+	go logClients(ctx, n.legs)
 	runCalls(ctx, n.entry)
 	go runWires(ctx, n.c, n.entry)
 }

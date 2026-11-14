@@ -38,11 +38,35 @@ export interface FleetProfile {
 	carriedMbps: (number | null)[];
 }
 
+/**
+ * A cascade (hub internal/admin/fleet_cascades.go): a trunk entry in Russia
+ * and its exit, under the name a subscriber reads for the cascade link, with
+ * its two legs as history. Loss is per 1000; a bucket nothing was sent in is
+ * null.
+ */
+export interface FleetCascade {
+	label: string;
+	entry: string;
+	entryLocation: string;
+	entryProvider: string;
+	exit: string;
+	exitLocation: string;
+	/** client → entry: TCP segments the entry sent its clients again, per 1000 sent */
+	clientLossPm: (number | null)[];
+	/** client → entry: median of the minutes' p50 round trip of the clients' sockets */
+	clientRttMs: (number | null)[];
+	/** entry → exit: the trunk's call with one copy, lost per 1000 */
+	trunkLossPm: (number | null)[];
+	/** entry → exit: median of the call's minutes' p50 round trip */
+	trunkRttMs: (number | null)[];
+}
+
 export interface FleetProfiles {
 	window: FleetWindow;
 	bucketSeconds: number;
 	buckets: string[];
 	profiles: FleetProfile[];
+	cascades: FleetCascade[];
 	missing: { figure: string; why: string }[];
 }
 

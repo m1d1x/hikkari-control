@@ -50,11 +50,13 @@ import (
 )
 
 type fleetProfiles struct {
-	Window        string          `json:"window"`
-	BucketSeconds int             `json:"bucketSeconds"`
-	Buckets       []string        `json:"buckets"`
-	Profiles      []fleetProfile  `json:"profiles"`
-	Missing       []missingFigure `json:"missing"`
+	Window        string         `json:"window"`
+	BucketSeconds int            `json:"bucketSeconds"`
+	Buckets       []string       `json:"buckets"`
+	Profiles      []fleetProfile `json:"profiles"`
+	// Cascades are the trunk entries with their two legs (fleet_cascades.go).
+	Cascades []fleetCascade  `json:"cascades"`
+	Missing  []missingFigure `json:"missing"`
 }
 
 // fleetProfile is one card of the fleet screen.
@@ -230,6 +232,12 @@ func (h *Handlers) FleetProfiles(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out.Profiles = foldProfiles(profiles, starts, month, figures)
+	if out.Cascades, err = h.cascades(ctx, starts, now, bucket); err != nil {
+		// The profiles stand without them: the cascade's legs are a card more.
+		log.Printf("admin fleet profiles: %v", err)
+		out.Cascades = []fleetCascade{}
+		out.Missing = append(out.Missing, missingFigure{Figure: "cascades", Why: "the trunk entries' legs could not be read"})
+	}
 	writeJSONResponse(w, out)
 }
 

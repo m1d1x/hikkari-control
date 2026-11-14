@@ -79,5 +79,19 @@ export function mockFleetProfiles(window: FleetWindow): FleetProfiles {
 			carriedMbps: wave(n, 0.6, 0.5),
 		},
 	];
-	return { window, bucketSeconds, buckets, profiles, missing: [] };
+	const cascades = [
+		{
+			label: 'нидерланды-102',
+			entry: 'aezamsk1',
+			entryLocation: 'Moscow, RU',
+			entryProvider: 'aeza',
+			exit: 'unl1',
+			exitLocation: 'Netherlands, NL',
+			clientLossPm: wave(n, 4, 3),
+			clientRttMs: wave(n, 22, 8),
+			trunkLossPm: wave(n, 0.2, 0.2),
+			trunkRttMs: wave(n, 44, 2),
+		},
+	];
+	return { window, bucketSeconds, buckets, profiles, cascades, missing: [] };
 }

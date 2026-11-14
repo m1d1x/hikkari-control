@@ -35,3 +35,20 @@ func TestTheStandsLinesGoUnderTargetsOfItsOwn(t *testing.T) {
 		t.Fatalf("mark %q", m.Label)
 	}
 }
+
+// The entry's clients line is a row of layer clients at its minute, with
+// the counts as numbers and "-" kept as said.
+func TestTheClientsLineIsARowOfItsMinute(t *testing.T) {
+	l := parseJournal("1794651602.017453 lim nekko-trunk-entry[1]: 2026/11/14 10:20:02 nekko-trunk-entry: clients tcp from=1794651540 conns=12 closed=3 sending=9 segs=48210 retrans=37 loss_pm=0.77 rtt_p50=18.4 rtt_p90=61.0\n")[0]
+	r, ok := classifyClients(l)
+	if !ok || r.Layer != LayerClients || r.Target != "tcp" || r.TS.Unix() != 1794651540 {
+		t.Fatalf("%+v %v", r, ok)
+	}
+	if num(r.Data, "segs") != 48210 || num(r.Data, "retrans") != 37 || num(r.Data, "rtt_p50") != 18.4 {
+		t.Fatalf("data %+v", r.Data)
+	}
+	idle := parseJournal("1794651602.0 lim nekko-trunk-entry[1]: nekko-trunk-entry: clients tcp from=1794651540 conns=0 closed=0 sending=0 segs=0 retrans=0 loss_pm=- rtt_p50=- rtt_p90=-\n")[0]
+	if r, _ := classifyClients(idle); r.Data["rtt_p50"] != "-" || num(r.Data, "segs") != 0 {
+		t.Fatalf("idle %+v", r.Data)
+	}
+}

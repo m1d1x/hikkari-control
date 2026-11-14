@@ -103,15 +103,15 @@ func (c *cascade) link(rec entry.RelayRecord, label string, dup bool) (string, b
 	if err != nil {
 		return "", false
 	}
-	u.Fragment = strings.TrimSpace(c.flag + " " + cascadeName(name))
+	u.Fragment = strings.TrimSpace(c.flag + " " + CascadeName(name))
 	return u.String(), true
 }
 
-// cascadeName is a node's label as its cascade reads: the number's first
+// CascadeName is a node's label as its cascade reads: the number's first
 // digit says the way in, 0 straight and 1 through the cascade
 // ("нидерланды-002" → "нидерланды-102"). A number that does not start with 0
 // gets the 1 in front ("-123" → "-1123"); a label with no number is kept.
-func cascadeName(label string) string {
+func CascadeName(label string) string {
 	i := strings.LastIndexByte(label, '-')
 	num := label[i+1:]
 	if i < 0 || num == "" || strings.Trim(num, "0123456789") != "" {

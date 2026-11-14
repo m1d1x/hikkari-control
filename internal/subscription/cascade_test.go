@@ -222,8 +222,8 @@ func TestACascadeNumbersTheNodeFromOne(t *testing.T) {
 		"нидерланды-a1":  "нидерланды-a1",
 		"нидерланды-":    "нидерланды-",
 	} {
-		if got := cascadeName(label); got != want {
-			t.Errorf("cascadeName(%q) = %q, want %q", label, got, want)
+		if got := CascadeName(label); got != want {
+			t.Errorf("CascadeName(%q) = %q, want %q", label, got, want)
 		}
 	}
 }

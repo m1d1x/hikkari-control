@@ -9,13 +9,18 @@
 
 	// Everything subscribers are handed right now, one card per profile: what
 	// it is (hoster, place, price, traffic, disguise) and how it lived over the
-	// window: ping from RU, and what the relay passed for subscribers.
+	// window: ping from RU, and what the relay passed for subscribers. First the
+	// cascades: the entry in Russia and its exit, with the loss and ping of
+	// both legs, client → RU and RU → EU.
 
 	const WINDOWS: FleetWindow[] = ['24h', '7d', '30d'];
 	const REFRESH_MS = 60_000;
 	const AVAIL_COLOR = '#d95926';
 	const RTT_COLOR = '#3987e5';
 	const SPEED_COLOR = '#199e70';
+	const CLIENT_LEG_COLOR = '#d95926';
+	const TRUNK_LEG_COLOR = '#3987e5';
+	const perMille = (v: number) => `${v.toLocaleString('ru', { maximumFractionDigits: 2 })} на 1000`;
 
 	let data = $state<FleetProfiles | null>(null);
 	let loadError = $state<string | null>(null);
@@ -121,6 +126,71 @@
 						<button class="chip" class:on={proto === p} onclick={() => (proto = p)}>{PROTO_LABEL[p] ?? p}</button>
 					{/each}
 				</div>
+			{/if}
+
+			{#if (data.cascades ?? []).length > 0}
+				<h2 class="section">каскад</h2>
+				<div class="grid">
+					{#each data.cascades as c (c.entry)}
+						<section class="card">
+							<header>
+								<h2>{c.label}</h2>
+								<span class="tag">каскад</span>
+							</header>
+							<dl>
+								<dt>вход</dt>
+								<dd>{c.entry}, {geo(c.entryLocation)}, {providerLabel(c.entryProvider)}</dd>
+								<dt>выход</dt>
+								<dd>{c.exit}, {geo(c.exitLocation)}</dd>
+							</dl>
+							<div class="legend">
+								<span><i style="background: {CLIENT_LEG_COLOR}"></i>клиент → РФ</span>
+								<span><i style="background: {TRUNK_LEG_COLOR}"></i>РФ → ЕУ</span>
+							</div>
+							<TrendChart
+								buckets={data.buckets}
+								bucketSeconds={data.bucketSeconds}
+								series={[
+									{
+										key: 'client-loss',
+										label: 'потери клиент → РФ',
+										color: CLIENT_LEG_COLOR,
+										values: c.clientLossPm,
+										format: perMille,
+										primary: true,
+									},
+									{
+										key: 'trunk-loss',
+										label: 'потери РФ → ЕУ',
+										color: TRUNK_LEG_COLOR,
+										values: c.trunkLossPm,
+										format: perMille,
+										primary: true,
+									},
+								]}
+								formatAxis={perMille}
+								height={140}
+								empty="потерь не мерили за окно"
+							/>
+							<TrendChart
+								buckets={data.buckets}
+								bucketSeconds={data.bucketSeconds}
+								series={[
+									{ key: 'client-rtt', label: 'пинг клиент → РФ', color: CLIENT_LEG_COLOR, values: c.clientRttMs, format: ms, primary: true },
+									{ key: 'trunk-rtt', label: 'пинг РФ → ЕУ', color: TRUNK_LEG_COLOR, values: c.trunkRttMs, format: ms, primary: true },
+								]}
+								formatAxis={ms}
+								height={120}
+								empty="пинга нет за окно"
+							/>
+							<p class="note">
+								клиент → РФ: переотправки TCP всех клиентов входа, без разбивки по людям; UDP клиента вход не видит.
+								РФ → ЕУ: звонок магистрали, датаграмма раз в 20 мс.
+							</p>
+						</section>
+					{/each}
+				</div>
+				<h2 class="section">профили</h2>
 			{/if}
 
 			{#if shown.length === 0}
@@ -306,6 +376,45 @@
 
 	.hint {
 		margin: 0 0 8px;
+		color: oklch(0.62 0 0);
+	}
+
+	h2.section {
+		margin: 16px 0 8px;
+		font-size: 13px;
+		font-weight: 500;
+		color: oklch(0.62 0 0);
+	}
+
+	.tag {
+		font-size: 11px;
+		padding: 1px 6px;
+		border-radius: 4px;
+		color: oklch(0.93 0 0);
+		background: oklch(0.3 0.05 250);
+	}
+
+	.legend {
+		display: flex;
+		gap: 14px;
+		margin: 0 0 6px;
+		font-size: 12px;
+		color: oklch(0.75 0 0);
+	}
+
+	.legend i {
+		display: inline-block;
+		width: 10px;
+		height: 3px;
+		margin-right: 6px;
+		vertical-align: middle;
+		border-radius: 2px;
+	}
+
+	.note {
+		margin: 6px 0 0;
+		font-size: 11px;
+		line-height: 15px;
 		color: oklch(0.62 0 0);
 	}
 </style>
