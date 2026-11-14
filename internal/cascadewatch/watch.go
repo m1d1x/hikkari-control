@@ -228,9 +228,29 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 	if err != nil {
 		return fmt.Errorf("journalctl: %w", err)
 	}
+	// The stand over hk-pipe beside the entry, when it stands: no unit, no
+	// line.
+	pipeOut, err := r.Run(ctx, pipeJournalCmd(since.Unix()), nil)
+	if err != nil {
+		return fmt.Errorf("journalctl %s: %w", pipeUnit, err)
+	}
 	var runs []Run
 	var legs []testerlegs.Row
 	newest := since
+	for _, l := range parseJournal(pipeOut) {
+		if !l.TS.After(since) {
+			continue
+		}
+		if l.TS.After(newest) {
+			newest = l.TS
+		}
+		if moved, ok := classifyPipe(l); ok {
+			for _, run := range moved {
+				run.Entry, run.Exit, run.Vantage = p.Entry, p.Exit, "entry"
+				runs = append(runs, run)
+			}
+		}
+	}
 	for _, l := range parseJournal(out) {
 		if !l.TS.After(since) {
 			continue

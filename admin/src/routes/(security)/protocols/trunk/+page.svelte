@@ -7,8 +7,9 @@
 	// The trunk's wires through the border (stage 4): the entry's call over
 	// each wire every 20 ms and its 1 MiB every 10 minutes, as history. The
 	// pool's own call (copies1, copies2), the stand's process per wire
-	// (wire-*) and the entry's own wires (trunk-*) side by side; the
-	// selector's moves of voice and bulk are marks on every chart.
+	// (wire-*), the entry's own wires (trunk-*) and the stand over hk-pipe
+	// (pipe-*: its wires, and its calls of the route pipe-copies*) side by
+	// side; the selector's moves of voice and bulk are marks on every chart.
 	// Only charts: there is no number without its line.
 
 	const WINDOWS: TrunkWindow[] = ['6h', '24h', '7d'];
@@ -29,11 +30,12 @@
 		salamander: '#9085e9',
 		awg: '#c98500',
 		udp: '#199e70',
+		h3dgram: '#2fa8b5',
 	};
 
 	function wireOf(key: string): string {
-		if (key.startsWith('copies')) return 'pool';
-		return key.replace(/^(wire|trunk)-/, '');
+		const bare = key.replace(/^(wire|trunk|pipe)-/, '');
+		return bare.startsWith('copies') ? 'pool' : bare;
 	}
 
 	function labelOf(key: string): string {
@@ -42,19 +44,22 @@
 		if (key.startsWith('wire-')) return `стенд ${key.slice(5)}`;
 		if (key === 'trunk-pool') return 'вход, пул';
 		if (key.startsWith('trunk-')) return `вход ${key.slice(6)}`;
+		if (key === 'pipe-copies1') return 'труба, звонок маршрута 1 копией';
+		if (key === 'pipe-copies2') return 'труба, звонок маршрута 2 копиями';
+		if (key.startsWith('pipe-')) return `труба ${key.slice(5)}`;
 		return key;
 	}
 
 	function colorOf(key: string): string {
 		const c = WIRE_COLOR[wireOf(key)] ?? '#7e7e7e';
 		// The pool's call with one copy is the lighter of its two lines.
-		return key === 'copies1' ? '#d55181' : c;
+		return key === 'copies1' || key === 'pipe-copies1' ? '#d55181' : c;
 	}
 
 	// Lines in a fixed order: the pool first, then the entry's wires, then
-	// the stand's.
+	// the stand over hk-pipe, then the wire stand's.
 	function rank(key: string): string {
-		const head = key.startsWith('copies') ? '0' : key.startsWith('trunk-') ? '1' : '2';
+		const head = key.startsWith('copies') ? '0' : key.startsWith('trunk-') ? '1' : key.startsWith('pipe-') ? '2' : '3';
 		return head + key;
 	}
 
@@ -187,7 +192,7 @@
 		<p class="hint">
 			Участок РФ ДЦ → ЕУ ДЦ: вход меряет каждый провод своим звонком (датаграмма раз в 20 мс) и загрузкой 1 МиБ раз в
 			10 минут. Пул: звонок магистрали по пулу, стенд: отдельный процесс провода на входе, вход: провода в самом процессе
-			входа. Отметки на оси: селектор перевёл голос или объём на другой провод (красная: провод покраснел).
+			входа, труба: стенд входа на Rust-трубе рядом с входом (его провода и звонки маршрута). Отметки на оси: селектор перевёл голос или объём на другой провод (красная: провод покраснел).
 		</p>
 
 		{#if loadError}

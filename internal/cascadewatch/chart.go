@@ -19,7 +19,7 @@ import (
 // Targets keep their meaning from the journal: copies1 and copies2 are the
 // pool's own call, wire-<wire> the stand's process for that wire,
 // trunk-<wire> the entry's own wire (trunk-pool its pool under the
-// selector). The wire layer names the stand's wire bare and the entry's as
+// selector), pipe-<wire> the stand over hk-pipe (pipe.go). The wire layer names the stand's wire bare and the entry's as
 // trunk-<wire>; here both take the call layer's names, so one wire is one
 // colour on every chart.
 
@@ -251,6 +251,9 @@ func routeMark(ts time.Time, data map[string]any) ChartMark {
 		label = fmt.Sprintf("%s: %s → %s, лучше %s", name, str("from"), str("to"), str("hold"))
 	default:
 		label = "маршрут: " + str("detail")
+	}
+	if str("path") == PathPipe {
+		label = "труба, " + label
 	}
 	return ChartMark{At: ts.UTC().Format(time.RFC3339), Label: label, Class: class, Why: why}
 }

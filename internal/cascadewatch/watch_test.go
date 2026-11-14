@@ -235,6 +235,8 @@ func (b fakeBox) Run(_ context.Context, cmd string, _ io.Reader) (string, error)
 	*b.cmds = append(*b.cmds, b.name+": "+cmd)
 	b.mu.Unlock()
 	switch {
+	case strings.HasPrefix(cmd, "journalctl -u "+pipeUnit):
+		return "", nil
 	case strings.HasPrefix(cmd, "journalctl"):
 		return b.journal, nil
 	case strings.HasSuffix(cmd, " vps"):
