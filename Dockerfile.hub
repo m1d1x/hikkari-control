@@ -94,6 +94,16 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
       cargo build --release --locked -p hikkari-exit --target x86_64-unknown-linux-gnu && \
       cp target/x86_64-unknown-linux-gnu/release/hk-exit /out/relay/linux-amd64/hk-exit; \
     else echo "hk-exit: built on amd64 only, none in this image"; fi
+# libcronet with the CONNECT-UDP tunnel (hikkari-protocol
+# rust/cronet/chromium/build.sh and connect-udp.patch, the same Chromium as
+# libcronet.so above), for the stand's Chromium QUIC wire (trunkpipe.go):
+# Chromium takes 25 GB and half an hour to build, so the build is a release
+# of hikkari-protocol, checked by its sha256 here. amd64 only.
+ARG CRONET_UDP=cronet-150.0.7871.63-udp.1
+ARG CRONET_UDP_SHA256=4baa833b8b961d731025222a897613c99c0200667ec0463e249551381ae41bf8
+RUN curl -fsSL -o /out/relay/linux-amd64/libcronet-udp.so \
+      "https://github.com/m1d1x/hikkari-protocol/releases/download/$CRONET_UDP/libcronet-udp-linux-amd64.so" && \
+    echo "$CRONET_UDP_SHA256  /out/relay/linux-amd64/libcronet-udp.so" | sha256sum -c -
 
 # ── The stand's entry with Chromium's QUIC (edge/, -tags wirestand_h3) ──────
 # The wire stand's entry (internal/entry/wirestand.go) runs the edge built
