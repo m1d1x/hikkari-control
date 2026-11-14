@@ -70,7 +70,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # members. Cross-built from the build platform for both boxes' architectures;
 # it needs glibc 2.34 or later on the box (the stand's swap runs it first).
 FROM --platform=$BUILDPLATFORM rust:1.97.1-bookworm AS pipe-builder
-RUN host=$(dpkg --print-architecture) && pkgs="" && \
+RUN host=$(dpkg --print-architecture) && pkgs="cmake libclang-dev" && \
     { [ "$host" = amd64 ] || pkgs="$pkgs gcc-x86-64-linux-gnu libc6-dev-amd64-cross"; } && \
     { [ "$host" = arm64 ] || pkgs="$pkgs gcc-aarch64-linux-gnu libc6-dev-arm64-cross"; } && \
     apt-get update && apt-get install -y --no-install-recommends $pkgs && rm -rf /var/lib/apt/lists/* && \
@@ -85,6 +85,15 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
       cargo build --release --locked -p hikkari-pipe --target $target && \
       mkdir -p /out/relay/linux-$arch && cp target/$target/release/hk-pipe /out/relay/linux-$arch/hk-pipe || exit 1; \
     done
+# The exit's Rust pipe (hk-exit), the exit's end of Chromium's QUIC wire for
+# the stand (internal/entry/trunkh3exit.go, R6.3): quiche builds BoringSSL
+# with cmake, so for the build host's own architecture alone, amd64 (the
+# exits are amd64; an arm64 one has no hk-exit, and the hub says so).
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    if [ "$(dpkg --print-architecture)" = amd64 ]; then \
+      cargo build --release --locked -p hikkari-exit --target x86_64-unknown-linux-gnu && \
+      cp target/x86_64-unknown-linux-gnu/release/hk-exit /out/relay/linux-amd64/hk-exit; \
+    else echo "hk-exit: built on amd64 only, none in this image"; fi
 
 # ── The stand's entry with Chromium's QUIC (edge/, -tags wirestand_h3) ──────
 # The wire stand's entry (internal/entry/wirestand.go) runs the edge built

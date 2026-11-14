@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/m1d1x/hikkari-protocol/trunk/pipectl"
 )
 
 // The brain over hk-pipe across two processes (R5): the test binary is the
@@ -275,5 +277,37 @@ func TestABrainOverThePipeReloadsIntoAnotherProcessUnderACallAndAStream(t *testi
 		}
 	case <-time.After(3 * time.Minute):
 		t.Errorf("the first generation still runs 3 min after the reload")
+	}
+}
+
+// TestThePipeCarriesTheUdpAndTheQuicWire: the brain gives the pipe the udp
+// wire and Chromium's QUIC wire of the hub's file, the latter with the
+// trunk's SNI, the libcronet beside hk-pipe, the roots and the pool's book
+// of ports (R6.3).
+func TestThePipeCarriesTheUdpAndTheQuicWire(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wires.json")
+	t.Setenv("EDGE_TRUNK_WIRES_FILE", path)
+	raw := `{"steer": true, "wires": [{"name": "udp", "kind": "udp", "port": 20447, "members": 2},
+		{"name": "quic", "kind": "quic", "port": 20448, "members": 4},
+		{"name": "h3dgram", "kind": "h3dgram", "port": 4445, "members": 4}]}`
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := Config{SNI: "hk.example", Key: "k", Pipe: "/usr/local/lib/nekko-trunk-pipe/hk-pipe", PortLo: 10000, PortHi: 19999}
+	exit, _ := exitOf(Config{Exit: "192.0.2.1:443"})
+	ws, steer, err := pipeWires(c, exit, "PEM")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !steer || len(ws) != 2 {
+		t.Fatalf("steer %v, %d wires, want the udp and the h3dgram ones", steer, len(ws))
+	}
+	h := ws[1]
+	if h.ID != 6 || h.Exit.String() != "192.0.2.1:4445" || h.H3 == nil || ws[0].H3 != nil {
+		t.Fatalf("wire %+v", h)
+	}
+	want := pipectl.H3Form{SNI: "hk.example", Cronet: "/usr/local/lib/nekko-trunk-pipe/libcronet.so", Roots: "PEM", Ports: [2]uint16{10000, 19999}}
+	if *h.H3 != want || wireShape(h) != "browser" || wireShape(ws[0]) != "random" {
+		t.Fatalf("form %+v, want %+v", *h.H3, want)
 	}
 }

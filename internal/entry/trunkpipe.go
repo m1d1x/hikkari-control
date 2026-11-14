@@ -20,8 +20,13 @@ import (
 // path pipe), so a run reads the pipe against the Go entry of the same hour.
 // Standing it, reloading it or taking it off never touches the Go entry.
 //
-//	cmd/server entry-box trunk-pipe <box> <listen=port,...> [members]   # stand up or update
+//	cmd/server entry-box trunk-pipe <box> <listen=port,...> [members] [h3dgram=<port>[:proxy]]   # stand up or update
 //	cmd/server entry-box trunk-pipe-off <box>
+//
+// h3dgram= gives the stand Chromium's QUIC wire (R6.3) to the exit's end of
+// it at that port (entry-box trunk-h3-exit, trunkh3exit.go), its members'
+// sessions as Chrome's to a site, or to a proxy with :proxy; the stand's
+// libcronet is then the build with the CONNECT-UDP tunnel.
 
 const (
 	trunkPipeUnit = "nekko-trunk-pipe"
@@ -35,8 +40,10 @@ const (
 	// ephemeral range, so the two never race for a port to the same exit.
 	TrunkPipeSourcePorts = "10000-19999"
 	// trunkPipeWireMembers is the udp wire's members, as the Go entry's
-	// (entry-box trunk-entry-wires).
+	// (entry-box trunk-entry-wires); trunkPipeH3Members the QUIC wire's, as
+	// R6.3's bench.
 	trunkPipeWireMembers = 2
+	trunkPipeH3Members   = 4
 )
 
 var trunkPipeUnitSpec = trunkUnit{name: trunkPipeUnit, dir: trunkPipeDir, env: trunkPipeEnv,
@@ -50,6 +57,10 @@ type TrunkPipeOptions struct {
 	Forward          map[int]int
 	Members          int
 	HikkariUDPCopies int
+	// H3Port, when set, is the exit's port of Chromium's QUIC wire, H3Usage
+	// its members' session usage ("" is destination).
+	H3Port  int
+	H3Usage string
 }
 
 // trunkPipeEnvOf is the stand's env: the entry's (trunkEntryEnv) and the
@@ -60,15 +71,16 @@ func trunkPipeEnvOf(addr, sni, key string, o TrunkPipeOptions) string {
 		"\nEDGE_TRUNK_SOURCE_PORTS=" + TrunkPipeSourcePorts + "\n"
 }
 
-// trunkPipeWiresOf is the stand's wires file: the exit's udp wire, steered.
-// The pipe carries no quic or salamander (owner, 12.11); no udp wire is the
-// pool alone.
-func trunkPipeWiresOf(wires map[string]int) (string, error) {
+// trunkPipeWiresOf is the stand's wires file: the exit's udp wire and the
+// QUIC wire at h3Port (0: none), steered. The pipe carries no quic or
+// salamander (owner, 12.11); no wire is the pool alone.
+func trunkPipeWiresOf(wires map[string]int, h3Port int, h3Usage string) (string, error) {
 	type wire struct {
 		Name    string `json:"name"`
 		Kind    string `json:"kind"`
 		Port    int    `json:"port"`
 		Members int    `json:"members"`
+		Usage   string `json:"usage,omitempty"`
 	}
 	f := struct {
 		Steer bool   `json:"steer"`
@@ -76,6 +88,9 @@ func trunkPipeWiresOf(wires map[string]int) (string, error) {
 	}{Steer: true, Wires: []wire{}}
 	if port, ok := wires["udp"]; ok {
 		f.Wires = append(f.Wires, wire{Name: "udp", Kind: "udp", Port: port, Members: trunkPipeWireMembers})
+	}
+	if h3Port > 0 {
+		f.Wires = append(f.Wires, wire{Name: "h3dgram", Kind: "h3dgram", Port: h3Port, Members: trunkPipeH3Members, Usage: h3Usage})
 	}
 	raw, err := json.Marshal(f)
 	return string(raw) + "\n", err
@@ -99,6 +114,19 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	}
 	if len(p.pipeBuilds) == 0 {
 		return fmt.Errorf("%w: в образе хаба нет hk-pipe", ErrRejected)
+	}
+	if o.H3Usage != "" && o.H3Usage != "destination" && o.H3Usage != "proxy" {
+		return fmt.Errorf("%w: форма члена %q, destination или proxy", ErrRejected, o.H3Usage)
+	}
+	if o.H3Port < 0 || o.H3Port > 65535 {
+		return fmt.Errorf("%w: порт h3dgram %d", ErrRejected, o.H3Port)
+	}
+	cronet := p.cronetBuilds
+	if o.H3Port > 0 {
+		if len(p.cronetUDPBuilds) == 0 {
+			return fmt.Errorf("%w: в образе хаба нет libcronet-udp.so для провода h3dgram", ErrRejected)
+		}
+		cronet = p.cronetUDPBuilds
 	}
 	pair, err := p.svc.trunkPairOf(ctx, box)
 	if err != nil {
@@ -126,7 +154,7 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	if err != nil {
 		return err
 	}
-	wiresFile, err := trunkPipeWiresOf(wires)
+	wiresFile, err := trunkPipeWiresOf(wires, o.H3Port, o.H3Usage)
 	if err != nil {
 		return err
 	}
@@ -140,7 +168,7 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	}
 	applog.Info(ctx, "entry", "operator trunk pipe on box", applog.F("box", box), applog.F("exit", pair.Exit),
 		applog.F("members", o.Members), applog.F("listen", strings.Join(listen, ",")))
-	files := []trunkFile{{"nekko-trunk-entry", p.trunkBuilds}, {"libcronet.so", p.cronetBuilds}, {"hk-pipe", p.pipeBuilds}}
+	files := []trunkFile{{"nekko-trunk-entry", p.trunkBuilds}, {"libcronet.so", cronet}, {"hk-pipe", p.pipeBuilds}}
 	if err := standTrunkUnit(ctx, r, trunkPipeUnitSpec, files, trunkPipeEnvOf(addr, sni, key, o),
 		map[string]string{"wires.json": wiresFile}, listen, logf); err != nil {
 		return err

@@ -3,7 +3,7 @@ module github.com/m1d1x/hikkari-control/trunkentry
 go 1.27
 
 require (
-	github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261113044351-69f125d2f38a
+	github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261114070754-8dda30bd832e
 	github.com/m1d1x/hikkari-protocol/trunk/chromium v0.0.0-20261109035446-c773c6a37f81
 	github.com/m1d1x/hikkari-protocol/trunk/quicwire v0.0.0-20261111070922-a2b0763eb54c
 	golang.org/x/sys v0.47.0
@@ -13,7 +13,7 @@ require (
 	github.com/andybalholm/brotli v1.0.6 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/klauspost/compress v1.19.1 // indirect
-	github.com/m1d1x/hikkari-protocol v0.0.0-20261113044351-69f125d2f38a // indirect
+	github.com/m1d1x/hikkari-protocol v0.0.0-20261114070754-8dda30bd832e // indirect
 	github.com/metacubex/utls v1.8.7 // indirect
 	github.com/miekg/dns v1.1.72 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect

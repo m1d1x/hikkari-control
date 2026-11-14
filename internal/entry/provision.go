@@ -147,6 +147,12 @@ type Provisioner struct {
 	// pipeBuilds are the entry's Rust pipe (linux-<arch>/hk-pipe, glibc:
 	// it loads libcronet), for the stand over it (trunkpipe.go).
 	pipeBuilds map[string]EdgeBuild
+	// cronetUDPBuilds are libcronet with the CONNECT-UDP tunnel
+	// (linux-<arch>/libcronet-udp.so, hikkari-protocol rust/cronet/chromium:
+	// the same Chromium as libcronet.so and the patch), for the stand's
+	// Chromium QUIC wire; exitBuilds the exit's Rust pipe (linux-<arch>/hk-exit),
+	// the end of that wire on the exit (trunkh3exit.go).
+	cronetUDPBuilds, exitBuilds map[string]EdgeBuild
 	// wireStandH3Builds are the edge built with cronet
 	// (linux-<arch>/hikkari-wire-stand-h3): the stand's entry (wirestand.go).
 	wireStandH3Builds map[string]EdgeBuild
@@ -188,6 +194,8 @@ func NewProvisioner(svc *Service, dial Dialer, artifacts string) *Provisioner {
 		trunkBuilds:       loadNamedBuilds(artifacts, "nekko-trunk-entry"),
 		cronetBuilds:      loadNamedBuilds(artifacts, "libcronet.so"),
 		pipeBuilds:        loadNamedBuilds(artifacts, "hk-pipe"),
+		cronetUDPBuilds:   loadNamedBuilds(artifacts, "libcronet-udp.so"),
+		exitBuilds:        loadNamedBuilds(artifacts, "hk-exit"),
 		wireStandH3Builds: loadNamedBuilds(artifacts, WireStandH3Build),
 		probeBuilds:       loadNamedBuilds(artifacts, "nekko-cascade-probe"),
 		probeTimeout:      5 * time.Minute, probePoll: 2 * time.Second, drainPoll: drainPoll,

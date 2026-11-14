@@ -102,24 +102,41 @@ func exitOf(c Config) (netip.AddrPort, error) {
 	return ap, nil
 }
 
-// pipeWires are the packet wires of the hub's file the pipe carries: udp
-// alone (the owner's 12.11: quic and salamander are not carried over to
-// Rust, Chromium's QUIC comes as R6).
-func pipeWires(c Config, exit netip.AddrPort) ([]pipectl.Wire, bool, error) {
+// pipeWires are the packet wires of the hub's file the pipe carries: udp,
+// and Chromium's QUIC wire h3dgram (R6.3: the pipe opens its members from
+// the pool's book of ports, through the libcronet beside it, to the exit's
+// QUIC port, whose certificate names the trunk's SNI). quic and salamander
+// are not carried over to Rust (the owner's 12.11).
+func pipeWires(c Config, exit netip.AddrPort, roots string) ([]pipectl.Wire, bool, error) {
 	f, _, err := readWires(wiresFilePath())
 	if err != nil {
 		return nil, false, err
 	}
 	var out []pipectl.Wire
 	for _, w := range f.Wires {
-		if w.Kind != "udp" {
+		pw := pipectl.Wire{ID: wireIDs[w.Kind], Name: w.Name, Key: c.Key, Members: w.Members, Stall: c.Stall,
+			Exit: netip.AddrPortFrom(exit.Addr(), uint16(w.Port))}
+		switch w.Kind {
+		case "udp":
+		case "h3dgram":
+			pw.H3 = &pipectl.H3Form{SNI: c.SNI, Cronet: cronetBeside(c.Pipe), Roots: roots, Usage: w.Usage,
+				Ports: [2]uint16{uint16(c.PortLo), uint16(c.PortHi)}}
+		default:
 			log.Printf("nekko-trunk-entry: wire %s is not carried by the pipe, left out", w.Name)
 			continue
 		}
-		out = append(out, pipectl.Wire{ID: wireIDs[w.Kind], Name: w.Name, Key: c.Key, Members: w.Members, Stall: c.Stall,
-			Exit: netip.AddrPortFrom(exit.Addr(), uint16(w.Port))})
+		out = append(out, pw)
 	}
 	return out, f.Steer, nil
+}
+
+// wireShape is a pipe wire's shape for the selector's warm pair: Chromium's
+// QUIC looks like a browser, the bare UDP wire like nothing.
+func wireShape(w pipectl.Wire) string {
+	if w.H3 != nil {
+		return "browser"
+	}
+	return "random"
 }
 
 // startBrain starts the pipe and gives it the pool and the wires. No
@@ -154,7 +171,7 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 	}
 	// A file that cannot be read leaves the pool alone, as the Go entry's
 	// addWires: a wire less, not an entry less.
-	ws, steer, err := pipeWires(c, exit)
+	ws, steer, err := pipeWires(c, exit, roots)
 	if err != nil {
 		log.Printf("nekko-trunk-entry: wires: %v (the pool alone)", err)
 	}
@@ -271,7 +288,7 @@ func (b *brain) startExtras() {
 	ids := []trunk.WireID{trunk.PoolWire}
 	names := map[trunk.WireID]string{trunk.PoolWire: "pool"}
 	for _, w := range b.wires {
-		all = append(all, trunk.Wire{ID: w.ID, Name: w.Name, Shape: "random", Packet: true})
+		all = append(all, trunk.Wire{ID: w.ID, Name: w.Name, Shape: wireShape(w), Packet: true})
 		ids = append(ids, w.ID)
 		names[w.ID] = w.Name
 	}

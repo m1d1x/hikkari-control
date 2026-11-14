@@ -156,3 +156,41 @@ func TestDownloadsAreOffTheSteal(t *testing.T) {
 		ats = append(ats, at)
 	}
 }
+
+// TestTheGoEntryLeavesChromiumsQuicWireOut: a file with the pipe's wire
+// h3dgram reads, its usage checked, and the Go entry builds only the wires
+// it carries.
+func TestTheGoEntryLeavesChromiumsQuicWireOut(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wires.json")
+	write := func(s string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`{"steer": true, "wires": [{"name": "udp", "kind": "udp", "port": 20447, "members": 2},
+		{"name": "h3dgram", "kind": "h3dgram", "port": 4445, "members": 4, "usage": "proxy"}]}`)
+	f, _, err := readWires(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Wires) != 2 || f.Wires[1].Usage != "proxy" {
+		t.Fatalf("read %+v", f.Wires)
+	}
+	ws, err := buildWires(Config{Exit: "127.0.0.1:443", Key: "k"}, f, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ws) != 1 || ws[0].ID != wireIDs["udp"] {
+		t.Fatalf("the Go entry built %d wires, want the udp one alone", len(ws))
+	}
+	for _, bad := range []string{
+		`{"wires": [{"name": "h3dgram", "kind": "h3dgram", "port": 4445, "members": 4, "usage": "kProxy"}]}`,
+		`{"wires": [{"name": "udp", "kind": "udp", "port": 20447, "members": 2, "usage": "proxy"}]}`,
+	} {
+		write(bad)
+		if _, _, err := readWires(path); err == nil {
+			t.Fatalf("taken: %s", bad)
+		}
+	}
+}

@@ -50,11 +50,18 @@ package main
 //	                                    # the Hikkari relay's datagrams cross once
 //	                                    # (v1.02 copies them itself) unless =2
 //	cmd/server entry-box trunk-entry-off <box>
-//	cmd/server entry-box trunk-pipe <box> <listen=port,...> [members] [hikkari-udp-copies=1|2]
+//	cmd/server entry-box trunk-pipe <box> <listen=port,...> [members] [hikkari-udp-copies=1|2] [h3dgram=<port>[:proxy]]
 //	                                    # the stand over hk-pipe (the Rust pipe)
 //	                                    # beside the box's trunk entry, to its exit,
-//	                                    # on ports of its own (internal/entry/trunkpipe.go)
+//	                                    # on ports of its own (internal/entry/trunkpipe.go);
+//	                                    # h3dgram= adds Chromium's QUIC wire to its
+//	                                    # end on the exit (trunk-h3-exit)
 //	cmd/server entry-box trunk-pipe-off <box>
+//	cmd/server entry-box trunk-h3-exit <exit-box> <port>
+//	                                    # the exit's end of that wire: hk-exit beside
+//	                                    # the relay, on its own UDP port
+//	                                    # (internal/entry/trunkh3exit.go)
+//	cmd/server entry-box trunk-h3-exit-off <exit-box>
 //	cmd/server entry-box trunk-wires <exit-box> udp=20447,quic=20448,salamander=20449|off
 //	                                    # the trunk's other wires at the exit
 //	                                    # (internal/entry/trunkwires.go): env,
@@ -516,8 +523,37 @@ func runEntryBox(args []string) {
 		fmt.Printf("%s: wires %s, steer=%v (the entry reads them within 10 s)\n", args[1], args[3], steer)
 		os.Exit(0)
 	}
-	if (len(args) >= 3 && len(args) <= 5 && args[0] == "trunk-pipe") || (len(args) == 2 && args[0] == "trunk-pipe-off") {
-		// entry-box trunk-pipe <box> <listen=port,...> [members] [hikkari-udp-copies=1|2]
+	if (len(args) == 3 && args[0] == "trunk-h3-exit") || (len(args) == 2 && args[0] == "trunk-h3-exit-off") {
+		// entry-box trunk-h3-exit <exit-box> <port> — the exit's end of
+		// Chromium's QUIC wire for the stand (internal/entry/trunkh3exit.go, R6.3).
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+		if args[0] == "trunk-h3-exit-off" {
+			if err := prov.StopTrunkH3Exit(ctx, args[1]); err != nil {
+				fail(err)
+			}
+			os.Exit(0)
+		}
+		port, err := strconv.Atoi(args[2])
+		if err != nil {
+			fail(fmt.Errorf("port %q", args[2]))
+		}
+		if err := prov.StandTrunkH3Exit(ctx, args[1], port); err != nil {
+			fail(err)
+		}
+		os.Exit(0)
+	}
+	if (len(args) >= 3 && len(args) <= 6 && args[0] == "trunk-pipe") || (len(args) == 2 && args[0] == "trunk-pipe-off") {
+		// entry-box trunk-pipe <box> <listen=port,...> [members] [hikkari-udp-copies=1|2] [h3dgram=<port>[:proxy]]
 		// — the stand over hk-pipe beside the box's trunk entry, to its exit
 		// (internal/entry/trunkpipe.go, roadmap 4.6, R5).
 		if err := cryptobox.Configure(os.Getenv); err != nil {
@@ -552,6 +588,14 @@ func runEntryBox(args []string) {
 				if o.HikkariUDPCopies, err = strconv.Atoi(v); err != nil || o.HikkariUDPCopies < 1 || o.HikkariUDPCopies > 2 {
 					fail(fmt.Errorf("hikkari-udp-copies %q: 1 or 2", v))
 				}
+				continue
+			}
+			if v, ok := strings.CutPrefix(a, "h3dgram="); ok {
+				port, usage, _ := strings.Cut(v, ":")
+				if o.H3Port, err = strconv.Atoi(port); err != nil {
+					fail(fmt.Errorf("h3dgram %q: <port>[:proxy]", v))
+				}
+				o.H3Usage = usage
 				continue
 			}
 			if o.Members, err = strconv.Atoi(a); err != nil {

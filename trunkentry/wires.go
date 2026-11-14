@@ -8,6 +8,10 @@ package main
 //	{"steer": true, "wires": [{"name": "udp", "kind": "udp", "port": 20447, "members": 2},
 //	                          {"name": "quic", "kind": "quic", "port": 20448, "members": 4}]}
 //
+// The kind h3dgram (Chromium's QUIC, hot path plan R6.3) only the brain over
+// hk-pipe carries (brain_linux.go pipeWires), with "usage" destination (the
+// default, the owner's choice of 14.11) or proxy; the Go entry leaves it out.
+//
 // and the running entry reads it every 10 s: a wire added comes up, a wire
 // gone has its members closed, a wire changed is dialled anew (trunk
 // Entry.SetWires), all without a new process. No file, or no wire in it, is
@@ -50,6 +54,9 @@ type wireSpec struct {
 	Kind    string `json:"kind"`
 	Port    int    `json:"port"`
 	Members int    `json:"members"`
+	// Usage is how an h3dgram wire's members use their QUIC sessions:
+	// "destination" (when empty) or "proxy" (pipectl.H3Form.Usage).
+	Usage string `json:"usage,omitempty"`
 }
 
 type wiresSpec struct {
@@ -59,7 +66,7 @@ type wiresSpec struct {
 
 // wireIDs are the wires' ids on the trunk: fixed per kind, so the exit's
 // numbers and the logs say the same wire across processes.
-var wireIDs = map[string]trunk.WireID{"quic": 1, "salamander": 2, "udp": 3}
+var wireIDs = map[string]trunk.WireID{"quic": 1, "salamander": 2, "udp": 3, "h3dgram": 6}
 
 // downloadAt is each wire's second in every ten minutes for its 1 MiB: not
 // at :x0 nor :x5, where the box's neighbours steal its CPU (opyt 1.1; quic's
@@ -108,6 +115,9 @@ func readWires(path string) (wiresSpec, []byte, error) {
 		if seen[w.Kind] || w.Port < 1 || w.Port > 65535 || w.Members < 1 || w.Members > 32 {
 			return f, raw, fmt.Errorf("%s: wire %q: twice, or port %d, or members %d", path, w.Name, w.Port, w.Members)
 		}
+		if w.Usage != "" && (w.Kind != "h3dgram" || w.Usage != "destination" && w.Usage != "proxy") {
+			return f, raw, fmt.Errorf("%s: wire %q: usage %q", path, w.Name, w.Usage)
+		}
 		seen[w.Kind] = true
 	}
 	return f, raw, nil
@@ -126,6 +136,10 @@ func buildWires(c Config, f wiresSpec, udpPorts *trunk.PortBook) ([]trunk.Wire, 
 	}
 	out := make([]trunk.Wire, 0, len(f.Wires))
 	for _, w := range f.Wires {
+		if w.Kind == "h3dgram" {
+			// Chromium's QUIC wire is the pipe's alone (pipeWires).
+			continue
+		}
 		at := netip.AddrPortFrom(ip, uint16(w.Port))
 		tw := trunk.Wire{ID: wireIDs[w.Kind], Name: w.Name, Members: w.Members, Ports: udpPorts, Knobs: fmt.Sprintf("port=%d", w.Port)}
 		switch w.Kind {
