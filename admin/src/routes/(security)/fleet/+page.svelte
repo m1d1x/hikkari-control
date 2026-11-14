@@ -242,10 +242,6 @@
 								height={120}
 								empty="пинга нет за окно"
 							/>
-							<p class="note">
-								клиент → РФ: переотправки TCP всех клиентов входа, без разбивки по людям; UDP клиента вход не видит.
-								РФ → ЕУ: звонок магистрали, датаграмма раз в 20 мс.
-							</p>
 						</section>
 					{/each}
 				</div>
@@ -482,12 +478,5 @@
 		margin-right: 6px;
 		vertical-align: middle;
 		border-radius: 2px;
-	}
-
-	.note {
-		margin: 6px 0 0;
-		font-size: 11px;
-		line-height: 15px;
-		color: oklch(0.62 0 0);
 	}
 </style>
