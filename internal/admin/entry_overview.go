@@ -141,13 +141,18 @@ type moneyBlock struct {
 	Series []moneyPoint `json:"series"`
 }
 
-// spendLine is one spending article in three readings. Projection is the
+// spendLine is one spending article in four readings. Projection is the
 // month's spend at the rate seen so far — the number that says "this is where
-// it lands", which neither of the other two does.
+// it lands", which neither of the other two does. RateMonthCents is what a
+// whole month costs at what runs now: the machines' prices as their hosters
+// bill them today, which a window's average lags behind by every machine
+// added or handed back inside it (owner, 14.11: $8.91 on 30 days, $42.10 the
+// fleet really costs).
 type spendLine struct {
 	PerDayCents     int64 `json:"perDayCents"`
 	MonthCents      int64 `json:"monthCents"`
 	ProjectionCents int64 `json:"projectionCents"`
+	RateMonthCents  int64 `json:"rateMonthCents"`
 }
 
 // survivalBlock is how long what we buy lives. The two medians apart are the
@@ -801,6 +806,8 @@ func (h *Handlers) fillMoney(ctx context.Context, out *entryOverview, window tim
 		PerDayCents:     perDay,
 		MonthCents:      month,
 		ProjectionCents: projection,
+		// Domains are bought, not rented: their month is the window's rate.
+		RateMonthCents: perDay * 30,
 	}
 	if err := h.fillMachineSpend(ctx, out, window); err != nil {
 		return err
@@ -809,6 +816,7 @@ func (h *Handlers) fillMoney(ctx context.Context, out *entryOverview, window tim
 		PerDayCents:     out.Money.Domains.PerDayCents + out.Money.Machines.PerDayCents,
 		MonthCents:      out.Money.Domains.MonthCents + out.Money.Machines.MonthCents,
 		ProjectionCents: out.Money.Domains.ProjectionCents + out.Money.Machines.ProjectionCents,
+		RateMonthCents:  out.Money.Domains.RateMonthCents + out.Money.Machines.RateMonthCents,
 	}
 	projection = out.Money.Total.ProjectionCents
 	out.Money.ActivePeople = out.Reach.People
@@ -891,6 +899,7 @@ func (h *Handlers) fillMachineSpend(ctx context.Context, out *entryOverview, win
 		PerDayCents:     int64(float64(inWindow) / window.Hours() * 24),
 		MonthCents:      month,
 		ProjectionCents: month + int64(float64(fleetMonthly)/daysInMonth*daysLeft),
+		RateMonthCents:  fleetMonthly,
 	}
 	out.Money.MachinesUnpriced, out.Money.MachinesPriced = unpriced, priced
 	return nil

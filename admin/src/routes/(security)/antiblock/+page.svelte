@@ -110,9 +110,9 @@
 				<div class="money-layout">
 					<div class="money-figure">
 						<div class="big">
-							{formatCents(data.money.total.perDayCents * 30)}<span class="unit">/ мес</span>
+							{formatCents(data.money.total.rateMonthCents)}<span class="unit">/ мес</span>
 						</div>
-						<div class="what">прогноз на месяц</div>
+						<div class="what">месяц по текущему флоту</div>
 					</div>
 					<div class="chart-wrapper">
 						<TrendChart

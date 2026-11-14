@@ -8,6 +8,7 @@ import (
 
 	"github.com/m1d1x/hikkari-control/internal/digitalocean"
 	"github.com/m1d1x/hikkari-control/internal/entry"
+	"github.com/m1d1x/hikkari-control/internal/fx"
 	"github.com/m1d1x/hikkari-control/internal/hetzner"
 	"github.com/m1d1x/hikkari-control/internal/openstack"
 	"github.com/m1d1x/hikkari-control/internal/vdsina"
@@ -42,11 +43,14 @@ func (h hoster) Plans(ctx context.Context) ([]entry.BoxPlan, error) {
 	}
 	out := make([]entry.BoxPlan, 0, len(ps))
 	for _, p := range ps {
-		out = append(out, entry.BoxPlan{
+		bp, err := pricedPlan(ctx, nil, entry.BoxPlan{
 			ID: p.ID, VCPUs: p.VCPUs, RAMMB: p.RAMMB, DiskGB: p.DiskGB,
-			BandwidthGB: p.BandwidthGB, MonthlyCents: p.MonthlyCents,
-			OverageCentsPerTB: p.OverageCentsPerTB, Regions: p.Regions,
-		})
+			BandwidthGB: p.BandwidthGB, Regions: p.Regions,
+		}, p.MonthlyCents, p.OverageCentsPerTB, fx.USD)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, bp)
 	}
 	return out, nil
 }
@@ -178,9 +182,14 @@ func toBoxInstance(i vultr.Instance) entry.BoxInstance {
 // ── Hetzner Cloud Adapter ───────────────────────────────────────────────
 
 // HetznerHoster adapts a Hetzner Cloud client to entry.BoxProvider.
-func HetznerHoster(c *hetzner.Client) entry.BoxProvider { return hetznerHoster{c: c} }
+func HetznerHoster(c *hetzner.Client, r *fx.Rates) entry.BoxProvider {
+	return hetznerHoster{c: c, r: r}
+}
 
-type hetznerHoster struct{ c *hetzner.Client }
+type hetznerHoster struct {
+	c *hetzner.Client
+	r *fx.Rates
+}
 
 func (h hetznerHoster) Regions(ctx context.Context) ([]entry.BoxRegion, error) {
 	rs, err := h.c.Regions(ctx)
@@ -201,11 +210,14 @@ func (h hetznerHoster) Plans(ctx context.Context) ([]entry.BoxPlan, error) {
 	}
 	out := make([]entry.BoxPlan, 0, len(ps))
 	for _, p := range ps {
-		out = append(out, entry.BoxPlan{
+		bp, err := pricedPlan(ctx, h.r, entry.BoxPlan{
 			ID: p.ID, VCPUs: p.VCPUs, RAMMB: p.RAMMB, DiskGB: p.DiskGB,
-			BandwidthGB: p.BandwidthGB, MonthlyCents: p.MonthlyCents,
-			OverageCentsPerTB: p.OverageCentsPerTB, Regions: p.Regions,
-		})
+			BandwidthGB: p.BandwidthGB, Regions: p.Regions,
+		}, p.MonthlyCents, p.OverageCentsPerTB, p.Currency)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, bp)
 	}
 	return out, nil
 }
@@ -311,11 +323,14 @@ func (h doHoster) Plans(ctx context.Context) ([]entry.BoxPlan, error) {
 	}
 	out := make([]entry.BoxPlan, 0, len(ps))
 	for _, p := range ps {
-		out = append(out, entry.BoxPlan{
+		bp, err := pricedPlan(ctx, nil, entry.BoxPlan{
 			ID: p.ID, VCPUs: p.VCPUs, RAMMB: p.RAMMB, DiskGB: p.DiskGB,
-			BandwidthGB: p.BandwidthGB, MonthlyCents: p.MonthlyCents,
-			OverageCentsPerTB: p.OverageCentsPerTB, Regions: p.Regions,
-		})
+			BandwidthGB: p.BandwidthGB, Regions: p.Regions,
+		}, p.MonthlyCents, p.OverageCentsPerTB, fx.USD)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, bp)
 	}
 	return out, nil
 }
@@ -399,9 +414,12 @@ func toBoxInstanceDO(i digitalocean.Instance) entry.BoxInstance {
 // ── VDSina Adapter ──────────────────────────────────────────────────────
 
 // VDSinaHoster adapts a VDSina client to entry.BoxProvider.
-func VDSinaHoster(c *vdsina.Client) entry.BoxProvider { return vdsinaHoster{c: c} }
+func VDSinaHoster(c *vdsina.Client, r *fx.Rates) entry.BoxProvider { return vdsinaHoster{c: c, r: r} }
 
-type vdsinaHoster struct{ c *vdsina.Client }
+type vdsinaHoster struct {
+	c *vdsina.Client
+	r *fx.Rates
+}
 
 func (h vdsinaHoster) Regions(ctx context.Context) ([]entry.BoxRegion, error) {
 	rs, err := h.c.Regions(ctx)
@@ -422,11 +440,14 @@ func (h vdsinaHoster) Plans(ctx context.Context) ([]entry.BoxPlan, error) {
 	}
 	out := make([]entry.BoxPlan, 0, len(ps))
 	for _, p := range ps {
-		out = append(out, entry.BoxPlan{
+		bp, err := pricedPlan(ctx, h.r, entry.BoxPlan{
 			ID: p.ID, VCPUs: p.VCPUs, RAMMB: p.RAMMB, DiskGB: p.DiskGB,
-			BandwidthGB: p.BandwidthGB, MonthlyCents: p.MonthlyCents,
-			OverageCentsPerTB: p.OverageCentsPerTB, Regions: p.Regions,
-		})
+			BandwidthGB: p.BandwidthGB, Regions: p.Regions,
+		}, p.MonthlyCents, p.OverageCentsPerTB, p.Currency)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, bp)
 	}
 	return out, nil
 }
@@ -522,9 +543,12 @@ func toBoxInstanceVDSina(i vdsina.Instance) entry.BoxInstance {
 // ── OpenStack Adapter ───────────────────────────────────────────────────
 
 // OpenStackHoster adapts an OpenStack client to entry.BoxProvider.
-func OpenStackHoster(c *openstack.Client) entry.BoxProvider { return osHoster{c: c} }
+func OpenStackHoster(c *openstack.Client, r *fx.Rates) entry.BoxProvider { return osHoster{c: c, r: r} }
 
-type osHoster struct{ c *openstack.Client }
+type osHoster struct {
+	c *openstack.Client
+	r *fx.Rates
+}
 
 func (h osHoster) Regions(ctx context.Context) ([]entry.BoxRegion, error) {
 	rs, err := h.c.Regions(ctx)
@@ -545,11 +569,14 @@ func (h osHoster) Plans(ctx context.Context) ([]entry.BoxPlan, error) {
 	}
 	out := make([]entry.BoxPlan, 0, len(ps))
 	for _, p := range ps {
-		out = append(out, entry.BoxPlan{
+		bp, err := pricedPlan(ctx, h.r, entry.BoxPlan{
 			ID: p.ID, VCPUs: p.VCPUs, RAMMB: p.RAMMB, DiskGB: p.DiskGB,
-			BandwidthGB: p.BandwidthGB, MonthlyCents: p.MonthlyCents,
-			OverageCentsPerTB: p.OverageCentsPerTB, Regions: p.Regions,
-		})
+			BandwidthGB: p.BandwidthGB, Regions: p.Regions,
+		}, p.MonthlyCents, p.OverageCentsPerTB, p.Currency)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, bp)
 	}
 	return out, nil
 }
@@ -627,4 +654,30 @@ func toBoxInstanceOS(i openstack.Instance) entry.BoxInstance {
 		ID: i.ID, Label: i.Label, Address: i.Address, Region: i.Region,
 		Plan: i.Plan, Status: i.Status, Tags: i.Tags,
 	}
+}
+
+// pricedPlan fills a plan's price from what the hoster quoted: minor and
+// overageMinor in hundredths of cur. It keeps the hoster's own figure and
+// converts it to US cents at today's rate; a price in a currency with no rate
+// to read is an error, never a figure taken as dollars.
+func pricedPlan(ctx context.Context, r *fx.Rates, p entry.BoxPlan, minor, overageMinor int, cur string) (entry.BoxPlan, error) {
+	c, err := fx.Normalize(cur)
+	if err != nil {
+		return p, err
+	}
+	p.Price, p.Currency = float64(minor)/100, c
+	if c == fx.USD {
+		p.MonthlyCents, p.OverageCentsPerTB = minor, overageMinor
+		return p, nil
+	}
+	if r == nil {
+		return p, fmt.Errorf("plan %s: priced in %s and no rates to convert it", p.ID, c)
+	}
+	if p.MonthlyCents, err = r.USDCents(ctx, p.Price, c); err != nil {
+		return p, fmt.Errorf("plan %s: %w", p.ID, err)
+	}
+	if p.OverageCentsPerTB, err = r.USDCents(ctx, float64(overageMinor)/100, c); err != nil {
+		return p, fmt.Errorf("plan %s: %w", p.ID, err)
+	}
+	return p, nil
 }

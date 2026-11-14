@@ -9,7 +9,12 @@ const SHAPE: Record<OverviewWindow, { n: number; step: number }> = {
 	'30d': { n: 30, step: 86400 },
 };
 
-const line = (cents: number) => ({ perDayCents: cents, monthCents: cents * 30, projectionCents: cents * 30 });
+const line = (cents: number) => ({
+	perDayCents: cents,
+	monthCents: cents * 30,
+	projectionCents: cents * 30,
+	rateMonthCents: cents * 30,
+});
 
 export function mockOverview(window: OverviewWindow): EntryOverview {
 	const { n, step } = SHAPE[window];

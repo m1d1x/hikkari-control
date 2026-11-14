@@ -280,6 +280,10 @@ func run() error {
 		svc.SetVerdicts(verdictSource{store})
 		svc.SetVantages(verdictSource{store})
 		svc.SetInspector(prov)
+		// Machines' prices from their hosters' plans and the day's rate
+		// (boxprice.go): reads only, so it runs whether or not this process
+		// manages the fleet.
+		go svc.PriceSyncLoop(ctx, 6*time.Hour)
 		if os.Getenv("ENTRY_AUTOPILOT_ENABLED") == "1" {
 			go svc.DetectLoop(ctx, time.Minute)
 			go mechanic.Run(ctx, time.Minute)

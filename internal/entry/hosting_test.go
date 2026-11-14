@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -37,6 +38,8 @@ type fakeHoster struct {
 	// what a hoster does when the machine was already built.
 	pollsBeforeAddress int
 	instanceErr        error
+	// plansErr is what Plans answers while set: a key the hoster refused.
+	plansErr error
 
 	createErr          error
 	createErrForRegion map[string]error
@@ -105,7 +108,14 @@ func newFakeHoster(t *testing.T) *fakeHoster {
 }
 
 func (f *fakeHoster) Regions(context.Context) ([]BoxRegion, error) { return f.regions, nil }
-func (f *fakeHoster) Plans(context.Context) ([]BoxPlan, error)     { return f.plans, nil }
+func (f *fakeHoster) Plans(context.Context) ([]BoxPlan, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.plansErr != nil {
+		return nil, f.plansErr
+	}
+	return slices.Clone(f.plans), nil
+}
 
 func (f *fakeHoster) EnsureSSHKey(_ context.Context, name, publicKey string) (string, error) {
 	f.mu.Lock()

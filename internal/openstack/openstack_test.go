@@ -351,6 +351,21 @@ func TestOpenStack_Plans(t *testing.T) {
 	if plans[1].ID != "flavor-2" || plans[1].VCPUs != 2 || plans[1].RAMMB != 4096 || plans[1].DiskGB != 40 {
 		t.Fatalf("unexpected plan 1: %+v", plans[1])
 	}
+	// Priced from HostVDS's list in euros, not estimated from the size.
+	if plans[0].MonthlyCents != 299 || plans[1].MonthlyCents != 599 || plans[0].Currency != "EUR" {
+		t.Fatalf("prices: %d %s, %d %s; want 299 EUR, 599 EUR",
+			plans[0].MonthlyCents, plans[0].Currency, plans[1].MonthlyCents, plans[1].Currency)
+	}
+}
+
+func TestOpenStack_ThePriceListIsHostVDSs(t *testing.T) {
+	// eun16, eun17 and awgl1 run 1 vCPU / 1 GB / 10 GB, euw1 2 / 4 / 40.
+	if got := hostvdsEuroCents[[3]int{2, 4096, 40}]; got != 599 {
+		t.Fatalf("2 vCPU / 4 GB / 40 GB = %d euro cents, want 599", got)
+	}
+	if got := hostvdsEuroCents[[3]int{1, 1024, 10}]; got != 149 {
+		t.Fatalf("1 vCPU / 1 GB / 10 GB = %d euro cents, want 149", got)
+	}
 }
 
 func TestOpenStack_EnsureSSHKey(t *testing.T) {

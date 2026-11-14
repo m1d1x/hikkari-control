@@ -10,9 +10,13 @@ import (
 
 	"github.com/m1d1x/hikkari-control/internal/digitalocean"
 	"github.com/m1d1x/hikkari-control/internal/entry"
+	"github.com/m1d1x/hikkari-control/internal/fx"
 	"github.com/m1d1x/hikkari-control/internal/hetzner"
 	"github.com/m1d1x/hikkari-control/internal/vdsina"
 )
+
+// testRates are roubles per unit: €1 = 91 ₽, $1 = 82 ₽.
+var testRates = fx.Fixed(map[string]float64{fx.USD: 82, fx.EUR: 91})
 
 func TestProvidersKindsIncludesAllHosters(t *testing.T) {
 	p := Providers()
@@ -109,7 +113,7 @@ func TestHetznerHosterAdaptsAllMethods(t *testing.T) {
 
 	// Use test server base URL
 	client := hetzner.New("test-tok", hetzner.WithBaseURL(srv.URL))
-	bp = HetznerHoster(client)
+	bp = HetznerHoster(client, testRates)
 	ctx := context.Background()
 
 	// 1. Account
@@ -135,7 +139,9 @@ func TestHetznerHosterAdaptsAllMethods(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Plans: %v", err)
 	}
-	if len(plans) != 1 || plans[0].ID != "cx22" || plans[0].MonthlyCents != 379 {
+	// Hetzner bills €3.79: 3.79 * 91 / 82 = $4.21.
+	if len(plans) != 1 || plans[0].ID != "cx22" || plans[0].MonthlyCents != 421 ||
+		plans[0].Price != 3.79 || plans[0].Currency != "EUR" {
 		t.Errorf("plans = %+v", plans)
 	}
 
@@ -434,7 +440,7 @@ func TestVDSinaHosterAdaptsAllMethods(t *testing.T) {
 	}
 
 	client := vdsina.New("test-tok", vdsina.WithBaseURL(srv.URL))
-	bp = VDSinaHoster(client)
+	bp = VDSinaHoster(client, testRates)
 	ctx := context.Background()
 
 	// 1. Account
@@ -462,7 +468,8 @@ func TestVDSinaHosterAdaptsAllMethods(t *testing.T) {
 		t.Fatalf("Plans: %v", err)
 	}
 	// 10/day * 30 * 100 = 30000 cents
-	if len(plans) != 1 || plans[0].ID != "1" || plans[0].MonthlyCents != 30000 {
+	// The international API (any host but vdsina.ru) quotes dollars.
+	if len(plans) != 1 || plans[0].ID != "1" || plans[0].MonthlyCents != 30000 || plans[0].Currency != "USD" {
 		t.Errorf("plans = %+v", plans)
 	}
 
@@ -621,7 +628,7 @@ func TestOpenStackHosterAdaptsAllMethods(t *testing.T) {
 	defer srv.Close()
 	srvURL = srv.URL
 
-	p := Providers()
+	p := ProvidersWithRates(testRates)
 	bp, err := p.Hosting("openstack", map[string]string{
 		"auth_url":        srv.URL + "/v3",
 		"app_cred_id":     "app-id",
@@ -657,7 +664,10 @@ func TestOpenStackHosterAdaptsAllMethods(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Plans: %v", err)
 	}
-	if len(plans) != 1 || plans[0].ID != "flavor-1" {
+	// HostVDS's 1 vCPU / 2 GB / 20 GB is €2.99 by its price list:
+	// 2.99 * 91 / 82 = $3.32.
+	if len(plans) != 1 || plans[0].ID != "flavor-1" || plans[0].MonthlyCents != 332 ||
+		plans[0].Price != 2.99 || plans[0].Currency != "EUR" {
 		t.Errorf("plans = %+v", plans)
 	}
 

@@ -18,6 +18,11 @@ package main
 //	                                    # drop the record of an IPv6 order the
 //	                                    # hoster does not have, so the next run
 //	                                    # of entry-box ipv6 may buy
+//	cmd/server entry-box price <box> <amount> <USD|EUR|RUB>
+//	                                    # what a machine rented where the hub
+//	                                    # has no API costs a month
+//	cmd/server entry-box prices         # the price pass now (hosters' plans,
+//	                                    # today's rate)
 //	cmd/server entry-box retire <box> [reason]
 //	                                    # hand a machine back and delete it at
 //	                                    # its hoster; a ban reason (ip_banned,
@@ -225,6 +230,47 @@ func runEntryBox(args []string) {
 		}
 		for _, p := range cat.Plans {
 			fmt.Printf("plan %s  %d vCPU  %d MB  %d GB  counted at $%0.2f  regions %v\n", p.ID, p.VCPUs, p.RAMMB, p.DiskGB, float64(p.MonthlyCents)/100, p.Regions)
+		}
+		os.Exit(0)
+	}
+	if (len(args) == 4 && args[0] == "price") || (len(args) == 1 && args[0] == "prices") {
+		// entry-box price <box> <amount> <USD|EUR|RUB> — what a machine rented
+		// where the hub has no API costs a month, as the hoster bills it; the
+		// hub keeps it converted at the Bank of Russia's rate.
+		// entry-box prices — the price pass now: every box on a hoster with an
+		// API takes its plan's price, every price is re-converted.
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		svc.SetProviderConnector(entrywire.Providers())
+		if args[0] == "price" {
+			amount, err := strconv.ParseFloat(strings.ReplaceAll(args[2], ",", "."), 64)
+			if err != nil {
+				fail(fmt.Errorf("цена %q: %w", args[2], err))
+			}
+			cents, err := svc.SetBoxPrice(ctx, args[1], amount, args[3])
+			if err != nil {
+				fail(err)
+			}
+			fmt.Printf("%s: %s %s a month, counted at $%0.2f\n", args[1], args[2], strings.ToUpper(args[3]), float64(cents)/100)
+			os.Exit(0)
+		}
+		res, err := svc.SyncBoxPrices(ctx)
+		for _, c := range res.Changed {
+			fmt.Printf("changed %s\n", c)
+		}
+		for _, f := range res.Failed {
+			fmt.Printf("unread  %s\n", f)
+		}
+		if err != nil {
+			fail(err)
 		}
 		os.Exit(0)
 	}

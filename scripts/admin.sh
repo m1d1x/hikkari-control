@@ -108,11 +108,21 @@ fi
 TARGET="${1:-}"
 [[ -n "$TARGET" ]] || die "usage: scripts/admin.sh <ssh-host|local>"
 
-port_busy() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+port_busy() {
+	if command -v lsof >/dev/null 2>&1; then
+		lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+	else
+		# Git Bash on Windows has no lsof.
+		netstat -an 2>/dev/null | grep -Eq "[:.]$1 .*(LISTEN|LISTENING)"
+	fi
+}
 
 open_browser() {
 	if command -v open >/dev/null 2>&1; then
 		open "$URL"
+	elif command -v explorer.exe >/dev/null 2>&1; then
+		# Git Bash on Windows: explorer hands a URL to the default browser.
+		explorer.exe "$URL" || true
 	elif command -v xdg-open >/dev/null 2>&1; then
 		xdg-open "$URL" >/dev/null 2>&1 &
 	else

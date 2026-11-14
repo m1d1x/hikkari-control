@@ -272,6 +272,15 @@ func TestEntryOverviewAccruesMachineRentAndSaysWhatItCannotPrice(t *testing.T) {
 		t.Errorf("total %d is not domains %d + machines %d", got.Money.Total.MonthCents,
 			got.Money.Domains.MonthCents, got.Money.Machines.MonthCents)
 	}
+	// A month at what runs now is the live machines' full prices, not the
+	// window's average: the $30 machine counts whole however late it came.
+	if got.Money.Machines.RateMonthCents < 3000 {
+		t.Errorf("a month at the running fleet = %d, under the $30 machine alone", got.Money.Machines.RateMonthCents)
+	}
+	if got.Money.Total.RateMonthCents != got.Money.Domains.RateMonthCents+got.Money.Machines.RateMonthCents {
+		t.Errorf("total month %d is not domains %d + machines %d", got.Money.Total.RateMonthCents,
+			got.Money.Domains.RateMonthCents, got.Money.Machines.RateMonthCents)
+	}
 	for _, m := range got.Missing {
 		if m.Figure == "money.machines" {
 			t.Error("money.machines is named absent while a priced machine is on record")

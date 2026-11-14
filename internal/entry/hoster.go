@@ -120,15 +120,22 @@ type BoxRegion struct {
 
 // BoxPlan is one machine size, with its price.
 type BoxPlan struct {
-	ID           string `json:"id"`
-	VCPUs        int    `json:"vcpus"`
-	RAMMB        int    `json:"ramMb"`
-	DiskGB       int    `json:"diskGb"`
-	BandwidthGB  int    `json:"bandwidthGb"`
-	MonthlyCents int    `json:"monthlyCents"`
-	// OverageCentsPerTB is what traffic past the plan's allowance costs; zero
-	// when the hoster does not say. The fleet reads it against the plan's own
-	// price per allowed terabyte (sizing.go, the quota floor).
+	ID          string `json:"id"`
+	VCPUs       int    `json:"vcpus"`
+	RAMMB       int    `json:"ramMb"`
+	DiskGB      int    `json:"diskGb"`
+	BandwidthGB int    `json:"bandwidthGb"`
+	// MonthlyCents is the price in US cents at today's rate: the one unit the
+	// budget, the box rows and the console keep money in.
+	MonthlyCents int `json:"monthlyCents"`
+	// Price and Currency are the price as the hoster bills it (469 RUB,
+	// 1.49 EUR). A box keeps them, so its cents follow the rate instead of
+	// freezing the day it was ordered.
+	Price    float64 `json:"price"`
+	Currency string  `json:"currency"`
+	// OverageCentsPerTB is what traffic past the plan's allowance costs, in
+	// US cents; zero when the hoster does not say. The fleet reads it against
+	// the plan's own price per allowed terabyte (sizing.go, the quota floor).
 	OverageCentsPerTB int `json:"overageCentsPerTb"`
 	// Regions is where this plan can be ordered. A plan sold out of a region
 	// fails at order time with the hoster's own words, which is why the

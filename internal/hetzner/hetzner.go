@@ -245,12 +245,15 @@ func (c *Client) Regions(ctx context.Context) ([]Region, error) {
 
 // Plan is one server type.
 type Plan struct {
-	ID                string
-	VCPUs             int
-	RAMMB             int
-	DiskGB            int
-	BandwidthGB       int
+	ID          string
+	VCPUs       int
+	RAMMB       int
+	DiskGB      int
+	BandwidthGB int
+	// MonthlyCents is the net monthly price in euro cents: Hetzner bills in
+	// euros.
 	MonthlyCents      int
+	Currency          string
 	OverageCentsPerTB int
 	Regions           []string
 }
@@ -276,13 +279,13 @@ func parsePrice(raw json.RawMessage) float64 {
 func (c *Client) Plans(ctx context.Context) ([]Plan, error) {
 	var out struct {
 		ServerTypes []struct {
-			ID              int             `json:"id"`
-			Name            string          `json:"name"`
-			Description     string          `json:"description"`
-			Cores           int             `json:"cores"`
-			Memory          float64         `json:"memory"` // GB
-			Disk            int             `json:"disk"`   // GB
-			IncludedTraffic int64           `json:"included_traffic"`
+			ID              int     `json:"id"`
+			Name            string  `json:"name"`
+			Description     string  `json:"description"`
+			Cores           int     `json:"cores"`
+			Memory          float64 `json:"memory"` // GB
+			Disk            int     `json:"disk"`   // GB
+			IncludedTraffic int64   `json:"included_traffic"`
 			Prices          []struct {
 				Location     string `json:"location"`
 				PriceMonthly struct {
@@ -321,6 +324,7 @@ func (c *Client) Plans(ctx context.Context) ([]Plan, error) {
 			DiskGB:            st.Disk,
 			BandwidthGB:       bw,
 			MonthlyCents:      monthlyCents,
+			Currency:          "EUR",
 			OverageCentsPerTB: overageCentsPerTB,
 			Regions:           locs,
 		})

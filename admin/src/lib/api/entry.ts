@@ -931,12 +931,14 @@ export interface ReachBlock {
 	series: ReachPoint[];
 }
 
-/** One spending article in three readings. */
+/** One spending article in four readings. */
 export interface SpendLine {
 	perDayCents: number;
 	monthCents: number;
 	/** where the month lands at the rate seen now */
 	projectionCents: number;
+	/** a whole month at what runs now: today's prices of the live machines */
+	rateMonthCents: number;
 }
 
 export interface MoneyBlock {

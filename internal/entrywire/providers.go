@@ -3,6 +3,7 @@ package entrywire
 import (
 	"github.com/m1d1x/hikkari-control/internal/digitalocean"
 	"github.com/m1d1x/hikkari-control/internal/entry"
+	"github.com/m1d1x/hikkari-control/internal/fx"
 	"github.com/m1d1x/hikkari-control/internal/hetzner"
 	"github.com/m1d1x/hikkari-control/internal/openstack"
 	"github.com/m1d1x/hikkari-control/internal/porkbun"
@@ -14,9 +15,15 @@ import (
 // each kind is called, what it does, which credential fields the console asks
 // for, and how saved credentials become a live client. It is the one place
 // that knows both the entry package's types and the provider clients.
-func Providers() entry.ProviderConnector { return providers{} }
+func Providers() entry.ProviderConnector { return providers{rates: fx.Default()} }
 
-type providers struct{}
+// ProvidersWithRates is Providers converting hosters' prices with r instead
+// of the bank's live feed.
+func ProvidersWithRates(r *fx.Rates) entry.ProviderConnector { return providers{rates: r} }
+
+// providers converts every hoster's prices with rates: VDSina's Russian API
+// quotes roubles, HostVDS and Hetzner euros.
+type providers struct{ rates *fx.Rates }
 
 const (
 	// kindPorkbun is the registrar the hub buys relay domains through.
@@ -94,7 +101,7 @@ func (providers) Registrar(kind string, creds map[string]string) (entry.DomainRe
 	return nil, entry.ErrUnknownProvider
 }
 
-func (providers) Hosting(kind string, creds map[string]string) (entry.BoxProvider, error) {
+func (p providers) Hosting(kind string, creds map[string]string) (entry.BoxProvider, error) {
 	switch kind {
 	case kindVultr:
 		return Hoster(vultr.New(creds["api_key"])), nil
@@ -107,13 +114,13 @@ func (providers) Hosting(kind string, creds map[string]string) (entry.BoxProvide
 		if creds["api_url"] != "" {
 			opts = append(opts, vdsina.WithBaseURL(creds["api_url"]))
 		}
-		return VDSinaHoster(vdsina.New(tok, opts...)), nil
+		return VDSinaHoster(vdsina.New(tok, opts...), p.rates), nil
 	case kindHetzner:
 		tok := creds["api_token"]
 		if tok == "" {
 			tok = creds["api_key"]
 		}
-		return HetznerHoster(hetzner.New(tok)), nil
+		return HetznerHoster(hetzner.New(tok), p.rates), nil
 	case kindDigitalOcean:
 		tok := creds["api_token"]
 		if tok == "" {
@@ -143,7 +150,7 @@ func (providers) Hosting(kind string, creds map[string]string) (entry.BoxProvide
 		cfg.ProjectName = proj
 		cfg.ApplicationCredentialID = creds["app_cred_id"]
 		cfg.ApplicationCredentialSecret = creds["app_cred_secret"]
-		return OpenStackHoster(openstack.New(cfg)), nil
+		return OpenStackHoster(openstack.New(cfg), p.rates), nil
 	}
 	return nil, entry.ErrUnknownProvider
 }

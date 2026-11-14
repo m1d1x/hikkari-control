@@ -460,14 +460,32 @@ var hostvdsPlaces = map[string]Region{
 
 // Plan is an OpenStack flavor.
 type Plan struct {
-	ID                string
-	VCPUs             int
-	RAMMB             int
-	DiskGB            int
-	BandwidthGB       int
+	ID          string
+	VCPUs       int
+	RAMMB       int
+	DiskGB      int
+	BandwidthGB int
+	// MonthlyCents is the monthly price in hundredths of Currency (euro
+	// cents at HostVDS).
 	MonthlyCents      int
+	Currency          string
 	OverageCentsPerTB int
 	Regions           []string
+}
+
+// hostvdsEuroCents is HostVDS's price list, by flavor size, in euro cents a
+// month. Nova has no prices, so the list is kept here, from the hoster's own
+// table as of 01.11.2026 (plans/2026-11-01-fleet-tails-prompt.md). A flavor
+// that is not in it has no known price and is not offered: an order the
+// budget gate cannot price is an order it cannot refuse.
+var hostvdsEuroCents = map[[3]int]int{
+	// {vCPU, RAM MB, disk GB}
+	{1, 1024, 10}:   149,
+	{1, 2048, 20}:   299,
+	{2, 4096, 40}:   599,
+	{2, 8192, 80}:   1199,
+	{3, 8192, 80}:   1399,
+	{4, 16384, 160}: 2399,
 }
 
 type wireFlavor struct {
@@ -492,14 +510,18 @@ func (c *Client) Plans(ctx context.Context) ([]Plan, error) {
 	}
 	plans := make([]Plan, 0, len(out.Flavors))
 	for _, f := range out.Flavors {
+		price, known := hostvdsEuroCents[[3]int{f.VCPUs, f.RAM, f.Disk}]
+		if !known {
+			continue
+		}
 		plans = append(plans, Plan{
-			ID:          fmt.Sprint(f.ID),
-			VCPUs:       f.VCPUs,
-			RAMMB:       f.RAM,
-			DiskGB:      f.Disk,
-			BandwidthGB: 10000,
-			// OpenStack flavors do not define price in Nova API; estimate monthly cents so budget caps & catalog selection work
-			MonthlyCents:      99 + f.VCPUs*100 + (f.RAM/1024)*50,
+			ID:                fmt.Sprint(f.ID),
+			VCPUs:             f.VCPUs,
+			RAMMB:             f.RAM,
+			DiskGB:            f.Disk,
+			BandwidthGB:       10000,
+			MonthlyCents:      price,
+			Currency:          "EUR",
 			OverageCentsPerTB: 0,
 			Regions:           c.regions,
 		})

@@ -356,14 +356,27 @@ func (c *Client) Regions(ctx context.Context) ([]Region, error) {
 
 // Plan is one server tariff.
 type Plan struct {
-	ID                string
-	VCPUs             int
-	RAMMB             int
-	DiskGB            int
-	BandwidthGB       int
+	ID          string
+	VCPUs       int
+	RAMMB       int
+	DiskGB      int
+	BandwidthGB int
+	// MonthlyCents is the monthly price in hundredths of Currency: kopecks
+	// from the Russian API, cents from the international one.
 	MonthlyCents      int
+	Currency          string
 	OverageCentsPerTB int
 	Regions           []string
+}
+
+// Currency is what the API this client talks to bills in: VDSina's Russian
+// API in roubles, its international one in dollars. The client may move from
+// the first to the second on a refused key, so it is read per call.
+func (c *Client) Currency() string {
+	if strings.Contains(strings.ToLower(c.baseURL), "vdsina.ru") {
+		return "RUB"
+	}
+	return "USD"
 }
 
 type wirePlan struct {
@@ -489,6 +502,7 @@ func (c *Client) Plans(ctx context.Context) ([]Plan, error) {
 			DiskGB:            diskGB,
 			BandwidthGB:       bwGB,
 			MonthlyCents:      int(math.Round(monthly * 100)),
+			Currency:          c.Currency(),
 			OverageCentsPerTB: overageCentsPerTB,
 			Regions:           locs,
 		})

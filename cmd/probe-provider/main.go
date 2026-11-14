@@ -11,6 +11,7 @@ import (
 
 	"github.com/m1d1x/hikkari-control/internal/digitalocean"
 	"github.com/m1d1x/hikkari-control/internal/entrywire"
+	"github.com/m1d1x/hikkari-control/internal/fx"
 	"github.com/m1d1x/hikkari-control/internal/hetzner"
 	"github.com/m1d1x/hikkari-control/internal/openstack"
 	"github.com/m1d1x/hikkari-control/internal/porkbun"
@@ -23,7 +24,7 @@ var apiURL = flag.String("api-url", "", "API URL override (optional)")
 func main() {
 	origEnv := map[string]string{
 		"VULTR_API_KEY":      os.Getenv("VULTR_API_KEY"),
-		"HETZNER_TOKEN":     os.Getenv("HETZNER_TOKEN"),
+		"HETZNER_TOKEN":      os.Getenv("HETZNER_TOKEN"),
 		"DIGITALOCEAN_TOKEN": os.Getenv("DIGITALOCEAN_TOKEN"),
 		"DO_TOKEN":           os.Getenv("DO_TOKEN"),
 		"VDSINA_TOKEN":       os.Getenv("VDSINA_TOKEN"),
@@ -288,7 +289,7 @@ func probeVDSina(ctx context.Context, token, apiURL string) {
 		opts = append(opts, vdsina.WithBaseURL(os.Getenv("VDSINA_API_URL")))
 	}
 	client := vdsina.New(token, opts...)
-	hoster := entrywire.VDSinaHoster(client)
+	hoster := entrywire.VDSinaHoster(client, fx.Default())
 
 	// 1. Account / Balance
 	acct, err := hoster.Account(ctx)
@@ -434,7 +435,7 @@ func probeHetzner(ctx context.Context, token string) {
 		opts = append(opts, hetzner.WithBaseURL(u))
 	}
 	client := hetzner.New(token, opts...)
-	hoster := entrywire.HetznerHoster(client)
+	hoster := entrywire.HetznerHoster(client, fx.Default())
 
 	// 1. Account / Balance
 	acct, err := hoster.Account(ctx)
@@ -574,7 +575,7 @@ func probeDigitalOcean(ctx context.Context, token string) {
 func probeOpenStack(ctx context.Context, cfg openstack.Config) {
 	fmt.Println("==> Testing OpenStack connection (Read-Only / Free)...")
 	client := openstack.New(cfg)
-	hoster := entrywire.OpenStackHoster(client)
+	hoster := entrywire.OpenStackHoster(client, fx.Default())
 
 	// 1. Auth check
 	_, err := hoster.Account(ctx)

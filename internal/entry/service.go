@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/m1d1x/hikkari-control/internal/fx"
 	"net"
 	"os"
 	"regexp"
@@ -160,6 +161,9 @@ type Service struct {
 	// inspect runs the escalated grid against a box that read badly (П9.4);
 	// nil leaves the detector naming causes from the probe alone.
 	inspect BoxInspector
+	// rates converts hosters' prices into US cents (boxprice.go); nil means
+	// the bank's live feed.
+	rates *fx.Rates
 	// coverAnswers dials a cover site from the hub; the detector asks it
 	// only about the proven covers a healthy box is missing (covers.go).
 	// Nil is the real TLS handshake; tests put a fake here.
