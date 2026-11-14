@@ -52,6 +52,10 @@ type brain struct {
 	// steer whether the selector moves the route over them.
 	wires []pipectl.Wire
 	steer bool
+	// exit and roots are the pool's end and the PEM roots, for the wires
+	// the file gives later (brain_wires_linux.go).
+	exit  netip.AddrPort
+	roots string
 	// voiceOn holds voice on that wire, bulk on the pool, no selector (the
 	// file's "voice"; 0 none: the pool is wire 0, never named so).
 	voiceOn trunk.WireID
@@ -105,43 +109,6 @@ func exitOf(c Config) (netip.AddrPort, error) {
 	return ap, nil
 }
 
-// pipeWires are the packet wires of the hub's file the pipe carries: udp,
-// and Chromium's QUIC wire h3dgram (R6.3: the pipe opens its members from
-// the pool's book of ports, through the libcronet beside it, to the exit's
-// QUIC port, whose certificate names the trunk's SNI). quic and salamander
-// are not carried over to Rust (the owner's 12.11).
-func pipeWires(c Config, exit netip.AddrPort, roots string) ([]pipectl.Wire, wiresSpec, error) {
-	f, _, err := readWires(wiresFilePath())
-	if err != nil {
-		return nil, f, err
-	}
-	var out []pipectl.Wire
-	for _, w := range f.Wires {
-		pw := pipectl.Wire{ID: wireIDs[w.Kind], Name: w.Name, Key: c.Key, Members: w.Members, Stall: c.Stall,
-			Exit: netip.AddrPortFrom(exit.Addr(), uint16(w.Port))}
-		switch w.Kind {
-		case "udp":
-		case "h3dgram":
-			pw.H3 = &pipectl.H3Form{SNI: c.SNI, Cronet: cronetBeside(c.Pipe), Roots: roots, Usage: w.Usage,
-				Ports: [2]uint16{uint16(c.PortLo), uint16(c.PortHi)}}
-		default:
-			log.Printf("nekko-trunk-entry: wire %s is not carried by the pipe, left out", w.Name)
-			continue
-		}
-		out = append(out, pw)
-	}
-	return out, f, nil
-}
-
-// wireShape is a pipe wire's shape for the selector's warm pair: Chromium's
-// QUIC looks like a browser, the bare UDP wire like nothing.
-func wireShape(w pipectl.Wire) string {
-	if w.H3 != nil {
-		return "browser"
-	}
-	return "random"
-}
-
 // startBrain starts the pipe and gives it the pool and the wires. No
 // client is served yet (serve).
 func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
@@ -157,7 +124,7 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 		}
 		roots = string(raw)
 	}
-	b := &brain{c: c, s: s, ctx: ctx, handed: make(chan struct{})}
+	b := &brain{c: c, s: s, ctx: ctx, handed: make(chan struct{}), exit: exit, roots: roots}
 	p, err := pipectl.Start(pipectl.Config{Bin: c.Pipe, Stderr: os.Stderr,
 		Logf:     func(format string, a ...any) { log.Printf("nekko-trunk-entry: "+format, a...) },
 		OnMember: func(_ trunk.WireID, _ int, up bool, why byte) { b.deaths.note(up, why) }})
@@ -275,7 +242,8 @@ func (b *brain) comeUp() error {
 }
 
 // startExtras starts the newest generation's minute line, the trunk's
-// calls and the selector over the wires.
+// calls, and the wires' calls and selector, which follow the hub's file
+// (followWires).
 func (b *brain) startExtras() {
 	ctx, cancel := context.WithCancel(b.ctx)
 	b.extras = cancel
@@ -286,35 +254,7 @@ func (b *brain) startExtras() {
 			log.Print("nekko-trunk-entry: " + callLine(w))
 		})
 	}
-	if len(b.wires) == 0 {
-		b.pipe.SetRoute(trunk.AnyRoute)
-		return
-	}
-	all := []trunk.Wire{poolWire()}
-	ids := []trunk.WireID{trunk.PoolWire}
-	names := map[trunk.WireID]string{trunk.PoolWire: "pool"}
-	for _, w := range b.wires {
-		all = append(all, trunk.Wire{ID: w.ID, Name: w.Name, Shape: wireShape(w), Packet: true})
-		ids = append(ids, w.ID)
-		names[w.ID] = w.Name
-	}
-	line := func(id trunk.WireID, cw trunk.CallWindow) {
-		log.Print("nekko-trunk-entry: " + wireCallLine(names[id], cw))
-	}
-	if !b.steer || b.voiceOn != 0 {
-		route := trunk.AnyRoute
-		if b.voiceOn != 0 {
-			route = trunk.Route{Voice: b.voiceOn, Bulk: trunk.PoolWire}
-			log.Printf("nekko-trunk-entry: voice held on %s, bulk on the pool, no selector", names[b.voiceOn])
-		}
-		b.pipe.SetRoute(route)
-		for _, id := range ids {
-			go trunk.RunCallOn(ctx, carrier, trunk.CallConfig{Copies: 1, OnWire: true, Wire: id}, func(cw trunk.CallWindow) { line(id, cw) })
-		}
-		return
-	}
-	sel := trunk.NewSelector(trunk.SelectorConfig{}, all...)
-	go b.pipe.Run(ctx, sel, ids, line, func(format string, a ...any) { log.Printf("nekko-trunk-entry: "+format, a...) })
+	go b.followWires(ctx)
 }
 
 // handOver makes this generation an old one (its pipe already drains): no

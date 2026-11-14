@@ -30,6 +30,17 @@ type pipeStand struct {
 	env      map[string]string
 	dir      string
 	tcp, udp int
+	// wire is the exit's udp wire port; logs the file the entry and its
+	// pipe write to (a file, not a pipe: the next generation inherits it, and
+	// a pipe would hold the first one's Wait until the last generation ends).
+	wire int
+	logs string
+}
+
+// written is what the entry and its pipe wrote so far.
+func (s *pipeStand) written() string {
+	raw, _ := os.ReadFile(s.logs)
+	return string(raw)
 }
 
 func newPipeStand(t *testing.T) *pipeStand {
@@ -77,7 +88,7 @@ func newPipeStand(t *testing.T) *pipeStand {
 	tcpEcho, udpEcho := echoes(t)
 	_, tcpTo, _ := net.SplitHostPort(tcpEcho)
 	_, udpTo, _ := net.SplitHostPort(udpEcho)
-	s := &pipeStand{dir: dir, tcp: freePort(t), udp: freePort(t)}
+	s := &pipeStand{dir: dir, tcp: freePort(t), udp: freePort(t), wire: wire, logs: filepath.Join(dir, "entry.log")}
 	s.env = map[string]string{
 		"EDGE_TRUNK_EXIT": "127.0.0.1:" + strconv.Itoa(naive), "EDGE_TRUNK_SNI": "hk.example",
 		"EDGE_TRUNK_KEY": "bench-trunk-key-0123456789abcdef", "EDGE_TRUNK_MEMBERS": "4",
@@ -101,7 +112,17 @@ func (s *pipeStand) start(t *testing.T) *exec.Cmd {
 	for k, v := range s.env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
-	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+	logs, err := os.OpenFile(s.logs, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logs.Close()
+	cmd.Stdout, cmd.Stderr = logs, logs
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("the entry wrote:\n%s", tail(s.written(), 6000))
+		}
+	})
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
