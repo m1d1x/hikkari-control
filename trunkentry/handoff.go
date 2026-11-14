@@ -375,7 +375,7 @@ func (n *node) startExtras() {
 	ctx, cancel := context.WithCancel(n.ctx)
 	n.extras = cancel
 	go logStats(ctx, n.entry)
-	go logClients(ctx, n.legs)
+	go logClients(ctx, goClients(n.legs))
 	runCalls(ctx, n.entry)
 	go runWires(ctx, n.c, n.entry)
 }

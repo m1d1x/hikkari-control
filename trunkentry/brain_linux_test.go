@@ -147,6 +147,7 @@ type call struct {
 	got      int
 	last     time.Time
 	gapMax   time.Duration
+	gapAt    time.Time
 	stop     chan struct{}
 	finished chan struct{}
 }
@@ -167,7 +168,7 @@ func startCall(t *testing.T, port int) *call {
 			now := time.Now()
 			k.mu.Lock()
 			if !k.last.IsZero() && now.Sub(k.last) > k.gapMax {
-				k.gapMax = now.Sub(k.last)
+				k.gapMax, k.gapAt = now.Sub(k.last), now
 			}
 			k.last, k.got = now, k.got+1
 			k.mu.Unlock()

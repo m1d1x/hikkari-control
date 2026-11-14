@@ -96,6 +96,18 @@ func (d *memberDeaths) note(up bool, why byte) {
 func (b *brain) context() context.Context { return b.ctx }
 func (b *brain) sockets() *sockets        { return b.s }
 
+// clients is the pipe's minute of the leg client → entry: the clients'
+// sockets are the pipe's, it adds them up (pipectl.Pipe.Clients).
+func (b *brain) clients(from time.Time) (clientSum, bool) {
+	c, err := b.pipe.Clients()
+	if err != nil {
+		log.Printf("nekko-trunk-entry: clients: %v", err)
+		return clientSum{}, false
+	}
+	return clientSum{from: from, conns: int(c.Conns), closed: int(c.Closed), sending: int(c.Sending),
+		segs: int64(c.Segs), retrans: int64(c.Retrans), p50: c.RTTP50, p90: c.RTTP90}, true
+}
+
 // cronetBeside is the libcronet.so the pipe loads: beside hk-pipe, as the
 // hub stages them (internal/entry trunkpipe.go).
 func cronetBeside(pipe string) string { return filepath.Join(filepath.Dir(pipe), "libcronet.so") }
@@ -249,6 +261,7 @@ func (b *brain) startExtras() {
 	b.extras = cancel
 	carrier := func() trunk.CallCarrier { return b.pipe }
 	go b.logMinutes(ctx)
+	go logClients(ctx, b.clients)
 	for _, copies := range callCopies {
 		go trunk.RunCallOn(ctx, carrier, trunk.CallConfig{Copies: copies}, func(w trunk.CallWindow) {
 			log.Print("nekko-trunk-entry: " + callLine(w))

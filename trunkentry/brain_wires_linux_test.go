@@ -84,9 +84,10 @@ func TestABrainFollowsItsWiresFileWithoutANewProcess(t *testing.T) {
 			t.Fatal(err)
 		}
 		s.waitWire(t, st.what, 3, st.wire, st.voice)
-		t.Logf("%s: the pipe carries it", st.what)
+		t.Logf("%s %s: the pipe carries it", time.Now().Format("15:04:05.000"), st.what)
 	}
 	sent, back, gapMax := k.end()
+	t.Logf("the longest pause ended at %s", k.gapAt.Format("15:04:05.000"))
 	if gapMax > 150*time.Millisecond || back < sent-sent/100 {
 		t.Errorf("the call through the changes: %d/%d back, the longest pause %s; want 99%% back, no pause over 150 ms", back, sent, gapMax)
 	}
@@ -101,6 +102,11 @@ func TestABrainFollowsItsWiresFileWithoutANewProcess(t *testing.T) {
 	logs := s.written()
 	if n := strings.Count(logs, "no new process"); n != len(steps) {
 		t.Errorf("the brain said %d changes without a new process, want %d", n, len(steps))
+	}
+	// The test spans a wall-clock minute: the pipe's leg client → entry
+	// is in the brain's line, its streams' segments with it.
+	if !regexp.MustCompile(`nekko-trunk-entry: clients tcp from=\d+ conns=\d+ closed=\d+ sending=[1-9]\d* segs=[1-9]`).MatchString(logs) {
+		t.Errorf("no clients line with the stream's segments in:\n%s", tail(logs, 4000))
 	}
 	if strings.Contains(logs, "generation 2") || entry.Process.Signal(syscall.Signal(0)) != nil {
 		t.Errorf("a new generation came up, or the entry %d ended", pid)

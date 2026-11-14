@@ -136,28 +136,48 @@ func (l *clientLegs) minute(from time.Time) clientMinute {
 	return m
 }
 
+// clientSum is a minute of the leg as the line says it, from the Go
+// entry's sockets (clientMinute.sum) or the pipe's (brain_clients_linux.go):
+// the round trips -1 where no socket sent.
+type clientSum struct {
+	from                   time.Time
+	conns, closed, sending int
+	segs, retrans          int64
+	p50, p90               time.Duration
+}
+
+// sum turns the Go entry's minute into the line's.
+func (m clientMinute) sum() clientSum {
+	s := clientSum{from: m.from, conns: m.conns, closed: m.closed, sending: len(m.rtts), segs: m.segs, retrans: m.retrans, p50: -1, p90: -1}
+	if len(m.rtts) > 0 {
+		sort.Slice(m.rtts, func(i, j int) bool { return m.rtts[i] < m.rtts[j] })
+		s.p50 = m.rtts[int(0.5*float64(len(m.rtts)-1))]
+		s.p90 = m.rtts[int(0.9*float64(len(m.rtts)-1))]
+	}
+	return s
+}
+
 // clientLine is the minute: from is its start (unix), loss_pm the
 // retransmissions per 1000 segments, the round trips in ms; "-" where no
 // socket sent.
-func clientLine(m clientMinute) string {
-	loss, p50, p90 := "-", "-", "-"
+func clientLine(m clientSum) string {
+	loss := "-"
 	if m.segs > 0 {
 		loss = fmt.Sprintf("%.2f", float64(m.retrans)*1000/float64(m.segs))
 	}
-	if len(m.rtts) > 0 {
-		sort.Slice(m.rtts, func(i, j int) bool { return m.rtts[i] < m.rtts[j] })
-		at := func(q float64) string {
-			return fmt.Sprintf("%.1f", float64(m.rtts[int(q*float64(len(m.rtts)-1))].Microseconds())/1000)
+	ms := func(d time.Duration) string {
+		if d < 0 {
+			return "-"
 		}
-		p50, p90 = at(0.5), at(0.9)
+		return fmt.Sprintf("%.1f", float64(d.Microseconds())/1000)
 	}
 	return fmt.Sprintf("clients tcp from=%d conns=%d closed=%d sending=%d segs=%d retrans=%d loss_pm=%s rtt_p50=%s rtt_p90=%s",
-		m.from.Unix(), m.conns, m.closed, len(m.rtts), m.segs, m.retrans, loss, p50, p90)
+		m.from.Unix(), m.conns, m.closed, m.sending, m.segs, m.retrans, loss, ms(m.p50), ms(m.p90))
 }
 
 // logClients writes the leg's minute on the wall clock's minutes until ctx
-// ends: the newest generation's.
-func logClients(ctx context.Context, l *clientLegs) {
+// ends: the newest generation's. minute reads the minute that began at from.
+func logClients(ctx context.Context, minute func(from time.Time) (clientSum, bool)) {
 	from := time.Now().Truncate(time.Minute)
 	for {
 		next := from.Add(time.Minute)
@@ -166,7 +186,14 @@ func logClients(ctx context.Context, l *clientLegs) {
 			return
 		case <-time.After(time.Until(next)):
 		}
-		log.Print("nekko-trunk-entry: " + clientLine(l.minute(from)))
+		if m, ok := minute(from); ok {
+			log.Print("nekko-trunk-entry: " + clientLine(m))
+		}
 		from = next
 	}
+}
+
+// goClients is the Go entry's minute of its legs.
+func goClients(l *clientLegs) func(time.Time) (clientSum, bool) {
+	return func(from time.Time) (clientSum, bool) { return l.minute(from).sum(), true }
 }

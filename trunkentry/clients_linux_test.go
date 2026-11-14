@@ -51,7 +51,7 @@ func TestTheClientsLegAddsUpEverySocketOfTheMinute(t *testing.T) {
 	if m.conns != 1 || m.closed != 1 || m.segs < 2 || len(m.rtts) != 2 || m.retrans != 0 {
 		t.Fatalf("minute %+v: want 1 live, 1 closed, both sockets' segments and round trips, no retransmission", m)
 	}
-	line := clientLine(m)
+	line := clientLine(m.sum())
 	if !strings.HasPrefix(line, "clients tcp from=1794650000 conns=1 closed=1 sending=2 ") || !strings.Contains(line, " loss_pm=0.00 ") {
 		t.Fatalf("line %q", line)
 	}
@@ -64,7 +64,7 @@ func TestTheClientsLegAddsUpEverySocketOfTheMinute(t *testing.T) {
 	if next.segs != 0 || next.closed != 0 || next.conns != 1 {
 		t.Fatalf("idle minute %+v", next)
 	}
-	if got := clientLine(next); !strings.HasSuffix(got, "segs=0 retrans=0 loss_pm=- rtt_p50=- rtt_p90=-") {
+	if got := clientLine(next.sum()); !strings.HasSuffix(got, "segs=0 retrans=0 loss_pm=- rtt_p50=- rtt_p90=-") {
 		t.Fatalf("idle line %q", got)
 	}
 }
