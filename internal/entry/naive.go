@@ -34,6 +34,13 @@ type HikkariParams struct {
 	// TrunkWires are the trunk's other wires at this exit, kind (udp, quic,
 	// salamander) to its UDP port (trunkwires.go, edge/trunk_wires.go).
 	TrunkWires map[string]int `json:"trunk_wires,omitempty"`
+	// TrunkPipeKey and TrunkPipeWires make the relay the brain of hk-exit,
+	// the trunk's Rust exit (trunkpipeexit.go, edge/trunk_pipe.go): an
+	// entry presenting this key reaches hk-exit, its members by the relay's
+	// TLS and its wires (udp, h3dgram) on these UDP ports, and the same
+	// TrunkPorts. A key of its own: one entry never reaches both exits.
+	TrunkPipeKey   string         `json:"trunk_pipe_key,omitempty"`
+	TrunkPipeWires map[string]int `json:"trunk_pipe_wires,omitempty"`
 }
 
 func domainProtocol(proto string) bool {

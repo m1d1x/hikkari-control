@@ -25,7 +25,9 @@ import (
 //	cmd/server entry-box trunk-pipe-wires <box> <kind:members,...|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
 //
 // h3dgram= gives the stand Chromium's QUIC wire (R6.3) to the exit's end of
-// it at that port (entry-box trunk-h3-exit, trunkh3exit.go), its members'
+// it at that port (hk-exit under the exit's relay, entry-box trunk-pipe-exit,
+// trunkpipeexit.go: the stand reaches it by the pipe key, the Go entry the
+// relay's Go exit by its own), its members'
 // sessions as Chrome's to a site, or to a proxy with :proxy; the stand's
 // libcronet is then the build with the CONNECT-UDP tunnel. voice= holds the
 // voice class on that wire (udp or h3dgram), bulk on the pool, with no
@@ -152,12 +154,16 @@ func trunkPipeWiresOf(exit map[string]int, w TrunkPipeWires) (string, error) {
 		case "udp":
 			port, served := exit["udp"]
 			if !served {
-				return "", fmt.Errorf("%w: выход не держит провод udp, сначала entry-box trunk-wires", ErrRejected)
+				return "", fmt.Errorf("%w: hk-exit выхода не держит провод udp, сначала entry-box trunk-pipe-exit", ErrRejected)
 			}
 			f.Wires = append(f.Wires, wire{Name: kind, Kind: kind, Port: port, Members: n})
 		case "h3dgram":
-			if w.H3Port < 1 || w.H3Port > 65535 {
-				return "", fmt.Errorf("%w: проводу h3dgram нужен порт его конца на выходе (h3dgram=<port>)", ErrRejected)
+			// The wire's end is hk-exit's under the relay (trunkpipeexit.go):
+			// a port the stand names must be the one it serves.
+			if port, served := exit["h3dgram"]; !served {
+				return "", fmt.Errorf("%w: hk-exit выхода не держит провод h3dgram, сначала entry-box trunk-pipe-exit", ErrRejected)
+			} else if w.H3Port != port {
+				return "", fmt.Errorf("%w: h3dgram выхода на порту %d, а не %d", ErrRejected, port, w.H3Port)
 			}
 			f.Wires = append(f.Wires, wire{Name: kind, Kind: kind, Port: w.H3Port, Members: n, Usage: w.H3Usage})
 		}
@@ -179,7 +185,7 @@ func (p *Provisioner) SetTrunkPipeWires(ctx context.Context, box string, w Trunk
 	if err != nil {
 		return err
 	}
-	exit, err := p.svc.TrunkWiresOf(ctx, pair.Exit)
+	exit, err := p.svc.TrunkPipeWiresOf(ctx, pair.Exit)
 	if err != nil {
 		return err
 	}
@@ -240,7 +246,7 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	if err != nil {
 		return err
 	}
-	addr, sni, key, open, err := p.svc.trunkExitOf(ctx, pair.Exit)
+	addr, sni, key, open, err := p.svc.trunkPipeExitOf(ctx, pair.Exit)
 	if err != nil {
 		return err
 	}
@@ -258,7 +264,7 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 		listen = append(listen, strconv.Itoa(l))
 	}
 	sort.Strings(listen)
-	wires, err := p.svc.TrunkWiresOf(ctx, pair.Exit)
+	wires, err := p.svc.TrunkPipeWiresOf(ctx, pair.Exit)
 	if err != nil {
 		return err
 	}

@@ -759,15 +759,25 @@ func (id Identity) EdgeEnv() (map[string]string, error) {
 	}
 	if h := id.Hikkari; h != nil {
 		env := map[string]string{"EDGE_PROTO": ProtoHikkari, "EDGE_LISTEN": "0.0.0.0:" + strconv.Itoa(id.Port), "EDGE_HIKKARI_HOST": h.Host, "EDGE_HIKKARI_USER": h.User, "EDGE_HIKKARI_PASS": h.Pass}
-		if h.TrunkKey != "" {
+		if h.TrunkKey != "" || h.TrunkPipeKey != "" {
 			ports := make([]string, len(h.TrunkPorts))
 			for i, p := range h.TrunkPorts {
 				ports[i] = strconv.Itoa(p)
 			}
-			env["EDGE_HIKKARI_TRUNK_KEYS"] = h.TrunkKey
 			env["EDGE_HIKKARI_TRUNK_PORTS"] = strings.Join(ports, ",")
+		}
+		if h.TrunkKey != "" {
+			env["EDGE_HIKKARI_TRUNK_KEYS"] = h.TrunkKey
 			if w := trunkWiresEnv(h.TrunkWires); w != "" {
 				env["EDGE_HIKKARI_TRUNK_WIRES"] = w
+			}
+		}
+		// hk-exit beside nekko-edge (trunkpipeexit.go): its binary is the
+		// edge's neighbour, edge/trunk_pipe.go finds it there.
+		if h.TrunkPipeKey != "" {
+			env["EDGE_HIKKARI_TRUNK_PIPE_KEYS"] = h.TrunkPipeKey
+			if w := trunkWiresEnv(h.TrunkPipeWires); w != "" {
+				env["EDGE_HIKKARI_TRUNK_PIPE_WIRES"] = w
 			}
 		}
 		return env, nil

@@ -302,10 +302,38 @@ func (c *controller) spawn(req handoffRequest) (int, byte, error) {
 	cmd := exec.Command(binary, "run")
 	cmd.Env = childEnv(os.Environ(), req.Env, next)
 	cmd.ExtraFiles = []*os.File{tcp, udp, readyW}
+	// hk-exit's wires and the handoff's new end (trunk_pipe.go), only for a
+	// child that runs hk-exit too: this one's drains to the other end once
+	// the child is up, and a child without hk-exit would adopt nothing.
+	var pipe *trunkPipe
+	if len(cfg.Pipe.Keys) > 0 {
+		if rt := activeNaive.Load(); rt != nil {
+			rt.mu.Lock()
+			pipe = rt.pipe
+			rt.mu.Unlock()
+		}
+	}
+	if pipe != nil {
+		files, env, err := pipe.forChild(3 + len(cmd.ExtraFiles))
+		if err != nil {
+			readyW.Close()
+			return 0, 0, fmt.Errorf("hk-exit's sockets for generation %d: %w", next, err)
+		}
+		defer func() {
+			for _, f := range files {
+				f.Close()
+			}
+		}()
+		cmd.ExtraFiles = append(cmd.ExtraFiles, files...)
+		cmd.Env = append(cmd.Env, env)
+	}
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	err = cmd.Start()
 	readyW.Close()
 	if err != nil {
+		if pipe != nil {
+			pipe.childFailed()
+		}
 		return 0, 0, fmt.Errorf("start %s: %w", binary, err)
 	}
 	exited := make(chan error, 1)
@@ -318,6 +346,9 @@ func (c *controller) spawn(req handoffRequest) (int, byte, error) {
 	fail := func(why string) (int, byte, error) {
 		_ = cmd.Process.Kill()
 		<-exited
+		if pipe != nil {
+			pipe.childFailed()
+		}
 		return 0, 0, fmt.Errorf("generation %d: %s", next, why)
 	}
 	select {
@@ -329,6 +360,9 @@ func (c *controller) spawn(req handoffRequest) (int, byte, error) {
 			return fail(line)
 		}
 	case err := <-exited:
+		if pipe != nil {
+			pipe.childFailed()
+		}
 		return 0, 0, fmt.Errorf("generation %d exited before it was up: %v", next, err)
 	case <-time.After(childUpWithin):
 		return fail("not up within " + childUpWithin.String())

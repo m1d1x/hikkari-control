@@ -50,6 +50,10 @@ type naiveConfig struct {
 	// Trunk is the cascade trunk's exit on a Hikkari relay (trunk_exit.go);
 	// no keys, no trunk.
 	Trunk trunkExitConfig
+	// Pipe is the trunk's Rust exit under this relay (trunk_pipe.go); no
+	// keys, no hk-exit. Its keys are none of Trunk's: an entry's members
+	// reach one exit.
+	Pipe trunkPipeConfig
 	// network, when set, is the Caddy network the listener comes from:
 	// relayNetwork for a Hikkari relay, whose listener outlives a process
 	// (handoff.go).
@@ -87,6 +91,16 @@ func naiveFromEnv(get func(string) string) (naiveConfig, error) {
 		if n.Trunk, err = trunkExitFromEnv(get); err != nil {
 			return n, err
 		}
+		if n.Pipe, err = trunkPipeFromEnv(get); err != nil {
+			return n, err
+		}
+		for _, k := range n.Pipe.Keys {
+			if n.Trunk.admits(k) {
+				return n, errors.New("EDGE_HIKKARI_TRUNK_PIPE_KEYS: a key of EDGE_HIKKARI_TRUNK_KEYS too: an entry's members would reach two exits")
+			}
+		}
+	} else if get("EDGE_HIKKARI_TRUNK_PIPE_KEYS") != "" {
+		return n, errors.New("EDGE_HIKKARI_TRUNK_PIPE_KEYS on a relay that is not Hikkari")
 	}
 	if value := get("EDGE_NAIVE_H3"); value != "" && !hikkari {
 		n.H3, err = strconv.ParseBool(value)
@@ -170,6 +184,8 @@ type naiveRuntime struct {
 	dup *hkserver.DupHub
 	// trunk is the cascade trunk's exit (trunk_exit.go), nil without keys.
 	trunk *trunk.Exit
+	// pipe is the trunk's Rust exit (trunk_pipe.go), nil without its keys.
+	pipe *trunkPipe
 	// book and watches are v1.04 observability (tcpwatch.go), set when the
 	// relay is Hikkari: what each key's sessions saw, by path.
 	book    *observe.Book
@@ -489,6 +505,14 @@ func serveNaive(cfg naiveConfig, socks *sockets) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	runtime.startTrunkExit(ctx)
+	if socks != nil {
+		// The clients' relay goes on without it: the trunk of the pipe's
+		// entry is down until the next generation.
+		if err := runtime.startTrunkPipe(ctx, socks.gen); err != nil {
+			log.Printf("nekko-edge: %v", err)
+		}
+		defer runtime.closeTrunkPipe()
+	}
 	var udp *hikkariUDP
 	if cfg.UDP {
 		if udp, err = startHikkariUDP(ctx, runtime, socks); err != nil {
@@ -531,10 +555,15 @@ func (n *naiveRuntime) drain(ctx context.Context, next byte, udp *hikkariUDP, st
 		udp.conn.Drain(next)
 	}
 	n.mu.Lock()
-	x := n.trunk
+	x, pipe := n.trunk, n.pipe
 	n.mu.Unlock()
 	if x != nil {
 		x.Drain()
+	}
+	// hk-exit drains to the next generation's, which adopted the other end
+	// of the handoff socket before it said it was up (trunk_pipe.go).
+	if pipe != nil {
+		pipe.drain()
 	}
 	go stopCaddy() // no more accepts; HTTP/2 says GOAWAY, open tunnels go on
 	started := time.Now()
@@ -557,8 +586,10 @@ func (n *naiveRuntime) drain(ctx context.Context, next byte, udp *hikkariUDP, st
 			left := len(n.sessions)
 			n.mu.Unlock()
 			// Not in the first seconds: systemd hears of the new main
-			// process before this one leaves.
-			if left == 0 && time.Since(started) >= drainMinimum {
+			// process before this one leaves. hk-exit's flows ride no
+			// session of this process: it says itself when it carries
+			// nothing more.
+			if left == 0 && (pipe == nil || pipe.drained()) && time.Since(started) >= drainMinimum {
 				log.Printf("nekko-edge: drained in %s", time.Since(started).Round(time.Second))
 				return
 			}

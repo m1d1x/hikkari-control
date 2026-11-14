@@ -60,6 +60,12 @@ func trunkWiresEnv(w map[string]int) string {
 
 // ParseTrunkWires reads kind=port,... ("off" or empty: none).
 func ParseTrunkWires(raw string) (map[string]int, error) {
+	return parseWirePorts(raw, knownWireKind, TrunkWireKinds)
+}
+
+// parseWirePorts reads kind=port,... of the kinds known says, named by kinds
+// in its errors.
+func parseWirePorts(raw string, known func(string) bool, kinds []string) (map[string]int, error) {
 	out := map[string]int{}
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "off" {
@@ -72,8 +78,8 @@ func ParseTrunkWires(raw string) (map[string]int, error) {
 		if !ok || err != nil || port < 1024 || port > 65535 {
 			return nil, fmt.Errorf("%w: провод %q, нужно вид=порт (порт 1024-65535)", ErrRejected, item)
 		}
-		if !knownWireKind(kind) {
-			return nil, fmt.Errorf("%w: провод %q, бывают %s", ErrRejected, kind, strings.Join(TrunkWireKinds, ", "))
+		if !known(kind) {
+			return nil, fmt.Errorf("%w: провод %q, бывают %s", ErrRejected, kind, strings.Join(kinds, ", "))
 		}
 		if _, dup := out[kind]; dup || ports[port] {
 			return nil, fmt.Errorf("%w: %q дважды", ErrRejected, item)

@@ -55,16 +55,19 @@ package main
 //	                                    # beside the box's trunk entry, to its exit,
 //	                                    # on ports of its own (internal/entry/trunkpipe.go);
 //	                                    # h3dgram= adds Chromium's QUIC wire to its
-//	                                    # end on the exit (trunk-h3-exit); voice=
+//	                                    # end on the exit (trunk-pipe-exit); voice=
 //	                                    # holds voice on that wire, no selector
 //	cmd/server entry-box trunk-pipe-off <box>
 //	cmd/server entry-box trunk-pipe-wires <box> <udp:2,h3dgram:4|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
 //	                                    # the stand's wires and their knobs, a file
 //	                                    # its brain follows (no new process)
-//	cmd/server entry-box trunk-h3-exit <exit-box> <port>
-//	                                    # the exit's end of that wire: hk-exit beside
-//	                                    # the relay, on its own UDP port
-//	                                    # (internal/entry/trunkh3exit.go)
+//	cmd/server entry-box trunk-pipe-exit <exit-box> udp=<port>[,h3dgram=<port>]|off
+//	                                    # hk-exit under the exit's relay, the
+//	                                    # stand's exit by a key of its own, every
+//	                                    # wire in one process (internal/entry/
+//	                                    # trunkpipeexit.go): env, reconfigure
+//	                                    # (reload, no cut), ufw; takes the former
+//	                                    # nekko-trunk-h3exit off first
 //	cmd/server entry-box trunk-h3-exit-off <exit-box>
 //	cmd/server entry-box trunk-wires <exit-box> udp=20447,quic=20448,salamander=20449|off
 //	                                    # the trunk's other wires at the exit
@@ -527,11 +530,32 @@ func runEntryBox(args []string) {
 		fmt.Printf("%s: wires %s, steer=%v (the entry reads them within 10 s)\n", args[1], args[3], steer)
 		os.Exit(0)
 	}
-	if (len(args) == 3 && args[0] == "trunk-h3-exit") || (len(args) == 2 && args[0] == "trunk-h3-exit-off") {
-		// entry-box trunk-h3-exit <exit-box> <port> — the exit's end of
-		// Chromium's QUIC wire for the stand (internal/entry/trunkh3exit.go, R6.3).
+	if len(args) == 2 && args[0] == "trunk-h3-exit-off" {
+		// entry-box trunk-h3-exit-off <exit-box> — the former unit of the
+		// QUIC wire's end (R6.3) off the box (internal/entry/trunkh3exit.go).
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		if err := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir).StopTrunkH3Exit(ctx, args[1]); err != nil {
+			fail(err)
+		}
+		os.Exit(0)
+	}
+	if len(args) == 3 && args[0] == "trunk-pipe-exit" {
+		// entry-box trunk-pipe-exit <exit-box> udp=<port>[,h3dgram=<port>]|off
+		// — hk-exit under the exit's relay (internal/entry/trunkpipeexit.go,
+		// R6.4.4): the former unit off first (its port is the wire's), then
+		// the relay's env, ufw and a reconfigure (reload, nothing cut).
 		if err := cryptobox.Configure(os.Getenv); err != nil {
 			fail(fmt.Errorf("content key: %w", err))
+		}
+		wires, err := entry.ParseTrunkPipeExitWires(args[2])
+		if err != nil {
+			fail(err)
 		}
 		ctx, cancel, pool := adminCLIPool()
 		defer cancel()
@@ -540,20 +564,25 @@ func runEntryBox(args []string) {
 		if err != nil {
 			fail(err)
 		}
-		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
-		if args[0] == "trunk-h3-exit-off" {
-			if err := prov.StopTrunkH3Exit(ctx, args[1]); err != nil {
-				fail(err)
-			}
-			os.Exit(0)
-		}
-		port, err := strconv.Atoi(args[2])
-		if err != nil {
-			fail(fmt.Errorf("port %q", args[2]))
-		}
-		if err := prov.StandTrunkH3Exit(ctx, args[1], port); err != nil {
+		prov := newProvisioner(svc)
+		if err := prov.StopTrunkH3Exit(ctx, args[1]); err != nil {
 			fail(err)
 		}
+		before, _ := svc.TrunkPipeWiresOf(ctx, args[1])
+		relays, err := svc.SetTrunkPipeExit(ctx, args[1], wires)
+		if err != nil {
+			fail(err)
+		}
+		fmt.Printf("trunk pipe exit %s: %s\n", args[2], strings.Join(relays, ", "))
+		jctx, jcancel := context.WithTimeout(context.Background(), 40*time.Minute)
+		defer jcancel()
+		if err := prov.OpenTrunkWirePorts(jctx, args[1], wires, before); err != nil {
+			fail(err)
+		}
+		if err := entry.NewOrchestrator(svc, prov).Reconfigure(jctx, args[1]); err != nil {
+			fail(fmt.Errorf("reconfigure %s: %w", args[1], err))
+		}
+		fmt.Printf("%s reconfigured\n", args[1])
 		os.Exit(0)
 	}
 	if (len(args) >= 3 && len(args) <= 7 && args[0] == "trunk-pipe") || (len(args) == 2 && args[0] == "trunk-pipe-off") {

@@ -152,8 +152,9 @@ func TestTheStandOverThePipe(t *testing.T) {
 	if err != nil || wires != `{"steer":true,"wires":[{"name":"udp","kind":"udp","port":20447,"members":2}]}`+"\n" {
 		t.Fatalf("wires %q %v", wires, err)
 	}
-	// Chromium's QUIC wire (R6.3), at the port of its end on the exit.
-	h3, err := trunkPipeWiresOf(nil, TrunkPipeWires{Members: map[string]int{"h3dgram": 4}, H3Port: 4445, H3Usage: "proxy", Voice: "h3dgram"})
+	// Chromium's QUIC wire (R6.3), at the port hk-exit under the exit's relay
+	// serves it on (R6.4.4).
+	h3, err := trunkPipeWiresOf(map[string]int{"h3dgram": 4445}, TrunkPipeWires{Members: map[string]int{"h3dgram": 4}, H3Port: 4445, H3Usage: "proxy", Voice: "h3dgram"})
 	if err != nil || h3 != `{"steer":true,"wires":[{"name":"h3dgram","kind":"h3dgram","port":4445,"members":4,"usage":"proxy"}],"voice":"h3dgram"}`+"\n" {
 		t.Fatalf("wires %q %v", h3, err)
 	}
@@ -161,11 +162,12 @@ func TestTheStandOverThePipe(t *testing.T) {
 		{Voice: "h3dgram"},
 		{Members: map[string]int{"udp": 2}},
 		{Members: map[string]int{"h3dgram": 4}},
+		{Members: map[string]int{"h3dgram": 4}, H3Port: 4446},
 		{Members: map[string]int{"h3dgram": 40}, H3Port: 4445},
 		{Members: map[string]int{"h3dgram": 4}, H3Port: 4445, H3Usage: "tunnel"},
 	} {
-		if _, err := trunkPipeWiresOf(nil, w); err == nil {
-			t.Fatalf("%+v accepted: voice on a wire the stand has not, udp the exit has not, h3dgram with no port, 40 members or a usage of none", w)
+		if _, err := trunkPipeWiresOf(map[string]int{"h3dgram": 4445}, w); err == nil {
+			t.Fatalf("%+v accepted: voice on a wire the stand has not, udp the exit has not, h3dgram on no port of the exit's, 40 members or a usage of none", w)
 		}
 	}
 	r := &provokeRecorder{stdin: map[string]string{}}

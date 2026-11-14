@@ -1634,6 +1634,35 @@ func (j *jobRun) stage(r Remote, build EdgeBuild, have string) error {
 	return nil
 }
 
+// edgeExitBin is hk-exit beside nekko-edge: the relay that is the brain of
+// the trunk's Rust exit starts it from there (edge/trunk_pipe.go).
+const edgeExitBin = "/usr/local/bin/hk-exit"
+
+// stageExit puts the image's hk-exit beside nekko-edge before the relay's
+// new generation starts it, unless the box has it already. A renamed file:
+// the running hk-exit keeps its own, the next generation's is the new one.
+func (j *jobRun) stageExit(r Remote, arch string) error {
+	build, ok := j.p.exitBuilds[arch]
+	if !ok {
+		return fmt.Errorf("%w: в образе хаба нет hk-exit для linux-%s, а релей ведёт выход магистрали на Rust", ErrRejected, arch)
+	}
+	out, _ := r.Run(j.ctx, "sha256sum "+edgeExitBin+" 2>/dev/null | cut -d' ' -f1", nil)
+	if strings.TrimSpace(out) == build.SHA {
+		j.log("hk-exit %s… уже на месте", build.SHA[:12])
+		return nil
+	}
+	binary, err := build.read()
+	if err != nil {
+		return err
+	}
+	if _, err := r.Run(j.ctx, "cat > "+edgeExitBin+".new && chmod 755 "+edgeExitBin+".new && mv "+edgeExitBin+".new "+edgeExitBin,
+		bytes.NewReader(binary)); err != nil {
+		return fmt.Errorf("загрузка hk-exit: %w", err)
+	}
+	j.log("hk-exit %s… загружен (%d МБ)", build.SHA[:12], len(binary)>>20)
+	return nil
+}
+
 // edgeOnBox reads the build the box runs and records it: a fact worth keeping
 // even if what follows fails, since the rollout reads versions from here.
 // "" when there is no binary yet.
@@ -1655,6 +1684,17 @@ func (j *jobRun) install(r Remote, rel provRelay) error {
 	envMap, err := rel.id.EdgeEnv()
 	if err != nil {
 		return fmt.Errorf("env релея %s: %w", rel.name, err)
+	}
+	// A relay that is hk-exit's brain starts it beside itself: it is there
+	// before the relay's new generation (deploy, reconfigure, rollback).
+	if h := rel.id.Hikkari; h != nil && h.TrunkPipeKey != "" {
+		arch, err := j.arch(r)
+		if err != nil {
+			return err
+		}
+		if err := j.stageExit(r, arch); err != nil {
+			return err
+		}
 	}
 	// Where this relay reports its own counters (П9.3). Its name comes from
 	// here rather than from anything on the box, and the token is this box's

@@ -26,17 +26,37 @@ import (
 	"github.com/m1d1x/hikkari-protocol/trunk"
 )
 
-// trunkTargets maps a loopback connection the exit dialled to the stream
-// or flow it carries, by network and the connection's local address (which
-// the relay sees as the remote).
+// trunkTargets maps a loopback connection an exit dialled to the stream or
+// flow it carries, by network and the connection's local address (which
+// the relay sees as the remote): what marks that stream or flow with a
+// tester's key. The Go exit's connections are tracked as it dials them; the
+// Rust exit's as it tells them (trunk_pipe.go).
 type trunkTargets struct {
 	mu sync.Mutex
-	m  map[string]trunk.Target
+	m  map[string]*trunkTarget
+	// waiting are keys the relay admitted on a connection no exit had told
+	// yet, by network and remote: the Rust exit's word may come a moment
+	// after the relay's (trunk_pipe.go).
+	waiting map[string]waitingMark
 }
 
-func newTrunkTargets() *trunkTargets { return &trunkTargets{m: map[string]trunk.Target{}} }
+// trunkTarget marks one stream or flow with a tester's key.
+type trunkTarget struct{ mark func(key string) }
 
-func (t *trunkTargets) get(network, remote string) (trunk.Target, bool) {
+type waitingMark struct {
+	key string
+	at  time.Time
+}
+
+// markWait is how long a key admitted on a connection no exit told waits
+// for the exit's word.
+const markWait = 2 * time.Second
+
+func newTrunkTargets() *trunkTargets {
+	return &trunkTargets{m: map[string]*trunkTarget{}, waiting: map[string]waitingMark{}}
+}
+
+func (t *trunkTargets) get(network, remote string) (*trunkTarget, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	tg, ok := t.m[network+" "+remote]
@@ -46,16 +66,49 @@ func (t *trunkTargets) get(network, remote string) (trunk.Target, bool) {
 // track remembers c as tg's until c is closed.
 func (t *trunkTargets) track(network string, c net.Conn, tg trunk.Target) net.Conn {
 	key := network + " " + c.LocalAddr().String()
+	target := &trunkTarget{mark: func(k string) { tg.Session.Observe(tg.Kind, tg.ID, k) }}
 	t.mu.Lock()
-	t.m[key] = tg
+	t.m[key] = target
 	t.mu.Unlock()
-	return &trackedConn{Conn: c, forget: func() {
-		t.mu.Lock()
-		if t.m[key] == tg {
-			delete(t.m, key)
+	return &trackedConn{Conn: c, forget: func() { t.forget(key, target) }}
+}
+
+// told remembers the connection at network and remote as target's, as the
+// Rust exit tells it, and marks it at once if the relay admitted a
+// tester's key on it already.
+func (t *trunkTargets) told(network, remote string, target *trunkTarget) {
+	key := network + " " + remote
+	t.mu.Lock()
+	t.m[key] = target
+	w, ok := t.waiting[key]
+	delete(t.waiting, key)
+	t.mu.Unlock()
+	if ok && time.Since(w.at) <= markWait {
+		target.mark(w.key)
+	}
+}
+
+// forget drops the connection at key if it is still target's.
+func (t *trunkTargets) forget(key string, target *trunkTarget) {
+	t.mu.Lock()
+	if t.m[key] == target {
+		delete(t.m, key)
+	}
+	t.mu.Unlock()
+}
+
+// wait keeps a tester's key admitted on a connection no exit told yet, for
+// markWait; older waiting keys are dropped on the way.
+func (t *trunkTargets) wait(network, remote, key string) {
+	now := time.Now()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for k, w := range t.waiting {
+		if now.Sub(w.at) > markWait {
+			delete(t.waiting, k)
 		}
-		t.mu.Unlock()
-	}}
+	}
+	t.waiting[network+" "+remote] = waitingMark{key, now}
 }
 
 func (t *trunkTargets) len() int {
@@ -102,13 +155,17 @@ func (n *naiveRuntime) observeTrunk(network, remote, key string) {
 		return
 	}
 	n.mu.Lock()
-	on := n.observed[key]
+	on, pipe := n.observed[key], n.pipe
 	n.mu.Unlock()
 	if !on {
 		return
 	}
 	if tg, ok := n.targets.get(network, remote); ok {
-		tg.Session.Observe(tg.Kind, tg.ID, key)
+		tg.mark(key)
+		return
+	}
+	if pipe != nil {
+		n.targets.wait(network, remote, key)
 	}
 }
 

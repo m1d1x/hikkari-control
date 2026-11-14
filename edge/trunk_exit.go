@@ -43,17 +43,24 @@ type trunkExitConfig struct {
 func trunkExitFromEnv(get func(string) string) (trunkExitConfig, error) {
 	var c trunkExitConfig
 	raw := strings.TrimSpace(get("EDGE_HIKKARI_TRUNK_KEYS"))
+	// The ports are the Rust exit's too (trunk_pipe.go): a relay whose
+	// trunk is only hk-exit's names them without a key of the Go exit.
+	pipe := strings.TrimSpace(get("EDGE_HIKKARI_TRUNK_PIPE_KEYS")) != ""
 	if raw == "" {
-		if get("EDGE_HIKKARI_TRUNK_PORTS") != "" || get("EDGE_HIKKARI_TRUNK_WIRES") != "" {
+		if get("EDGE_HIKKARI_TRUNK_WIRES") != "" || !pipe && get("EDGE_HIKKARI_TRUNK_PORTS") != "" {
 			return c, errors.New("EDGE_HIKKARI_TRUNK_PORTS or _WIRES without EDGE_HIKKARI_TRUNK_KEYS")
 		}
-		return c, nil
-	}
-	for _, key := range strings.Split(raw, ",") {
-		if err := trunk.ParseKey(key); err != nil {
-			return c, fmt.Errorf("EDGE_HIKKARI_TRUNK_KEYS: %w", err)
+		if !pipe {
+			return c, nil
 		}
-		c.Keys = append(c.Keys, key)
+	}
+	if raw != "" {
+		for _, key := range strings.Split(raw, ",") {
+			if err := trunk.ParseKey(key); err != nil {
+				return c, fmt.Errorf("EDGE_HIKKARI_TRUNK_KEYS: %w", err)
+			}
+			c.Keys = append(c.Keys, key)
+		}
 	}
 	ports := strings.TrimSpace(get("EDGE_HIKKARI_TRUNK_PORTS"))
 	if ports == "" {
@@ -186,10 +193,13 @@ func sortedPorts(ports map[uint16]bool) []int {
 // gets what strangers get.
 func (n *naiveRuntime) serveTrunk(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler, user, pass string) error {
 	n.mu.Lock()
-	x := n.trunk
+	x, pipe := n.trunk, n.pipe
 	closed := n.closed
 	n.mu.Unlock()
-	if x == nil || closed || user != trunk.User || !isTrunkHost(r.Host) || !n.cfg.Trunk.admits(pass) {
+	// An entry's key names its exit: the Go one's or hk-exit's
+	// (trunk_pipe.go), never both.
+	toPipe := pipe != nil && n.cfg.Pipe.admits(pass)
+	if !toPipe && (x == nil || !n.cfg.Trunk.admits(pass)) || closed || user != trunk.User || !isTrunkHost(r.Host) {
 		// Not ours to tell apart from a wrong password: the proxy's own
 		// probe resistance answers.
 		r = r.Clone(r.Context())
@@ -208,6 +218,9 @@ func (n *naiveRuntime) serveTrunk(w http.ResponseWriter, r *http.Request, next c
 	n.mu.Unlock()
 	defer func() { cancel(); n.mu.Lock(); delete(n.sessions, id); n.mu.Unlock() }()
 	ctx = context.WithValue(ctx, connect.ContextKeyDial{}, func(ctx context.Context) (net.Conn, error) {
+		if toPipe {
+			return pipe.serveMember()
+		}
 		proxySide, relaySide := net.Pipe()
 		go func() {
 			defer relaySide.Close()
