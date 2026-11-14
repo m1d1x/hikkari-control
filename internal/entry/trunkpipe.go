@@ -22,6 +22,7 @@ import (
 //
 //	cmd/server entry-box trunk-pipe <box> <listen=port,...> [members] [h3dgram=<port>[:proxy]] [voice=<wire>]   # stand up or update
 //	cmd/server entry-box trunk-pipe-off <box>
+//	cmd/server entry-box trunk-pipe-wires <box> <kind:members,...|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
 //
 // h3dgram= gives the stand Chromium's QUIC wire (R6.3) to the exit's end of
 // it at that port (entry-box trunk-h3-exit, trunkh3exit.go), its members'
@@ -29,6 +30,10 @@ import (
 // libcronet is then the build with the CONNECT-UDP tunnel. voice= holds the
 // voice class on that wire (udp or h3dgram), bulk on the pool, with no
 // selector: the wire measured under load, not chosen by its numbers.
+//
+// trunk-pipe-wires changes the stand's wires (roadmap 4.4) by its file
+// alone, with no new process: which wires, their members, the QUIC wire's
+// port and usage, voice held or steered.
 
 const (
 	trunkPipeUnit = "nekko-trunk-pipe"
@@ -75,10 +80,51 @@ func trunkPipeEnvOf(addr, sni, key string, o TrunkPipeOptions) string {
 		"\nEDGE_TRUNK_SOURCE_PORTS=" + TrunkPipeSourcePorts + "\n"
 }
 
-// trunkPipeWiresOf is the stand's wires file: the exit's udp wire and the
-// QUIC wire at h3Port (0: none), steered. The pipe carries no quic or
-// salamander (owner, 12.11); no wire is the pool alone.
-func trunkPipeWiresOf(wires map[string]int, h3Port int, h3Usage, voice string) (string, error) {
+// TrunkPipeWires are the stand's wires file as the hub writes it: the
+// members of each wire it carries (udp, h3dgram; a kind left out is no such
+// wire), the exit's port and session usage of h3dgram, and the wire voice is
+// held on ("" the selector's choice).
+type TrunkPipeWires struct {
+	Members map[string]int
+	H3Port  int
+	H3Usage string
+	Voice   string
+}
+
+// trunkPipeWireKinds are the wires the pipe carries (trunkentry
+// brain_wires_linux.go pipeWiresOf), in the file's order.
+var trunkPipeWireKinds = []string{"udp", "h3dgram"}
+
+// ParseTrunkPipeWires reads the stand's wires, kind:members,... of
+// trunkPipeWireKinds ("off": none).
+func ParseTrunkPipeWires(raw string) (map[string]int, error) {
+	out := map[string]int{}
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "off" {
+		return out, nil
+	}
+	for _, item := range strings.Split(raw, ",") {
+		kind, m, ok := strings.Cut(strings.TrimSpace(item), ":")
+		n, err := strconv.Atoi(m)
+		if !ok || err != nil || n < 1 || n > 32 {
+			return nil, fmt.Errorf("%w: %q, нужно вид:члены (1-32)", ErrRejected, item)
+		}
+		if kind != "udp" && kind != "h3dgram" {
+			return nil, fmt.Errorf("%w: провод %q, труба везёт %s", ErrRejected, kind, strings.Join(trunkPipeWireKinds, ", "))
+		}
+		if _, dup := out[kind]; dup {
+			return nil, fmt.Errorf("%w: %q дважды", ErrRejected, kind)
+		}
+		out[kind] = n
+	}
+	return out, nil
+}
+
+// trunkPipeWiresOf is the stand's wires file, steered: the exit's udp wire
+// (exit: the exit's wires and their ports) and the QUIC wire at w.H3Port.
+// The pipe carries no quic or salamander (owner, 12.11); no wire is the
+// pool alone.
+func trunkPipeWiresOf(exit map[string]int, w TrunkPipeWires) (string, error) {
 	type wire struct {
 		Name    string `json:"name"`
 		Kind    string `json:"kind"`
@@ -90,25 +136,73 @@ func trunkPipeWiresOf(wires map[string]int, h3Port int, h3Usage, voice string) (
 		Steer bool   `json:"steer"`
 		Wires []wire `json:"wires"`
 		Voice string `json:"voice,omitempty"`
-	}{Steer: true, Wires: []wire{}, Voice: voice}
-	if port, ok := wires["udp"]; ok {
-		f.Wires = append(f.Wires, wire{Name: "udp", Kind: "udp", Port: port, Members: trunkPipeWireMembers})
+	}{Steer: true, Wires: []wire{}, Voice: w.Voice}
+	if w.H3Usage != "" && w.H3Usage != "destination" && w.H3Usage != "proxy" {
+		return "", fmt.Errorf("%w: форма члена %q, destination или proxy", ErrRejected, w.H3Usage)
 	}
-	if h3Port > 0 {
-		f.Wires = append(f.Wires, wire{Name: "h3dgram", Kind: "h3dgram", Port: h3Port, Members: trunkPipeH3Members, Usage: h3Usage})
-	}
-	if voice != "" {
-		found := false
-		for _, w := range f.Wires {
-			found = found || w.Kind == voice
+	for _, kind := range trunkPipeWireKinds {
+		n, ok := w.Members[kind]
+		if !ok {
+			continue
 		}
-		if !found {
-			return "", fmt.Errorf("%w: голос на проводе %q, которого у стенда нет", ErrRejected, voice)
+		if n < 1 || n > 32 {
+			return "", fmt.Errorf("%w: членов %s %d, 1-32", ErrRejected, kind, n)
+		}
+		switch kind {
+		case "udp":
+			port, served := exit["udp"]
+			if !served {
+				return "", fmt.Errorf("%w: выход не держит провод udp, сначала entry-box trunk-wires", ErrRejected)
+			}
+			f.Wires = append(f.Wires, wire{Name: kind, Kind: kind, Port: port, Members: n})
+		case "h3dgram":
+			if w.H3Port < 1 || w.H3Port > 65535 {
+				return "", fmt.Errorf("%w: проводу h3dgram нужен порт его конца на выходе (h3dgram=<port>)", ErrRejected)
+			}
+			f.Wires = append(f.Wires, wire{Name: kind, Kind: kind, Port: w.H3Port, Members: n, Usage: w.H3Usage})
+		}
+	}
+	if w.Voice != "" {
+		if _, ok := w.Members[w.Voice]; !ok {
+			return "", fmt.Errorf("%w: голос на проводе %q, которого у стенда нет", ErrRejected, w.Voice)
 		}
 	}
 	raw, err := json.Marshal(f)
 	return string(raw) + "\n", err
 }
+
+// SetTrunkPipeWires rewrites the wires file of the stand on box, and only
+// it: the running brain follows the file within 10 s, with no new process
+// and no flow or stream cut (trunkentry brain_wires_linux.go, roadmap 4.4).
+func (p *Provisioner) SetTrunkPipeWires(ctx context.Context, box string, w TrunkPipeWires) error {
+	pair, err := p.svc.trunkPairOf(ctx, box)
+	if err != nil {
+		return err
+	}
+	exit, err := p.svc.TrunkWiresOf(ctx, pair.Exit)
+	if err != nil {
+		return err
+	}
+	raw, err := trunkPipeWiresOf(exit, w)
+	if err != nil {
+		return err
+	}
+	r, _, err := p.provokeRemote(ctx, box)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	if out, err := r.Run(ctx, trunkPipeWiresScript, strings.NewReader(raw)); err != nil {
+		return fmt.Errorf("файл проводов стенда на %s: %w: %s", box, err, out)
+	}
+	applog.Info(ctx, "entry", "operator trunk pipe wires", applog.F("box", box), applog.F("wires", strings.TrimSpace(raw)))
+	return nil
+}
+
+// trunkPipeWiresScript swaps the stand's wires file in, and only on a box
+// the stand stands on.
+const trunkPipeWiresScript = "test -f " + trunkPipeEnv + " || { echo 'стенда нет: сначала entry-box trunk-pipe' >&2; exit 1; }; " +
+	"umask 022; cat > " + trunkPipeWires + ".new && mv " + trunkPipeWires + ".new " + trunkPipeWires
 
 // StandTrunkPipe stands up or updates the stand over hk-pipe on box, beside
 // its Go entry. Running it again is the update (a new build goes in by
@@ -168,7 +262,14 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	if err != nil {
 		return err
 	}
-	wiresFile, err := trunkPipeWiresOf(wires, o.H3Port, o.H3Usage, o.Voice)
+	members := map[string]int{}
+	if _, ok := wires["udp"]; ok {
+		members["udp"] = trunkPipeWireMembers
+	}
+	if o.H3Port > 0 {
+		members["h3dgram"] = trunkPipeH3Members
+	}
+	wiresFile, err := trunkPipeWiresOf(wires, TrunkPipeWires{Members: members, H3Port: o.H3Port, H3Usage: o.H3Usage, Voice: o.Voice})
 	if err != nil {
 		return err
 	}

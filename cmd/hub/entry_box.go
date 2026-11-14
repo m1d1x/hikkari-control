@@ -58,6 +58,9 @@ package main
 //	                                    # end on the exit (trunk-h3-exit); voice=
 //	                                    # holds voice on that wire, no selector
 //	cmd/server entry-box trunk-pipe-off <box>
+//	cmd/server entry-box trunk-pipe-wires <box> <udp:2,h3dgram:4|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
+//	                                    # the stand's wires and their knobs, a file
+//	                                    # its brain follows (no new process)
 //	cmd/server entry-box trunk-h3-exit <exit-box> <port>
 //	                                    # the exit's end of that wire: hk-exit beside
 //	                                    # the relay, on its own UDP port
@@ -610,6 +613,47 @@ func runEntryBox(args []string) {
 		if err := prov.StandTrunkPipe(ctx, args[1], o); err != nil {
 			fail(err)
 		}
+		os.Exit(0)
+	}
+	if len(args) >= 3 && len(args) <= 5 && args[0] == "trunk-pipe-wires" {
+		// entry-box trunk-pipe-wires <box> <kind:members,...|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
+		// — the stand's wires by its file alone: the brain follows it within
+		// 10 s with no new process (internal/entry/trunkpipe.go, roadmap 4.4).
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		members, err := entry.ParseTrunkPipeWires(args[2])
+		if err != nil {
+			fail(err)
+		}
+		w := entry.TrunkPipeWires{Members: members}
+		for _, a := range args[3:] {
+			if v, ok := strings.CutPrefix(a, "voice="); ok {
+				w.Voice = v
+				continue
+			}
+			v, ok := strings.CutPrefix(a, "h3dgram=")
+			if !ok {
+				fail(fmt.Errorf("%q: h3dgram=<port>[:proxy] or voice=<wire>", a))
+			}
+			port, usage, _ := strings.Cut(v, ":")
+			if w.H3Port, err = strconv.Atoi(port); err != nil {
+				fail(fmt.Errorf("h3dgram %q: <port>[:proxy]", v))
+			}
+			w.H3Usage = usage
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+		if err := prov.SetTrunkPipeWires(ctx, args[1], w); err != nil {
+			fail(err)
+		}
+		fmt.Printf("%s: stand wires %s, voice=%s (the brain follows them within 10 s, no new process)\n", args[1], args[2], w.Voice)
 		os.Exit(0)
 	}
 	if (len(args) >= 4 && len(args) <= 6 && args[0] == "trunk-entry") || (len(args) == 2 && args[0] == "trunk-entry-off") {

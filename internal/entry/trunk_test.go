@@ -148,17 +148,25 @@ func TestTheStandOverThePipe(t *testing.T) {
 			t.Fatalf("env lacks %q:\n%s", want, env)
 		}
 	}
-	wires, err := trunkPipeWiresOf(map[string]int{"udp": 20447, "quic": 20448}, 0, "", "")
+	wires, err := trunkPipeWiresOf(map[string]int{"udp": 20447, "quic": 20448}, TrunkPipeWires{Members: map[string]int{"udp": 2}})
 	if err != nil || wires != `{"steer":true,"wires":[{"name":"udp","kind":"udp","port":20447,"members":2}]}`+"\n" {
 		t.Fatalf("wires %q %v", wires, err)
 	}
 	// Chromium's QUIC wire (R6.3), at the port of its end on the exit.
-	h3, err := trunkPipeWiresOf(nil, 4445, "proxy", "h3dgram")
+	h3, err := trunkPipeWiresOf(nil, TrunkPipeWires{Members: map[string]int{"h3dgram": 4}, H3Port: 4445, H3Usage: "proxy", Voice: "h3dgram"})
 	if err != nil || h3 != `{"steer":true,"wires":[{"name":"h3dgram","kind":"h3dgram","port":4445,"members":4,"usage":"proxy"}],"voice":"h3dgram"}`+"\n" {
 		t.Fatalf("wires %q %v", h3, err)
 	}
-	if _, err := trunkPipeWiresOf(nil, 0, "", "h3dgram"); err == nil {
-		t.Fatal("voice held on a wire the stand has not")
+	for _, w := range []TrunkPipeWires{
+		{Voice: "h3dgram"},
+		{Members: map[string]int{"udp": 2}},
+		{Members: map[string]int{"h3dgram": 4}},
+		{Members: map[string]int{"h3dgram": 40}, H3Port: 4445},
+		{Members: map[string]int{"h3dgram": 4}, H3Port: 4445, H3Usage: "tunnel"},
+	} {
+		if _, err := trunkPipeWiresOf(nil, w); err == nil {
+			t.Fatalf("%+v accepted: voice on a wire the stand has not, udp the exit has not, h3dgram with no port, 40 members or a usage of none", w)
+		}
 	}
 	r := &provokeRecorder{stdin: map[string]string{}}
 	files := []trunkFile{{"nekko-trunk-entry", testBuild(t)}, {"libcronet.so", testBuild(t)}, {"hk-pipe", testBuild(t)}}
@@ -235,5 +243,29 @@ func TestTheStandsPortsAreKeptOnTheEntrysRow(t *testing.T) {
 	}
 	if err := s.forgetTrunkEntry(ctx, "pipeentry1"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTheStandsWiresAreTheKindsThePipeCarries(t *testing.T) {
+	m, err := ParseTrunkPipeWires("udp:2,h3dgram:6")
+	if err != nil || m["udp"] != 2 || m["h3dgram"] != 6 || len(m) != 2 {
+		t.Fatalf("%v %v", m, err)
+	}
+	if m, err := ParseTrunkPipeWires("off"); err != nil || len(m) != 0 {
+		t.Fatalf("off: %v %v", m, err)
+	}
+	for _, raw := range []string{"quic:4", "udp:2,udp:3", "udp", "h3dgram:0"} {
+		if _, err := ParseTrunkPipeWires(raw); err == nil {
+			t.Fatalf("%q accepted", raw)
+		}
+	}
+	// The command rewrites the file only, and only where the stand stands.
+	for _, want := range []string{"test -f " + trunkPipeEnv, "mv " + trunkPipeWires + ".new " + trunkPipeWires} {
+		if !strings.Contains(trunkPipeWiresScript, want) {
+			t.Fatalf("no %q in %q", want, trunkPipeWiresScript)
+		}
+	}
+	if strings.Contains(trunkPipeWiresScript, "systemctl") {
+		t.Fatal("the wires' change touches the unit")
 	}
 }
