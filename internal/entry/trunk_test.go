@@ -148,14 +148,17 @@ func TestTheStandOverThePipe(t *testing.T) {
 			t.Fatalf("env lacks %q:\n%s", want, env)
 		}
 	}
-	wires, err := trunkPipeWiresOf(map[string]int{"udp": 20447, "quic": 20448}, 0, "")
+	wires, err := trunkPipeWiresOf(map[string]int{"udp": 20447, "quic": 20448}, 0, "", "")
 	if err != nil || wires != `{"steer":true,"wires":[{"name":"udp","kind":"udp","port":20447,"members":2}]}`+"\n" {
 		t.Fatalf("wires %q %v", wires, err)
 	}
 	// Chromium's QUIC wire (R6.3), at the port of its end on the exit.
-	h3, err := trunkPipeWiresOf(nil, 4445, "proxy")
-	if err != nil || h3 != `{"steer":true,"wires":[{"name":"h3dgram","kind":"h3dgram","port":4445,"members":4,"usage":"proxy"}]}`+"\n" {
+	h3, err := trunkPipeWiresOf(nil, 4445, "proxy", "h3dgram")
+	if err != nil || h3 != `{"steer":true,"wires":[{"name":"h3dgram","kind":"h3dgram","port":4445,"members":4,"usage":"proxy"}],"voice":"h3dgram"}`+"\n" {
 		t.Fatalf("wires %q %v", h3, err)
+	}
+	if _, err := trunkPipeWiresOf(nil, 0, "", "h3dgram"); err == nil {
+		t.Fatal("voice held on a wire the stand has not")
 	}
 	r := &provokeRecorder{stdin: map[string]string{}}
 	files := []trunkFile{{"nekko-trunk-entry", testBuild(t)}, {"libcronet.so", testBuild(t)}, {"hk-pipe", testBuild(t)}}

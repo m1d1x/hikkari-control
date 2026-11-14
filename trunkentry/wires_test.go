@@ -187,6 +187,7 @@ func TestTheGoEntryLeavesChromiumsQuicWireOut(t *testing.T) {
 	for _, bad := range []string{
 		`{"wires": [{"name": "h3dgram", "kind": "h3dgram", "port": 4445, "members": 4, "usage": "kProxy"}]}`,
 		`{"wires": [{"name": "udp", "kind": "udp", "port": 20447, "members": 2, "usage": "proxy"}]}`,
+		`{"voice": "h3dgram", "wires": [{"name": "udp", "kind": "udp", "port": 20447, "members": 2}]}`,
 	} {
 		write(bad)
 		if _, _, err := readWires(path); err == nil {

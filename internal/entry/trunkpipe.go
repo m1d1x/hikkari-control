@@ -20,13 +20,15 @@ import (
 // path pipe), so a run reads the pipe against the Go entry of the same hour.
 // Standing it, reloading it or taking it off never touches the Go entry.
 //
-//	cmd/server entry-box trunk-pipe <box> <listen=port,...> [members] [h3dgram=<port>[:proxy]]   # stand up or update
+//	cmd/server entry-box trunk-pipe <box> <listen=port,...> [members] [h3dgram=<port>[:proxy]] [voice=<wire>]   # stand up or update
 //	cmd/server entry-box trunk-pipe-off <box>
 //
 // h3dgram= gives the stand Chromium's QUIC wire (R6.3) to the exit's end of
 // it at that port (entry-box trunk-h3-exit, trunkh3exit.go), its members'
 // sessions as Chrome's to a site, or to a proxy with :proxy; the stand's
-// libcronet is then the build with the CONNECT-UDP tunnel.
+// libcronet is then the build with the CONNECT-UDP tunnel. voice= holds the
+// voice class on that wire (udp or h3dgram), bulk on the pool, with no
+// selector: the wire measured under load, not chosen by its numbers.
 
 const (
 	trunkPipeUnit = "nekko-trunk-pipe"
@@ -61,6 +63,8 @@ type TrunkPipeOptions struct {
 	// its members' session usage ("" is destination).
 	H3Port  int
 	H3Usage string
+	// Voice, when set, is the wire voice is held on.
+	Voice string
 }
 
 // trunkPipeEnvOf is the stand's env: the entry's (trunkEntryEnv) and the
@@ -74,7 +78,7 @@ func trunkPipeEnvOf(addr, sni, key string, o TrunkPipeOptions) string {
 // trunkPipeWiresOf is the stand's wires file: the exit's udp wire and the
 // QUIC wire at h3Port (0: none), steered. The pipe carries no quic or
 // salamander (owner, 12.11); no wire is the pool alone.
-func trunkPipeWiresOf(wires map[string]int, h3Port int, h3Usage string) (string, error) {
+func trunkPipeWiresOf(wires map[string]int, h3Port int, h3Usage, voice string) (string, error) {
 	type wire struct {
 		Name    string `json:"name"`
 		Kind    string `json:"kind"`
@@ -85,12 +89,22 @@ func trunkPipeWiresOf(wires map[string]int, h3Port int, h3Usage string) (string,
 	f := struct {
 		Steer bool   `json:"steer"`
 		Wires []wire `json:"wires"`
-	}{Steer: true, Wires: []wire{}}
+		Voice string `json:"voice,omitempty"`
+	}{Steer: true, Wires: []wire{}, Voice: voice}
 	if port, ok := wires["udp"]; ok {
 		f.Wires = append(f.Wires, wire{Name: "udp", Kind: "udp", Port: port, Members: trunkPipeWireMembers})
 	}
 	if h3Port > 0 {
 		f.Wires = append(f.Wires, wire{Name: "h3dgram", Kind: "h3dgram", Port: h3Port, Members: trunkPipeH3Members, Usage: h3Usage})
+	}
+	if voice != "" {
+		found := false
+		for _, w := range f.Wires {
+			found = found || w.Kind == voice
+		}
+		if !found {
+			return "", fmt.Errorf("%w: голос на проводе %q, которого у стенда нет", ErrRejected, voice)
+		}
 	}
 	raw, err := json.Marshal(f)
 	return string(raw) + "\n", err
@@ -154,7 +168,7 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	if err != nil {
 		return err
 	}
-	wiresFile, err := trunkPipeWiresOf(wires, o.H3Port, o.H3Usage)
+	wiresFile, err := trunkPipeWiresOf(wires, o.H3Port, o.H3Usage, o.Voice)
 	if err != nil {
 		return err
 	}

@@ -295,12 +295,12 @@ func TestThePipeCarriesTheUdpAndTheQuicWire(t *testing.T) {
 	}
 	c := Config{SNI: "hk.example", Key: "k", Pipe: "/usr/local/lib/nekko-trunk-pipe/hk-pipe", PortLo: 10000, PortHi: 19999}
 	exit, _ := exitOf(Config{Exit: "192.0.2.1:443"})
-	ws, steer, err := pipeWires(c, exit, "PEM")
+	ws, f, err := pipeWires(c, exit, "PEM")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !steer || len(ws) != 2 {
-		t.Fatalf("steer %v, %d wires, want the udp and the h3dgram ones", steer, len(ws))
+	if !f.Steer || len(ws) != 2 {
+		t.Fatalf("steer %v, %d wires, want the udp and the h3dgram ones", f.Steer, len(ws))
 	}
 	h := ws[1]
 	if h.ID != 6 || h.Exit.String() != "192.0.2.1:4445" || h.H3 == nil || ws[0].H3 != nil {

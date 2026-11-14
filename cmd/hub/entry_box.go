@@ -50,12 +50,13 @@ package main
 //	                                    # the Hikkari relay's datagrams cross once
 //	                                    # (v1.02 copies them itself) unless =2
 //	cmd/server entry-box trunk-entry-off <box>
-//	cmd/server entry-box trunk-pipe <box> <listen=port,...> [members] [hikkari-udp-copies=1|2] [h3dgram=<port>[:proxy]]
+//	cmd/server entry-box trunk-pipe <box> <listen=port,...> [members] [hikkari-udp-copies=1|2] [h3dgram=<port>[:proxy]] [voice=<wire>]
 //	                                    # the stand over hk-pipe (the Rust pipe)
 //	                                    # beside the box's trunk entry, to its exit,
 //	                                    # on ports of its own (internal/entry/trunkpipe.go);
 //	                                    # h3dgram= adds Chromium's QUIC wire to its
-//	                                    # end on the exit (trunk-h3-exit)
+//	                                    # end on the exit (trunk-h3-exit); voice=
+//	                                    # holds voice on that wire, no selector
 //	cmd/server entry-box trunk-pipe-off <box>
 //	cmd/server entry-box trunk-h3-exit <exit-box> <port>
 //	                                    # the exit's end of that wire: hk-exit beside
@@ -552,7 +553,7 @@ func runEntryBox(args []string) {
 		}
 		os.Exit(0)
 	}
-	if (len(args) >= 3 && len(args) <= 6 && args[0] == "trunk-pipe") || (len(args) == 2 && args[0] == "trunk-pipe-off") {
+	if (len(args) >= 3 && len(args) <= 7 && args[0] == "trunk-pipe") || (len(args) == 2 && args[0] == "trunk-pipe-off") {
 		// entry-box trunk-pipe <box> <listen=port,...> [members] [hikkari-udp-copies=1|2] [h3dgram=<port>[:proxy]]
 		// — the stand over hk-pipe beside the box's trunk entry, to its exit
 		// (internal/entry/trunkpipe.go, roadmap 4.6, R5).
@@ -588,6 +589,10 @@ func runEntryBox(args []string) {
 				if o.HikkariUDPCopies, err = strconv.Atoi(v); err != nil || o.HikkariUDPCopies < 1 || o.HikkariUDPCopies > 2 {
 					fail(fmt.Errorf("hikkari-udp-copies %q: 1 or 2", v))
 				}
+				continue
+			}
+			if v, ok := strings.CutPrefix(a, "voice="); ok {
+				o.Voice = v
 				continue
 			}
 			if v, ok := strings.CutPrefix(a, "h3dgram="); ok {

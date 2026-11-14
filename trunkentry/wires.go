@@ -11,6 +11,9 @@ package main
 // The kind h3dgram (Chromium's QUIC, hot path plan R6.3) only the brain over
 // hk-pipe carries (brain_linux.go pipeWires), with "usage" destination (the
 // default, the owner's choice of 14.11) or proxy; the Go entry leaves it out.
+// "voice" (the stand over hk-pipe alone) holds the voice class on that wire,
+// bulk on the pool, with no selector: a wire measured under the stand's load
+// (R6.3), not chosen by its numbers.
 //
 // and the running entry reads it every 10 s: a wire added comes up, a wire
 // gone has its members closed, a wire changed is dialled anew (trunk
@@ -62,6 +65,7 @@ type wireSpec struct {
 type wiresSpec struct {
 	Steer bool       `json:"steer"`
 	Wires []wireSpec `json:"wires"`
+	Voice string     `json:"voice,omitempty"`
 }
 
 // wireIDs are the wires' ids on the trunk: fixed per kind, so the exit's
@@ -119,6 +123,9 @@ func readWires(path string) (wiresSpec, []byte, error) {
 			return f, raw, fmt.Errorf("%s: wire %q: usage %q", path, w.Name, w.Usage)
 		}
 		seen[w.Kind] = true
+	}
+	if f.Voice != "" && !seen[f.Voice] {
+		return f, raw, fmt.Errorf("%s: voice on wire %q, which the file has not", path, f.Voice)
 	}
 	return f, raw, nil
 }

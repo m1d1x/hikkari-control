@@ -52,6 +52,9 @@ type brain struct {
 	// steer whether the selector moves the route over them.
 	wires []pipectl.Wire
 	steer bool
+	// voiceOn holds voice on that wire, bulk on the pool, no selector (the
+	// file's "voice"; 0 none: the pool is wire 0, never named so).
+	voiceOn trunk.WireID
 
 	extras context.CancelFunc
 	handed chan struct{}
@@ -107,10 +110,10 @@ func exitOf(c Config) (netip.AddrPort, error) {
 // the pool's book of ports, through the libcronet beside it, to the exit's
 // QUIC port, whose certificate names the trunk's SNI). quic and salamander
 // are not carried over to Rust (the owner's 12.11).
-func pipeWires(c Config, exit netip.AddrPort, roots string) ([]pipectl.Wire, bool, error) {
+func pipeWires(c Config, exit netip.AddrPort, roots string) ([]pipectl.Wire, wiresSpec, error) {
 	f, _, err := readWires(wiresFilePath())
 	if err != nil {
-		return nil, false, err
+		return nil, f, err
 	}
 	var out []pipectl.Wire
 	for _, w := range f.Wires {
@@ -127,7 +130,7 @@ func pipeWires(c Config, exit netip.AddrPort, roots string) ([]pipectl.Wire, boo
 		}
 		out = append(out, pw)
 	}
-	return out, f.Steer, nil
+	return out, f, nil
 }
 
 // wireShape is a pipe wire's shape for the selector's warm pair: Chromium's
@@ -171,7 +174,7 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 	}
 	// A file that cannot be read leaves the pool alone, as the Go entry's
 	// addWires: a wire less, not an entry less.
-	ws, steer, err := pipeWires(c, exit, roots)
+	ws, f, err := pipeWires(c, exit, roots)
 	if err != nil {
 		log.Printf("nekko-trunk-entry: wires: %v (the pool alone)", err)
 	}
@@ -181,7 +184,10 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 			return nil, fmt.Errorf("wire %s: %w", w.Name, err)
 		}
 	}
-	b.wires, b.steer = ws, steer
+	b.wires, b.steer = ws, f.Steer
+	if f.Voice != "" {
+		b.voiceOn = wireIDs[f.Voice]
+	}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -295,8 +301,13 @@ func (b *brain) startExtras() {
 	line := func(id trunk.WireID, cw trunk.CallWindow) {
 		log.Print("nekko-trunk-entry: " + wireCallLine(names[id], cw))
 	}
-	if !b.steer {
-		b.pipe.SetRoute(trunk.AnyRoute)
+	if !b.steer || b.voiceOn != 0 {
+		route := trunk.AnyRoute
+		if b.voiceOn != 0 {
+			route = trunk.Route{Voice: b.voiceOn, Bulk: trunk.PoolWire}
+			log.Printf("nekko-trunk-entry: voice held on %s, bulk on the pool, no selector", names[b.voiceOn])
+		}
+		b.pipe.SetRoute(route)
 		for _, id := range ids {
 			go trunk.RunCallOn(ctx, carrier, trunk.CallConfig{Copies: 1, OnWire: true, Wire: id}, func(cw trunk.CallWindow) { line(id, cw) })
 		}
