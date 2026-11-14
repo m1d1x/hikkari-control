@@ -208,6 +208,13 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 			return fmt.Errorf("fleet analytics schema 10 (%s): %w", column, err)
 		}
 	}
+	// The box's TCP segments sent and sent again since boot, from the relay's
+	// pulse: the fleet card's retransmit line (admin/fleet_profiles.go).
+	for _, column := range []string{"tcp_out_segs UInt64", "tcp_retrans_segs UInt64"} {
+		if err := s.conn.Exec(ctx, `ALTER TABLE entry_relay_stats ADD COLUMN IF NOT EXISTS `+column+` DEFAULT 0`); err != nil {
+			return fmt.Errorf("fleet analytics schema 10b (%s): %w", column, err)
+		}
+	}
 	// Hikkari v1.04 observability (internal/hikkariobs): one row per number
 	// of a period. Ordered by metric first: a chart reads one metric over
 	// time for a relay, a path or a person.
@@ -338,13 +345,14 @@ func (s *Store) InsertEntryRelayStats(ctx context.Context, records []EntryRelayS
 		"wait_for_async_insert": 0,
 	}))
 	batch, err := s.conn.PrepareBatch(ctx,
-		"INSERT INTO entry_relay_stats (ts, relay_name, proto, uptime_s, bytes_up, bytes_down, conns, cpu_pct, mem_mb, version)")
+		"INSERT INTO entry_relay_stats (ts, relay_name, proto, uptime_s, bytes_up, bytes_down, conns, cpu_pct, mem_mb, version, tcp_out_segs, tcp_retrans_segs)")
 	if err != nil {
 		return fmt.Errorf("prepare entry_relay_stats batch: %w", err)
 	}
 	for _, r := range records {
 		if err := batch.Append(r.Timestamp, r.RelayName, r.Proto, r.UptimeS,
-			r.BytesUp, r.BytesDown, r.Conns, r.CPUPct, r.MemMB, r.Version); err != nil {
+			r.BytesUp, r.BytesDown, r.Conns, r.CPUPct, r.MemMB, r.Version,
+			r.TCPOutSegs, r.TCPRetransSegs); err != nil {
 			return fmt.Errorf("append relay stat: %w", err)
 		}
 	}

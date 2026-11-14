@@ -28,12 +28,18 @@ export interface FleetProfile {
 	trafficUsedGb?: number;
 	trafficQuotaGb?: number;
 	trafficSince: string;
-	/** share of the RU probers' verdicts that got through; a bucket nobody judged is null */
-	availPct: (number | null)[];
+	/** per prober: share of the call-sized datagrams sent through the relay that never came back */
+	loss: { source: string; pct: (number | null)[] }[];
+	/** share of the probers' rounds the relay carried nothing in: banned, a silent tunnel, no datagram back */
+	failPct: (number | null)[];
+	/** share of the TCP segments the relay's box sent that it had to send again; null below 2000 segments */
+	retransPct: (number | null)[];
 	/** median latency of the RU probers' check through the relay */
 	rttMs: (number | null)[];
 	/** download speed the RU probers measured through the profile, median per bucket */
 	speedMbps: (number | null)[];
+	/** the node's usual speed: the median of the same measurements over the past week */
+	speedNormMbps?: number;
 	/** what the relay passed for subscribers, the busier direction: load, not speed */
 	carriedMbps: (number | null)[];
 }

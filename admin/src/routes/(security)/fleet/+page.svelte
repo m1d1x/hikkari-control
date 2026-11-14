@@ -15,7 +15,11 @@
 
 	const WINDOWS: FleetWindow[] = ['24h', '7d', '30d'];
 	const REFRESH_MS = 60_000;
-	const AVAIL_COLOR = '#d95926';
+	const FAIL_COLOR = '#d95926';
+	const RETRANS_COLOR = '#c2459c';
+	const NORM_COLOR = '#8a8f98';
+	/** one colour per prober on the loss chart, in the order the hub lists them */
+	const LOSS_COLORS = ['#3987e5', '#e5a339', '#8a5cd6', '#199e70'];
 	const RTT_COLOR = '#3987e5';
 	const SPEED_COLOR = '#199e70';
 	const CLIENT_LEG_COLOR = '#d95926';
@@ -54,6 +58,61 @@
 
 	const pct = (v: number) => `${v.toLocaleString('ru', { maximumFractionDigits: 1 })}%`;
 	const ms = (v: number) => `${Math.round(v)} мс`;
+
+	/** The probers' names as the console says them elsewhere. */
+	const SOURCE_LABEL: Record<string, string> = {
+		'ru-eurodir': 'eurodir',
+		'ru-spb': 'СПб',
+		'lv-main': 'Латвия',
+		'eu-riga': 'Рига',
+	};
+
+	/** The loss chart: datagrams lost per prober, and the rounds the relay carried nothing in. */
+	function lossSeries(p: FleetProfile) {
+		return [
+			...p.loss.map((l, i) => ({
+				key: `loss-${l.source}`,
+				label: `потери датаграмм, ${SOURCE_LABEL[l.source] ?? l.source}`,
+				color: LOSS_COLORS[i % LOSS_COLORS.length],
+				values: l.pct,
+				format: pct,
+				primary: true,
+			})),
+			{
+				key: 'fail',
+				label: 'раунды без трафика',
+				color: FAIL_COLOR,
+				values: p.failPct,
+				format: pct,
+			},
+		];
+	}
+
+	/** The speed line with the node's usual speed beside it, flat. */
+	function speedSeries(p: FleetProfile) {
+		const series = [
+			{
+				key: 'speed',
+				label: 'скорость с пробников РФ',
+				color: SPEED_COLOR,
+				values: p.speedMbps,
+				format: formatRate,
+				primary: true,
+			},
+		];
+		if (p.speedNormMbps != null) {
+			const norm = p.speedNormMbps;
+			series.push({
+				key: 'norm',
+				label: 'обычная скорость узла (неделя)',
+				color: NORM_COLOR,
+				values: p.speedMbps.map(() => norm),
+				format: formatRate,
+				primary: false,
+			});
+		}
+		return series;
+	}
 
 	/** Gigabytes said in the unit that reads best: 1,2 ТБ, 340 ГБ. */
 	function size(gb: number): string {
@@ -211,24 +270,42 @@
 							{/each}
 						</dl>
 
+						<div class="legend">
+							{#each lossSeries(p) as s (s.key)}
+								<span><i style="background: {s.color}"></i>{s.label}</span>
+							{/each}
+						</div>
+						<TrendChart
+							buckets={data.buckets}
+							bucketSeconds={data.bucketSeconds}
+							series={lossSeries(p)}
+							formatAxis={pct}
+							height={120}
+							empty="пробники не слали датаграмм и не судили за окно"
+						/>
+						<div class="legend">
+							<span><i style="background: {RETRANS_COLOR}"></i>переотправки TCP машины</span>
+						</div>
 						<TrendChart
 							buckets={data.buckets}
 							bucketSeconds={data.bucketSeconds}
 							series={[
 								{
-									key: 'avail',
-									label: 'доступность',
-									color: AVAIL_COLOR,
-									values: p.availPct,
+									key: 'retrans',
+									label: 'переотправки TCP машины',
+									color: RETRANS_COLOR,
+									values: p.retransPct,
 									format: pct,
 									primary: true,
 								},
 							]}
 							formatAxis={pct}
-							max={100}
 							height={120}
-							empty="пробники не судили за окно"
+							empty="машина не прислала счётчиков TCP за окно"
 						/>
+						<div class="legend">
+							<span><i style="background: {RTT_COLOR}"></i>пинг</span>
+						</div>
 						<TrendChart
 							buckets={data.buckets}
 							bucketSeconds={data.bucketSeconds}
@@ -237,19 +314,15 @@
 							height={120}
 							empty="пинга нет за окно"
 						/>
+						<div class="legend">
+							{#each speedSeries(p) as s (s.key)}
+								<span><i style="background: {s.color}"></i>{s.label}</span>
+							{/each}
+						</div>
 						<TrendChart
 							buckets={data.buckets}
 							bucketSeconds={data.bucketSeconds}
-							series={[
-								{
-									key: 'speed',
-									label: 'скорость с пробников РФ',
-									color: SPEED_COLOR,
-									values: p.speedMbps,
-									format: formatRate,
-									primary: true,
-								},
-							]}
+							series={speedSeries(p)}
 							formatAxis={formatRate}
 							height={120}
 							empty="пробники не мерили скорость за окно"

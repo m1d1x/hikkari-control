@@ -90,6 +90,12 @@ type PulseReport struct {
 	// (П6.14) is seen to have landed from the relay's own mouth, rather than
 	// from the hub's record of what it pushed.
 	Version string
+	// TCPOutSegs and TCPRetransSegs are the box's TCP segments sent and sent
+	// again since the box booted, totals like the bytes. Their deltas are
+	// the share of the box's sending that had to be repeated: on a TCP
+	// protocol, the loss a user feels as a stall. Zero from an older edge.
+	TCPOutSegs     int64
+	TCPRetransSegs int64
 	// Boot names this run of the edge process, so per-key totals are filed
 	// against the run they count from.
 	Boot string
@@ -204,6 +210,9 @@ type PulseRecord struct {
 	CPUPct    float64
 	MemMB     int64
 	Version   string
+	// TCPOutSegs and TCPRetransSegs: the box's totals since boot (PulseReport).
+	TCPOutSegs     int64
+	TCPRetransSegs int64
 }
 
 // PulseSink takes pulses into the dataset (ClickHouse entry_relay_stats).
@@ -274,16 +283,18 @@ func (s *Service) RecordPulse(ctx context.Context, master, bearer string, p Puls
 		return nil
 	}
 	return s.pulses.InsertEntryRelayStats(ctx, []PulseRecord{{
-		TS:        s.now(),
-		Relay:     p.Relay,
-		Proto:     proto,
-		UptimeS:   nonNegative(p.UptimeS),
-		BytesUp:   nonNegative(p.BytesUp),
-		BytesDown: nonNegative(p.BytesDown),
-		Conns:     nonNegative(p.Conns),
-		CPUPct:    clampFloat(p.CPUPct, 0, 100),
-		MemMB:     nonNegative(p.MemMB),
-		Version:   clip(p.Version, maxPulseVersion),
+		TS:             s.now(),
+		Relay:          p.Relay,
+		Proto:          proto,
+		UptimeS:        nonNegative(p.UptimeS),
+		BytesUp:        nonNegative(p.BytesUp),
+		BytesDown:      nonNegative(p.BytesDown),
+		Conns:          nonNegative(p.Conns),
+		CPUPct:         clampFloat(p.CPUPct, 0, 100),
+		MemMB:          nonNegative(p.MemMB),
+		Version:        clip(p.Version, maxPulseVersion),
+		TCPOutSegs:     nonNegative(p.TCPOutSegs),
+		TCPRetransSegs: nonNegative(p.TCPRetransSegs),
 	}})
 }
 

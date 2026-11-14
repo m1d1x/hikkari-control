@@ -30,16 +30,25 @@ func TestFoldProfilesLaysFiguresOnBucketsAndKeepsGaps(t *testing.T) {
 	month := monthStart(t0)
 	starts := []time.Time{t0, t0.Add(time.Hour), t0.Add(2 * time.Hour)}
 	f := relayFigures{
-		probes: map[string]map[int64]probeCount{"a1-1": {
-			t0.Unix():                    {ok: 3, bad: 1},
+		rounds: map[string]map[int64]roundCount{"a1-1": {
+			t0.Unix():                    {judged: 4, failed: 1},
 			t0.Add(time.Hour).Unix():     {},
-			t0.Add(2 * time.Hour).Unix(): {ok: 2},
+			t0.Add(2 * time.Hour).Unix(): {judged: 2},
 		}},
-		rtt:     map[string]map[int64]float64{"a1-1": {t0.Unix(): 300, t0.Add(2 * time.Hour).Unix(): 310}},
-		carried: map[string]map[int64]float64{"a1-1": {t0.Add(time.Hour).Unix(): 4.5}},
-		speed:   map[string]map[int64]float64{"ams-2-node": {t0.Unix(): 340}},
-		covers:  map[string]string{"a1-1": "www.samsung.com", "b1-1": "probed.example"},
-		boxGB:   map[string]float64{"a1": 1500},
+		loss: map[string]map[string]map[int64]datagramCount{"a1-1": {
+			"ru-spb":     {t0.Unix(): {sent: 100, got: 99}},
+			"ru-eurodir": {t0.Add(time.Hour).Unix(): {sent: 200, got: 150}},
+		}},
+		segs: map[string]map[int64]segmentCount{"a1-1": {
+			t0.Unix():                {out: 100_000, retrans: 1500},
+			t0.Add(time.Hour).Unix(): {out: 500, retrans: 400},
+		}},
+		speedNorm: map[string]float64{"ams-2-node": 310},
+		rtt:       map[string]map[int64]float64{"a1-1": {t0.Unix(): 300, t0.Add(2 * time.Hour).Unix(): 310}},
+		carried:   map[string]map[int64]float64{"a1-1": {t0.Add(time.Hour).Unix(): 4.5}},
+		speed:     map[string]map[int64]float64{"ams-2-node": {t0.Unix(): 340}},
+		covers:    map[string]string{"a1-1": "www.samsung.com", "b1-1": "probed.example"},
+		boxGB:     map[string]float64{"a1": 1500},
 	}
 	got := foldProfiles([]fleetProfile{
 		{Label: "riga-1", Relay: "b1-1", Box: "b1", Proto: "vless-xhttp", Cover: "site.example", boxSince: t0.Add(-time.Hour)},
@@ -60,8 +69,23 @@ func TestFoldProfilesLaysFiguresOnBucketsAndKeepsGaps(t *testing.T) {
 	if value(t, p.SpeedMbps, 0) != 340 || p.SpeedMbps[1] != nil {
 		t.Errorf("speed = %v, want 340 from the node's measurements, then gap", p.SpeedMbps)
 	}
-	if value(t, p.AvailPct, 0) != 75 || p.AvailPct[1] != nil || value(t, p.AvailPct, 2) != 100 {
-		t.Errorf("avail = %v, want 75, gap (nobody judged), 100", p.AvailPct)
+	if value(t, p.FailPct, 0) != 25 || p.FailPct[1] != nil || value(t, p.FailPct, 2) != 0 {
+		t.Errorf("fail = %v, want 25, gap (nobody judged), 0", p.FailPct)
+	}
+	if len(p.Loss) != 2 || p.Loss[0].Source != "ru-eurodir" || p.Loss[1].Source != "ru-spb" {
+		t.Fatalf("loss lines = %+v, want one per prober in name order", p.Loss)
+	}
+	if p.Loss[0].Pct[0] != nil || value(t, p.Loss[0].Pct, 1) != 25 || value(t, p.Loss[1].Pct, 0) != 1 {
+		t.Errorf("loss = %v / %v, want gap, 25 and 1", p.Loss[0].Pct, p.Loss[1].Pct)
+	}
+	if value(t, p.RetransPct, 0) != 1.5 || p.RetransPct[1] != nil || p.RetransPct[2] != nil {
+		t.Errorf("retrans = %v, want 1.5, gap (too few segments), gap", p.RetransPct)
+	}
+	if p.SpeedNormMbps == nil || *p.SpeedNormMbps != 310 {
+		t.Errorf("speed norm = %v, want the node's 310", p.SpeedNormMbps)
+	}
+	if got[0].SpeedNormMbps != nil || len(got[0].Loss) != 0 || len(got[0].FailPct) != len(starts) {
+		t.Errorf("a relay with no figures: norm %v, %d loss lines, %d fail points", got[0].SpeedNormMbps, len(got[0].Loss), len(got[0].FailPct))
 	}
 	if p.Cover != "www.samsung.com" {
 		t.Errorf("cover = %q, want the probed one", p.Cover)
@@ -147,6 +171,7 @@ func TestFleetProfilesReadsServedNodesAndTheirLines(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	if err := store.InsertEntryProbes(ctx, []analytics.EntryProbeRecord{
 		{Timestamp: now.Add(-30 * time.Second), SourceRegion: "ru-spb", RelayName: relay, Verdict: "clean", RealityRTTMs: 250, Cover: "www.samsung.com"},
+		{Timestamp: now.Add(-25 * time.Second), SourceRegion: "ru-spb", RelayName: relay, Verdict: "clean", Detail: "k3: tunnel dialled, upstream silent"},
 		{Timestamp: now.Add(-20 * time.Second), SourceRegion: "ru-spb", RelayName: relay, Verdict: "unknown"},
 	}); err != nil {
 		t.Fatalf("insert probes: %v", err)
@@ -178,12 +203,14 @@ func TestFleetProfilesReadsServedNodesAndTheirLines(t *testing.T) {
 			if p.Cover != "www.samsung.com" {
 				continue
 			}
-			var rtt, avail bool
+			// Two judged rounds, one of them a silent tunnel the old pass
+			// rate counted as clean: half failed.
+			var rtt, fail bool
 			for i, v := range p.RTTMs {
 				rtt = rtt || (v != nil && *v == 250)
-				avail = avail || (p.AvailPct[i] != nil && *p.AvailPct[i] == 100)
+				fail = fail || (p.FailPct[i] != nil && *p.FailPct[i] == 50)
 			}
-			if rtt && avail {
+			if rtt && fail {
 				return
 			}
 		}

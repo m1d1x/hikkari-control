@@ -14,15 +14,30 @@ package admin
 // draws data as history, never as a number of the moment). A bucket nobody
 // measured is null and drawn as a gap.
 //
-//   - availPct: the share of the RU probers' verdicts on the relay that got
-//     through, the protocol screen's pass rate (entry_protocol_stats.go):
-//     a verdict that could not judge (network_down, unknown) is not in it.
+//   - loss: per prober, the share of the call-sized datagrams it sent through
+//     the relay that never came back (entry_probes xudp_sent/xudp_got: 100 a
+//     round, to the relay's loopback echo). A tunnel that opened and carried
+//     nothing back loses them all. Only relays that carry calls have lines.
+//   - failPct: the share of the probers' rounds in which the relay did not
+//     carry traffic: banned, its tunnel opened and stayed silent, or not one
+//     datagram came back. A round that could not judge (network_down,
+//     unknown: the prober's own network) is not in it. This replaces the
+//     pass rate of verdicts, which only told a ban from no ban and read 100%
+//     on a relay whose tunnel was silent (owner, 14.11).
+//   - retransPct: of the TCP segments the relay's box sent, the share it had
+//     to send again (the relay's pulse, /proc/net/snmp of the box). On a TCP
+//     protocol that is the loss users feel, as stalls rather than gaps. It is
+//     the box's: probes and the hub's own traffic are in it too, and a bucket
+//     with too few segments to tell is a gap.
 //   - rttMs: the median time of the RU probers' check through the relay
 //     (entry_probes.reality_rtt_ms), a check that did not complete left out.
 //   - speedMbps: the download speed the RU probers measured through the
 //     profile (the stand's capacity runs, relay_capacity_history), the
 //     median of the points in a bucket. This is the profile's speed; it is
 //     what subscribers are handed with their links (capacity.Store.Metrics).
+//     speedNormMbps is the node's own usual speed, the median of the same
+//     measurements over the week before now, drawn beside the line: a node
+//     is slow against itself, not against a figure picked for all.
 //   - carriedMbps: what the relay passed for subscribers, the busier
 //     direction, counted on the relay itself and sent in its pulses
 //     (analytics.EntryRelayDeltas). Load, not speed: on an idle relay it is
@@ -90,25 +105,54 @@ type fleetProfile struct {
 	TrafficQuotaGB *int      `json:"trafficQuotaGb,omitempty"`
 	TrafficSince   time.Time `json:"trafficSince"`
 
-	AvailPct    []*float64 `json:"availPct"`
-	RTTMs       []*float64 `json:"rttMs"`
-	SpeedMbps   []*float64 `json:"speedMbps"`
-	CarriedMbps []*float64 `json:"carriedMbps"`
+	Loss          []fleetLossLine `json:"loss"`
+	FailPct       []*float64      `json:"failPct"`
+	RetransPct    []*float64      `json:"retransPct"`
+	RTTMs         []*float64      `json:"rttMs"`
+	SpeedMbps     []*float64      `json:"speedMbps"`
+	SpeedNormMbps *float64        `json:"speedNormMbps,omitempty"`
+	CarriedMbps   []*float64      `json:"carriedMbps"`
 
 	providerRegion string
 	boxSince       time.Time
 }
 
+// fleetLossLine is one prober's datagram loss through a relay, per bucket.
+type fleetLossLine struct {
+	Source string     `json:"source"`
+	Pct    []*float64 `json:"pct"`
+}
+
+// datagramCount is what one prober sent through a relay in a bucket and what
+// came back.
+type datagramCount struct{ sent, got uint64 }
+
+// roundCount is a relay's judged rounds in a bucket and those in which it
+// carried no traffic.
+type roundCount struct{ judged, failed uint64 }
+
+// segmentCount is a box's TCP segments sent in a bucket and those sent again.
+type segmentCount struct{ out, retrans uint64 }
+
+// minRetransSegments is how many segments a bucket needs before its share of
+// retransmits is drawn: below it, one lost probe reads as a percent.
+const minRetransSegments = 2000
+
 // relayFigures is what the dataset says of each relay, keyed by bucket start,
 // and of each box over the month.
 type relayFigures struct {
-	probes  map[string]map[int64]probeCount
+	// loss is keyed by relay, then prober.
+	loss    map[string]map[string]map[int64]datagramCount
+	rounds  map[string]map[int64]roundCount
+	segs    map[string]map[int64]segmentCount
 	rtt     map[string]map[int64]float64
 	carried map[string]map[int64]float64
-	// speed is keyed by node slug, not relay: a measurement names the node.
-	speed  map[string]map[int64]float64
-	covers map[string]string
-	boxGB  map[string]float64
+	// speed and speedNorm are keyed by node slug, not relay: a measurement
+	// names the node.
+	speed     map[string]map[int64]float64
+	speedNorm map[string]float64
+	covers    map[string]string
+	boxGB     map[string]float64
 }
 
 // PlanCatalog reads a hoster's offer in one region: where a plan's traffic
@@ -208,7 +252,9 @@ func (h *Handlers) FleetProfiles(w http.ResponseWriter, r *http.Request) {
 	if h.analytics == nil {
 		why := "analytics is not configured on this hub"
 		out.Missing = append(out.Missing,
-			missingFigure{Figure: "availPct", Why: why},
+			missingFigure{Figure: "loss", Why: why},
+			missingFigure{Figure: "failPct", Why: why},
+			missingFigure{Figure: "retransPct", Why: why},
 			missingFigure{Figure: "rttMs", Why: why},
 			missingFigure{Figure: "carriedMbps", Why: why},
 			missingFigure{Figure: "trafficUsedGb", Why: why})
@@ -219,6 +265,11 @@ func (h *Handlers) FleetProfiles(w http.ResponseWriter, r *http.Request) {
 	}
 	if figures.speed, err = h.probedSpeed(ctx, starts[0], bucket); err != nil {
 		log.Printf("admin fleet profiles: speed: %v", err)
+		http.Error(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	if figures.speedNorm, err = h.probedSpeedNorm(ctx, now.Add(-speedNormWindow)); err != nil {
+		log.Printf("admin fleet profiles: speed norm: %v", err)
 		http.Error(w, "query failed", http.StatusInternalServerError)
 		return
 	}
@@ -298,7 +349,9 @@ func helloBuildOf(proto, nodeFP string) string {
 // cover each relay was last probed under, and each box's bytes this month.
 func (h *Handlers) relayFigures(ctx context.Context, since, now time.Time, bucket time.Duration, month time.Time) (relayFigures, error) {
 	out := relayFigures{
-		probes:  map[string]map[int64]probeCount{},
+		loss:    map[string]map[string]map[int64]datagramCount{},
+		rounds:  map[string]map[int64]roundCount{},
+		segs:    map[string]map[int64]segmentCount{},
 		rtt:     map[string]map[int64]float64{},
 		carried: map[string]map[int64]float64{},
 		covers:  map[string]string{},
@@ -312,35 +365,108 @@ func (h *Handlers) relayFigures(ctx context.Context, since, now time.Time, bucke
 		m[relay][at.Unix()] = v
 	}
 
-	verdicts, err := h.analytics.Query(ctx, `
+	// A round judged the relay unless the prober's own network was down or it
+	// could not tell. Judged, the relay failed it when it was banned, when
+	// its tunnel opened and stayed silent (k3), or when not one of the
+	// round's datagrams came back.
+	rounds, err := h.analytics.Query(ctx, `
 		SELECT relay_name, toStartOfInterval(ts, toIntervalSecond(?)) AS bucket,
-		       toString(verdict), count()
-		FROM entry_probes WHERE ts >= ? AND ts <= ?
-		GROUP BY relay_name, bucket, verdict`, seconds, since, now.Add(verdictSkew))
+		       toUInt64(count()),
+		       toUInt64(countIf(
+		           verdict IN ('ip_banned', 'fingerprint', 'domain_blocked')
+		           OR position(detail, 'upstream silent') > 0
+		           OR (xudp_sent > 0 AND xudp_got = 0)
+		           OR (dup_sent > 0 AND dup_got = 0)))
+		FROM entry_probes
+		WHERE ts >= ? AND ts <= ? AND verdict NOT IN ('network_down', 'unknown')
+		GROUP BY relay_name, bucket`, seconds, since, now.Add(verdictSkew))
 	if err != nil {
-		return out, fmt.Errorf("verdicts: %w", err)
+		return out, fmt.Errorf("rounds: %w", err)
 	}
-	defer verdicts.Close()
-	for verdicts.Next() {
-		var relay, verdict string
+	defer rounds.Close()
+	for rounds.Next() {
+		var relay string
 		var at time.Time
-		var n uint64
-		if err := verdicts.Scan(&relay, &at, &verdict, &n); err != nil {
-			return out, fmt.Errorf("scan verdicts: %w", err)
+		var c roundCount
+		if err := rounds.Scan(&relay, &at, &c.judged, &c.failed); err != nil {
+			return out, fmt.Errorf("scan rounds: %w", err)
 		}
-		if out.probes[relay] == nil {
-			out.probes[relay] = map[int64]probeCount{}
+		if out.rounds[relay] == nil {
+			out.rounds[relay] = map[int64]roundCount{}
 		}
-		c := out.probes[relay][at.Unix()]
-		switch verdict {
-		case entry.VerdictClean, entry.VerdictRealityWins:
-			c.ok += n
-		case entry.VerdictIPBanned, entry.VerdictFingerprint, entry.CauseDomainBlocked:
-			c.bad += n
-		}
-		out.probes[relay][at.Unix()] = c
+		out.rounds[relay][at.Unix()] = c
 	}
-	if err := verdicts.Err(); err != nil {
+	if err := rounds.Err(); err != nil {
+		return out, err
+	}
+
+	loss, err := h.analytics.Query(ctx, `
+		SELECT relay_name, toString(source_region), toStartOfInterval(ts, toIntervalSecond(?)) AS bucket,
+		       toUInt64(sum(xudp_sent)), toUInt64(sum(xudp_got))
+		FROM entry_probes
+		WHERE ts >= ? AND ts <= ? AND xudp_sent > 0
+		GROUP BY relay_name, source_region, bucket`, seconds, since, now.Add(verdictSkew))
+	if err != nil {
+		return out, fmt.Errorf("loss: %w", err)
+	}
+	defer loss.Close()
+	for loss.Next() {
+		var relay, source string
+		var at time.Time
+		var c datagramCount
+		if err := loss.Scan(&relay, &source, &at, &c.sent, &c.got); err != nil {
+			return out, fmt.Errorf("scan loss: %w", err)
+		}
+		if out.loss[relay] == nil {
+			out.loss[relay] = map[string]map[int64]datagramCount{}
+		}
+		if out.loss[relay][source] == nil {
+			out.loss[relay][source] = map[int64]datagramCount{}
+		}
+		out.loss[relay][source][at.Unix()] = c
+	}
+	if err := loss.Err(); err != nil {
+		return out, err
+	}
+
+	// Pulses carry the box's totals since boot; a total that went down is a
+	// reboot, and that pair is no delta. The pulse before the window gives
+	// the window's first delta its base.
+	segs, err := h.analytics.Query(ctx, `
+		SELECT relay_name, toStartOfInterval(ts, toIntervalSecond(?)) AS bucket,
+		       toUInt64(sum(d_out)), toUInt64(sum(d_re))
+		FROM (
+			SELECT relay_name, ts,
+			       if(p_out > 0 AND tcp_out_segs >= p_out AND tcp_retrans_segs >= p_re, tcp_out_segs - p_out, 0) AS d_out,
+			       if(p_out > 0 AND tcp_out_segs >= p_out AND tcp_retrans_segs >= p_re, tcp_retrans_segs - p_re, 0) AS d_re
+			FROM (
+				SELECT relay_name, ts, tcp_out_segs, tcp_retrans_segs,
+				       lagInFrame(tcp_out_segs) OVER w AS p_out,
+				       lagInFrame(tcp_retrans_segs) OVER w AS p_re
+				FROM entry_relay_stats
+				WHERE ts >= ? AND ts <= ? AND tcp_out_segs > 0
+				WINDOW w AS (PARTITION BY relay_name ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
+			)
+		)
+		WHERE ts >= ?
+		GROUP BY relay_name, bucket`, seconds, since.Add(-10*time.Minute), now, since)
+	if err != nil {
+		return out, fmt.Errorf("segments: %w", err)
+	}
+	defer segs.Close()
+	for segs.Next() {
+		var relay string
+		var at time.Time
+		var c segmentCount
+		if err := segs.Scan(&relay, &at, &c.out, &c.retrans); err != nil {
+			return out, fmt.Errorf("scan segments: %w", err)
+		}
+		if out.segs[relay] == nil {
+			out.segs[relay] = map[int64]segmentCount{}
+		}
+		out.segs[relay][at.Unix()] = c
+	}
+	if err := segs.Err(); err != nil {
 		return out, err
 	}
 
@@ -471,6 +597,63 @@ func (h *Handlers) probedSpeed(ctx context.Context, since time.Time, bucket time
 	return out, rows.Err()
 }
 
+// speedNormWindow is how far back a node's usual speed is taken from.
+const speedNormWindow = 7 * 24 * time.Hour
+
+// probedSpeedNorm is each node's usual speed: the median of its successful
+// RU measurements since since.
+func (h *Handlers) probedSpeedNorm(ctx context.Context, since time.Time) (map[string]float64, error) {
+	out := map[string]float64{}
+	rows, err := h.pool.Query(ctx, `
+		SELECT n.node_slug,
+		       percentile_cont(0.5) WITHIN GROUP (ORDER BY (c.sample->>'mbps')::float8)
+		FROM relay_capacity_history c
+		JOIN relay_capacity_nodes n ON n.config_key = c.config_key
+		JOIN entry_vantages v ON v.slot = c.slot
+		WHERE v.in_russia AND c.measured_at >= $1
+		  AND coalesce(c.sample->>'error', '') = '' AND (c.sample->>'mbps')::float8 > 0
+		GROUP BY 1`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var slug string
+		var mbps float64
+		if err := rows.Scan(&slug, &mbps); err != nil {
+			return nil, err
+		}
+		out[slug] = mbps
+	}
+	return out, rows.Err()
+}
+
+// lossPct is the share of a bucket's datagrams that did not come back.
+func lossPct(c datagramCount) *float64 {
+	if c.sent == 0 {
+		return nil
+	}
+	got := min(c.got, c.sent)
+	return num(float64(c.sent-got) * 100 / float64(c.sent))
+}
+
+// failPct is the share of a bucket's judged rounds the relay failed.
+func failPct(c roundCount) *float64 {
+	if c.judged == 0 {
+		return nil
+	}
+	return num(float64(min(c.failed, c.judged)) * 100 / float64(c.judged))
+}
+
+// retransPct is the share of a bucket's TCP segments sent again; a gap below
+// minRetransSegments.
+func retransPct(c segmentCount) *float64 {
+	if c.out < minRetransSegments {
+		return nil
+	}
+	return num(float64(min(c.retrans, c.out)) * 100 / float64(c.out))
+}
+
 // carriedMbps is a relay's rate in a bucket: the busier direction's bytes over
 // the seconds they took. The link is full duplex, so the two directions are
 // not added. No measured second is no rate, not zero.
@@ -500,13 +683,29 @@ func foldProfiles(profiles []fleetProfile, starts []time.Time, month time.Time, 
 	}
 	for i := range profiles {
 		p := &profiles[i]
-		p.AvailPct = make([]*float64, len(starts))
+		// A bucket nobody judged or measured is a gap, not 0%: the probers
+		// were down, not the relay.
+		p.FailPct = make([]*float64, len(starts))
+		p.RetransPct = make([]*float64, len(starts))
 		for j, at := range starts {
-			// A bucket where no verdict judged is a gap, not 0%: the probers
-			// were down, not the relay.
-			if c := f.probes[p.Relay][at.Unix()]; c.ok+c.bad > 0 {
-				p.AvailPct[j] = passPct(c)
+			p.FailPct[j] = failPct(f.rounds[p.Relay][at.Unix()])
+			p.RetransPct[j] = retransPct(f.segs[p.Relay][at.Unix()])
+		}
+		p.Loss = []fleetLossLine{}
+		sources := make([]string, 0, len(f.loss[p.Relay]))
+		for source := range f.loss[p.Relay] {
+			sources = append(sources, source)
+		}
+		sort.Strings(sources)
+		for _, source := range sources {
+			l := fleetLossLine{Source: source, Pct: make([]*float64, len(starts))}
+			for j, at := range starts {
+				l.Pct[j] = lossPct(f.loss[p.Relay][source][at.Unix()])
 			}
+			p.Loss = append(p.Loss, l)
+		}
+		if v, ok := f.speedNorm[p.Slug]; ok {
+			p.SpeedNormMbps = num(v)
 		}
 		p.RTTMs = line(f.rtt, p.Relay)
 		p.SpeedMbps = line(f.speed, p.Slug)

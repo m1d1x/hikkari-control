@@ -124,6 +124,13 @@ type pulseBody struct {
 	CPUPct    float64 `json:"cpuPct"`
 	MemMB     int64   `json:"memMb"`
 	Version   string  `json:"version"`
+	// TCPOutSegs and TCPRetransSegs are the box's TCP segments sent and sent
+	// again since the box booted (/proc/net/snmp): the box's, like CPUPct,
+	// since one box runs several relays. Their deltas are how much of what
+	// the box sent to its users had to be sent twice, the loss users feel on
+	// a TCP protocol as a stall. Absent where /proc has no such table.
+	TCPOutSegs     int64 `json:"tcpOutSegs,omitempty"`
+	TCPRetransSegs int64 `json:"tcpRetransSegs,omitempty"`
 	// Boot names this run of the process: per-key totals count from it.
 	Boot string              `json:"boot,omitempty"`
 	Keys map[string]pulseKey `json:"keys,omitempty"`
@@ -255,17 +262,20 @@ func (s awgSource) read() (up, down, conns int64, keys map[string]pulseKey) {
 func readPulse(source pulseSource, cfg pulseConfig, started time.Time) pulseBody {
 	up, down, conns, keys := source.read()
 	cpu, mem := boxLoad()
+	out, retrans := boxTCPSegs()
 	body := pulseBody{
-		Relay:     cfg.relay,
-		UptimeS:   int64(time.Since(started).Seconds()),
-		BytesUp:   up,
-		BytesDown: down,
-		Conns:     conns,
-		CPUPct:    cpu,
-		MemMB:     mem,
-		Version:   cfg.version,
-		Keys:      keys,
-		Hellos:    helloTotals(source),
+		Relay:          cfg.relay,
+		UptimeS:        int64(time.Since(started).Seconds()),
+		BytesUp:        up,
+		BytesDown:      down,
+		Conns:          conns,
+		CPUPct:         cpu,
+		MemMB:          mem,
+		Version:        cfg.version,
+		TCPOutSegs:     out,
+		TCPRetransSegs: retrans,
+		Keys:           keys,
+		Hellos:         helloTotals(source),
 	}
 	if s, ok := source.(observedSource); ok {
 		body.Hikkari, body.HikkariS = s.periods()
@@ -378,6 +388,46 @@ func boxLoad() (cpuPct float64, memMB int64) {
 		}
 	}
 	return cpuPct, memMB
+}
+
+// boxTCPSegs reads the box's TCP segments sent and retransmitted since boot.
+// Zeroes where /proc/net/snmp cannot be read.
+func boxTCPSegs() (out, retrans int64) {
+	raw, err := os.ReadFile("/proc/net/snmp")
+	if err != nil {
+		return 0, 0
+	}
+	return tcpSegs(string(raw))
+}
+
+// tcpSegs pulls OutSegs and RetransSegs out of /proc/net/snmp: a "Tcp:" line
+// of names followed by a "Tcp:" line of values, matched by position.
+func tcpSegs(snmp string) (out, retrans int64) {
+	var names []string
+	for _, line := range strings.Split(snmp, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 || f[0] != "Tcp:" {
+			continue
+		}
+		if names == nil {
+			names = f
+			continue
+		}
+		for i := 1; i < len(f) && i < len(names); i++ {
+			v, err := strconv.ParseInt(f[i], 10, 64)
+			if err != nil || v < 0 {
+				continue
+			}
+			switch names[i] {
+			case "OutSegs":
+				out = v
+			case "RetransSegs":
+				retrans = v
+			}
+		}
+		return out, retrans
+	}
+	return 0, 0
 }
 
 // meminfoKB pulls the kB figure out of a /proc/meminfo line.

@@ -197,6 +197,10 @@ type EntryRelayStatRecord struct {
 	CPUPct    float32
 	MemMB     uint32
 	Version   string
+	// TCPOutSegs and TCPRetransSegs are the box's TCP segments sent and sent
+	// again since it booted (/proc/net/snmp); zero from an older edge.
+	TCPOutSegs     uint64
+	TCPRetransSegs uint64
 }
 
 // EntryUserTrafficRecord is what one account's message socket carried since

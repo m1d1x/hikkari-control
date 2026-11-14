@@ -45,6 +45,10 @@ type pulseBody struct {
 	CPUPct    float64 `json:"cpuPct"`
 	MemMB     int64   `json:"memMb"`
 	Version   string  `json:"version"`
+	// TCPOutSegs and TCPRetransSegs: the box's TCP segments sent and sent
+	// again since it booted (edge/pulse.go); zero from an older edge.
+	TCPOutSegs     int64 `json:"tcpOutSegs,omitempty"`
+	TCPRetransSegs int64 `json:"tcpRetransSegs,omitempty"`
 	// Boot and Keys: per-access-key totals of this edge run (pulse.go).
 	Boot string                  `json:"boot,omitempty"`
 	Keys map[string]pulseKeyBody `json:"keys,omitempty"`
@@ -100,21 +104,23 @@ func RegisterPulseRoutes(mux *http.ServeMux, svc *Service, token string) {
 		}
 
 		err := svc.RecordPulse(r.Context(), token, bearer, PulseReport{
-			Relay:     body.Relay,
-			UptimeS:   body.UptimeS,
-			BytesUp:   body.BytesUp,
-			BytesDown: body.BytesDown,
-			Conns:     body.Conns,
-			CPUPct:    body.CPUPct,
-			MemMB:     body.MemMB,
-			Version:   body.Version,
-			Boot:      body.Boot,
-			Keys:      keyUsage(body.Keys),
-			Hellos:    body.Hellos,
-			Hikkari:   body.Hikkari,
-			HikkariS:  body.HikkariS,
-			Drain:     body.Drain,
-			Legs:      body.Legs,
+			Relay:          body.Relay,
+			UptimeS:        body.UptimeS,
+			BytesUp:        body.BytesUp,
+			BytesDown:      body.BytesDown,
+			Conns:          body.Conns,
+			CPUPct:         body.CPUPct,
+			MemMB:          body.MemMB,
+			Version:        body.Version,
+			TCPOutSegs:     body.TCPOutSegs,
+			TCPRetransSegs: body.TCPRetransSegs,
+			Boot:           body.Boot,
+			Keys:           keyUsage(body.Keys),
+			Hellos:         body.Hellos,
+			Hikkari:        body.Hikkari,
+			HikkariS:       body.HikkariS,
+			Drain:          body.Drain,
+			Legs:           body.Legs,
 		})
 		switch {
 		case errors.Is(err, ErrPulseRefused):

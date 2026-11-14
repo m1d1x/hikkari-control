@@ -218,16 +218,18 @@ func (s pulseSink) InsertEntryRelayStats(ctx context.Context, rows []entry.Pulse
 	out := make([]analytics.EntryRelayStatRecord, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, analytics.EntryRelayStatRecord{
-			Timestamp: r.TS,
-			RelayName: r.Relay,
-			Proto:     r.Proto,
-			UptimeS:   uint32(r.UptimeS),
-			BytesUp:   uint64(r.BytesUp),
-			BytesDown: uint64(r.BytesDown),
-			Conns:     uint64(r.Conns),
-			CPUPct:    float32(r.CPUPct),
-			MemMB:     uint32(r.MemMB),
-			Version:   r.Version,
+			Timestamp:      r.TS,
+			RelayName:      r.Relay,
+			Proto:          r.Proto,
+			UptimeS:        uint32(r.UptimeS),
+			BytesUp:        uint64(r.BytesUp),
+			BytesDown:      uint64(r.BytesDown),
+			Conns:          uint64(r.Conns),
+			CPUPct:         float32(r.CPUPct),
+			MemMB:          uint32(r.MemMB),
+			Version:        r.Version,
+			TCPOutSegs:     uint64(r.TCPOutSegs),
+			TCPRetransSegs: uint64(r.TCPRetransSegs),
 		})
 	}
 	return s.store.InsertEntryRelayStats(ctx, out)
