@@ -108,6 +108,14 @@ func TestABrainFollowsItsWiresFileWithoutANewProcess(t *testing.T) {
 	if !regexp.MustCompile(`nekko-trunk-entry: clients tcp from=\d+ conns=\d+ closed=\d+ sending=[1-9]\d* segs=[1-9]`).MatchString(logs) {
 		t.Errorf("no clients line with the stream's segments in:\n%s", tail(logs, 4000))
 	}
+	// The Go entry's lines the hub reads (cascadewatch journal.go: reStats,
+	// reUp) come from the brain over the pipe too.
+	if !regexp.MustCompile(`nekko-trunk-entry: members=4 joined=\d+ stalled=0 broken=0 resent=\d+ dead_ports=\d+ port_kills=\d+ streams=1/1 reset=0 up=[1-9]\d* down=[1-9]\d* flows=\d+ dgrams=\d+/\d+ copies=\d+ pauses=\d+ paused_ms=\d+ rtt_p50=[\d.]+ rtt_p90=[\d.]+ rtt_max=[\d.]+`).MatchString(logs) {
+		t.Errorf("no minute line in the Go entry's keys with the pool and the stream in:\n%s", tail(logs, 4000))
+	}
+	if !strings.Contains(logs, "nekko-trunk-entry: up: over hk-pipe") {
+		t.Error("no up line in the Go entry's words")
+	}
 	if strings.Contains(logs, "generation 2") || entry.Process.Signal(syscall.Signal(0)) != nil {
 		t.Errorf("a new generation came up, or the entry %d ended", pid)
 	}

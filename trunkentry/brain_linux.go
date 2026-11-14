@@ -34,6 +34,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -75,9 +76,44 @@ func (b *brain) end() {
 }
 
 // memberDeaths counts the pipe's member events since the start, as the Go
-// entry's minute line counts its members' (joined, stalled, broken).
+// entry's minute line counts its members' (joined, stalled, broken), and
+// says a pool member's death in the Go entry's line (trunk entry.go: "trunk:
+// member N: down after D: ..."), the event member_down the hub reads.
 type memberDeaths struct {
 	joined, silent, quiet, gone atomic.Uint64
+
+	mu sync.Mutex
+	up map[int]time.Time // the pool's members up, by index: since when
+}
+
+// event is a member's event of the pipe (pipectl Config.OnMember).
+func (d *memberDeaths) event(wire trunk.WireID, index int, up bool, why byte) {
+	d.note(up, why)
+	if wire != trunk.PoolWire {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.up == nil {
+		d.up = map[int]time.Time{}
+	}
+	if up {
+		d.up[index] = time.Now()
+		return
+	}
+	since, ok := d.up[index]
+	if !ok {
+		return
+	}
+	delete(d.up, index)
+	reason := "broken: its socket failed"
+	switch why {
+	case pipectl.WhySilent:
+		reason = "stalled: it owed an answer past its stall while another member proved the exit alive"
+	case pipectl.WhyQuiet:
+		reason = "stalled: every member silent past Quiet"
+	}
+	log.Printf("nekko-trunk-entry: trunk: member %d: down after %s: %s", index, time.Since(since).Round(time.Second), reason)
 }
 
 func (d *memberDeaths) note(up bool, why byte) {
@@ -106,6 +142,15 @@ func (b *brain) clients(from time.Time) (clientSum, bool) {
 	}
 	return clientSum{from: from, conns: int(c.Conns), closed: int(c.Closed), sending: int(c.Sending),
 		segs: int64(c.Segs), retrans: int64(c.Retrans), p50: c.RTTP50, p90: c.RTTP90}, true
+}
+
+// logPipeObserved writes the pipe's report of a tester's stream or flow in
+// the Go entry's line (observe.go observedLine): the hub joins it to the
+// exit's by id (legs).
+func logPipeObserved(o pipectl.Observed) {
+	t := o.TCP
+	log.Print("nekko-trunk-entry: " + observedLine(o.Report, tcpSample{RTT: t.RTT, RTTVar: t.RTTVar, Retrans: t.Retrans, Lost: t.Lost,
+		Unack: t.Unack, Cwnd: t.Cwnd, SegsOut: t.SegsOut, SegsIn: t.SegsIn}, o.HaveTCP))
 }
 
 // cronetBeside is the libcronet.so the pipe loads: beside hk-pipe, as the
@@ -138,8 +183,9 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 	}
 	b := &brain{c: c, s: s, ctx: ctx, handed: make(chan struct{}), exit: exit, roots: roots}
 	p, err := pipectl.Start(pipectl.Config{Bin: c.Pipe, Stderr: os.Stderr,
-		Logf:     func(format string, a ...any) { log.Printf("nekko-trunk-entry: "+format, a...) },
-		OnMember: func(_ trunk.WireID, _ int, up bool, why byte) { b.deaths.note(up, why) }})
+		Logf:       func(format string, a ...any) { log.Printf("nekko-trunk-entry: "+format, a...) },
+		OnMember:   b.deaths.event,
+		OnObserved: logPipeObserved})
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +486,7 @@ func runPipeGeneration(c Config) error {
 	for _, w := range b.wires {
 		names = append(names, fmt.Sprintf("%s:%d", w.Name, w.Members))
 	}
-	log.Printf("nekko-trunk-entry: up over hk-pipe (pid %d): generation %d, exit %s (%s), %d members, wires %v steer=%v, tcp %v, udp %v, udp one copy %v",
+	log.Printf("nekko-trunk-entry: up: over hk-pipe (pid %d), generation %d, exit %s (%s), %d members, wires %v steer=%v, tcp %v, udp %v, udp one copy %v",
 		b.pipe.Pid(), s.gen, c.Exit, c.SNI, c.Members, names, b.steer, forwardList(c.TCP), forwardList(c.UDP), portList(c.OneCopy))
 	if ctl != nil {
 		go ctl.serve()

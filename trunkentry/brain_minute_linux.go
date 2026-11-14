@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/m1d1x/hikkari-protocol/trunk"
 	"github.com/m1d1x/hikkari-protocol/trunk/pipectl"
 )
 
@@ -76,6 +77,13 @@ func (b *brain) logMinutes(ctx context.Context) {
 		t, _ := b.pipe.Tick()
 		now := b.mark(t)
 		log.Print("nekko-trunk-entry: " + pipeLine(t, &b.deaths, now, last))
+		// The Go entry's minute line too, in its keys: the hub's entry
+		// layer, its alerts and summary read it (cascadewatch journal.go).
+		if st, err := b.pipe.Stats(); err == nil {
+			log.Print("nekko-trunk-entry: " + pipeStatsLine(t, st, &b.deaths))
+		} else {
+			log.Printf("nekko-trunk-entry: stats: %v", err)
+		}
 		last = now
 	}
 }
@@ -103,4 +111,27 @@ func pipeLine(t pipectl.Tick, d *memberDeaths, now, last minuteMark) string {
 		members, up, d.joined.Load(), d.silent.Load(), d.quiet.Load(), d.gone.Load(), t.Streams, t.Flows,
 		t.DgramsOut, t.DgramsIn, t.DgramsCopy, t.FlowsIdle, t.Pauses, t.LateMax.Milliseconds(), t.Retired, t.Coming,
 		pkts, brain.Milliseconds(), cpu.Milliseconds(), perPkt, strings.Join(wires, ","))
+}
+
+// pipeStatsLine is the Go entry's minute line (main.go statsLine) over the
+// pipe: members up of the pool, the members' events since the start (a
+// member silent or past Quiet is stalled, one whose socket failed broken),
+// and the pipe's counters (pipectl Stats, the tick).
+func pipeStatsLine(t pipectl.Tick, st pipectl.Stats, d *memberDeaths) string {
+	members := 0
+	for _, w := range t.Wires {
+		if w.ID == trunk.PoolWire {
+			members = w.Up
+		}
+	}
+	ms := func(v time.Duration) string {
+		if v < 0 {
+			return "-"
+		}
+		return strconv.FormatFloat(float64(v.Microseconds())/1000, 'f', 1, 64)
+	}
+	return fmt.Sprintf("members=%d joined=%d stalled=%d broken=%d resent=%d dead_ports=%d port_kills=%d streams=%d/%d reset=%d up=%d down=%d flows=%d dgrams=%d/%d copies=%d pauses=%d paused_ms=%d rtt_p50=%s rtt_p90=%s rtt_max=%s",
+		members, d.joined.Load(), d.silent.Load()+d.quiet.Load(), d.gone.Load(), st.Resent, st.DeadPorts, st.PortKills,
+		t.Streams, st.Opened, st.Reset, st.Up, st.Down, t.Flows, t.DgramsOut, t.DgramsIn, t.DgramsCopy,
+		t.Pauses, st.Paused.Milliseconds(), ms(st.RTTP50), ms(st.RTTP90), ms(st.RTTMax))
 }
