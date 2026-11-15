@@ -38,6 +38,8 @@ type fakeBox struct {
 	binary      []byte // what runs as nekko-edge
 	staged      []byte // nekko-edge.new, waiting for the swap
 	prev        []byte // nekko-edge.prev, kept by the swap for a rollback
+	exit        []byte // /usr/local/bin/hk-exit
+	exitPrev    []byte // hk-exit.prev, kept by stageExit for a rollback
 	// conns answers the relay connection count, one value per ask; the last
 	// one repeats.
 	conns []int
@@ -93,6 +95,23 @@ func (r *fakeRemote) Run(_ context.Context, cmd string, stdin io.Reader) (string
 		r.b.passwordOff = true
 	case cmd == "uname -m":
 		return "x86_64\n", nil
+	case strings.HasPrefix(cmd, "if [ -f /usr/local/bin/hk-exit ]; then cp -p /usr/local/bin/hk-exit /usr/local/bin/hk-exit.prev"):
+		if r.b.exit != nil {
+			r.b.exitPrev = r.b.exit
+		}
+		if r.b.exit == nil {
+			return "", nil
+		}
+		sum := sha256.Sum256(r.b.exit)
+		return hex.EncodeToString(sum[:]) + "\n", nil
+	case strings.HasPrefix(cmd, "cat > /usr/local/bin/hk-exit.new"):
+		r.b.exit = in
+	case strings.HasPrefix(cmd, "if [ -f /usr/local/bin/hk-exit.prev ]"):
+		if r.b.exitPrev == nil {
+			return "", nil
+		}
+		r.b.exit = r.b.exitPrev
+		return "back\n", nil
 	case strings.HasPrefix(cmd, "cat > /usr/local/bin/nekko-edge.new"):
 		r.b.staged = in
 	case strings.HasPrefix(cmd, "test -f /usr/local/bin/nekko-edge.prev"):

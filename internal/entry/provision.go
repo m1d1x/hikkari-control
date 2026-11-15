@@ -696,6 +696,11 @@ type jobRun struct {
 	// movedRelays are the relays this run moved to the box's new domain
 	// (moveRelaysToDomain): their holders carry records naming the old one.
 	movedRelays []string
+	// exitBack: a rollback puts back the hk-exit the box ran before
+	// (hk-exit.prev), and install leaves it, not the image's: the edge and
+	// its hk-exit speak one socket version (hikkari-protocol trunk/pipectl
+	// ExitVersion), so an old edge under a new hk-exit has no Rust exit.
+	exitBack bool
 }
 
 func (j *jobRun) step(name string) {
@@ -1641,12 +1646,20 @@ const edgeExitBin = "/usr/local/bin/hk-exit"
 // stageExit puts the image's hk-exit beside nekko-edge before the relay's
 // new generation starts it, unless the box has it already. A renamed file:
 // the running hk-exit keeps its own, the next generation's is the new one.
+// The one it replaces stays as hk-exit.prev, which a rollback puts back with
+// nekko-edge.prev (rollback, exitBack).
 func (j *jobRun) stageExit(r Remote, arch string) error {
+	if j.exitBack {
+		return nil
+	}
 	build, ok := j.p.exitBuilds[arch]
 	if !ok {
 		return fmt.Errorf("%w: в образе хаба нет hk-exit для linux-%s, а релей ведёт выход магистрали на Rust", ErrRejected, arch)
 	}
-	out, _ := r.Run(j.ctx, "sha256sum "+edgeExitBin+" 2>/dev/null | cut -d' ' -f1", nil)
+	// The running one is what a rollback of this deploy goes back to, the
+	// image's or not: kept before every swap, as the swap keeps nekko-edge.
+	keep := "if [ -f " + edgeExitBin + " ]; then cp -p " + edgeExitBin + " " + edgeExitBin + ".prev; fi; "
+	out, _ := r.Run(j.ctx, keep+"sha256sum "+edgeExitBin+" 2>/dev/null | cut -d' ' -f1", nil)
 	if strings.TrimSpace(out) == build.SHA {
 		j.log("hk-exit %s… уже на месте", build.SHA[:12])
 		return nil
@@ -1906,6 +1919,11 @@ func (j *jobRun) rollback(r Remote, arch string, relays []provRelay) error {
 		}
 		return fmt.Errorf("прежнего бинаря на машине нет, откатывать не на что: %w", err)
 	}
+	if err := j.exitToPrev(r); err != nil {
+		return err
+	}
+	j.exitBack = true
+	defer func() { j.exitBack = false }()
 	for _, rel := range relays {
 		if err := j.install(r, rel); err != nil {
 			return fmt.Errorf("откат %s: %w", rel.name, err)
@@ -1913,6 +1931,20 @@ func (j *jobRun) rollback(r Remote, arch string, relays []provRelay) error {
 	}
 	if sha := j.edgeOnBox(r, arch); sha != "" {
 		j.log("откат: на машине снова %s…", sha[:12])
+	}
+	return nil
+}
+
+// exitToPrev puts the hk-exit the box ran before the last stageExit back,
+// where the box kept one: the image holds only the new one.
+func (j *jobRun) exitToPrev(r Remote) error {
+	back := "if [ -f " + edgeExitBin + ".prev ]; then cp -p " + edgeExitBin + ".prev " + edgeExitBin + ".new && mv " + edgeExitBin + ".new " + edgeExitBin + "; echo back; fi"
+	out, err := r.Run(j.ctx, back, nil)
+	if err != nil {
+		return fmt.Errorf("откат hk-exit: %w", err)
+	}
+	if strings.TrimSpace(out) == "back" {
+		j.log("откат: hk-exit прежней сборки")
 	}
 	return nil
 }
