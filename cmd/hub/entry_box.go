@@ -66,6 +66,10 @@ package main
 //	cmd/server entry-box trunk-pipe-wires <box> <udp:2,h3dgram:4[:fate]|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
 //	                                    # the stand's wires and their knobs, a file
 //	                                    # its brain follows (no new process)
+//	cmd/server entry-box trunk-copies <box> stand|people <members>:<window_ms>|off
+//	                                    # the pool's members of copies and their
+//	                                    # window, a file the brain follows (no new
+//	                                    # process; internal/entry/trunkcopies.go)
 //	cmd/server entry-box trunk-pipe-exit <exit-box> udp=<port>[,h3dgram=<port>]|off
 //	                                    # hk-exit under the exit's relay, the
 //	                                    # stand's exit by a key of its own, every
@@ -688,6 +692,29 @@ func runEntryBox(args []string) {
 		if err := prov.StandTrunkPipe(ctx, args[1], o); err != nil {
 			fail(err)
 		}
+		os.Exit(0)
+	}
+	if len(args) == 4 && args[0] == "trunk-copies" {
+		// entry-box trunk-copies <box> stand|people <members>:<window_ms>|off
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		c, err := entry.ParseTrunkCopies(args[3])
+		if err != nil {
+			fail(err)
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+		if err := prov.SetTrunkCopies(ctx, args[1], args[2], c); err != nil {
+			fail(err)
+		}
+		fmt.Printf("%s: %s copies %s (the brain follows them within 10 s, no new process)\n", args[1], args[2], args[3])
 		os.Exit(0)
 	}
 	if len(args) >= 3 && len(args) <= 5 && args[0] == "trunk-pipe-wires" {

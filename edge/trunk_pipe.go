@@ -51,6 +51,10 @@ const (
 
 var pipeWireIDs = map[string]trunk.WireID{pipeWireUDP: 3, pipeWireH3Dgram: 6}
 
+// pipeCopyWindow is how long hk-exit holds answers on the pool's members of
+// copies, as the entry holds its copies (trunkentry copies.go).
+const pipeCopyWindow = 4 * time.Millisecond
+
 // envPipeInherit names what a generation inherits for hk-exit: each wire's
 // socket by kind and the new end of the handoff socket, as kind=fd pairs.
 const envPipeInherit = "NEKKO_EDGE_PIPE_INHERIT"
@@ -184,6 +188,12 @@ func (n *naiveRuntime) startTrunkPipe(ctx context.Context, gen byte) error {
 	}
 	closeFiles(inherited, nil)
 	if err := x.SetPool(nil, 0, 0); err != nil {
+		return fail(err)
+	}
+	// Answers on a member of copies (one the entry sends no stream on) go
+	// down a window at a time (hikkari-protocol spec/trunk.md, "Copies on
+	// the pool"): the entry's window, the owner's 4 ms of 15.11.
+	if err := x.SetCopyWindow(pipeCopyWindow); err != nil {
 		return fail(err)
 	}
 	ports := make([]uint16, 0, len(n.cfg.Trunk.Ports))

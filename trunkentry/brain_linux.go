@@ -197,6 +197,17 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 		p.Close()
 		return nil, fmt.Errorf("pool: %w", err)
 	}
+	// Copies before the pool's members come up would be the same; after is
+	// what a reload of the file does. A file that cannot be read leaves the
+	// copies going round the pool, as before.
+	if cp, _, err := readCopies(copiesFilePath()); err != nil {
+		log.Printf("nekko-trunk-entry: copies: %v (round the pool)", err)
+	} else if err := p.SetCopies(cp); err != nil {
+		p.Close()
+		return nil, fmt.Errorf("copies: %w", err)
+	} else if cp.Members > 0 {
+		log.Printf("nekko-trunk-entry: copies on %d members of the pool, a window of %v", cp.Members, cp.Window)
+	}
 	// A file that cannot be read leaves the pool alone, as the Go entry's
 	// addWires: a wire less, not an entry less.
 	ws, f, err := pipeWires(c, exit, roots)

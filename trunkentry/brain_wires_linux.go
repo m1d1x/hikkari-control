@@ -173,8 +173,9 @@ func (b *brain) measureWires(ctx context.Context) context.CancelFunc {
 // followWires measures the wires the brain came up with, then follows the
 // hub's file until ctx ends: the newest generation's.
 func (b *brain) followWires(ctx context.Context) {
-	path := wiresFilePath()
+	path, cpath := wiresFilePath(), copiesFilePath()
 	_, last, _ := readWires(path)
+	_, clast, _ := readCopies(cpath)
 	failed := ""
 	set := wireSet(b.wires, b.steer, b.voiceOn)
 	stop := b.measureWires(ctx)
@@ -187,6 +188,7 @@ func (b *brain) followWires(ctx context.Context) {
 			return
 		case <-t.C:
 		}
+		clast = b.followCopies(cpath, clast)
 		f, raw, err := readWires(path)
 		if bytes.Equal(raw, last) {
 			continue
@@ -228,4 +230,23 @@ func (b *brain) followWires(ctx context.Context) {
 			stop = b.measureWires(ctx)
 		}
 	}
+}
+
+// followCopies gives the pipe the copies file when it changed since last
+// (its bytes), and says what it now holds as read.
+func (b *brain) followCopies(path string, last []byte) []byte {
+	cp, raw, err := readCopies(path)
+	if bytes.Equal(raw, last) {
+		return last
+	}
+	if err != nil {
+		log.Printf("nekko-trunk-entry: copies: %v (kept what runs)", err)
+		return raw
+	}
+	if err := b.pipe.SetCopies(cp); err != nil {
+		log.Printf("nekko-trunk-entry: copies: %v (tried again in %s)", err, wiresEvery)
+		return last
+	}
+	log.Printf("nekko-trunk-entry: copies on %d members of the pool, a window of %v, no new process", cp.Members, cp.Window)
+	return raw
 }
