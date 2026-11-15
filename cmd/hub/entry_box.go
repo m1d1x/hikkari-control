@@ -63,7 +63,7 @@ package main
 //	                                    # end on the exit (trunk-pipe-exit); voice=
 //	                                    # holds voice on that wire, no selector
 //	cmd/server entry-box trunk-pipe-off <box>
-//	cmd/server entry-box trunk-pipe-wires <box> <udp:2,h3dgram:4|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
+//	cmd/server entry-box trunk-pipe-wires <box> <udp:2,h3dgram:4[:fate]|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
 //	                                    # the stand's wires and their knobs, a file
 //	                                    # its brain follows (no new process)
 //	cmd/server entry-box trunk-pipe-exit <exit-box> udp=<port>[,h3dgram=<port>]|off
@@ -691,17 +691,16 @@ func runEntryBox(args []string) {
 		os.Exit(0)
 	}
 	if len(args) >= 3 && len(args) <= 5 && args[0] == "trunk-pipe-wires" {
-		// entry-box trunk-pipe-wires <box> <kind:members,...|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
+		// entry-box trunk-pipe-wires <box> <kind:members[:fate],...|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
 		// — the stand's wires by its file alone: the brain follows it within
 		// 10 s with no new process (internal/entry/trunkpipe.go, roadmap 4.4).
 		if err := cryptobox.Configure(os.Getenv); err != nil {
 			fail(fmt.Errorf("content key: %w", err))
 		}
-		members, err := entry.ParseTrunkPipeWires(args[2])
+		w, err := entry.ParseTrunkPipeWires(args[2])
 		if err != nil {
 			fail(err)
 		}
-		w := entry.TrunkPipeWires{Members: members}
 		for _, a := range args[3:] {
 			if v, ok := strings.CutPrefix(a, "voice="); ok {
 				w.Voice = v

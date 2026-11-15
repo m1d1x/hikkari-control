@@ -195,3 +195,38 @@ func TestTheGoEntryLeavesChromiumsQuicWireOut(t *testing.T) {
 		}
 	}
 }
+
+// TestAWireTakesTheFateTheFileGives: a wire's fate (two fates, section 1)
+// comes from the file into the trunk's wire; none is udp, a word of another
+// alphabet is no fate.
+func TestAWireTakesTheFateTheFileGives(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wires.json")
+	write := func(s string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`{"steer": true, "wires": [{"name": "udp", "kind": "udp", "port": 20447, "members": 2, "fate": "hop2"},
+		{"name": "quic", "kind": "quic", "port": 20448, "members": 4}]}`)
+	f, _, err := readWires(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := buildWires(Config{Exit: "127.0.0.1:443", Key: "k"}, f, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ws) != 2 || ws[0].Fate != "hop2" || ws[1].Fate != "" {
+		t.Fatalf("fates %+v", ws)
+	}
+	if poolWire().Fate != trunk.FateTCP {
+		t.Fatalf("the pool's fate %q", poolWire().Fate)
+	}
+	for _, bad := range []string{`"Hop"`, `"x-y"`, `"a b"`, `"abcdefghijklmnopq"`} {
+		write(`{"wires": [{"name": "udp", "kind": "udp", "port": 20447, "members": 2, "fate": ` + bad + `}]}`)
+		if _, _, err := readWires(path); err == nil {
+			t.Fatalf("fate %s taken", bad)
+		}
+	}
+}

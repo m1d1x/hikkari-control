@@ -311,11 +311,11 @@ func TestCallLineHearing(t *testing.T) {
 		strings.Contains(line, "lag_up") {
 		t.Fatalf("set line: %s", line)
 	}
-	set := voiceSet(func() trunk.Route { return trunk.Route{Voice: 1, Bulk: trunk.PoolWire} })
+	set := trunk.VoiceCallSet(func() trunk.Route { return trunk.Route{Voice: 1, Bulk: trunk.PoolWire} })
 	if got := set.Wires(); len(got) != 2 || got[0] != 1 || got[1] != trunk.PoolWire {
 		t.Fatalf("voice on udp: %v", got)
 	}
-	set = voiceSet(func() trunk.Route { return trunk.AnyRoute })
+	set = trunk.VoiceCallSet(func() trunk.Route { return trunk.AnyRoute })
 	if got := set.Wires(); len(got) != 1 || got[0] != trunk.PoolWire {
 		t.Fatalf("voice on any wire: %v", got)
 	}

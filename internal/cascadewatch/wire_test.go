@@ -121,6 +121,55 @@ func TestSelectorRouteLines(t *testing.T) {
 	}
 }
 
+// TestTwoFatesRouteLines: the selector of two fates (hikkari-protocol
+// trunk/selector_voice.go) moves voice's copy (voice2) and video by the same
+// parts as voice, and says the third copy and video's leave by what a
+// listener heard; none of it lands in detail.
+func TestTwoFatesRouteLines(t *testing.T) {
+	lines := parseJournal(`1794355262.100000 aezamsk1 nekko-trunk-pipe[90]: nekko-trunk-entry: trunk: route: bulk: on pool; voice: on udp; voice2: on pool; video: on udp
+1794355266.000000 aezamsk1 nekko-trunk-pipe[90]: nekko-trunk-entry: trunk: route: voice: third copy on udp (2 bad seconds of 5); video: udp had 3 bad seconds of 5, to pool
+1794355600.000000 aezamsk1 nekko-trunk-pipe[90]: nekko-trunk-entry: trunk: route: voice: third copy off (no bad second for 5m0s); video: pool better than udp for 5m0s
+1794355601.000000 aezamsk1 nekko-trunk-pipe[90]: nekko-trunk-entry: trunk: route: voice: udp is red, to h3dgram; voice2: pool is red, to h3dgram`)
+	var runs []Run
+	for _, l := range lines {
+		if rs, ok := classifyRoute(l); ok {
+			runs = append(runs, rs...)
+		}
+	}
+	want := []map[string]any{
+		{"class": "bulk", "to": "pool", "why": "first"},
+		{"class": "voice", "to": "udp", "why": "first"},
+		{"class": "voice2", "from": "none", "to": "pool", "why": "first"},
+		{"class": "video", "to": "udp", "why": "first"},
+		{"class": "voice", "to": "udp", "why": "third_on", "bad_s": 2, "of_s": 5},
+		{"class": "video", "from": "udp", "to": "pool", "why": "bad_seconds", "bad_s": 3, "of_s": 5},
+		{"class": "voice", "why": "third_off", "hold": "5m0s"},
+		{"class": "video", "from": "udp", "to": "pool", "why": "better", "hold": "5m0s"},
+		{"class": "voice", "from": "udp", "to": "h3dgram", "why": "red"},
+		{"class": "voice2", "from": "pool", "to": "h3dgram", "why": "red"},
+	}
+	if len(runs) != len(want) {
+		t.Fatalf("%d events: %+v", len(runs), runs)
+	}
+	for i, w := range want {
+		r := runs[i]
+		if r.Data["kind"] != "route" || r.Data["detail"] != nil {
+			t.Fatalf("event %d %+v", i, r.Data)
+		}
+		for k, v := range w {
+			if r.Data[k] != v {
+				t.Fatalf("event %d: %s = %v, want %v (%+v)", i, k, r.Data[k], v, r.Data)
+			}
+		}
+	}
+	if m := routeMark(runs[4].TS, runs[4].Data); m.Label != "голос: третья копия по udp, плохих секунд 2 из 5" {
+		t.Fatalf("mark %q", m.Label)
+	}
+	if m := routeMark(runs[5].TS, runs[5].Data); m.Label != "видео: udp, плохих секунд 3 из 5, на pool" {
+		t.Fatalf("mark %q", m.Label)
+	}
+}
+
 // TestWireLoadLine: a minute of the stand's synthetic users is a wire row
 // by its mode, red when frames were lost or a word.
 func TestWireLoadLine(t *testing.T) {

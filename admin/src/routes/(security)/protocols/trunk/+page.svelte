@@ -204,7 +204,7 @@
 		(data?.marks ?? []).map((m) => ({
 			at: m.at,
 			label: m.label,
-			color: m.why === 'red' ? '#e66767' : m.class === 'voice' ? '#199e70' : '#3987e5',
+			color: m.why === 'red' ? '#e66767' : m.class === 'voice' || m.class === 'voice2' ? '#199e70' : '#3987e5',
 		})),
 	);
 

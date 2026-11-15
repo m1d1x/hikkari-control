@@ -45,22 +45,6 @@ func callLine(w trunk.CallWindow) string {
 		hearingFields(w.Up, w.Down)
 }
 
-// The voice set (hikkari-client plans/2026-11-15-live-udp-two-fates.md): the
-// wire the route gives voice and the pool, the other fate. Until the route
-// holds a set of its own (step A) the set is these two; voice on the pool, or
-// on no wire in particular, is the pool alone.
-const voiceSetName = "voice"
-
-func voiceSet(route func() trunk.Route) trunk.CallSet {
-	return trunk.CallSet{Name: voiceSetName, Wires: func() []trunk.WireID {
-		v := route().Voice
-		if v == trunk.AnyWire || v == trunk.PoolWire {
-			return []trunk.WireID{trunk.PoolWire}
-		}
-		return []trunk.WireID{v, trunk.PoolWire}
-	}}
-}
-
 // setLine is a set's minute: what a listener of the set heard, and how much
 // later the other wires' copy came than the first wire's, in ms with one
 // decimal (lag_up_*, lag_down_*; absent when no frame came on both). The hub

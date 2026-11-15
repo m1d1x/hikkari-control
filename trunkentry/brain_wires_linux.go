@@ -41,7 +41,7 @@ func pipeWires(c Config, exit netip.AddrPort, roots string) ([]pipectl.Wire, wir
 func pipeWiresOf(c Config, exit netip.AddrPort, roots string, f wiresSpec) []pipectl.Wire {
 	var out []pipectl.Wire
 	for _, w := range f.Wires {
-		pw := pipectl.Wire{ID: wireIDs[w.Kind], Name: w.Name, Key: c.Key, Members: w.Members, Stall: c.Stall,
+		pw := pipectl.Wire{ID: wireIDs[w.Kind], Name: w.Name, Key: c.Key, Members: w.Members, Stall: c.Stall, Fate: trunk.Fate(w.Fate),
 			Exit: netip.AddrPortFrom(exit.Addr(), uint16(w.Port))}
 		switch w.Kind {
 		case "udp":
@@ -69,19 +69,19 @@ func wireShape(w pipectl.Wire) string {
 // sameWire says whether the pipe already carries w as had: the same
 // members, exit and form. Anything else gives it again.
 func sameWire(had, w pipectl.Wire) bool {
-	if had.Members != w.Members || had.Exit != w.Exit || had.Stall != w.Stall || (had.H3 == nil) != (w.H3 == nil) {
+	if had.Members != w.Members || had.Exit != w.Exit || had.Stall != w.Stall || had.Fate != w.Fate || (had.H3 == nil) != (w.H3 == nil) {
 		return false
 	}
 	return had.H3 == nil || *had.H3 == *w.H3
 }
 
-// wireSet is what the selector and the calls stand on: the wires by id and
-// shape, steer and voice. Members, ports and usage are not in it.
+// wireSet is what the selector and the calls stand on: the wires by id,
+// shape and fate, steer and voice. Members, ports and usage are not in it.
 func wireSet(ws []pipectl.Wire, steer bool, voice trunk.WireID) string {
 	parts := make([]string, 0, len(ws)+1)
 	parts = append(parts, fmt.Sprintf("steer=%v voice=%d", steer, voice))
 	for _, w := range ws {
-		parts = append(parts, fmt.Sprintf("%d:%s", w.ID, wireShape(w)))
+		parts = append(parts, fmt.Sprintf("%d:%s:%s", w.ID, wireShape(w), w.Fate))
 	}
 	return strings.Join(parts, " ")
 }
@@ -137,14 +137,14 @@ func (b *brain) measureWires(ctx context.Context) context.CancelFunc {
 	ids := []trunk.WireID{trunk.PoolWire}
 	names := map[trunk.WireID]string{trunk.PoolWire: "pool"}
 	for _, w := range b.wires {
-		all = append(all, trunk.Wire{ID: w.ID, Name: w.Name, Shape: wireShape(w), Packet: true})
+		all = append(all, trunk.Wire{ID: w.ID, Name: w.Name, Shape: wireShape(w), Fate: w.Fate, Packet: true})
 		ids = append(ids, w.ID)
 		names[w.ID] = w.Name
 	}
 	line := func(id trunk.WireID, cw trunk.CallWindow) {
 		log.Print("nekko-trunk-entry: " + wireCallLine(names[id], cw))
 	}
-	sets := []trunk.CallSet{voiceSet(b.pipe.Route)}
+	sets := []trunk.CallSet{trunk.VoiceCallSet(b.pipe.Route)}
 	setLog := func(sw trunk.CallSetWindow) {
 		log.Print("nekko-trunk-entry: " + setLine(sw, func(id trunk.WireID) string { return names[id] }))
 	}

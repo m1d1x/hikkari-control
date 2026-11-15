@@ -37,6 +37,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -49,6 +50,9 @@ import (
 // moves it, for tests).
 const defaultWiresFile = "/etc/nekko-trunk-entry.wires.json"
 
+// fateWord is a fate the file may give a wire.
+var fateWord = regexp.MustCompile(`^[a-z0-9]{1,16}$`)
+
 // wiresEvery is how often the file is read.
 var wiresEvery = 10 * time.Second
 
@@ -60,6 +64,10 @@ type wireSpec struct {
 	// Usage is how an h3dgram wire's members use their QUIC sessions:
 	// "destination" (when empty) or "proxy" (pipectl.H3Form.Usage).
 	Usage string `json:"usage,omitempty"`
+	// Fate is what must break on the path for the wire to lose a frame
+	// (trunk Wire.Fate): udp when empty. A new way over the border is a
+	// fate of its own, a word the hub gives (two fates, section 1).
+	Fate string `json:"fate,omitempty"`
 }
 
 type wiresSpec struct {
@@ -122,6 +130,9 @@ func readWires(path string) (wiresSpec, []byte, error) {
 		if w.Usage != "" && (w.Kind != "h3dgram" || w.Usage != "destination" && w.Usage != "proxy") {
 			return f, raw, fmt.Errorf("%s: wire %q: usage %q", path, w.Name, w.Usage)
 		}
+		if w.Fate != "" && !fateWord.MatchString(w.Fate) {
+			return f, raw, fmt.Errorf("%s: wire %q: fate %q", path, w.Name, w.Fate)
+		}
 		seen[w.Kind] = true
 	}
 	if f.Voice != "" && !seen[f.Voice] {
@@ -148,7 +159,7 @@ func buildWires(c Config, f wiresSpec, udpPorts *trunk.PortBook) ([]trunk.Wire, 
 			continue
 		}
 		at := netip.AddrPortFrom(ip, uint16(w.Port))
-		tw := trunk.Wire{ID: wireIDs[w.Kind], Name: w.Name, Members: w.Members, Ports: udpPorts, Knobs: fmt.Sprintf("port=%d", w.Port)}
+		tw := trunk.Wire{ID: wireIDs[w.Kind], Name: w.Name, Fate: trunk.Fate(w.Fate), Members: w.Members, Ports: udpPorts, Knobs: fmt.Sprintf("port=%d", w.Port)}
 		switch w.Kind {
 		case "udp":
 			tw.Shape, tw.Packet = "random", true
@@ -167,7 +178,7 @@ func buildWires(c Config, f wiresSpec, udpPorts *trunk.PortBook) ([]trunk.Wire, 
 
 // poolWire is the pool as the selector sees it.
 func poolWire() trunk.Wire {
-	return trunk.Wire{ID: trunk.PoolWire, Name: "pool", Shape: "browser", Streams: true}
+	return trunk.Wire{ID: trunk.PoolWire, Name: "pool", Shape: "browser", Fate: trunk.FateTCP, Streams: true}
 }
 
 // wireUDPPorts is the book of the wires' UDP source ports: the pool's range,
@@ -272,7 +283,7 @@ func measure(ctx context.Context, entry *trunk.Entry, ws []trunk.Wire, steer boo
 	}
 	// The wires' calls tick with one frame number, so the voice set is
 	// heard from them without a datagram more.
-	go trunk.RunCalls(ctx, func() trunk.CallCarrier { return entry.Session() }, legs, []trunk.CallSet{voiceSet(entry.Route)}, trunk.CallReports{
+	go trunk.RunCalls(ctx, func() trunk.CallCarrier { return entry.Session() }, legs, []trunk.CallSet{trunk.VoiceCallSet(entry.Route)}, trunk.CallReports{
 		Leg: func(i int, cw trunk.CallWindow) {
 			sel.Call(all[i].ID, cw)
 			log.Print("nekko-trunk-entry: " + wireCallLine(all[i].Name, cw))
@@ -280,6 +291,9 @@ func measure(ctx context.Context, entry *trunk.Entry, ws []trunk.Wire, steer boo
 		Set: func(sw trunk.CallSetWindow) {
 			log.Print("nekko-trunk-entry: " + setLine(sw, func(id trunk.WireID) string { return names[id] }))
 		},
+		// Each second heard, of the voice set and of each wire's call: the
+		// third copy and video's move off a wire (selector_voice.go).
+		Second: sel.Second,
 	})
 	for _, w := range all {
 		if at, ok := downloadAt[w.Name]; ok && w.Streams {

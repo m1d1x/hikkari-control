@@ -237,7 +237,7 @@ func (s *Store) BuildWireChart(ctx context.Context, entry, window string, now ti
 func routeMark(ts time.Time, data map[string]any) ChartMark {
 	str := func(k string) string { v, _ := data[k].(string); return v }
 	class, why := str("class"), str("why")
-	name := map[string]string{"voice": "голос", "bulk": "объём"}[class]
+	name := map[string]string{"voice": "голос", "voice2": "копия голоса", "video": "видео", "bulk": "объём"}[class]
 	if name == "" {
 		name = class
 	}
@@ -249,6 +249,12 @@ func routeMark(ts time.Time, data map[string]any) ChartMark {
 		label = fmt.Sprintf("%s: %s красный, на %s", name, str("from"), str("to"))
 	case "better":
 		label = fmt.Sprintf("%s: %s → %s, лучше %s", name, str("from"), str("to"), str("hold"))
+	case "third_on":
+		label = fmt.Sprintf("%s: третья копия по %s, плохих секунд %v из %v", name, str("to"), data["bad_s"], data["of_s"])
+	case "third_off":
+		label = fmt.Sprintf("%s: третья копия снята, %s без плохой секунды", name, str("hold"))
+	case "bad_seconds":
+		label = fmt.Sprintf("%s: %s, плохих секунд %v из %v, на %s", name, str("from"), data["bad_s"], data["of_s"], str("to"))
 	default:
 		label = "маршрут: " + str("detail")
 	}

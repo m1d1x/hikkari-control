@@ -145,13 +145,24 @@ func wireFields(s string) map[string]any {
 // red wire within 10 s of the entry's own pause, or while every wire is red,
 // and says when the set of held ones changes: "trunk: held red wires udp:
 // <reason>" or "none: ...", an event wires_held.
+//
+// Since 15.11 (two fates, hikkari-client plans/2026-11-15-live-udp-two-fates.md)
+// voice rides a set: its main wire (class voice) and a copy on a wire of
+// another fate (class voice2), and video a wire of its own (class video);
+// each moves by the same three parts. Two more say what a listener heard:
+// "voice: third copy on udp (2 bad seconds of 5)" and "voice: third copy off
+// (no bad second for 5m0s)" (why third_on, third_off), and "video: udp had 3
+// bad seconds of 5, to pool" (why bad_seconds).
 var (
-	reRoute       = regexp.MustCompile(`trunk: route: (.+)$`)
-	reRouteFirst  = regexp.MustCompile(`^(voice|bulk): on ([a-z0-9]+)$`)
-	reRouteRed    = regexp.MustCompile(`^(voice|bulk): ([a-z0-9]+) is red, to ([a-z0-9]+)$`)
-	reRouteBetter = regexp.MustCompile(`^(voice|bulk): ([a-z0-9]+) better than ([a-z0-9]+) for (\S+)$`)
-	reRedWires    = regexp.MustCompile(`trunk: red wires ([a-z0-9,]+)$`)
-	reHeldWires   = regexp.MustCompile(`trunk: held red wires ([a-z0-9,]+):`)
+	reRoute         = regexp.MustCompile(`trunk: route: (.+)$`)
+	reRouteFirst    = regexp.MustCompile(`^(voice|voice2|video|bulk): on ([a-z0-9]+)$`)
+	reRouteRed      = regexp.MustCompile(`^(voice|voice2|video|bulk): ([a-z0-9]+) is red, to ([a-z0-9]+)$`)
+	reRouteBetter   = regexp.MustCompile(`^(voice|voice2|video|bulk): ([a-z0-9]+) better than ([a-z0-9]+) for (\S+)$`)
+	reRouteThirdOn  = regexp.MustCompile(`^voice: third copy on ([a-z0-9]+) \((\d+) bad seconds of (\d+)\)$`)
+	reRouteThirdOff = regexp.MustCompile(`^voice: third copy off \(no bad second for (\S+)\)$`)
+	reRouteVideoBad = regexp.MustCompile(`^video: ([a-z0-9]+) had (\d+) bad seconds of (\d+), to ([a-z0-9]+)$`)
+	reRedWires      = regexp.MustCompile(`trunk: red wires ([a-z0-9,]+)$`)
+	reHeldWires     = regexp.MustCompile(`trunk: held red wires ([a-z0-9,]+):`)
 )
 
 // classifyRoute turns a line of the selector into its events; false for any
@@ -188,6 +199,15 @@ func classifyRoute(l journalLine) ([]Run, bool) {
 		case reRouteBetter.MatchString(part):
 			p := reRouteBetter.FindStringSubmatch(part)
 			data["class"], data["from"], data["to"], data["why"], data["hold"] = p[1], p[3], p[2], "better", p[4]
+		case reRouteThirdOn.MatchString(part):
+			p := reRouteThirdOn.FindStringSubmatch(part)
+			data["class"], data["to"], data["why"], data["bad_s"], data["of_s"] = "voice", p[1], "third_on", atoi(p[2]), atoi(p[3])
+		case reRouteThirdOff.MatchString(part):
+			p := reRouteThirdOff.FindStringSubmatch(part)
+			data["class"], data["why"], data["hold"] = "voice", "third_off", p[1]
+		case reRouteVideoBad.MatchString(part):
+			p := reRouteVideoBad.FindStringSubmatch(part)
+			data["class"], data["from"], data["to"], data["why"], data["bad_s"], data["of_s"] = "video", p[1], p[4], "bad_seconds", atoi(p[2]), atoi(p[3])
 		default:
 			// A part this hub does not know yet: kept as said.
 			data["detail"] = clip(part)

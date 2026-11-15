@@ -158,6 +158,10 @@ func TestTheStandOverThePipe(t *testing.T) {
 	if err != nil || h3 != `{"steer":true,"wires":[{"name":"h3dgram","kind":"h3dgram","port":4445,"members":4,"usage":"proxy"}],"voice":"h3dgram"}`+"\n" {
 		t.Fatalf("wires %q %v", h3, err)
 	}
+	fated, err := trunkPipeWiresOf(map[string]int{"udp": 20447}, TrunkPipeWires{Members: map[string]int{"udp": 2}, Fates: map[string]string{"udp": "hop2"}})
+	if err != nil || fated != `{"steer":true,"wires":[{"name":"udp","kind":"udp","port":20447,"members":2,"fate":"hop2"}]}`+"\n" {
+		t.Fatalf("fated wires %q %v", fated, err)
+	}
 	for _, w := range []TrunkPipeWires{
 		{Voice: "h3dgram"},
 		{Members: map[string]int{"udp": 2}},
@@ -296,14 +300,19 @@ func TestTheStandsPortsAreKeptOnTheEntrysRow(t *testing.T) {
 }
 
 func TestTheStandsWiresAreTheKindsThePipeCarries(t *testing.T) {
-	m, err := ParseTrunkPipeWires("udp:2,h3dgram:6")
-	if err != nil || m["udp"] != 2 || m["h3dgram"] != 6 || len(m) != 2 {
-		t.Fatalf("%v %v", m, err)
+	w, err := ParseTrunkPipeWires("udp:2,h3dgram:6")
+	if m := w.Members; err != nil || m["udp"] != 2 || m["h3dgram"] != 6 || len(m) != 2 || len(w.Fates) != 0 {
+		t.Fatalf("%+v %v", w, err)
 	}
-	if m, err := ParseTrunkPipeWires("off"); err != nil || len(m) != 0 {
-		t.Fatalf("off: %v %v", m, err)
+	if w, err := ParseTrunkPipeWires("off"); err != nil || len(w.Members) != 0 {
+		t.Fatalf("off: %+v %v", w, err)
 	}
-	for _, raw := range []string{"quic:4", "udp:2,udp:3", "udp", "h3dgram:0"} {
+	// A wire's fate (two fates, section 1): udp when not given.
+	w, err = ParseTrunkPipeWires("udp:2,h3dgram:6:hop2")
+	if err != nil || w.Members["h3dgram"] != 6 || len(w.Fates) != 1 || w.Fates["h3dgram"] != "hop2" {
+		t.Fatalf("fates: %+v %v", w, err)
+	}
+	for _, raw := range []string{"quic:4", "udp:2,udp:3", "udp", "h3dgram:0", "udp:2:", "udp:2:Hop", "udp:2:a:b"} {
 		if _, err := ParseTrunkPipeWires(raw); err == nil {
 			t.Fatalf("%q accepted", raw)
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,7 +23,7 @@ import (
 //
 //	cmd/server entry-box trunk-pipe <box> <listen=port,...> [members] [h3dgram=<port>[:proxy]] [voice=<wire>]   # stand up or update
 //	cmd/server entry-box trunk-pipe-off <box>
-//	cmd/server entry-box trunk-pipe-wires <box> <kind:members,...|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
+//	cmd/server entry-box trunk-pipe-wires <box> <kind:members[:fate],...|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
 //
 // h3dgram= gives the stand Chromium's QUIC wire (R6.3) to the exit's end of
 // it at that port (hk-exit under the exit's relay, entry-box trunk-pipe-exit,
@@ -34,8 +35,11 @@ import (
 // selector: the wire measured under load, not chosen by its numbers.
 //
 // trunk-pipe-wires changes the stand's wires (roadmap 4.4) by its file
-// alone, with no new process: which wires, their members, the QUIC wire's
-// port and usage, voice held or steered.
+// alone, with no new process: which wires, their members and fates, the
+// QUIC wire's port and usage, voice held or steered. A wire's fate
+// (hikkari-client plans/2026-11-15-live-udp-two-fates.md, section 1) is what
+// must break on the path for it to lose a frame: udp when not given; the
+// selector puts voice on two fates at once.
 
 const (
 	trunkPipeUnit = "nekko-trunk-pipe"
@@ -147,6 +151,8 @@ func (p *Provisioner) pipeBrainFor(ctx context.Context, exit string, h3Port int,
 // held on ("" the selector's choice).
 type TrunkPipeWires struct {
 	Members map[string]int
+	// Fates are the wires' fates by kind; a kind left out is udp.
+	Fates   map[string]string
 	H3Port  int
 	H3Usage string
 	Voice   string
@@ -156,30 +162,40 @@ type TrunkPipeWires struct {
 // brain_wires_linux.go pipeWiresOf), in the file's order.
 var trunkPipeWireKinds = []string{"udp", "h3dgram"}
 
-// ParseTrunkPipeWires reads the stand's wires, kind:members,... of
-// trunkPipeWireKinds ("off": none).
-func ParseTrunkPipeWires(raw string) (map[string]int, error) {
-	out := map[string]int{}
+// ParseTrunkPipeWires reads the stand's wires, kind:members[:fate],... of
+// trunkPipeWireKinds ("off": none): the members and the fates given.
+func ParseTrunkPipeWires(raw string) (TrunkPipeWires, error) {
+	out := TrunkPipeWires{Members: map[string]int{}, Fates: map[string]string{}}
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "off" {
 		return out, nil
 	}
 	for _, item := range strings.Split(raw, ",") {
-		kind, m, ok := strings.Cut(strings.TrimSpace(item), ":")
+		kind, rest, ok := strings.Cut(strings.TrimSpace(item), ":")
+		m, fate, fated := strings.Cut(rest, ":")
 		n, err := strconv.Atoi(m)
 		if !ok || err != nil || n < 1 || n > 32 {
-			return nil, fmt.Errorf("%w: %q, нужно вид:члены (1-32)", ErrRejected, item)
+			return out, fmt.Errorf("%w: %q, нужно вид:члены[:судьба] (1-32)", ErrRejected, item)
 		}
 		if kind != "udp" && kind != "h3dgram" {
-			return nil, fmt.Errorf("%w: провод %q, труба везёт %s", ErrRejected, kind, strings.Join(trunkPipeWireKinds, ", "))
+			return out, fmt.Errorf("%w: провод %q, труба везёт %s", ErrRejected, kind, strings.Join(trunkPipeWireKinds, ", "))
 		}
-		if _, dup := out[kind]; dup {
-			return nil, fmt.Errorf("%w: %q дважды", ErrRejected, kind)
+		if _, dup := out.Members[kind]; dup {
+			return out, fmt.Errorf("%w: %q дважды", ErrRejected, kind)
 		}
-		out[kind] = n
+		if fated && !trunkFateWord.MatchString(fate) {
+			return out, fmt.Errorf("%w: судьба %q, латиница и цифры до 16", ErrRejected, fate)
+		}
+		out.Members[kind] = n
+		if fated {
+			out.Fates[kind] = fate
+		}
 	}
 	return out, nil
 }
+
+// trunkFateWord is a fate a wire may be given (trunkentry wires.go fateWord).
+var trunkFateWord = regexp.MustCompile(`^[a-z0-9]{1,16}$`)
 
 // trunkPipeWiresOf is the stand's wires file, steered: the exit's udp wire
 // (exit: the exit's wires and their ports) and the QUIC wire at w.H3Port.
@@ -192,6 +208,7 @@ func trunkPipeWiresOf(exit map[string]int, w TrunkPipeWires) (string, error) {
 		Port    int    `json:"port"`
 		Members int    `json:"members"`
 		Usage   string `json:"usage,omitempty"`
+		Fate    string `json:"fate,omitempty"`
 	}
 	f := struct {
 		Steer bool   `json:"steer"`
@@ -215,7 +232,7 @@ func trunkPipeWiresOf(exit map[string]int, w TrunkPipeWires) (string, error) {
 			if !served {
 				return "", fmt.Errorf("%w: hk-exit выхода не держит провод udp, сначала entry-box trunk-pipe-exit", ErrRejected)
 			}
-			f.Wires = append(f.Wires, wire{Name: kind, Kind: kind, Port: port, Members: n})
+			f.Wires = append(f.Wires, wire{Name: kind, Kind: kind, Port: port, Members: n, Fate: w.Fates[kind]})
 		case "h3dgram":
 			// The wire's end is hk-exit's under the relay (trunkpipeexit.go):
 			// a port the stand names must be the one it serves.
@@ -224,7 +241,7 @@ func trunkPipeWiresOf(exit map[string]int, w TrunkPipeWires) (string, error) {
 			} else if w.H3Port != port {
 				return "", fmt.Errorf("%w: h3dgram выхода на порту %d, а не %d", ErrRejected, port, w.H3Port)
 			}
-			f.Wires = append(f.Wires, wire{Name: kind, Kind: kind, Port: w.H3Port, Members: n, Usage: w.H3Usage})
+			f.Wires = append(f.Wires, wire{Name: kind, Kind: kind, Port: w.H3Port, Members: n, Usage: w.H3Usage, Fate: w.Fates[kind]})
 		}
 	}
 	if w.Voice != "" {
