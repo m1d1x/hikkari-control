@@ -271,12 +271,16 @@ github.com/m1d1x/hikkari-protocol v0.0.0-20261111064314-55387882bce4 h1:UFTrE8Pv
 github.com/m1d1x/hikkari-protocol v0.0.0-20261111064314-55387882bce4/go.mod h1:n6g14ffrmydnUSkndaeZX7+B7y9NjK/EKIkmg7DuYh4=
 github.com/m1d1x/hikkari-protocol v0.0.0-20261114165921-0d9781295870 h1:hhM7m+IYNIIgKu1kDc7TDnFWZ6tTQzC/qGOXzV0oCdg=
 github.com/m1d1x/hikkari-protocol v0.0.0-20261114165921-0d9781295870/go.mod h1:n6g14ffrmydnUSkndaeZX7+B7y9NjK/EKIkmg7DuYh4=
+github.com/m1d1x/hikkari-protocol v0.0.0-20261115135348-c5b85cbc1b17 h1:FywNusa1NVju6Nh0VlWpjt9Jkk7wlQpZ0CoQPhwxDjI=
+github.com/m1d1x/hikkari-protocol v0.0.0-20261115135348-c5b85cbc1b17/go.mod h1:n6g14ffrmydnUSkndaeZX7+B7y9NjK/EKIkmg7DuYh4=
 github.com/m1d1x/hikkari-protocol/server/naive v0.0.0-20261108155522-c8322b5caadd h1:p1286Dmx6quLq0/LxmJgEI+sD69698V0OWytb9zGPgo=
 github.com/m1d1x/hikkari-protocol/server/naive v0.0.0-20261108155522-c8322b5caadd/go.mod h1:C6s9lA2snZKui/f6HXLXTQvgxJs9CDxuOrRbVt5DFUk=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261111064314-55387882bce4 h1:PfxrzILfRM54IwQU0nwUfsraFagODgEwREy7/rkyx7s=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261111064314-55387882bce4/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261114165921-0d9781295870 h1:5hXpK/pJChMDW+VEvMobA2fsihl34jdqimQFyC4eFaY=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261114165921-0d9781295870/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
+github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261115135348-c5b85cbc1b17 h1:VlIXNn5gFz9/RKFX1A0jfDhH4xhvz2g5Rs57mBIoyas=
+github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261115135348-c5b85cbc1b17/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
 github.com/m1d1x/hikkari-protocol/trunk/chromium v0.0.0-20261111215512-a78c0ebe43df h1:Lu2lv9sGF7afAz20hUXaPWYHy5euaXGWHQ3UvCLHpGY=
 github.com/m1d1x/hikkari-protocol/trunk/chromium v0.0.0-20261111215512-a78c0ebe43df/go.mod h1:fbmJR/Vv5CCOk0KFUmW03yJnU/tnHTcWPbAn8Eps6I8=
 github.com/m1d1x/hikkari-protocol/trunk/quicwire v0.0.0-20261111070922-a2b0763eb54c h1:wbEDDbfwyAkjm/muALIcU60tUQGaiKxP16K8cS05zNA=
