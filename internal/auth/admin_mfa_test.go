@@ -385,6 +385,36 @@ func TestAdminStepUpOpensAShortWindowOnThatSessionOnly(t *testing.T) {
 	}
 }
 
+// A device that holds none of the existing passkeys (Windows next to a Mac
+// whose key lives in iCloud) steps up with a recovery code, once per code.
+func TestAdminRecoveryCodeStepsUpOnce(t *testing.T) {
+	f := newMFAFixture(t)
+	codes := f.enroll(newSoftKey(t))
+
+	_, out := f.password(f.pass)
+	_, body, _ := f.post(f.h.AdminLoginRecovery, map[string]any{"ceremonyId": out["ceremonyId"], "code": codes[0]}, nil)
+	sessionID := body["sessionId"].(string)
+	actor := &AdminInfo{ID: f.adminID, Login: f.login, SessionID: sessionID, Role: AdminRoleOwner}
+
+	if st, _, _ := f.post(f.h.AdminStepUpRecovery, map[string]any{"code": codes[0]}, actor); st != http.StatusUnauthorized {
+		t.Fatalf("step-up with a spent code = %d, want 401", st)
+	}
+	st, done, _ := f.post(f.h.AdminStepUpRecovery, map[string]any{"code": codes[1]}, actor)
+	if st != http.StatusOK {
+		t.Fatalf("step-up with a code = %d %v", st, done)
+	}
+	gate, err := LoadAdminGateState(context.Background(), f.h.pool, sessionID, f.adminID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !(&AdminInfo{SteppedUpUntil: gate.SteppedUpUntil}).SteppedUp(time.Now()) {
+		t.Fatal("session not stepped up after a recovery code")
+	}
+	if st, _, _ := f.post(f.h.AdminStepUpRecovery, map[string]any{"code": codes[1]}, actor); st != http.StatusUnauthorized {
+		t.Fatalf("step-up code reused = %d, want 401", st)
+	}
+}
+
 func TestAdminLastPasskeyCannotBeRemoved(t *testing.T) {
 	f := newMFAFixture(t)
 	f.enroll(newSoftKey(t))

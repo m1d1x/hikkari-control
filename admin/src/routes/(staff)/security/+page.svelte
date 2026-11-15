@@ -9,6 +9,7 @@
 	import {
 		fetchSecurity,
 		addPasskey,
+		addPasskeyWithCode,
 		removePasskey,
 		regenerateRecoveryCodes,
 		changePassword,
@@ -25,6 +26,8 @@
 	let pwNew = $state('');
 	let pwRepeat = $state('');
 	let pwDone = $state<string | null>(null);
+	let codeOpen = $state(false);
+	let addCode = $state('');
 
 	// Checked before the request so a typo in the repeat never costs a touch.
 	const pwMismatch = $derived(pwRepeat !== '' && pwNew !== pwRepeat);
@@ -56,6 +59,12 @@
 	}
 
 	const onAdd = () => run(async () => (sec = await addPasskey()));
+	const onAddWithCode = () =>
+		run(async () => {
+			sec = await addPasskeyWithCode(addCode.trim());
+			codeOpen = false;
+			addCode = '';
+		});
 	const onRemove = (id: string) =>
 		run(async () => {
 			sec = await removePasskey(id);
@@ -117,6 +126,29 @@
 				связке icloud уже есть на всех ваших apple-устройствах.
 			</p>
 			<button class="btn" disabled={busy} onclick={onAdd}>добавить passkey на этом устройстве</button>
+			{#if codeOpen}
+				<form
+					class="pw"
+					onsubmit={(e) => {
+						e.preventDefault();
+						if (addCode.trim()) onAddWithCode();
+					}}
+				>
+					<label>
+						<span>код восстановления</span>
+						<input type="text" autocomplete="off" spellcheck="false" bind:value={addCode} disabled={busy} />
+					</label>
+					<p class="hint">код сгорит, потом это устройство попросит свой passkey (windows hello, ключ).</p>
+					<span class="inline">
+						<button class="btn" type="submit" disabled={busy || !addCode.trim()}>добавить по коду</button>
+						<button class="btn" type="button" disabled={busy} onclick={() => ((codeOpen = false), (addCode = ''))}>отмена</button>
+					</span>
+				</form>
+			{:else}
+				<button class="btn" disabled={busy} onclick={() => (codeOpen = true)}>
+					на этом устройстве нет моего passkey: добавить по коду восстановления
+				</button>
+			{/if}
 		</section>
 
 		<section class="card">

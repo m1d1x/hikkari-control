@@ -316,6 +316,7 @@ func run() error {
 	adminMux.HandleFunc("GET /api/v1/admin/security", adminSecurity(authHandlers.AdminSecurity))
 	adminMux.HandleFunc("POST /api/v1/admin/security/step-up/begin", adminSecurity(authHandlers.AdminStepUpBegin))
 	adminMux.HandleFunc("POST /api/v1/admin/security/step-up/finish", adminSecurity(authHandlers.AdminStepUpFinish))
+	adminMux.HandleFunc("POST /api/v1/admin/security/step-up/recovery", adminSecurity(authHandlers.AdminStepUpRecovery))
 	adminMux.HandleFunc("POST /api/v1/admin/security/passkeys/begin", adminSecurityStepUp(authHandlers.AdminPasskeyAddBegin))
 	adminMux.HandleFunc("POST /api/v1/admin/security/passkeys/finish", adminSecurityStepUp(authHandlers.AdminPasskeyAddFinish))
 	adminMux.HandleFunc("DELETE /api/v1/admin/security/passkeys/{id}", adminSecurityStepUp(authHandlers.AdminPasskeyDelete))

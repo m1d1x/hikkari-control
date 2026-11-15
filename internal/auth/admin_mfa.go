@@ -15,6 +15,7 @@ package auth
 //
 //	GET    /api/v1/admin/security                      factors and step-up state
 //	POST   /api/v1/admin/security/step-up/begin|finish one touch → 5 minutes of destructive rights
+//	POST   /api/v1/admin/security/step-up/recovery     {code} one recovery code instead of the touch
 //	POST   /api/v1/admin/security/passkeys/begin|finish add a passkey (needs step-up)
 //	DELETE /api/v1/admin/security/passkeys/{id}         remove one (needs step-up, never the last)
 //	POST   /api/v1/admin/security/recovery-codes        ten new codes (needs step-up)
@@ -391,6 +392,52 @@ func (h *Handlers) AdminStepUpFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"steppedUpUntil": until})
+}
+
+// AdminStepUpRecovery handles POST /api/v1/admin/security/step-up/recovery:
+// one recovery code instead of a touch. The way to add a passkey on a device
+// that holds none of the existing ones (a Windows PC next to a Mac whose key
+// lives in iCloud Keychain). It is no weaker than what a code already does:
+// the same code at the login screen opens a whole session.
+func (h *Handlers) AdminStepUpRecovery(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	actor := GetAdmin(r)
+	if actor == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	req, ok := decodeAdminCeremonyRequest(w, r)
+	if !ok {
+		return
+	}
+	admin, err := GetAdminByID(ctx, h.pool, actor.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server error")
+		return
+	}
+	spent, err := consumeAdminRecoveryCode(ctx, h.pool, admin.ID, req.Code)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server error")
+		return
+	}
+	if !spent {
+		h.failAdminSecondFactor(w, r, admin, http.StatusUnauthorized, "code_invalid")
+		return
+	}
+	until, err := markAdminSteppedUp(ctx, h.pool, actor.SessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server error")
+		return
+	}
+	left, _ := CountAdminRecoveryCodesLeft(ctx, h.pool, admin.ID)
+	audit.Log(ctx, h.pool, r, audit.Entry{
+		AdminID: admin.ID, Action: "admin.step_up.recovery_code",
+		TargetType: "admin", TargetID: admin.ID,
+		Payload: map[string]any{"codesLeft": left},
+	})
+	applog.Warn(ctx, "auth", "admin step-up with a recovery code",
+		applog.F("admin_id", admin.ID), applog.F("codes_left", left))
+	writeJSON(w, http.StatusOK, map[string]any{"steppedUpUntil": until, "recoveryCodesLeft": left})
 }
 
 // AdminPasskeyAddBegin handles POST /api/v1/admin/security/passkeys/begin.

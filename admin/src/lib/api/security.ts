@@ -33,7 +33,17 @@ export async function addPasskey(name = defaultPasskeyName()): Promise<SecurityS
 	});
 }
 
-export const removePasskey = (id: string) => del<SecurityState>(`/api/v1/admin/security/passkeys/${id}`);
+/**
+ * Adds a passkey on a device that holds none of the existing ones: one
+ * recovery code stands in for the touch, then this device's prompt registers
+ * the new key.
+ */
+export async function addPasskeyWithCode(code: string, name = defaultPasskeyName()): Promise<SecurityState> {
+	await post<{ steppedUpUntil: string }>('/api/v1/admin/security/step-up/recovery', { code });
+	return addPasskey(name);
+}
+
+export const removePasskey =(id: string) => del<SecurityState>(`/api/v1/admin/security/passkeys/${id}`);
 
 /** Replaces every recovery code with ten new ones and returns them once. */
 export const regenerateRecoveryCodes = () => post<{ recoveryCodes: string[] }>('/api/v1/admin/security/recovery-codes');
