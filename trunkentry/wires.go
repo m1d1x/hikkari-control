@@ -264,11 +264,24 @@ func measure(ctx context.Context, entry *trunk.Entry, ws []trunk.Wire, steer boo
 	}
 	all := append([]trunk.Wire{poolWire()}, ws...)
 	sel := trunk.NewSelector(trunk.SelectorConfig{}, all...)
+	names := map[trunk.WireID]string{}
+	legs := make([]trunk.CallConfig, 0, len(all))
 	for _, w := range all {
-		go trunk.RunCall(ctx, entry.Session, trunk.CallConfig{Copies: 1, OnWire: true, Wire: w.ID}, func(cw trunk.CallWindow) {
-			sel.Call(w.ID, cw)
-			log.Print("nekko-trunk-entry: " + wireCallLine(w.Name, cw))
-		})
+		names[w.ID] = w.Name
+		legs = append(legs, trunk.CallConfig{Copies: 1, OnWire: true, Wire: w.ID})
+	}
+	// The wires' calls tick with one frame number, so the voice set is
+	// heard from them without a datagram more.
+	go trunk.RunCalls(ctx, func() trunk.CallCarrier { return entry.Session() }, legs, []trunk.CallSet{voiceSet(entry.Route)}, trunk.CallReports{
+		Leg: func(i int, cw trunk.CallWindow) {
+			sel.Call(all[i].ID, cw)
+			log.Print("nekko-trunk-entry: " + wireCallLine(all[i].Name, cw))
+		},
+		Set: func(sw trunk.CallSetWindow) {
+			log.Print("nekko-trunk-entry: " + setLine(sw, func(id trunk.WireID) string { return names[id] }))
+		},
+	})
+	for _, w := range all {
 		if at, ok := downloadAt[w.Name]; ok && w.Streams {
 			go downloads(ctx, entry, sel, w, at)
 		}

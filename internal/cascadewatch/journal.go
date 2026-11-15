@@ -187,7 +187,7 @@ func callFields(s string) map[string]any {
 			if len(worst) > 0 {
 				out["worst"] = worst
 			}
-		case strings.HasPrefix(k, "rtt_"):
+		case strings.HasPrefix(k, "rtt_"), strings.HasPrefix(k, "lag_") && !strings.HasSuffix(k, "_n"):
 			if f, err := strconv.ParseFloat(v, 64); err == nil {
 				out[k+"_ms"] = f
 			}

@@ -274,4 +274,21 @@ func RegisterAdminRoutes(mux *http.ServeMux, w *Watch, auth func(http.HandlerFun
 		}
 		writeJSON(rw, http.StatusOK, c)
 	}))
+	// GET /api/v1/admin/trunk/hearing?window=24h&entry=&view=trunk|voice:
+	// what a listener heard of the calls and sets (hearing.go), a minute a
+	// bucket.
+	mux.HandleFunc("GET /api/v1/admin/trunk/hearing", auth(func(rw http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		c, err := w.store.BuildHearingChart(r.Context(), q.Get("entry"), q.Get("window"), q.Get("view"), w.now())
+		if err != nil {
+			if errors.Is(err, errChartWindow) || errors.Is(err, errHearingView) {
+				writeJSON(rw, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			applog.Error(r.Context(), "cascadewatch", "hearing chart failed", applog.F("err", err.Error()))
+			writeJSON(rw, http.StatusInternalServerError, map[string]string{"error": "internal"})
+			return
+		}
+		writeJSON(rw, http.StatusOK, c)
+	}))
 }

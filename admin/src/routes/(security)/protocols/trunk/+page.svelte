@@ -3,6 +3,7 @@
 	import PageShell from '$components/layout/PageShell.svelte';
 	import TrendChart, { type TrendMark, type TrendSeries } from '$components/entry/TrendChart.svelte';
 	import { fetchTrunkWires, type TrunkWindow, type TrunkWireChart } from '$lib/api/trunkWires';
+	import { fetchTrunkHearing } from '$lib/api/trunkHearing';
 
 	// The trunk's wires through the border (stage 4): the entry's call over
 	// each wire every 20 ms and its 1 MiB every 10 minutes, as history. The
@@ -31,6 +32,7 @@
 		awg: '#c98500',
 		udp: '#199e70',
 		h3dgram: '#2fa8b5',
+		voice: '#e0e0e0',
 	};
 
 	function wireOf(key: string): string {
@@ -43,6 +45,8 @@
 		if (key === 'copies2') return 'пул, звонок 2 копиями';
 		if (key.startsWith('wire-')) return `стенд ${key.slice(5)}`;
 		if (key === 'trunk-pool') return 'вход, пул';
+		if (key === 'trunk-voice') return 'вход, набор голоса';
+		if (key === 'pipe-voice') return 'труба, набор голоса';
 		if (key.startsWith('trunk-')) return `вход ${key.slice(6)}`;
 		if (key === 'pipe-copies1') return 'труба, звонок маршрута 1 копией';
 		if (key === 'pipe-copies2') return 'труба, звонок маршрута 2 копиями';
@@ -126,14 +130,58 @@
 		},
 	];
 
+	// What a listener heard (hearing.go on the hub): a frame not there at its
+	// moment of play with a 60 ms jitter buffer is a hole. Each set of wires
+	// (набор голоса: the datagrams' wire and the pool) beside its wires.
+	const pct = (v: number) => `${v.toLocaleString('ru', { maximumFractionDigits: 2 })}%`;
+	const HEARING_CHARTS: ChartSpec[] = [
+		{
+			group: 'holes60_up',
+			title: 'Слух вверх: дыры',
+			hint: 'доля кадров звонка, которых слушатель у выхода не услышал бы при буфере 60 мс: не пришли или опоздали. Цель набора голоса меньше 1%.',
+			format: pct,
+		},
+		{
+			group: 'holes60_down',
+			title: 'Слух вниз: дыры',
+			hint: 'то же для слушателя у входа: ответы выхода, считая только кадры, которые выход получил.',
+			format: pct,
+		},
+		{
+			group: 'runs2_60_up',
+			title: 'Слух вверх: серии',
+			hint: 'серии из двух дыр и больше подряд: такое приложение не замажет, это проглоченный слог. Цель набора 0.',
+			format: count,
+		},
+		{
+			group: 'runs2_60_down',
+			title: 'Слух вниз: серии',
+			hint: 'серии из двух дыр и больше у слушателя у входа.',
+			format: count,
+		},
+		{
+			group: 'bad_s60_up',
+			title: 'Слух вверх: плохие секунды',
+			hint: 'секунды, где дыр 6% и больше (от 3 кадров из 50): это слышно как робоголос.',
+			format: count,
+		},
+		{
+			group: 'bad_s60_down',
+			title: 'Слух вниз: плохие секунды',
+			hint: 'плохие секунды у слушателя у входа.',
+			format: count,
+		},
+	];
+
 	let data = $state<TrunkWireChart | null>(null);
+	let hearing = $state<TrunkWireChart | null>(null);
 	let loadError = $state<string | null>(null);
 	let window = $state<TrunkWindow>('24h');
 	let timer: ReturnType<typeof setInterval> | undefined;
 
 	async function load() {
 		try {
-			data = await fetchTrunkWires(window);
+			[data, hearing] = await Promise.all([fetchTrunkWires(window), fetchTrunkHearing(window, 'trunk')]);
 			loadError = null;
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : 'не удалось загрузить';
@@ -160,22 +208,22 @@
 		})),
 	);
 
-	const charts = $derived(
-		CHARTS.map((c) => ({
-			...c,
-			lines: (data?.lines ?? [])
-				.filter((l) => l.group === c.group)
-				.sort((a, b) => rank(a.key).localeCompare(rank(b.key)))
-				.map<TrendSeries>((l) => ({
-					key: l.key,
-					label: labelOf(l.key),
-					color: colorOf(l.key),
-					values: l.values,
-					format: c.format,
-					primary: l.key.startsWith('trunk-'),
-				})),
-		})),
-	);
+	function linesOf(chart: TrunkWireChart | null, c: ChartSpec, primary: (key: string) => boolean): TrendSeries[] {
+		return (chart?.lines ?? [])
+			.filter((l) => l.group === c.group)
+			.sort((a, b) => rank(a.key).localeCompare(rank(b.key)))
+			.map<TrendSeries>((l) => ({
+				key: l.key,
+				label: labelOf(l.key),
+				color: colorOf(l.key),
+				values: l.values,
+				format: c.format,
+				primary: primary(l.key),
+			}));
+	}
+
+	const charts = $derived(CHARTS.map((c) => ({ ...c, lines: linesOf(data, c, (k) => k.startsWith('trunk-')) })));
+	const hearingCharts = $derived(HEARING_CHARTS.map((c) => ({ ...c, lines: linesOf(hearing, c, (k) => k.endsWith('-voice')) })));
 </script>
 
 <PageShell>
@@ -221,6 +269,33 @@
 					</section>
 				{/each}
 			</div>
+			{#if hearing}
+				<h2 class="section">что слышит слушатель</h2>
+				<p class="hint">
+					Те же звонки глазами приложения с буфером 60 мс, по направлениям отдельно. Набор голоса: кадр услышан, если
+					вовремя пришёл хоть по одному проводу набора (провод датаграмм и пул). Шаг минута до суток, неделя по 10 минут.
+				</p>
+				<div class="grid">
+					{#each hearingCharts as c (c.group)}
+						<section class="card">
+							<h2>{c.title}</h2>
+							<p class="hint small">{c.hint}</p>
+							<div class="legend">
+								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
+							</div>
+							<TrendChart
+								buckets={hearing.buckets}
+								bucketSeconds={hearing.bucketSeconds}
+								series={c.lines}
+								formatAxis={c.format}
+								{marks}
+								height={190}
+								empty="слух не мерили за окно"
+							/>
+						</section>
+					{/each}
+				</div>
+			{/if}
 		{/if}
 	</div>
 </PageShell>
@@ -249,6 +324,11 @@
 		margin: 0 0 4px;
 		font-size: 14px;
 		font-weight: 600;
+	}
+
+	h2.section {
+		margin: 24px 0 4px;
+		font-size: 16px;
 	}
 
 	.chips {

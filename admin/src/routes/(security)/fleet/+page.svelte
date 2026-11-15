@@ -6,6 +6,8 @@
 	import TrendChart from '$components/entry/TrendChart.svelte';
 	import { describeEntryError, formatCents, PROTO_LABEL, providerLabel } from '$lib/api/entry';
 	import { fetchFleetProfiles, type FleetProfile, type FleetProfiles, type FleetWindow } from '$lib/api/fleet';
+	import { fetchTrunkHearing } from '$lib/api/trunkHearing';
+	import type { TrunkWireChart } from '$lib/api/trunkWires';
 
 	// Everything subscribers are handed right now, one card per profile: what
 	// it is (hoster, place, price, traffic, disguise) and how it lived over the
@@ -32,6 +34,41 @@
 	let proto = $state<string>('all');
 	let timer: ReturnType<typeof setInterval> | undefined;
 
+	// «Качество голоса» of each cascade (hikkari-client
+	// plans/2026-11-15-live-udp-two-fates.md, раздел 4): the share of the
+	// voice set's frames a listener would not hear with a jitter buffer of
+	// 40, 60 and 100 ms, up and down, a minute a bucket up to a day. The
+	// trunk's own call, not the people's traffic: what a call would hear on
+	// this path.
+	const HEAR_40 = '#d95926';
+	const HEAR_60 = '#e5a339';
+	const HEAR_100 = '#199e70';
+	let voice = $state<Record<string, TrunkWireChart>>({});
+
+	async function loadVoice(entries: string[]) {
+		const got: Record<string, TrunkWireChart> = {};
+		await Promise.all(
+			entries.map(async (e) => {
+				try {
+					got[e] = await fetchTrunkHearing(window, 'voice', e);
+				} catch {
+					// the card draws its other legs without it
+				}
+			}),
+		);
+		voice = got;
+	}
+
+	function voiceSeries(entry: string, dir: 'up' | 'down') {
+		const lines = voice[entry]?.lines ?? [];
+		const of = (b: string) => lines.find((l) => l.group === `holes${b}_${dir}`)?.values ?? [];
+		return [
+			{ key: `holes40-${dir}`, label: 'дыры при буфере 40 мс', color: HEAR_40, values: of('40'), format: pct, primary: false },
+			{ key: `holes60-${dir}`, label: 'дыры при буфере 60 мс', color: HEAR_60, values: of('60'), format: pct, primary: true },
+			{ key: `holes100-${dir}`, label: 'дыры при буфере 100 мс', color: HEAR_100, values: of('100'), format: pct, primary: false },
+		];
+	}
+
 	async function load() {
 		try {
 			data = await fetchFleetProfiles(window);
@@ -39,6 +76,7 @@
 		} catch (e) {
 			loadError = describeEntryError(e);
 		}
+		await loadVoice((data?.cascades ?? []).map((c) => c.entry));
 	}
 
 	function pick(w: FleetWindow) {
@@ -242,6 +280,25 @@
 								height={120}
 								empty="пинга нет за окно"
 							/>
+							{#if voice[c.entry]}
+								<h3 class="sub">качество голоса РФ → ЕУ</h3>
+								<div class="legend">
+									<span><i style="background: {HEAR_40}"></i>буфер 40 мс</span>
+									<span><i style="background: {HEAR_60}"></i>60 мс</span>
+									<span><i style="background: {HEAR_100}"></i>100 мс</span>
+								</div>
+								{#each [['up', 'вверх, слушатель у выхода'], ['down', 'вниз, слушатель у входа']] as [dir, title] (dir)}
+									<p class="hint small">{title}</p>
+									<TrendChart
+										buckets={voice[c.entry].buckets}
+										bucketSeconds={voice[c.entry].bucketSeconds}
+										series={voiceSeries(c.entry, dir as 'up' | 'down')}
+										formatAxis={pct}
+										height={110}
+										empty="голос не слушали за окно"
+									/>
+								{/each}
+							{/if}
 						</section>
 					{/each}
 				</div>
@@ -446,6 +503,17 @@
 	.hint {
 		margin: 0 0 8px;
 		color: oklch(0.62 0 0);
+	}
+
+	.hint.small {
+		margin: 6px 0 2px;
+		font-size: 12px;
+	}
+
+	h3.sub {
+		margin: 12px 0 4px;
+		font-size: 13px;
+		font-weight: 500;
 	}
 
 	h2.section {

@@ -269,6 +269,11 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 			runs = append(runs, run)
 			continue
 		}
+		if run, ok := classifySet(l, "trunk"); ok {
+			run.Entry, run.Exit, run.Vantage = p.Entry, p.Exit, "entry"
+			runs = append(runs, run)
+			continue
+		}
 		if run, ok := classifyClients(l); ok {
 			run.Entry, run.Exit, run.Vantage = p.Entry, p.Exit, "entry"
 			runs = append(runs, run)

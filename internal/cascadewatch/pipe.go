@@ -30,6 +30,9 @@ func classifyPipe(l journalLine) ([]Run, bool) {
 		run.Target = "pipe-" + m[2]
 		return []Run{run}, true
 	}
+	if run, ok := classifySet(l, "pipe"); ok {
+		return []Run{run}, true
+	}
 	if m := reCall.FindStringSubmatch(l.Msg); m != nil {
 		data := callFields(m[1])
 		return []Run{{TS: time.Unix(int64(num(data, "from")), 0).UTC(), Layer: LayerCall, Target: fmt.Sprintf("pipe-copies%d", int(num(data, "copies"))),

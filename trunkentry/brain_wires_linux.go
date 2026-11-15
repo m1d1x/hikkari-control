@@ -144,6 +144,10 @@ func (b *brain) measureWires(ctx context.Context) context.CancelFunc {
 	line := func(id trunk.WireID, cw trunk.CallWindow) {
 		log.Print("nekko-trunk-entry: " + wireCallLine(names[id], cw))
 	}
+	sets := []trunk.CallSet{voiceSet(b.pipe.Route)}
+	setLog := func(sw trunk.CallSetWindow) {
+		log.Print("nekko-trunk-entry: " + setLine(sw, func(id trunk.WireID) string { return names[id] }))
+	}
 	if !b.steer || b.voiceOn != 0 {
 		route := trunk.AnyRoute
 		if b.voiceOn != 0 {
@@ -151,13 +155,18 @@ func (b *brain) measureWires(ctx context.Context) context.CancelFunc {
 			log.Printf("nekko-trunk-entry: voice held on %s, bulk on the pool, no selector", names[b.voiceOn])
 		}
 		b.pipe.SetRoute(route)
+		legs := make([]trunk.CallConfig, 0, len(ids))
 		for _, id := range ids {
-			go trunk.RunCallOn(ctx, carrier, trunk.CallConfig{Copies: 1, OnWire: true, Wire: id}, func(cw trunk.CallWindow) { line(id, cw) })
+			legs = append(legs, trunk.CallConfig{Copies: 1, OnWire: true, Wire: id})
 		}
+		go trunk.RunCalls(ctx, carrier, legs, sets, trunk.CallReports{
+			Leg: func(i int, cw trunk.CallWindow) { line(ids[i], cw) },
+			Set: setLog,
+		})
 		return cancel
 	}
 	sel := trunk.NewSelector(trunk.SelectorConfig{}, all...)
-	go b.pipe.Run(ctx, sel, ids, line, func(format string, a ...any) { log.Printf("nekko-trunk-entry: "+format, a...) })
+	go b.pipe.Run(ctx, sel, ids, line, sets, setLog, func(format string, a ...any) { log.Printf("nekko-trunk-entry: "+format, a...) })
 	return cancel
 }
 

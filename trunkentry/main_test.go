@@ -290,3 +290,33 @@ func TestCallLine(t *testing.T) {
 		t.Fatalf("nothing came back: %s", silent)
 	}
 }
+
+// What a listener heard goes after the call's keys, a direction only when
+// the exit stamped it; a set's line names its wires and the pool's lag.
+func TestCallLineHearing(t *testing.T) {
+	from := time.Unix(1762819200, 0)
+	up := trunk.CallHearing{Frames: 3000, Seconds: 60, Holes: [3]int{30, 12, 3}, Runs2: [3]int{4, 1, 0}, BadS: [3]int{2, 1, 0}}
+	w := trunk.CallWindow{Copies: 1, From: from, Sent: 3000, Got: 3000, Up: up}
+	want := " worst=- up_frames=3000 up_holes40=30 up_runs2_40=4 up_bad_s40=2 up_holes60=12 up_runs2_60=1 up_bad_s60=1 up_holes100=3 up_runs2_100=0 up_bad_s100=0"
+	if got := callLine(w); !strings.HasSuffix(got, want) {
+		t.Fatalf("\n got %s\nwant …%s", got, want)
+	}
+	names := map[trunk.WireID]string{trunk.PoolWire: "pool", 1: "udp"}
+	sw := trunk.CallSetWindow{Name: "voice", From: from, Wires: []trunk.WireID{1, trunk.PoolWire}, Up: up, Down: up,
+		LagDown: trunk.CallLag{N: 2900, P50: 4200 * time.Microsecond, P95: 31 * time.Millisecond, Max: 410 * time.Millisecond}}
+	line := setLine(sw, func(id trunk.WireID) string { return names[id] })
+	if !strings.HasPrefix(line, "call set=voice wires=udp,pool from=1762819200 up_frames=3000 ") ||
+		!strings.Contains(line, " down_frames=3000 down_holes40=30 ") ||
+		!strings.HasSuffix(line, " lag_down_n=2900 lag_down_p50=4.2 lag_down_p95=31.0 lag_down_max=410.0") ||
+		strings.Contains(line, "lag_up") {
+		t.Fatalf("set line: %s", line)
+	}
+	set := voiceSet(func() trunk.Route { return trunk.Route{Voice: 1, Bulk: trunk.PoolWire} })
+	if got := set.Wires(); len(got) != 2 || got[0] != 1 || got[1] != trunk.PoolWire {
+		t.Fatalf("voice on udp: %v", got)
+	}
+	set = voiceSet(func() trunk.Route { return trunk.AnyRoute })
+	if got := set.Wires(); len(got) != 1 || got[0] != trunk.PoolWire {
+		t.Fatalf("voice on any wire: %v", got)
+	}
+}
