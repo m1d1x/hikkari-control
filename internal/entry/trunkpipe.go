@@ -78,8 +78,67 @@ type TrunkPipeOptions struct {
 // pipe's own. CONTAINS THE TRUNK KEY.
 func trunkPipeEnvOf(addr, sni, key string, o TrunkPipeOptions) string {
 	env := trunkEntryEnv(addr, sni, key, TrunkEntryOptions{Forward: o.Forward, Members: o.Members, HikkariUDPCopies: o.HikkariUDPCopies})
-	return env + "EDGE_TRUNK_PIPE=" + trunkPipeDir + "/hk-pipe\nEDGE_TRUNK_WIRES_FILE=" + trunkPipeWires +
-		"\nEDGE_TRUNK_SOURCE_PORTS=" + TrunkPipeSourcePorts + "\n"
+	return env + pipeBrainEnv(trunkPipeUnitSpec, TrunkPipeSourcePorts)
+}
+
+// pipeBrainEnv is what makes u's entry the brain over hk-pipe: the pipe in
+// u's directory, the wires file beside u's env (standTrunkUnit's extra
+// "wires.json"), the members' source ports when not the entry's default.
+func pipeBrainEnv(u trunkUnit, sourcePorts string) string {
+	env := "EDGE_TRUNK_PIPE=" + u.dir + "/hk-pipe\nEDGE_TRUNK_WIRES_FILE=" + u.env + ".wires.json\n"
+	if sourcePorts != "" {
+		env += "EDGE_TRUNK_SOURCE_PORTS=" + sourcePorts + "\n"
+	}
+	return env
+}
+
+// pipeBrain is what an entry over hk-pipe to an exit needs from the hub:
+// hk-exit's address, SNI, pipe key and open ports, the wires file, the
+// libcronet build.
+type pipeBrain struct {
+	addr, sni, key string
+	open           map[int]bool
+	wires          string
+	cronet         map[string]EdgeBuild
+}
+
+// pipeBrainFor checks the pipe's parts for an entry to exit: the udp wire
+// when hk-exit serves it, Chromium's QUIC wire at h3Port when set.
+func (p *Provisioner) pipeBrainFor(ctx context.Context, exit string, h3Port int, h3Usage, voice string) (pipeBrain, error) {
+	var b pipeBrain
+	if len(p.pipeBuilds) == 0 {
+		return b, fmt.Errorf("%w: в образе хаба нет hk-pipe", ErrRejected)
+	}
+	if h3Usage != "" && h3Usage != "destination" && h3Usage != "proxy" {
+		return b, fmt.Errorf("%w: форма члена %q, destination или proxy", ErrRejected, h3Usage)
+	}
+	if h3Port < 0 || h3Port > 65535 {
+		return b, fmt.Errorf("%w: порт h3dgram %d", ErrRejected, h3Port)
+	}
+	b.cronet = p.cronetBuilds
+	if h3Port > 0 {
+		if len(p.cronetUDPBuilds) == 0 {
+			return b, fmt.Errorf("%w: в образе хаба нет libcronet-udp.so для провода h3dgram", ErrRejected)
+		}
+		b.cronet = p.cronetUDPBuilds
+	}
+	var err error
+	if b.addr, b.sni, b.key, b.open, err = p.svc.trunkPipeExitOf(ctx, exit); err != nil {
+		return b, err
+	}
+	wires, err := p.svc.TrunkPipeWiresOf(ctx, exit)
+	if err != nil {
+		return b, err
+	}
+	members := map[string]int{}
+	if _, ok := wires["udp"]; ok {
+		members["udp"] = trunkPipeWireMembers
+	}
+	if h3Port > 0 {
+		members["h3dgram"] = trunkPipeH3Members
+	}
+	b.wires, err = trunkPipeWiresOf(wires, TrunkPipeWires{Members: members, H3Port: h3Port, H3Usage: h3Usage, Voice: voice})
+	return b, err
 }
 
 // TrunkPipeWires are the stand's wires file as the hub writes it: the
@@ -226,30 +285,15 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	if len(o.Forward) == 0 {
 		return fmt.Errorf("%w: стенду нечего пересылать", ErrRejected)
 	}
-	if len(p.pipeBuilds) == 0 {
-		return fmt.Errorf("%w: в образе хаба нет hk-pipe", ErrRejected)
-	}
-	if o.H3Usage != "" && o.H3Usage != "destination" && o.H3Usage != "proxy" {
-		return fmt.Errorf("%w: форма члена %q, destination или proxy", ErrRejected, o.H3Usage)
-	}
-	if o.H3Port < 0 || o.H3Port > 65535 {
-		return fmt.Errorf("%w: порт h3dgram %d", ErrRejected, o.H3Port)
-	}
-	cronet := p.cronetBuilds
-	if o.H3Port > 0 {
-		if len(p.cronetUDPBuilds) == 0 {
-			return fmt.Errorf("%w: в образе хаба нет libcronet-udp.so для провода h3dgram", ErrRejected)
-		}
-		cronet = p.cronetUDPBuilds
-	}
 	pair, err := p.svc.trunkPairOf(ctx, box)
 	if err != nil {
 		return err
 	}
-	addr, sni, key, open, err := p.svc.trunkPipeExitOf(ctx, pair.Exit)
+	pipe, err := p.pipeBrainFor(ctx, pair.Exit, o.H3Port, o.H3Usage, o.Voice)
 	if err != nil {
 		return err
 	}
+	addr, sni, key, open := pipe.addr, pipe.sni, pipe.key, pipe.open
 	listen := make([]string, 0, len(o.Forward))
 	for l, to := range o.Forward {
 		if l < 1 || l > 65535 {
@@ -264,21 +308,7 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 		listen = append(listen, strconv.Itoa(l))
 	}
 	sort.Strings(listen)
-	wires, err := p.svc.TrunkPipeWiresOf(ctx, pair.Exit)
-	if err != nil {
-		return err
-	}
-	members := map[string]int{}
-	if _, ok := wires["udp"]; ok {
-		members["udp"] = trunkPipeWireMembers
-	}
-	if o.H3Port > 0 {
-		members["h3dgram"] = trunkPipeH3Members
-	}
-	wiresFile, err := trunkPipeWiresOf(wires, TrunkPipeWires{Members: members, H3Port: o.H3Port, H3Usage: o.H3Usage, Voice: o.Voice})
-	if err != nil {
-		return err
-	}
+	wiresFile, cronet := pipe.wires, pipe.cronet
 	r, _, err := p.provokeRemote(ctx, box)
 	if err != nil {
 		return err

@@ -186,11 +186,58 @@ func TestTheStandOverThePipe(t *testing.T) {
 	}
 }
 
+// TestThePeoplesEntryOverThePipe: the entry itself as the brain over
+// hk-pipe keeps its unit, directory and env file (the same rollout, and the
+// way back by the same command), and is told the pipe in its directory and
+// a wires file of its own beside its env: the Go entry's wires file, which a
+// running Go entry reads every 10 s, is never the pipe's, so the Go wires
+// stay for the way back. Its members keep the entry's book of source ports
+// (no EDGE_TRUNK_SOURCE_PORTS): the stand's stays its own.
+func TestThePeoplesEntryOverThePipe(t *testing.T) {
+	env := trunkEntryEnv("203.0.113.8:443", "hk.example", "pipe-key", TrunkEntryOptions{Members: 32, Forward: map[int]int{8443: 443, 8053: 2053}}) +
+		pipeBrainEnv(goEntryUnit, "")
+	for _, want := range []string{"EDGE_TRUNK_PIPE=" + trunkEntryDir + "/hk-pipe\n", "EDGE_TRUNK_WIRES_FILE=" + trunkEntryEnvFile + ".wires.json\n",
+		"EDGE_TRUNK_FORWARD=8053=2053,8443=443\n", "EDGE_TRUNK_UDP_ONE_COPY=8443\n"} {
+		if !strings.Contains(env, want) {
+			t.Fatalf("env lacks %q:\n%s", want, env)
+		}
+	}
+	if strings.Contains(env, "EDGE_TRUNK_SOURCE_PORTS") || strings.Contains(env, TrunkEntryWiresFile+"\n") || strings.Contains(env, trunkPipeDir) {
+		t.Fatalf("the entry over the pipe takes the stand's ports or files, or the Go entry's wires:\n%s", env)
+	}
+	if got := pipeBrainEnv(trunkPipeUnitSpec, TrunkPipeSourcePorts); got != "EDGE_TRUNK_PIPE="+trunkPipeDir+"/hk-pipe\nEDGE_TRUNK_WIRES_FILE="+trunkPipeWires+
+		"\nEDGE_TRUNK_SOURCE_PORTS="+TrunkPipeSourcePorts+"\n" {
+		t.Fatalf("the stand's pipe env changed: %q", got)
+	}
+	r := &provokeRecorder{stdin: map[string]string{}}
+	files := []trunkFile{{"nekko-trunk-entry", testBuild(t)}, {"libcronet.so", testBuild(t)}, {"hk-pipe", testBuild(t)}}
+	if err := standTrunkUnit(t.Context(), r, goEntryUnit, files, env, map[string]string{"wires.json": "{}\n"}, []string{"8053", "8443"}, t.Logf); err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(r.cmds, "\n")
+	for _, want := range []string{"cat > " + trunkEntryDir + ".new/hk-pipe.new", "umask 022; cat > " + trunkEntryEnvFile + ".wires.json.new", "bash -s -- 8053 8443"} {
+		if !strings.Contains(all, want) {
+			t.Fatalf("no %q in:\n%s", want, all)
+		}
+	}
+	// A Go entry refuses to hand over to a brain over the pipe: the swap
+	// restarts on a failed reload, and checks the staged pipe.
+	swap := goEntryUnit.swapScript(files)
+	for _, want := range []string{"передача не прошла, перезапуск", `if [ "$how" = restart ]; then systemctl restart ` + trunkEntryUnit, `EDGE_TRUNK_PIPE="$dir.new/hk-pipe"`} {
+		if !strings.Contains(swap, want) {
+			t.Fatalf("the swap has no %q", want)
+		}
+	}
+}
+
 func TestStandTrunkEntryRefusesBeforeTheBox(t *testing.T) {
 	p := &Provisioner{}
 	for _, o := range []TrunkEntryOptions{
 		{Exit: "unl1", Members: 500, Forward: map[int]int{8443: 443}},
 		{Exit: "unl1"},
+		{Exit: "unl1", Forward: map[int]int{8443: 443}, H3Port: 20460},
+		{Exit: "unl1", Forward: map[int]int{8443: 443}, Voice: "udp"},
+		{Exit: "unl1", Forward: map[int]int{8443: 443}, Pipe: true},
 	} {
 		if err := p.StandTrunkEntry(t.Context(), "box", o); err == nil {
 			t.Fatalf("%+v accepted", o)

@@ -29,8 +29,17 @@ import (
 //
 //	cmd/server entry-box trunk-exit <box> <port,...>      # trunk on the box's Hikkari relays
 //	cmd/server entry-box trunk-exit-off <box>             # trunk off
-//	cmd/server entry-box trunk-entry <box> <exit-box> <listen=port,...> [members]
+//	cmd/server entry-box trunk-entry <box> <exit-box> <listen=port,...> [members] [pipe [h3dgram=<port>[:proxy]] [voice=<wire>]]
 //	cmd/server entry-box trunk-entry-off <box>
+//
+// pipe stands the entry as the brain over hk-pipe (roadmap 4.6; trunkentry
+// brain_linux.go) to hk-exit under the exit's relay by its pipe key
+// (trunkpipeexit.go), with the stand's wires (trunkpipe.go): the same unit,
+// ports and book of source ports, so the people's entry moves to the pipe
+// and back by this one command. A move between the Go entry and the pipe is
+// a restart (the two hand nothing to each other, trunkentry handoff.go), a
+// cut of 1-3 s for everyone through the entry; within the pipe it is a
+// reload, nothing cut.
 
 const (
 	trunkEntryUnit = "nekko-trunk-entry"
@@ -104,6 +113,13 @@ type TrunkEntryOptions struct {
 	// clients copy their calls themselves, 2 as on any other port (to
 	// compare, or for clients without v1.02).
 	HikkariUDPCopies int
+	// Pipe stands the entry over hk-pipe to the exit's hk-exit, with
+	// Chromium's QUIC wire at H3Port (H3Usage its members' session usage)
+	// and voice held on Voice when set, as the stand's (TrunkPipeOptions).
+	Pipe    bool
+	H3Port  int
+	H3Usage string
+	Voice   string
 }
 
 // trunkExitOf finds the Hikkari relay with a trunk on box, for an entry.
@@ -201,7 +217,21 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 	if len(o.Forward) == 0 {
 		return fmt.Errorf("%w: входу нечего пересылать", ErrRejected)
 	}
-	addr, sni, key, open, err := p.svc.trunkExitOf(ctx, o.Exit)
+	if !o.Pipe && (o.H3Port != 0 || o.H3Usage != "" || o.Voice != "") {
+		return fmt.Errorf("%w: h3dgram и voice только у входа над трубой (pipe)", ErrRejected)
+	}
+	var (
+		addr, sni, key string
+		open           map[int]bool
+		err            error
+		pipe           pipeBrain
+	)
+	if o.Pipe {
+		pipe, err = p.pipeBrainFor(ctx, o.Exit, o.H3Port, o.H3Usage, o.Voice)
+		addr, sni, key, open = pipe.addr, pipe.sni, pipe.key, pipe.open
+	} else {
+		addr, sni, key, open, err = p.svc.trunkExitOf(ctx, o.Exit)
+	}
 	if err != nil {
 		return err
 	}
@@ -227,7 +257,15 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 	applog.Info(ctx, "entry", "operator trunk entry on box", applog.F("box", box), applog.F("exit", o.Exit),
 		applog.F("members", o.Members), applog.F("listen", strings.Join(listen, ",")))
 	files := []trunkFile{{"nekko-trunk-entry", p.trunkBuilds}, {"libcronet.so", p.cronetBuilds}}
-	if err := standTrunkUnit(ctx, r, goEntryUnit, files, trunkEntryEnv(addr, sni, key, o), nil, listen, logf); err != nil {
+	env := trunkEntryEnv(addr, sni, key, o)
+	var extra map[string]string
+	if o.Pipe {
+		files = []trunkFile{{"nekko-trunk-entry", p.trunkBuilds}, {"libcronet.so", pipe.cronet}, {"hk-pipe", p.pipeBuilds}}
+		env += pipeBrainEnv(goEntryUnit, "")
+		extra = map[string]string{"wires.json": pipe.wires}
+		applog.Info(ctx, "entry", "operator trunk entry over hk-pipe", applog.F("box", box), applog.F("wires", strings.TrimSpace(pipe.wires)))
+	}
+	if err := standTrunkUnit(ctx, r, goEntryUnit, files, env, extra, listen, logf); err != nil {
 		return err
 	}
 	// The cascade watch takes its pairs from here (cascade_watch.go).

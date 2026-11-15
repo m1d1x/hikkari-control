@@ -731,9 +731,11 @@ func runEntryBox(args []string) {
 		fmt.Printf("%s: stand wires %s, voice=%s (the brain follows them within 10 s, no new process)\n", args[1], args[2], w.Voice)
 		os.Exit(0)
 	}
-	if (len(args) >= 4 && len(args) <= 6 && args[0] == "trunk-entry") || (len(args) == 2 && args[0] == "trunk-entry-off") {
+	if (len(args) >= 4 && len(args) <= 9 && args[0] == "trunk-entry") || (len(args) == 2 && args[0] == "trunk-entry-off") {
 		// entry-box trunk-entry <box> <exit-box> <listen=port,...> [members] [hikkari-udp-copies=1|2]
-		// — the cascade's trunk entry on a box in Russia (internal/entry/trunk.go).
+		//     [pipe [h3dgram=<port>[:proxy]] [voice=<wire>]]
+		// — the cascade's trunk entry on a box in Russia (internal/entry/trunk.go);
+		// pipe: the entry over hk-pipe to the exit's hk-exit.
 		if err := cryptobox.Configure(os.Getenv); err != nil {
 			fail(fmt.Errorf("content key: %w", err))
 		}
@@ -766,6 +768,22 @@ func runEntryBox(args []string) {
 				if o.HikkariUDPCopies, err = strconv.Atoi(v); err != nil || o.HikkariUDPCopies < 1 || o.HikkariUDPCopies > 2 {
 					fail(fmt.Errorf("hikkari-udp-copies %q: 1 or 2", v))
 				}
+				continue
+			}
+			if a == "pipe" {
+				o.Pipe = true
+				continue
+			}
+			if v, ok := strings.CutPrefix(a, "voice="); ok {
+				o.Voice = v
+				continue
+			}
+			if v, ok := strings.CutPrefix(a, "h3dgram="); ok {
+				port, usage, _ := strings.Cut(v, ":")
+				if o.H3Port, err = strconv.Atoi(port); err != nil {
+					fail(fmt.Errorf("h3dgram %q: <port>[:proxy]", v))
+				}
+				o.H3Usage = usage
 				continue
 			}
 			if o.Members, err = strconv.Atoi(a); err != nil {
