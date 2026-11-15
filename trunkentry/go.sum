@@ -14,6 +14,8 @@ github.com/m1d1x/hikkari-protocol v0.0.0-20261115011046-7af0726042c3 h1:CFmlDpId
 github.com/m1d1x/hikkari-protocol v0.0.0-20261115011046-7af0726042c3/go.mod h1:n6g14ffrmydnUSkndaeZX7+B7y9NjK/EKIkmg7DuYh4=
 github.com/m1d1x/hikkari-protocol v0.0.0-20261115011950-26110089522b h1:fHXu+BEMIQ9kv76z+ZZwNMPh7MvagzK24lEt9FZ2Afc=
 github.com/m1d1x/hikkari-protocol v0.0.0-20261115011950-26110089522b/go.mod h1:n6g14ffrmydnUSkndaeZX7+B7y9NjK/EKIkmg7DuYh4=
+github.com/m1d1x/hikkari-protocol v0.0.0-20261115073203-83ace5396913 h1:Oi0UmCgEIDkNSQwfLTC3UxcnS1efmxM4v4+fB8eK+5I=
+github.com/m1d1x/hikkari-protocol v0.0.0-20261115073203-83ace5396913/go.mod h1:n6g14ffrmydnUSkndaeZX7+B7y9NjK/EKIkmg7DuYh4=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261114070754-8dda30bd832e h1:Jz5eH/If28dD+0EFhI5CK5NqxND0KibYtx8uNjhc10w=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261114070754-8dda30bd832e/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261114165921-0d9781295870 h1:5hXpK/pJChMDW+VEvMobA2fsihl34jdqimQFyC4eFaY=
@@ -22,6 +24,8 @@ github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261115011046-7af0726042c3 h1:OC
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261115011046-7af0726042c3/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261115011950-26110089522b h1:Cat6fUW+Znwl6r2isiD98LxkFjsEmXl7S/LxTNaenus=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261115011950-26110089522b/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
+github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261115073203-83ace5396913 h1:X4cP+4leOefALeQPnQS6e/3wr3IIAN5uJXsVu3E0u6M=
+github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261115073203-83ace5396913/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
 github.com/m1d1x/hikkari-protocol/trunk/chromium v0.0.0-20261109035446-c773c6a37f81 h1:7A0+HzMBbJ7oT4gBhqyKODRh7w/A4/9lORYQbFPD1IE=
 github.com/m1d1x/hikkari-protocol/trunk/chromium v0.0.0-20261109035446-c773c6a37f81/go.mod h1:fbmJR/Vv5CCOk0KFUmW03yJnU/tnHTcWPbAn8Eps6I8=
 github.com/m1d1x/hikkari-protocol/trunk/quicwire v0.0.0-20261111070922-a2b0763eb54c h1:wbEDDbfwyAkjm/muALIcU60tUQGaiKxP16K8cS05zNA=
