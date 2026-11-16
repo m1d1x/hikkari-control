@@ -25,7 +25,6 @@ require (
 	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/metacubex/utls v1.8.7 // indirect
-	github.com/mholt/acmez/v3 v3.1.7 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/oschwald/maxminddb-golang v1.13.0 // indirect
@@ -72,6 +71,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/m1d1x/hikkari-protocol v0.0.0-20261109182516-17e0428a7a25
+	github.com/mholt/acmez/v3 v3.1.7
 	github.com/oschwald/geoip2-golang v1.13.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/sagernet/sing v0.9.7-0.20260929150544-0ad23b637bd4

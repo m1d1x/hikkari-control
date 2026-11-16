@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/m1d1x/hikkari-protocol/trunk/pipectl"
 )
 
 // TestReceiversFromTheEnv: EDGE_TRUNK_RECEIVERS and EDGE_TRUNK_RECEIVER_POOL
@@ -181,5 +183,106 @@ func killFirstExit(t *testing.T, exit string) {
 	out, err := exec.Command("pkill", "-f", "--", "-naive "+exit+" ").CombinedOutput()
 	if err != nil {
 		t.Fatalf("pkill: %v %s", err, out)
+	}
+}
+
+// The hub's receiver file (P5): an IPv4 address or nothing.
+func TestTheReceiverFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("EDGE_TRUNK_WIRES_FILE", filepath.Join(dir, "nekko-trunk-entry.env.wires.json"))
+	path := receiverFilePath()
+	if path != filepath.Join(dir, "nekko-trunk-entry.env.receiver") {
+		t.Fatalf("path %s", path)
+	}
+	if raw, ip, err := readReceiverFile(path); raw != nil || ip.IsValid() || err != nil {
+		t.Fatalf("missing file: %q %v %v", raw, ip, err)
+	}
+	for text, want := range map[string]string{"10.0.0.2\n": "10.0.0.2", "  \n": ""} {
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, ip, err := readReceiverFile(path)
+		if err != nil || (want == "" && ip.IsValid()) || (want != "" && ip.String() != want) {
+			t.Fatalf("%q: %v %v", text, ip, err)
+		}
+	}
+	for _, bad := range []string{"::1", "ams3", "10.0.0.2,10.0.0.3"} {
+		if err := os.WriteFile(path, []byte(bad), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := readReceiverFile(path); err == nil {
+			t.Fatalf("%q read", bad)
+		}
+	}
+}
+
+// A receiver is heard by the judge's rule, its proofs aged by the time since
+// the pipe said them.
+func TestAReceiverIsHeardAsTheJudgeHearsIt(t *testing.T) {
+	w := func(up int, ago time.Duration) pipectl.WireTick { return pipectl.WireTick{Up: up, ProofAgo: ago} }
+	for _, tc := range []struct {
+		wires []pipectl.WireTick
+		age   time.Duration
+		heard bool
+	}{
+		{[]pipectl.WireTick{w(2, 100*time.Millisecond)}, 0, true},
+		{[]pipectl.WireTick{w(2, 100*time.Millisecond)}, 1500 * time.Millisecond, false},
+		{[]pipectl.WireTick{w(0, 100*time.Millisecond)}, 0, false},
+		{[]pipectl.WireTick{w(2, -1)}, 0, false},
+		{[]pipectl.WireTick{w(0, 0), w(1, time.Second)}, 0, true},
+	} {
+		if got := receiverHeard(tc.wires, tc.age); got != tc.heard {
+			t.Errorf("%+v aged %s: heard %v", tc.wires, tc.age, got)
+		}
+	}
+	if got := receiverPart(netip.MustParseAddr("10.0.0.2"), "standby", []pipectl.WireTick{w(2, 300*time.Millisecond), w(6, -1)}, 200*time.Millisecond); got != "10.0.0.2 standby up=8 proof_ms=500" {
+		t.Errorf("part %q", got)
+	}
+}
+
+// TestTheHubMovesTheEntryByHand: the hub's file names the second receiver
+// under a call and the entry moves there (why "by hand"), a stream goes
+// through it; the file back on the first moves the entry back; a receiver
+// that is not the entry's is refused and nothing moves.
+func TestTheHubMovesTheEntryByHand(t *testing.T) {
+	s := newReceiverStand(t)
+	s.start(t)
+	s.waitWritten(t, "receiver 1 at 127.0.0.2: a standby session", 20*time.Second)
+	time.Sleep(3 * time.Second) // the standby's members up
+	file := strings.TrimSuffix(s.env["EDGE_TRUNK_WIRES_FILE"], ".wires.json") + ".receiver"
+	k := startCall(t, s.udp)
+	time.Sleep(2 * time.Second)
+
+	if err := os.WriteFile(file, []byte("127.0.0.2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	took := s.waitWritten(t, "trunk: receiver moved from 127.0.0.1 to 127.0.0.2: by hand", 5*time.Second)
+	t.Logf("moved by hand %v after the file", took)
+	c, err := net.Dial("tcp", "127.0.0.1:"+strconv.Itoa(s.tcp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	echoTCP(t, c, "a stream after the move by hand")
+	c.Close()
+	time.Sleep(2 * time.Second)
+
+	if err := os.WriteFile(file, []byte("127.0.0.9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.waitWritten(t, "receiver 127.0.0.9 by hand refused", 5*time.Second)
+	time.Sleep(time.Second)
+
+	if err := os.WriteFile(file, []byte("127.0.0.1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.waitWritten(t, "trunk: receiver moved from 127.0.0.2 to 127.0.0.1: by hand", 5*time.Second)
+	time.Sleep(2 * time.Second)
+	sent, back, gap := k.end()
+	t.Logf("the call across two moves by hand: %d/%d back, the longest pause %s", back, sent, gap)
+	if gap > 2*time.Second {
+		t.Errorf("the call paused %s across moves by hand", gap)
+	}
+	if strings.Count(s.written(), "receiver moved") != 2 {
+		t.Errorf("moves: %d, want the two by hand", strings.Count(s.written(), "receiver moved"))
 	}
 }
