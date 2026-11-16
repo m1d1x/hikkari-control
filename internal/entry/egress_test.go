@@ -250,3 +250,20 @@ func TestATunnelNeedsAnEgressOfThatRole(t *testing.T) {
 		t.Fatalf("one box as both ends: %v", err)
 	}
 }
+
+// TestTheKeyIsWhereWgMayReadIt: Ubuntu's AppArmor profile of wg reads keys
+// only under /etc/wireguard; a key elsewhere fails the tunnel at "fopen:
+// Permission denied" (aeznl1, 16.11).
+func TestTheKeyIsWhereWgMayReadIt(t *testing.T) {
+	if !strings.HasPrefix(egressKey, "/etc/wireguard/") {
+		t.Fatalf("key at %s", egressKey)
+	}
+	for _, s := range []string{egressUpScript, egressPrepareScript} {
+		if strings.Contains(s, egressDir+"/private") || strings.Contains(s, `"$dir/private"`) {
+			t.Fatal("a script still reads the key outside /etc/wireguard")
+		}
+	}
+	if !strings.Contains(egressUpScript, "key="+egressKey) || !strings.Contains(egressPrepareScript, "wg genkey > "+egressKey) {
+		t.Fatal("the scripts do not use the key in /etc/wireguard")
+	}
+}

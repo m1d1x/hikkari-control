@@ -41,6 +41,10 @@ const (
 	egressDir    = "/etc/hikkari-egress"
 	egressScript = "/usr/local/sbin/hikkari-egress"
 	egressUnit   = "hikkari-egress-tunnel"
+	// egressKey is the box's own WireGuard key, made there and never read
+	// by the hub. It lives in /etc/wireguard: Ubuntu's AppArmor profile of
+	// wg reads keys only there (26.04: apparmor DENIED, profile wg).
+	egressKey = "/etc/wireguard/hk-egress.key"
 	// EgressUser is the uid whose connections the receiver routes into the
 	// tunnel; a unit that must reach the internet only through the egress
 	// runs as this user.
@@ -83,18 +87,19 @@ set -eu
 dir=` + egressDir + `
 ifc=hk-egress
 port=` + "51821" + `
+key=` + egressKey + `
 . "$dir/env"
 
 link_up() {
 	ip link del "$ifc" 2>/dev/null || true
 	ip link add "$ifc" type wireguard
 	if [ "$ROLE" = receiver ]; then
-		wg set "$ifc" private-key "$dir/private" listen-port "$port" \
+		wg set "$ifc" private-key "$key" listen-port "$port" \
 			peer "$PEER_PUB" endpoint "$PEER_ENDPOINT" allowed-ips 0.0.0.0/0,::/0 persistent-keepalive 25
 		ip addr add 10.231.0.1/30 dev "$ifc"
 		ip -6 addr add fd77:231::1/126 dev "$ifc"
 	else
-		wg set "$ifc" private-key "$dir/private" listen-port "$port" \
+		wg set "$ifc" private-key "$key" listen-port "$port" \
 			peer "$PEER_PUB" allowed-ips 10.231.0.1/32,fd77:231::1/128
 		ip addr add 10.231.0.2/30 dev "$ifc"
 		ip -6 addr add fd77:231::2/126 dev "$ifc"
@@ -229,10 +234,13 @@ command -v nft >/dev/null || need="$need nftables"
 if [ "$1" = receiver ] && ! id -u ` + EgressUser + ` >/dev/null 2>&1; then
 	useradd --system --no-create-home --shell /usr/sbin/nologin ` + EgressUser + `
 fi
-mkdir -p ` + egressDir + `
+mkdir -p ` + egressDir + ` /etc/wireguard
+chmod 700 /etc/wireguard
+# The key once lived beside the env, where wg may not read it.
+rm -f ` + egressDir + `/private
 chmod 700 ` + egressDir + `
-[ -s ` + egressDir + `/private ] || (umask 077; wg genkey > ` + egressDir + `/private)
-wg pubkey < ` + egressDir + `/private
+[ -s ` + egressKey + ` ] || (umask 077; wg genkey > ` + egressKey + `)
+wg pubkey < ` + egressKey + `
 `
 
 // egressStartScript installs the program and the unit and brings the tunnel
