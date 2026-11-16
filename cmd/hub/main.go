@@ -70,6 +70,8 @@ func main() {
 			runEntryBox(os.Args[2:])
 		case "entry-front":
 			runEntryFront(os.Args[2:])
+		case "receiver-cert":
+			runReceiverCert(os.Args[2:])
 		case "entry-bench":
 			runEntryBench(os.Args[2:])
 		case "ops-token":
@@ -176,6 +178,8 @@ func run() error {
 	}
 	go func() { prov.RollProbers(ctx); rollout.Run(ctx) }()
 	go svc.RunResigner(ctx)
+	// The receiver groups' certificates renewed a month ahead (P1).
+	go svc.RunReceiverCertRenewal(ctx, entry.ReceiverCertInterval, rollout.Reconfigure)
 
 	// ── Public plane: what probers and relays talk to ─────
 	mux := http.NewServeMux()

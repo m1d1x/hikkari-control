@@ -6,6 +6,8 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -44,6 +46,12 @@ const (
 type naiveConfig struct {
 	Listen, Host, User, Pass, Root, Storage string
 	H3                                      bool
+	// CertPEM and KeyPEM are the receiver group's certificate the hub
+	// issued over DNS-01 (EDGE_HIKKARI_CERT, EDGE_HIKKARI_KEY, base64 PEM):
+	// every receiver of the group answers under one name, which an order
+	// of Caddy's own over HTTP-01 gets only where the A record points
+	// (plans/2026-11-16-second-receiver.md, P1). Empty: Caddy orders its own.
+	CertPEM, KeyPEM string
 	// UDP is set for EDGE_PROTO=hikkari (hikkari.go): the datagram channel on
 	// udp/<port> and UDP-over-TCP inside the tunnel.
 	UDP bool
@@ -88,6 +96,9 @@ func naiveFromEnv(get func(string) string) (naiveConfig, error) {
 		return n, errors.New("naive: invalid probe credential")
 	}
 	if hikkari {
+		if n.CertPEM, n.KeyPEM, err = groupCertFromEnv(get, n.Host); err != nil {
+			return n, err
+		}
 		if n.Trunk, err = trunkExitFromEnv(get); err != nil {
 			return n, err
 		}
@@ -109,6 +120,39 @@ func naiveFromEnv(get func(string) string) (naiveConfig, error) {
 		}
 	}
 	return n, nil
+}
+
+// groupCertFromEnv reads the receiver group's certificate: both or neither,
+// a pair that matches, valid now and for host. A relay that would start on a
+// certificate no client accepts is refused at start, while the old
+// generation still serves.
+func groupCertFromEnv(get func(string) string, host string) (string, string, error) {
+	c64, k64 := get("EDGE_HIKKARI_CERT"), get("EDGE_HIKKARI_KEY")
+	if c64 == "" && k64 == "" {
+		return "", "", nil
+	}
+	certPEM, err1 := base64.StdEncoding.DecodeString(c64)
+	keyPEM, err2 := base64.StdEncoding.DecodeString(k64)
+	if c64 == "" || k64 == "" || err1 != nil || err2 != nil {
+		return "", "", errors.New("EDGE_HIKKARI_CERT, EDGE_HIKKARI_KEY: both, base64 PEM")
+	}
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return "", "", fmt.Errorf("EDGE_HIKKARI_CERT: %w", err)
+	}
+	leaf := pair.Leaf
+	if leaf == nil {
+		if leaf, err = x509.ParseCertificate(pair.Certificate[0]); err != nil {
+			return "", "", fmt.Errorf("EDGE_HIKKARI_CERT: %w", err)
+		}
+	}
+	if err := leaf.VerifyHostname(host); err != nil {
+		return "", "", fmt.Errorf("EDGE_HIKKARI_CERT: %w", err)
+	}
+	if now := time.Now(); now.After(leaf.NotAfter) || now.Before(leaf.NotBefore) {
+		return "", "", fmt.Errorf("EDGE_HIKKARI_CERT: valid %s to %s, not now", leaf.NotBefore.Format(time.DateOnly), leaf.NotAfter.Format(time.DateOnly))
+	}
+	return string(certPEM), string(keyPEM), nil
 }
 
 func (n naiveConfig) document() ([]byte, error) {
@@ -135,11 +179,15 @@ func (n naiveConfig) document() ([]byte, error) {
 	if n.network != "" {
 		listen = n.network + "/" + n.Listen
 	}
+	certificates := map[string]any{"automate": []string{n.Host}}
+	if n.CertPEM != "" {
+		certificates = map[string]any{"load_pem": []any{map[string]any{"certificate": n.CertPEM, "key": n.KeyPEM}}}
+	}
 	return json.Marshal(map[string]any{
 		"admin":   map[string]any{"disabled": true, "config": map[string]any{"persist": false}},
 		"storage": map[string]any{"module": "file_system", "root": n.Storage},
 		"apps": map[string]any{
-			"tls": map[string]any{"certificates": map[string]any{"automate": []string{n.Host}}},
+			"tls": map[string]any{"certificates": certificates},
 			"http": map[string]any{"servers": map[string]any{"naive": n.withWrappers(map[string]any{
 				"listen": []string{listen}, "protocols": protocols, "tls_connection_policies": []any{map[string]any{}},
 				"routes": []any{map[string]any{"handle": []any{

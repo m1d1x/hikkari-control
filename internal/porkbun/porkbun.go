@@ -506,6 +506,29 @@ func (c *Client) Records(ctx context.Context, domain string) ([]DNSRecord, error
 	return out.Records, nil
 }
 
+// CreateRecord adds one DNS record to domain (dns/create) and returns its id.
+// name is the part before the domain ("_acme-challenge"), "" for the apex.
+// Porkbun's least TTL is 600 s; a smaller one is raised to it.
+func (c *Client) CreateRecord(ctx context.Context, domain, name, typ, content string, ttl int) (string, error) {
+	if ttl < 600 {
+		ttl = 600
+	}
+	body := struct {
+		auth
+		Name    string `json:"name"`
+		Type    string `json:"type"`
+		Content string `json:"content"`
+		TTL     string `json:"ttl"`
+	}{auth: c.auth(), Name: name, Type: typ, Content: content, TTL: strconv.Itoa(ttl)}
+	var out struct {
+		ID jsonNum `json:"id"`
+	}
+	if err := c.post(ctx, "dns/create/"+strings.ToLower(domain), body, &out, "", ""); err != nil {
+		return "", err
+	}
+	return string(out.ID), nil
+}
+
 // DeleteRecord removes one DNS record by its id (dns/delete).
 func (c *Client) DeleteRecord(ctx context.Context, domain, id string) error {
 	return c.post(ctx, "dns/delete/"+strings.ToLower(domain)+"/"+id, c.auth(), nil, "", "")

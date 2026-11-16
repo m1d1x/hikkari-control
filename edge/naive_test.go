@@ -2,9 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -86,5 +92,63 @@ func TestHikkariFromEnv(t *testing.T) {
 	cfg, err = naiveFromEnv(func(k string) string { return env[k] })
 	if err != nil || cfg.UDP || cfg.Host != "wrong.example.com" {
 		t.Fatalf("naive config: %+v %v", cfg, err)
+	}
+}
+
+// The receiver group's certificate from the hub replaces Caddy's own order
+// (P1); a pair for another name, a broken pair or half of one is refused at
+// start, while the old generation still serves.
+func TestTheGroupCertificateReplacesCaddysOrder(t *testing.T) {
+	certFor := func(host string, notAfter time.Time) (string, string) {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tpl := &x509.Certificate{SerialNumber: big.NewInt(1), DNSNames: []string{host}, NotBefore: time.Now().Add(-time.Hour), NotAfter: notAfter}
+		der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		kder, _ := x509.MarshalECPrivateKey(key)
+		b64 := base64.StdEncoding.EncodeToString
+		return b64(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), b64(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kder}))
+	}
+	env := map[string]string{"EDGE_PROTO": "hikkari", "EDGE_HIKKARI_HOST": "otter9119.lol", "EDGE_HIKKARI_USER": "hikkari", "EDGE_HIKKARI_PASS": "0123456789abcdef0123"}
+	get := func(k string) string { return env[k] }
+
+	cfg, err := naiveFromEnv(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _ := cfg.document()
+	if !strings.Contains(string(doc), `"automate":["otter9119.lol"]`) {
+		t.Fatalf("no certificate from the hub, yet Caddy does not order: %s", doc)
+	}
+
+	env["EDGE_HIKKARI_CERT"], env["EDGE_HIKKARI_KEY"] = certFor("otter9119.lol", time.Now().Add(90*24*time.Hour))
+	if cfg, err = naiveFromEnv(get); err != nil {
+		t.Fatal(err)
+	}
+	doc, _ = cfg.document()
+	if strings.Contains(string(doc), "automate") || !strings.Contains(string(doc), "load_pem") {
+		t.Fatalf("the hub's certificate is not what Caddy serves: %s", doc)
+	}
+
+	good, goodKey := env["EDGE_HIKKARI_CERT"], env["EDGE_HIKKARI_KEY"]
+	other, _ := certFor("otter9119.lol", time.Now().Add(time.Hour))
+	for name, pair := range map[string][2]string{
+		"another name": func() [2]string { c, k := certFor("pine6573.lol", time.Now().Add(time.Hour)); return [2]string{c, k} }(),
+		"expired": func() [2]string {
+			c, k := certFor("otter9119.lol", time.Now().Add(-time.Minute))
+			return [2]string{c, k}
+		}(),
+		"key of another": {other, goodKey},
+		"no key":         {good, ""},
+		"not base64":     {"%%%", goodKey},
+	} {
+		env["EDGE_HIKKARI_CERT"], env["EDGE_HIKKARI_KEY"] = pair[0], pair[1]
+		if _, err := naiveFromEnv(get); err == nil {
+			t.Fatalf("%s: started", name)
+		}
 	}
 }

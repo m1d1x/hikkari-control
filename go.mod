@@ -25,6 +25,7 @@ require (
 	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/metacubex/utls v1.8.7 // indirect
+	github.com/mholt/acmez/v3 v3.1.7 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/oschwald/maxminddb-golang v1.13.0 // indirect
