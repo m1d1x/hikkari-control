@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"log"
 	"net/netip"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -97,12 +98,14 @@ var moveMu sync.Mutex
 // move by hand lands within it.
 const receiverFileEvery = time.Second
 
-// followReceiverFile moves the entry where the hub's file says when the file
-// changes (P5). What it said when the generation started is where the
-// generation started, not a move.
+// followReceiverFile moves the entry where the hub's file says each time the
+// hub writes it (P5), its bytes the same or not: after the judge moved the
+// entry off a receiver, the file still names that one, and the hub naming it
+// again is a move back. What the file was when the generation started is
+// where the generation started, not a move.
 func (b *brain) followReceiverFile(ctx context.Context, at map[byte]netip.Addr) {
 	path := receiverFilePath()
-	last, _, _ := readReceiverFile(path)
+	last, lastAt := readReceiverFileStamp(path)
 	t := time.NewTicker(receiverFileEvery)
 	defer t.Stop()
 	for {
@@ -112,10 +115,11 @@ func (b *brain) followReceiverFile(ctx context.Context, at map[byte]netip.Addr) 
 		case <-t.C:
 		}
 		raw, ip, err := readReceiverFile(path)
-		if bytes.Equal(raw, last) {
+		at2 := receiverFileTime(path)
+		if bytes.Equal(raw, last) && at2.Equal(lastAt) {
 			continue
 		}
-		last = raw
+		last, lastAt = raw, at2
 		if err != nil {
 			log.Printf("nekko-trunk-entry: trunk: %v (stays where it is)", err)
 			continue
@@ -129,13 +133,31 @@ func (b *brain) followReceiverFile(ctx context.Context, at map[byte]netip.Addr) 
 	}
 }
 
+// readReceiverFileStamp is the file's bytes and when it was last written.
+func readReceiverFileStamp(path string) ([]byte, time.Time) {
+	raw, _, _ := readReceiverFile(path)
+	return raw, receiverFileTime(path)
+}
+
+// receiverFileTime is when the hub last wrote the file (it writes a new one
+// and renames it over), zero when there is none.
+func receiverFileTime(path string) time.Time {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
+}
+
 // moveByHand makes the receiver at ip the active one, if it is one of the
-// entry's and heard now.
+// entry's and heard now. The one already active is said, so the hub hears an
+// answer to every word.
 func (b *brain) moveByHand(at map[byte]netip.Addr, ip netip.Addr) error {
 	moveMu.Lock()
 	defer moveMu.Unlock()
 	from := b.exitNow().Addr()
 	if ip == from {
+		log.Printf("nekko-trunk-entry: trunk: receiver %s by hand: already the active one", ip)
 		return nil
 	}
 	rx, ok := byte(0), false

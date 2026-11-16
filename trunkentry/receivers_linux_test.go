@@ -176,6 +176,18 @@ func TestTheBrainMovesOffADeadReceiverAndAReloadStartsOnTheNewOne(t *testing.T) 
 	u.Close()
 }
 
+// waitCount waits until written says want n times.
+func waitCount(t *testing.T, written func() string, want string, n int, within time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for strings.Count(written(), want) < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("%q %d times within %s: %d", want, n, within, strings.Count(written(), want))
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // killFirstExit ends the goexit newPipeStand started with its relay at
 // exit.
 func killFirstExit(t *testing.T, exit string) {
@@ -243,7 +255,10 @@ func TestAReceiverIsHeardAsTheJudgeHearsIt(t *testing.T) {
 // TestTheHubMovesTheEntryByHand: the hub's file names the second receiver
 // under a call and the entry moves there (why "by hand"), a stream goes
 // through it; the file back on the first moves the entry back; a receiver
-// that is not the entry's is refused and nothing moves.
+// that is not the entry's is refused and nothing moves. The file naming the
+// active receiver is answered, and written again with the same bytes it is
+// heard again: after the judge moved the entry, the file still names the
+// receiver it left (aezamsk1 16.11, the hub's move back went unheard).
 func TestTheHubMovesTheEntryByHand(t *testing.T) {
 	s := newReceiverStand(t)
 	s.start(t)
@@ -252,6 +267,12 @@ func TestTheHubMovesTheEntryByHand(t *testing.T) {
 	file := strings.TrimSuffix(s.env["EDGE_TRUNK_WIRES_FILE"], ".wires.json") + ".receiver"
 	k := startCall(t, s.udp)
 	time.Sleep(2 * time.Second)
+
+	if err := os.WriteFile(file, []byte("127.0.0.1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.waitWritten(t, "receiver 127.0.0.1 by hand: already the active one", 5*time.Second)
+	time.Sleep(1500 * time.Millisecond)
 
 	if err := os.WriteFile(file, []byte("127.0.0.2\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -276,7 +297,14 @@ func TestTheHubMovesTheEntryByHand(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.waitWritten(t, "trunk: receiver moved from 127.0.0.2 to 127.0.0.1: by hand", 5*time.Second)
-	time.Sleep(2 * time.Second)
+	time.Sleep(1500 * time.Millisecond)
+
+	// The same bytes again: a word of its own, answered.
+	if err := os.WriteFile(file, []byte("127.0.0.1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitCount(t, s.written, "receiver 127.0.0.1 by hand: already the active one", 2, 5*time.Second)
+	time.Sleep(time.Second)
 	sent, back, gap := k.end()
 	t.Logf("the call across two moves by hand: %d/%d back, the longest pause %s", back, sent, gap)
 	if gap > 2*time.Second {
