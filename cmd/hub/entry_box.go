@@ -938,9 +938,12 @@ func runEntryBox(args []string) {
 		adoptProto = strings.TrimPrefix(args[0], "adopt-")
 	}
 	naiveAdopt := adoptProto != ""
+	// entry-box receiver-spare <box> <primary-box> [replace]: box becomes a
+	// spare receiver of primary's group (P2, internal/entry/rxspare.go).
+	spare := (len(args) == 3 || (len(args) == 4 && args[3] == "replace")) && args[0] == "receiver-spare"
 	provider := len(args) >= 3 && len(args) <= 5 && args[0] == "provider"
-	if !naiveAdopt && !order && !retire && !provider && len(args) != 1 && len(args) != 4 && len(args) != 5 {
-		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain> | naive | hikkari]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|naive|hikkari|awg|voice=<region>] [hoster=<kind>] | entry-box adopt-naive|adopt-hikkari <box> <domain> | entry-box catalog <hoster>"))
+	if !naiveAdopt && !spare && !order && !retire && !provider && len(args) != 1 && len(args) != 4 && len(args) != 5 {
+		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain> | naive | hikkari]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|naive|hikkari|awg|voice=<region>] [hoster=<kind>] | entry-box adopt-naive|adopt-hikkari <box> <domain> | entry-box receiver-spare <box> <primary-box> [replace] | entry-box catalog <hoster>"))
 	}
 	if err := cryptobox.Configure(os.Getenv); err != nil {
 		fail(fmt.Errorf("content key: %w", err))
@@ -1006,6 +1009,8 @@ func runEntryBox(args []string) {
 	switch {
 	case naiveAdopt:
 		id, err = prov.Adopt(ctx, args[1], adoptProto, args[2], "")
+	case spare:
+		id, err = prov.AddReceiverSpare(ctx, args[1], args[2], len(args) == 4, "")
 	case order:
 		// "-" keeps the hoster's default, so a protocol can be named alone:
 		// `entry-box order - - xhttp` — what the operator runs when the

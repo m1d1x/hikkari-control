@@ -18,6 +18,8 @@ import (
 // concrete errors through unchanged.
 func Registrar(c *porkbun.Client) entry.DomainRegistrar { return registrar{c: c} }
 
+var _ entry.TXTRegistrar = registrar{}
+
 type registrar struct{ c *porkbun.Client }
 
 func (r registrar) Registerable(ctx context.Context, tld string) (bool, error) {
@@ -119,6 +121,16 @@ func (r registrar) ListDomains(ctx context.Context) ([]entry.RegistrarDomain, er
 		out = append(out, rd)
 	}
 	return out, nil
+}
+
+// CreateRecord and DeleteRecord make the registrar an entry.TXTRegistrar:
+// the TXT of a receiver group's DNS-01 challenge (P1).
+func (r registrar) CreateRecord(ctx context.Context, zone, name, typ, content string, ttl int) (string, error) {
+	return r.c.CreateRecord(ctx, zone, name, typ, content, ttl)
+}
+
+func (r registrar) DeleteRecord(ctx context.Context, zone, id string) error {
+	return r.c.DeleteRecord(ctx, zone, id)
 }
 
 func (r registrar) CanSetARecord(ctx context.Context, domain string) error {

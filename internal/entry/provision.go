@@ -971,6 +971,19 @@ func (j *jobRun) ensureDomain() error {
 		return err
 	}
 	domain := j.acc.domain
+	// A spare receiver carries its group's domain, whose A record is the
+	// primary's (rxspare.go): it stays there, and nothing waits for it to
+	// point here.
+	if domain != "" {
+		holder, err := j.p.svc.groupDomainHolder(j.ctx, j.box, domain)
+		if err != nil {
+			return err
+		}
+		if holder != "" {
+			j.log("домен группы %s, A-запись у %s, не трогаю", domain, holder)
+			return nil
+		}
+	}
 	if domain == "" {
 		d, bought, err := j.p.svc.AcquireDomain(j.ctx, j.box, target)
 		if err != nil {
@@ -1484,6 +1497,16 @@ func (j *jobRun) harden(r Remote, relays []provRelay) error {
 		if (rel.id.Naive != nil && rel.id.Naive.H3) || rel.id.Hikkari != nil {
 			ports = append(ports, strconv.Itoa(rel.id.Port)+"/udp")
 		}
+		// The trunk's wires of a receiver, the Go exit's and hk-exit's: a
+		// spare is born with them (rxspare.go), and a rerun on the primary
+		// keeps them open as entry-box trunk-wires did.
+		if h := rel.id.Hikkari; h != nil {
+			for _, wires := range []map[string]int{h.TrunkWires, h.TrunkPipeWires} {
+				for _, p := range wires {
+					ports = append(ports, strconv.Itoa(p)+"/udp")
+				}
+			}
+		}
 	}
 	sort.Strings(ports)
 	out, err := r.Run(j.ctx, "bash -s -- "+strings.Join(ports, " "), strings.NewReader(hardenScript))
@@ -1697,6 +1720,21 @@ func (j *jobRun) install(r Remote, rel provRelay) error {
 	envMap, err := rel.id.EdgeEnv()
 	if err != nil {
 		return fmt.Errorf("env релея %s: %w", rel.name, err)
+	}
+	// The receiver group's certificate (rxcert.go, P1): every relay under
+	// this domain serves the one the hub ordered over DNS-01. None kept:
+	// Caddy orders its own on the box, as before.
+	if h := rel.id.Hikkari; h != nil {
+		cert, err := j.p.svc.receiverCertEnv(j.ctx, h.Host)
+		if err != nil {
+			return fmt.Errorf("сертификат группы %s: %w", h.Host, err)
+		}
+		for k, v := range cert {
+			envMap[k] = v
+		}
+		if cert != nil {
+			j.log("%s: сертификат группы %s от хаба", rel.name, h.Host)
+		}
 	}
 	// A relay that is hk-exit's brain starts it beside itself: it is there
 	// before the relay's new generation (deploy, reconfigure, rollback).
