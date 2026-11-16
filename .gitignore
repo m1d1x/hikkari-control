@@ -18,3 +18,7 @@ dist/
 .vscode/
 /hub
 /downdetector
+/edge/edge
+/ops
+/trunkentry/trunkentry
+/cmd/entry-prober/entry-prober
