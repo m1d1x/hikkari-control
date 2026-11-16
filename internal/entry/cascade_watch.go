@@ -37,6 +37,10 @@ type TrunkPair struct {
 	// Pipe is the stand over hk-pipe beside the entry (trunkpipe.go): its
 	// listen ports to the exit's loopback ports; empty when there is none.
 	Pipe map[int]int
+	// Receivers names each receiver of the entry's group by its relay's
+	// address, the exit's included (P5): the entry's lines say addresses,
+	// the watch files box names.
+	Receivers map[string]string
 }
 
 // PipeListen is the stand's listen port that reaches port at the exit, 0
@@ -73,10 +77,14 @@ func (s *Service) recordTrunkEntry(ctx context.Context, box string, o TrunkEntry
 	if err != nil {
 		return err
 	}
+	receivers := o.Receivers
+	if receivers == nil {
+		receivers = []string{}
+	}
 	_, err = s.pool.Exec(ctx, `
-		INSERT INTO trunk_entries (entry_box, exit_box, forward, members) VALUES ($1, $2, $3, $4)
-		ON CONFLICT (entry_box) DO UPDATE SET exit_box = $2, forward = $3, members = $4, stood_at = now()`,
-		box, o.Exit, raw, o.Members)
+		INSERT INTO trunk_entries (entry_box, exit_box, forward, members, receivers) VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (entry_box) DO UPDATE SET exit_box = $2, forward = $3, members = $4, receivers = $5, stood_at = now()`,
+		box, o.Exit, raw, o.Members, receivers)
 	return err
 }
 
@@ -87,7 +95,7 @@ func (s *Service) forgetTrunkEntry(ctx context.Context, box string) error {
 
 // TrunkPairs lists the trunk entries the hub stood, each with its exit.
 func (s *Service) TrunkPairs(ctx context.Context) ([]TrunkPair, error) {
-	rows, err := s.pool.Query(ctx, `SELECT entry_box, exit_box, forward, members, pipe_forward FROM trunk_entries ORDER BY entry_box`)
+	rows, err := s.pool.Query(ctx, `SELECT entry_box, exit_box, forward, members, pipe_forward, receivers FROM trunk_entries ORDER BY entry_box`)
 	if err != nil {
 		return nil, err
 	}
@@ -95,11 +103,12 @@ func (s *Service) TrunkPairs(ctx context.Context) ([]TrunkPair, error) {
 		entry, exit string
 		fwd, pipe   []byte
 		members     int
+		receivers   []string
 	}
 	var list []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.entry, &r.exit, &r.fwd, &r.members, &r.pipe); err != nil {
+		if err := rows.Scan(&r.entry, &r.exit, &r.fwd, &r.members, &r.pipe, &r.receivers); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -139,6 +148,16 @@ func (s *Service) TrunkPairs(ctx context.Context) ([]TrunkPair, error) {
 			host, port, _ := net.SplitHostPort(addr)
 			p.ExitAddress = host
 			p.RelayPort, _ = strconv.Atoi(port)
+		}
+		if len(r.receivers) > 0 {
+			p.Receivers = map[string]string{p.ExitAddress: r.exit}
+			for _, b := range r.receivers {
+				acc, err := s.boxAccess(ctx, b)
+				if err != nil {
+					return nil, err
+				}
+				p.Receivers[acc.address] = b
+			}
 		}
 		out = append(out, p)
 	}

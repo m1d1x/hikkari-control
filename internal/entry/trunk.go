@@ -120,6 +120,14 @@ type TrunkEntryOptions struct {
 	H3Port  int
 	H3Usage string
 	Voice   string
+	// Receivers are the group's other receivers (hikkari-client
+	// plans/2026-11-16-second-receiver.md, P5): boxes whose Hikkari relay is
+	// Exit's again (receiver-spare), the entry over hk-pipe holds the trunk
+	// to them warm and moves off a dead receiver by itself
+	// (EDGE_TRUNK_RECEIVERS). ReceiverPool is the pool members of each
+	// standby (0: the brain's own, 8).
+	Receivers    []string
+	ReceiverPool int
 }
 
 // trunkExitOf finds the Hikkari relay with a trunk on box, for an entry.
@@ -217,6 +225,12 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 	if len(o.Forward) == 0 {
 		return fmt.Errorf("%w: входу нечего пересылать", ErrRejected)
 	}
+	if !o.Pipe && len(o.Receivers) > 0 {
+		return fmt.Errorf("%w: группа приёмников только у входа над трубой (pipe)", ErrRejected)
+	}
+	if o.ReceiverPool < 0 || o.ReceiverPool > 128 {
+		return fmt.Errorf("%w: членов пула запасного %d, 1-128", ErrRejected, o.ReceiverPool)
+	}
 	if !o.Pipe && (o.H3Port != 0 || o.H3Usage != "" || o.Voice != "") {
 		return fmt.Errorf("%w: h3dgram и voice только у входа над трубой (pipe)", ErrRejected)
 	}
@@ -258,6 +272,17 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 		applog.F("members", o.Members), applog.F("listen", strings.Join(listen, ",")))
 	files := []trunkFile{{"nekko-trunk-entry", p.trunkBuilds}, {"libcronet.so", p.cronetBuilds}}
 	env := trunkEntryEnv(addr, sni, key, o)
+	if len(o.Receivers) > 0 {
+		ips, err := p.svc.receiverAddresses(ctx, o.Exit, o.Receivers, addr, sni, key)
+		if err != nil {
+			return err
+		}
+		env += "EDGE_TRUNK_RECEIVERS=" + strings.Join(ips, ",") + "\n"
+		if o.ReceiverPool > 0 {
+			env += "EDGE_TRUNK_RECEIVER_POOL=" + strconv.Itoa(o.ReceiverPool) + "\n"
+		}
+		applog.Info(ctx, "entry", "operator trunk entry receivers", applog.F("box", box), applog.F("receivers", strings.Join(o.Receivers, ",")))
+	}
 	var extra map[string]string
 	if o.Pipe {
 		files = []trunkFile{{"nekko-trunk-entry", p.trunkBuilds}, {"libcronet.so", pipe.cronet}, {"hk-pipe", p.pipeBuilds}}
