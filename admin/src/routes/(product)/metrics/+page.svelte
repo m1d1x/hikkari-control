@@ -1,7 +1,7 @@
 <script lang="ts">
 	import WinChips from '$components/product/WinChips.svelte';
 	import TrendChart from '$components/entry/TrendChart.svelte';
-	import { fetchProductDowntime, fetchProductMetrics, type MetricsShare } from '$lib/api/product';
+	import { fetchProductDowntime, fetchProductMetrics, fetchUserDowntime, type MetricsShare } from '$lib/api/product';
 	import { num, pct, secs } from '$lib/product/format';
 	import { Windowed } from '$lib/product/windowed.svelte';
 
@@ -11,6 +11,11 @@
 	const down = new Windowed('7d', fetchProductDowntime);
 	$effect(() => {
 		down.win = m.win;
+	});
+	// The same metric of everyone who is not a tester, from telemetry.
+	const users = new Windowed('7d', fetchUserDowntime);
+	$effect(() => {
+		users.win = m.win;
 	});
 
 	const OS_COLOR: Record<string, string> = {
@@ -35,6 +40,8 @@
 
 	const count = (v: number) => String(Math.round(v));
 	const minutes = (v: number) => `${v < 10 ? v.toFixed(1) : Math.round(v)} мин`;
+	/** a stall total: ms under ten seconds, seconds above */
+	const stall = (v: number) => (v < 10_000 ? `${Math.round(v)} мс` : `${(v / 1000).toFixed(1)} с`);
 	const percent = (v: number) => `${v.toFixed(1)}%`;
 
 	/** A daily/weekly/monthly series as the chart wants it: ISO buckets and one value each. */
@@ -73,7 +80,7 @@
 	<!-- 0. Главная метрика: минуты простоя туннеля в среднем на человека -->
 	<div class="chart-card downtime-card">
 		<div class="card-header">
-			<h3 class="card-title">Простой на человека</h3>
+			<h3 class="card-title">Простой на человека, тестеры</h3>
 			<span class="card-value mono">{or(down.data.averageTotal, minutes)}</span>
 		</div>
 		<TrendChart
@@ -81,8 +88,97 @@
 			bucketSeconds={down.data.bucketSeconds}
 			formatAxis={minutes}
 			height={135}
-			series={[{ key: 'downtime', label: 'Простой на человека', color: C.orange, primary: true, values: down.data.average, format: minutes }]}
+			series={[
+				{
+					key: 'downtime',
+					label: 'Простой на человека',
+					color: C.orange,
+					primary: true,
+					values: down.data.average,
+					format: minutes,
+				},
+			]}
 		/>
+	</div>
+{/if}
+
+{#if users.error}
+	<div class="error-banner">Ошибка загрузки простоя пользователей: {users.error}</div>
+{/if}
+
+{#if users.data}
+	<!-- 0а. Та же метрика у всех, кто не тестер: только средние по людям, из события телеметрии tunnel -->
+	<div class="users-downtime">
+		<div class="chart-card">
+			<div class="card-header">
+				<h3 class="card-title">Простой на человека, все пользователи</h3>
+			</div>
+			<TrendChart
+				buckets={users.data.buckets}
+				bucketSeconds={users.data.bucketSeconds}
+				formatAxis={minutes}
+				height={135}
+				series={[
+					{
+						key: 'lost',
+						label: 'Простой на человека',
+						color: C.orange,
+						primary: true,
+						values: users.data.lost,
+						format: minutes,
+					},
+				]}
+			/>
+		</div>
+		<div class="chart-card">
+			<div class="card-header">
+				<h3 class="card-title">Подвисания на человека, все пользователи</h3>
+			</div>
+			<TrendChart
+				buckets={users.data.buckets}
+				bucketSeconds={users.data.bucketSeconds}
+				formatAxis={stall}
+				height={135}
+				series={[
+					{
+						key: 'stall',
+						label: 'Подвисания от 300 мс',
+						color: C.blue,
+						primary: true,
+						values: users.data.stallMs,
+						format: stall,
+					},
+					{
+						key: 'stallLong',
+						label: 'Подвисания от 1 с',
+						color: C.violet,
+						values: users.data.stallLongMs,
+						format: stall,
+					},
+				]}
+			/>
+		</div>
+		<div class="chart-card">
+			<div class="card-header">
+				<h3 class="card-title">Пользователей с включённым туннелем</h3>
+			</div>
+			<TrendChart
+				buckets={users.data.buckets}
+				bucketSeconds={users.data.bucketSeconds}
+				formatAxis={count}
+				height={135}
+				series={[
+					{
+						key: 'people',
+						label: 'С включённым туннелем',
+						color: C.green,
+						primary: true,
+						values: users.data.people,
+						format: count,
+					},
+				]}
+			/>
+		</div>
 	</div>
 {/if}
 
@@ -153,7 +249,9 @@
 					bucketSeconds={86400}
 					formatAxis={percent}
 					height={135}
-					series={[{ key: 'stick', label: 'Липкость', color: C.orange, primary: true, values: stick.values, format: percent }]}
+					series={[
+						{ key: 'stick', label: 'Липкость', color: C.orange, primary: true, values: stick.values, format: percent },
+					]}
 				/>
 			</div>
 		</div>
@@ -172,7 +270,9 @@
 				formatAxis={count}
 				height={135}
 				empty="история копится после обновления hub"
-				series={[{ key: 'online', label: 'Онлайн', color: C.green, primary: true, values: d.online.series, format: count }]}
+				series={[
+					{ key: 'online', label: 'Онлайн', color: C.green, primary: true, values: d.online.series, format: count },
+				]}
 			/>
 		</div>
 
@@ -186,7 +286,16 @@
 				bucketSeconds={d.bucketSeconds}
 				formatAxis={count}
 				height={135}
-				series={[{ key: 'active', label: 'Запускали клиент', color: C.blue, primary: true, values: d.people.series.active, format: count }]}
+				series={[
+					{
+						key: 'active',
+						label: 'Запускали клиент',
+						color: C.blue,
+						primary: true,
+						values: d.people.series.active,
+						format: count,
+					},
+				]}
 			/>
 		</div>
 
@@ -200,7 +309,16 @@
 				bucketSeconds={d.bucketSeconds}
 				formatAxis={count}
 				height={135}
-				series={[{ key: 'fresh', label: 'Новые установки', color: C.violet, primary: true, values: d.people.series.fresh, format: count }]}
+				series={[
+					{
+						key: 'fresh',
+						label: 'Новые установки',
+						color: C.violet,
+						primary: true,
+						values: d.people.series.fresh,
+						format: count,
+					},
+				]}
 			/>
 		</div>
 	</div>
@@ -226,7 +344,9 @@
 			<div class="kpi-box">
 				<span class="kpi-label">Подняли туннель</span>
 				<div class="kpi-main">
-					<span class="kpi-num mono">{num(d.activation.connected)}<span class="kpi-of"> из {num(d.activation.installs)}</span></span>
+					<span class="kpi-num mono"
+						>{num(d.activation.connected)}<span class="kpi-of"> из {num(d.activation.installs)}</span></span
+					>
 					<span class="kpi-side mono">{or(d.activation.pct, pct)}</span>
 				</div>
 			</div>
@@ -418,6 +538,13 @@
 	}
 
 	.downtime-card {
+		margin-bottom: 24px;
+	}
+
+	.users-downtime {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 16px;
 		margin-bottom: 24px;
 	}
 
@@ -816,6 +943,10 @@
 
 	/* Responsive */
 	@media (max-width: 1024px) {
+		.users-downtime {
+			grid-template-columns: 1fr;
+		}
+
 		.audience-grid,
 		.mini-grid,
 		.kpi-grid,

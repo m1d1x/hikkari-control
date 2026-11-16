@@ -155,3 +155,99 @@ func TestStorageFailureAsksTheClientToRetry(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+type fakeTunnel struct {
+	periods []TunnelPeriod
+	fail    error
+}
+
+func (f *fakeTunnel) InsertTunnelPeriods(_ context.Context, p []TunnelPeriod) error {
+	if f.fail != nil {
+		return f.fail
+	}
+	f.periods = append(f.periods, p...)
+	return nil
+}
+
+func TestATunnelEventIsKeptAsItsNumbersAndNothingElse(t *testing.T) {
+	sink, tunnel := &fakeSink{}, &fakeTunnel{}
+	s := &Server{Sink: sink, Tunnel: tunnel, Now: func() time.Time { return now }}
+	ts := now.Add(-20 * time.Minute).Unix()
+	w := post(t, s, batch(`"events":[{"ts":`+itoa(ts)+`,"name":"tunnel","fields":{"o":7,"d":2,"n":1,"stall_min":9,"s300":4,"s300_ms":2600,"s1000":1,"s1000_ms":1400}}]`))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	want := TunnelPeriod{
+		Install: install, At: time.Unix(ts, 0).UTC(),
+		Flowing: 7, Down: 2, NetDown: 1, StallMinutes: 9, N300: 4, MS300: 2600, N1000: 1, MS1000: 1400,
+	}
+	if len(tunnel.periods) != 1 || tunnel.periods[0] != want {
+		t.Fatalf("periods = %+v\nwant      %+v", tunnel.periods, want)
+	}
+	if len(sink.events) != 1 || sink.events[0].Fields != `{"d":2,"n":1,"o":7,"s1000":1,"s1000_ms":1400,"s300":4,"s300_ms":2600,"stall_min":9}` {
+		t.Fatalf("events = %+v", sink.events)
+	}
+}
+
+// An event that carries anything the contract does not name is not trimmed
+// down to its numbers: it is dropped whole, in both stores. What the hub keeps
+// of a tunnel event can only be what docs/TELEMETRY.md §4a lists.
+func TestATunnelEventWithAnythingExtraStoresNothing(t *testing.T) {
+	ts := itoa(now.Add(-20 * time.Minute).Unix())
+	for name, fields := range map[string]string{
+		"a profile tag":        `{"o":7,"profile":"p-002-3"}`,
+		"a network":            `{"o":7,"isp":"AS8359"}`,
+		"a destination":        `{"o":7,"dst":"example.org"}`,
+		"an address":           `{"o":7,"addr":"203.0.113.7"}`,
+		"a nested object":      `{"o":7,"extra":{"host":"example.org"}}`,
+		"text for a number":    `{"o":"example.org"}`,
+		"a fraction":           `{"o":7.5}`,
+		"a negative":           `{"o":7,"d":-1}`,
+		"minutes past a day":   `{"o":1441}`,
+		"no minutes":           `{"stall_min":0}`,
+		"stalls without timed": `{"o":7,"s300":2,"s300_ms":900}`,
+		"more timed than on":   `{"o":2,"stall_min":3}`,
+	} {
+		sink, tunnel := &fakeSink{}, &fakeTunnel{}
+		s := &Server{Sink: sink, Tunnel: tunnel, Now: func() time.Time { return now }}
+		w := post(t, s, batch(`"events":[{"ts":`+ts+`,"name":"tunnel","fields":`+fields+`}]`))
+		if w.Code != http.StatusNoContent {
+			t.Errorf("%s: status %d: %s", name, w.Code, w.Body)
+		}
+		if len(tunnel.periods) != 0 || len(sink.events) != 0 {
+			t.Errorf("%s: stored periods %+v, events %+v", name, tunnel.periods, sink.events)
+		}
+		if s.Skipped() != 1 {
+			t.Errorf("%s: skipped = %d", name, s.Skipped())
+		}
+	}
+}
+
+func TestATunnelEventOutsideTheHubsClockIsNoPeriod(t *testing.T) {
+	for name, ts := range map[string]int64{
+		"the future":      now.Add(time.Hour).Unix(),
+		"older than kept": now.Add(-9 * 24 * time.Hour).Unix(),
+		"not on a minute": now.Add(-20*time.Minute).Unix() + 7,
+	} {
+		sink, tunnel := &fakeSink{}, &fakeTunnel{}
+		s := &Server{Sink: sink, Tunnel: tunnel, Now: func() time.Time { return now }}
+		if w := post(t, s, batch(`"events":[{"ts":`+itoa(ts)+`,"name":"tunnel","fields":{"o":7}}]`)); w.Code != http.StatusNoContent {
+			t.Errorf("%s: status %d", name, w.Code)
+		}
+		if len(tunnel.periods) != 0 || len(sink.events) != 0 {
+			t.Errorf("%s: stored periods %+v, events %+v", name, tunnel.periods, sink.events)
+		}
+	}
+}
+
+func TestAFailedPeriodStoreAsksTheClientToRetryAndWritesNoEvent(t *testing.T) {
+	sink, tunnel := &fakeSink{}, &fakeTunnel{fail: errors.New("postgres down")}
+	s := &Server{Sink: sink, Tunnel: tunnel, Now: func() time.Time { return now }}
+	w := post(t, s, batch(`"events":[{"ts":`+itoa(now.Add(-20*time.Minute).Unix())+`,"name":"tunnel","fields":{"o":7}}]`))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status %d", w.Code)
+	}
+	if len(sink.events) != 0 {
+		t.Fatalf("events written before the periods: %+v", sink.events)
+	}
+}
