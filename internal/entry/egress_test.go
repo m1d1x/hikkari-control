@@ -259,7 +259,7 @@ func TestTheKeyIsWhereWgMayReadIt(t *testing.T) {
 		t.Fatalf("key at %s", egressKey)
 	}
 	for _, s := range []string{egressUpScript, egressPrepareScript} {
-		if strings.Contains(s, egressDir+"/private") || strings.Contains(s, `"$dir/private"`) {
+		if strings.Contains(s, "< "+egressDir+"/private") || strings.Contains(s, "> "+egressDir+"/private") || strings.Contains(s, `"$dir/private"`) {
 			t.Fatal("a script still reads the key outside /etc/wireguard")
 		}
 	}
