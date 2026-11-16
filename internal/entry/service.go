@@ -345,7 +345,22 @@ type BoxSpec struct {
 	ProviderRegion string
 	Plan           string
 	MonthlyCents   int
+	// Role is a box outside the relay pool (migration 070): RoleEgress or
+	// RoleReceiver; "" is a fleet box. A box with a role is a Hikkari box.
+	Role string
 }
+
+// Roles of a box outside the relay pool (hikkari-client
+// plans/2026-11-16-hidden-border-receiver-and-egress.md). The hub mints no
+// relay on such a box: provisioning lays its key and hardens it, nothing more.
+const (
+	// RoleEgress is the exit to the internet behind a receiver: no relay, no
+	// keys, no sessions, ever.
+	RoleEgress = "egress"
+	// RoleReceiver is a receiver of the trunk on a clean address: its relay
+	// comes only from receiver-spare, a copy of the group's primary.
+	RoleReceiver = "receiver"
+)
 
 var domainRe = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
 
@@ -383,12 +398,19 @@ func (s *Service) CreateBox(ctx context.Context, b BoxSpec) error {
 	if b.SSHUser == "" {
 		b.SSHUser = "root"
 	}
+	if b.Role != "" && b.Proto == "" {
+		b.Proto = ProtoHikkari
+	}
 	if b.Proto == "" {
 		b.Proto = ProtoVlessRealityVision
 	}
 	b.Region = strings.TrimSpace(b.Region)
 	b.Domain = strings.ToLower(strings.TrimSpace(b.Domain))
 	switch {
+	case b.Role != "" && b.Role != RoleEgress && b.Role != RoleReceiver:
+		return fmt.Errorf("%w: box role %q: egress or receiver", ErrRejected, b.Role)
+	case b.Role != "" && (b.Proto != ProtoHikkari || b.Domain != ""):
+		return fmt.Errorf("%w: a box with a role is a Hikkari box without a domain of its own", ErrRejected)
 	case b.Proto != ProtoVlessRealityVision && b.Proto != ProtoHysteria2 && b.Proto != ProtoVlessXhttp && b.Proto != ProtoAmneziaWG && b.Proto != ProtoNaive && b.Proto != ProtoHikkari:
 		return fmt.Errorf("%w: box protocol %q", ErrRejected, b.Proto)
 	case !domainProtocol(b.Proto) && b.Domain != "":
@@ -476,6 +498,8 @@ type boxAccess struct {
 	retired bool
 	// helloTap: the box's Reality relays run the hello tap (migration 040).
 	helloTap bool
+	// role is entry_boxes.role (migration 070): "" for a fleet box.
+	role string
 }
 
 // voice reports whether the box is a voice entry (Hysteria2).
@@ -488,7 +512,7 @@ func (a boxAccess) overUDP() bool { return a.voice() || a.proto == ProtoAmneziaW
 func (s *Service) boxAccess(ctx context.Context, box string) (boxAccess, error) {
 	var ct, domainCT []byte
 	var a boxAccess
-	err := s.pool.QueryRow(ctx, selectBoxAccess, box).Scan(&ct, &a.user, &a.hostKey, &a.hostKeyForgotten, &a.proto, &a.region, &a.retired, &domainCT, &a.helloTap)
+	err := s.pool.QueryRow(ctx, selectBoxAccess, box).Scan(&ct, &a.user, &a.hostKey, &a.hostKeyForgotten, &a.proto, &a.region, &a.retired, &domainCT, &a.helloTap, &a.role)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return boxAccess{}, fmt.Errorf("%w: %s", ErrNoSuchBox, box)
 	}
@@ -602,6 +626,9 @@ func (s *Service) AddRelay(ctx context.Context, box, kind string) (string, error
 	}
 	if err := refuseVantageBox(ctx, tx, box); err != nil {
 		return "", err
+	}
+	if lb.role != "" {
+		return "", fmt.Errorf("%w: %s is a box of role %s: the hub mints no relay there", ErrRejected, box, lb.role)
 	}
 	proto := lb.proto
 	existing, err := s.repo.relaysOnBox(ctx, tx, box)

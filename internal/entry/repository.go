@@ -28,11 +28,11 @@ func NewRepository(pool db.Pool) *Repository {
 const (
 	insertBox = `
 		INSERT INTO entry_boxes (name, address_ct, provider, location, rented_until, ssh_user, proto, region, domain_ct,
-		                         provider_instance_id, provider_region, plan, monthly_cents)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+		                         provider_instance_id, provider_region, plan, monthly_cents, role)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
 	selectBoxAccess = `
 		SELECT address_ct, ssh_user, coalesce(host_key, ''), host_key_forgotten_at IS NOT NULL,
-		       proto, coalesce(region, ''), retired_at IS NOT NULL, domain_ct, hello_tap
+		       proto, coalesce(region, ''), retired_at IS NOT NULL, domain_ct, hello_tap, coalesce(role, '')
 		FROM entry_boxes WHERE name = $1`
 	// Only the first key sticks: a change is refused at dial time, and
 	// forgetting the key is an operator act (ForgetHostKey), not an overwrite.
@@ -49,7 +49,7 @@ const (
 	setBoxEdge      = `
 		UPDATE entry_boxes SET arch = $2, edge_sha = $3, edge_seen_at = now() WHERE name = $1`
 	lockBox = `
-		SELECT proto, retired_at IS NOT NULL, domain_ct FROM entry_boxes WHERE name = $1 FOR UPDATE`
+		SELECT proto, retired_at IS NOT NULL, domain_ct, coalesce(role, '') FROM entry_boxes WHERE name = $1 FOR UPDATE`
 	relaysOnBox = `
 		SELECT name, status, coalesce(died_reason, ''), identity_ct FROM entry_relays WHERE box = $1 ORDER BY id`
 	// The box a relay lives on, its state, and the protocol it speaks — the
@@ -295,8 +295,12 @@ func (r *Repository) insertBox(ctx context.Context, tx pgx.Tx, b BoxSpec, addres
 	if b.MonthlyCents > 0 {
 		monthly = &b.MonthlyCents
 	}
+	var role *string
+	if b.Role != "" {
+		role = &b.Role
+	}
 	_, err := tx.Exec(ctx, insertBox, b.Name, addressCT, b.Provider, b.Location, b.RentedUntil, b.SSHUser, b.Proto,
-		region, domainCT, instanceID, b.ProviderRegion, b.Plan, monthly)
+		region, domainCT, instanceID, b.ProviderRegion, b.Plan, monthly, role)
 	return err
 }
 
@@ -308,10 +312,12 @@ type lockedBox struct {
 	retired bool
 	// domainCT is an XHTTP box's sealed domain, nil on the others.
 	domainCT []byte
+	// role is entry_boxes.role (migration 070): "" for a fleet box.
+	role string
 }
 
 func (r *Repository) lockBox(ctx context.Context, tx pgx.Tx, name string) (b lockedBox, ok bool, err error) {
-	err = tx.QueryRow(ctx, lockBox, name).Scan(&b.proto, &b.retired, &b.domainCT)
+	err = tx.QueryRow(ctx, lockBox, name).Scan(&b.proto, &b.retired, &b.domainCT, &b.role)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return lockedBox{}, false, nil
 	}

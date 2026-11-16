@@ -7,6 +7,9 @@ package main
 // admin-create).
 //
 //	cmd/server entry-box <box> <address> <provider> <location> [rented-until] [voice=<region> | xhttp=<domain>]
+//	cmd/server entry-box <box> <address> <provider> <location> [rented-until] role=egress|receiver
+//	                                    # a box outside the relay pool: the
+//	                                    # hub's key, harden, no relay (070)
 //	cmd/server entry-box <box>          # run again on a recorded box
 //	cmd/server entry-box ssh <box> <command...>
 //	                                    # run a command on a box with the
@@ -364,10 +367,14 @@ func runEntryBox(args []string) {
 	if n := len(args); n > 1 && args[0] == "order" && strings.HasPrefix(args[n-1], "hoster=") {
 		namedHoster, args = strings.TrimPrefix(args[n-1], "hoster="), args[:n-1]
 	}
-	region, domain, xhttp, naive, hikkari := "", "", false, false, false
+	region, domain, xhttp, naive, hikkari, role := "", "", false, false, false, ""
 	if n := len(args); n > 4 {
 		last := args[n-1]
 		switch {
+		case strings.HasPrefix(last, "role="):
+			// A box outside the relay pool (migration 070): the hub lays its
+			// key and closes it, and mints no relay there.
+			role, args = strings.TrimPrefix(last, "role="), args[:n-1]
 		case last == "hikkari":
 			// Bare hikkari: Hikkari v1 on a domain from the hub's pool.
 			hikkari, args = true, args[:n-1]
@@ -979,7 +986,7 @@ func runEntryBox(args []string) {
 	spare := (len(args) == 3 || (len(args) == 4 && args[3] == "replace")) && args[0] == "receiver-spare"
 	provider := len(args) >= 3 && len(args) <= 5 && args[0] == "provider"
 	if !naiveAdopt && !spare && !order && !retire && !provider && len(args) != 1 && len(args) != 4 && len(args) != 5 {
-		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain> | naive | hikkari]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|naive|hikkari|awg|voice=<region>] [hoster=<kind>] | entry-box adopt-naive|adopt-hikkari <box> <domain> | entry-box receiver-spare <box> <primary-box> [replace] | entry-box catalog <hoster>"))
+		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain> | naive | hikkari | role=egress|receiver]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|naive|hikkari|awg|voice=<region>] [hoster=<kind>] | entry-box adopt-naive|adopt-hikkari <box> <domain> | entry-box receiver-spare <box> <primary-box> [replace] | entry-box catalog <hoster>"))
 	}
 	if err := cryptobox.Configure(os.Getenv); err != nil {
 		fail(fmt.Errorf("content key: %w", err))
@@ -1083,7 +1090,7 @@ func runEntryBox(args []string) {
 	case len(args) == 1:
 		id, err = prov.Provision(ctx, args[0], password, "")
 	default:
-		spec := entry.BoxSpec{Name: args[0], Address: args[1], Provider: args[2], Location: args[3]}
+		spec := entry.BoxSpec{Name: args[0], Address: args[1], Provider: args[2], Location: args[3], Role: role}
 		switch {
 		case region != "":
 			spec.Proto, spec.Region = entry.ProtoHysteria2, region

@@ -788,6 +788,28 @@ func (j *jobRun) provision(password string) error {
 	j.step("ipv6")
 	j.ipv6(r, freshlyOrdered)
 
+	// A box with a role (migration 070) is outside the relay pool. Until a
+	// relay comes to it by receiver-spare (a receiver), and always for an
+	// egress, the job stops here: the hub's key is in, the box is closed, and
+	// nothing else is put on it. No domain either: a receiver's is its group's.
+	if acc.role != "" {
+		relays, err := j.liveRelays()
+		if err != nil {
+			return err
+		}
+		if acc.role == RoleEgress || len(relays) == 0 {
+			if len(relays) != 0 {
+				return fmt.Errorf("на выходе %s релеи %s: выход без релеев", j.box, strings.Join(relayNames(relays), ", "))
+			}
+			j.step("harden")
+			if err := j.harden(r, nil); err != nil {
+				return err
+			}
+			j.log("машина роли %s: ключ хаба положен, машина закрыта, релеев нет", acc.role)
+			return nil
+		}
+	}
+
 	// An XHTTP box needs its domain live before anything is deployed: relays
 	// are minted from the box's sealed domain, and the edge orders its
 	// certificate against it at start (Ф6).
@@ -1486,7 +1508,7 @@ func (j *jobRun) harden(r Remote, relays []provRelay) error {
 	for _, rel := range relays {
 		ports = append(ports, strconv.Itoa(rel.id.Port)+"/"+j.transport())
 	}
-	if domainProtocol(j.acc.proto) {
+	if domainProtocol(j.acc.proto) && len(relays) > 0 {
 		// nginx answers :80 for the ACME HTTP-01 challenge certbot runs, and a
 		// lived-in site answers there too (zovfy's :80 is open). :443 is already
 		// in the relay ports above.
