@@ -63,6 +63,9 @@ func (s *Service) PrepareReceiverSpare(ctx context.Context, box, primary string,
 	if err := refuseVantageBox(ctx, tx, box); err != nil {
 		return uuid.Nil, err
 	}
+	if lb.role == RoleEgress {
+		return uuid.Nil, fmt.Errorf("%w: %s is an egress: no relay, no keys, ever", ErrRejected, box)
+	}
 	var running int
 	if err = tx.QueryRow(ctx, `SELECT count(*) FROM entry_jobs WHERE box=$1 AND status='running'`, box).Scan(&running); err != nil {
 		return uuid.Nil, err
