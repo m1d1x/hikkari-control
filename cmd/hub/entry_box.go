@@ -96,6 +96,11 @@ package main
 //	                                    # boxes, synthetic only (internal/entry/wirestand.go);
 //	                                    # bench= adds 12 MiB and a 90 s load per wire
 //	cmd/server entry-box wire-stand-off <entry-box> <exit-box>
+//	cmd/server entry-box egress <receiver-box> <egress-box>
+//	                                    # the receiver's WireGuard tunnel to its
+//	                                    # egress, then the check (internal/entry/egress.go)
+//	cmd/server entry-box egress-check <receiver-box> <egress-box>
+//	cmd/server entry-box egress-off <receiver-box> <egress-box>
 //	cmd/server entry-box lab-reality <box> [port] [cover]
 //	                                    # stand up or update the опыт 0 lab
 //	                                    # Reality relay on a recorded box
@@ -943,6 +948,34 @@ func runEntryBox(args []string) {
 				load.Steps, load.CC = steps, cc
 			}
 			err = prov.StandWireStand(ctx, args[1], args[2], sni, bench, load)
+		}
+		if err != nil {
+			fail(err)
+		}
+		os.Exit(0)
+	}
+	if len(args) == 3 && (args[0] == "egress" || args[0] == "egress-check" || args[0] == "egress-off") {
+		// entry-box egress <receiver-box> <egress-box> — the receiver's tunnel
+		// to its egress (internal/entry/egress.go): stand up and check, check
+		// alone, or take it off both boxes. No relay restarts.
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+		switch args[0] {
+		case "egress":
+			err = prov.StandEgress(ctx, args[1], args[2])
+		case "egress-check":
+			err = prov.CheckEgress(ctx, args[1], args[2])
+		default:
+			err = prov.StopEgress(ctx, args[1], args[2])
 		}
 		if err != nil {
 			fail(err)
