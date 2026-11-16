@@ -27,6 +27,14 @@ import (
 // replace: the box's live relays die first (the owner's word of 16.11 for
 // ams3: its Reality relays give way to the receiver); without it a box with
 // serving relays is refused.
+//
+// On a box with the receiver role (migration 070) the spare is hidden (H5 of
+// hikkari-client plans/2026-11-16-hidden-border-receiver-and-egress.md): its
+// address reaches no subscription and no other hand-out of the hub. The relay
+// is granted to no account (grant candidates, the stand and the node registry
+// pass boxes with a role by) and takes the primary relay's keys instead
+// (entry_relays.keys_from, migration 071). A spare on a fleet box, as ams3-3
+// is, keeps its grants and its links: its address was out before.
 
 // PrepareReceiverSpare turns box into a spare receiver of primary's group and
 // queues its provisioning job.
@@ -115,6 +123,14 @@ func (s *Service) PrepareReceiverSpare(ctx context.Context, box, primary string,
 	name := fmt.Sprintf("%s-%d", box, len(existing)+1)
 	if err := s.repo.insertPendingRelay(ctx, tx, name, KindPersonal, box, ct); err != nil {
 		return uuid.Nil, err
+	}
+	if lb.role == RoleReceiver {
+		// A hidden receiver (H5): its relay holds no grants, so its address
+		// rides in no account's batch, and lets through the keys the
+		// primary's relay lets through (migration 071, KeysOf).
+		if _, err = tx.Exec(ctx, `UPDATE entry_relays SET keys_from = (SELECT id FROM entry_relays WHERE name = $2) WHERE name = $1`, name, src.name); err != nil {
+			return uuid.Nil, err
+		}
 	}
 	var admin any
 	if adminID != "" {

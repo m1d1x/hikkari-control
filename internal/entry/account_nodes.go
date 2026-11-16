@@ -38,7 +38,7 @@ const (
 		JOIN entry_nodes n ON n.slug = p.slug
 		JOIN entry_relays r ON r.id = n.relay_id
 		JOIN entry_boxes b ON b.name = r.box
-		WHERE p.account_id = $1 AND r.kind = 'personal' AND r.status = 'alive' AND r.expires_at > $2
+		WHERE p.account_id = $1 AND r.kind = 'personal' AND r.status = 'alive' AND r.expires_at > $2 AND b.role IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM entry_grants g
 		                  WHERE g.account_id = $1 AND g.relay_id = r.id AND g.revoked_at IS NULL)`
 	// The account's live grants on relays that stand behind none of its
