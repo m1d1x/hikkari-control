@@ -23,7 +23,7 @@ import (
 //
 //	cmd/server entry-box trunk-pipe <box> <listen=port,...> [members] [h3dgram=<port>[:proxy]] [voice=<wire>]   # stand up or update
 //	cmd/server entry-box trunk-pipe-off <box>
-//	cmd/server entry-box trunk-pipe-wires <box> <kind:members[:fate],...|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
+//	cmd/server entry-box trunk-pipe-wires <box> <[pool:members,]kind:members[:fate],...|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
 //
 // h3dgram= gives the stand Chromium's QUIC wire (R6.3) to the exit's end of
 // it at that port (hk-exit under the exit's relay, entry-box trunk-pipe-exit,
@@ -39,7 +39,9 @@ import (
 // QUIC wire's port and usage, voice held or steered. A wire's fate
 // (hikkari-client plans/2026-11-15-live-udp-two-fates.md, section 1) is what
 // must break on the path for it to lose a frame: udp when not given; the
-// selector puts voice on two fates at once.
+// selector puts voice on two fates at once. pool:members is the pool's
+// members the same way (roadmap Э7): left out, the pool is the one the stand
+// was stood with; the pipe dials a pool of a new size anew, no stream reset.
 
 const (
 	trunkPipeUnit = "nekko-trunk-pipe"
@@ -57,6 +59,9 @@ const (
 	// R6.3's bench.
 	trunkPipeWireMembers = 2
 	trunkPipeH3Members   = 4
+	// trunkPoolMembersMax is the most members a pool has (trunkentry
+	// main.go maxMembers).
+	trunkPoolMembersMax = 128
 )
 
 var trunkPipeUnitSpec = trunkUnit{name: trunkPipeUnit, dir: trunkPipeDir, env: trunkPipeEnv,
@@ -152,7 +157,10 @@ func (p *Provisioner) pipeBrainFor(ctx context.Context, exit string, h3Port int,
 type TrunkPipeWires struct {
 	Members map[string]int
 	// Fates are the wires' fates by kind; a kind left out is udp.
-	Fates   map[string]string
+	Fates map[string]string
+	// Pool is the pool's members in place of the ones the stand was stood
+	// with; 0 leaves those.
+	Pool    int
 	H3Port  int
 	H3Usage string
 	Voice   string
@@ -163,7 +171,8 @@ type TrunkPipeWires struct {
 var trunkPipeWireKinds = []string{"udp", "h3dgram"}
 
 // ParseTrunkPipeWires reads the stand's wires, kind:members[:fate],... of
-// trunkPipeWireKinds ("off": none): the members and the fates given.
+// trunkPipeWireKinds ("off": none): the members and the fates given; and
+// pool:members (1-128, trunkentry maxMembers), the pool's own.
 func ParseTrunkPipeWires(raw string) (TrunkPipeWires, error) {
 	out := TrunkPipeWires{Members: map[string]int{}, Fates: map[string]string{}}
 	raw = strings.TrimSpace(raw)
@@ -174,6 +183,13 @@ func ParseTrunkPipeWires(raw string) (TrunkPipeWires, error) {
 		kind, rest, ok := strings.Cut(strings.TrimSpace(item), ":")
 		m, fate, fated := strings.Cut(rest, ":")
 		n, err := strconv.Atoi(m)
+		if kind == "pool" {
+			if !ok || err != nil || n < 1 || n > trunkPoolMembersMax || fated || out.Pool != 0 {
+				return out, fmt.Errorf("%w: %q, нужно pool:члены (1-%d), один раз и без судьбы", ErrRejected, item, trunkPoolMembersMax)
+			}
+			out.Pool = n
+			continue
+		}
 		if !ok || err != nil || n < 1 || n > 32 {
 			return out, fmt.Errorf("%w: %q, нужно вид:члены[:судьба] (1-32)", ErrRejected, item)
 		}
@@ -214,7 +230,11 @@ func trunkPipeWiresOf(exit map[string]int, w TrunkPipeWires) (string, error) {
 		Steer bool   `json:"steer"`
 		Wires []wire `json:"wires"`
 		Voice string `json:"voice,omitempty"`
-	}{Steer: true, Wires: []wire{}, Voice: w.Voice}
+		Pool  int    `json:"pool,omitempty"`
+	}{Steer: true, Wires: []wire{}, Voice: w.Voice, Pool: w.Pool}
+	if w.Pool < 0 || w.Pool > trunkPoolMembersMax {
+		return "", fmt.Errorf("%w: членов пула %d, 1-%d", ErrRejected, w.Pool, trunkPoolMembersMax)
+	}
 	if w.H3Usage != "" && w.H3Usage != "destination" && w.H3Usage != "proxy" {
 		return "", fmt.Errorf("%w: форма члена %q, destination или proxy", ErrRejected, w.H3Usage)
 	}
@@ -293,7 +313,7 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	if o.Members == 0 {
 		o.Members = DefaultTrunkMembers
 	}
-	if o.Members < 1 || o.Members > 128 {
+	if o.Members < 1 || o.Members > trunkPoolMembersMax {
 		return fmt.Errorf("%w: членов пула %d, 1-128", ErrRejected, o.Members)
 	}
 	if o.HikkariUDPCopies < 0 || o.HikkariUDPCopies > 2 {

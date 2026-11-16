@@ -121,6 +121,94 @@ func TestABrainFollowsItsWiresFileWithoutANewProcess(t *testing.T) {
 	}
 }
 
+// TestABrainFollowsItsFilesPoolWithoutANewProcess: the hub's file names the
+// pool's members of a running brain over hk-pipe (roadmap Э7): 4 of the env
+// → 2 → the env's 4 again when the file names none, under a call (its voice
+// on the udp wire and the pool) and a stream of 16 MiB on the pool. The
+// pipe's tick says the pool's members each time, the brain says so without
+// a new generation, the call pauses no longer than 150 ms, the stream comes
+// back byte for byte though its members were dialed anew, and the process
+// is the one that started.
+func TestABrainFollowsItsFilesPoolWithoutANewProcess(t *testing.T) {
+	s := newPipeStand(t)
+	entry := s.start(t)
+	pid := entry.Process.Pid
+	k := startCall(t, s.udp)
+	conn, err := net.Dial("tcp", "127.0.0.1:"+strconv.Itoa(s.tcp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	const size = 16 << 20
+	data := make([]byte, 1<<20)
+	_, _ = rand.Read(data)
+	errc := make(chan error, 1)
+	go func() {
+		for sent := 0; sent < size; sent += len(data) {
+			if _, err := conn.Write(data); err != nil {
+				errc <- err
+				return
+			}
+			time.Sleep(2 * time.Second) // the stream spans the changes
+		}
+		errc <- nil
+	}()
+	read := make(chan error, 1)
+	go func() {
+		got := make([]byte, len(data))
+		for n := 0; n < size; n += len(got) {
+			if _, err := io.ReadFull(conn, got); err != nil {
+				read <- err
+				return
+			}
+			if !bytes.Equal(got, data) {
+				read <- io.ErrUnexpectedEOF
+				return
+			}
+		}
+		read <- nil
+	}()
+	s.waitPool(t, "the start", 4)
+	udp := []wireSpec{{Name: "udp", Kind: "udp", Port: s.wire, Members: 2}}
+	steps := []struct {
+		what string
+		file wiresSpec
+		pool int // the pool's members in the pipe's tick
+	}{
+		{"a pool of 2 under the call", wiresSpec{Steer: true, Wires: udp, Pool: 2}, 2},
+		{"the env's pool when the file names none", wiresSpec{Steer: true, Wires: udp}, 4},
+	}
+	for _, st := range steps {
+		raw, _ := json.Marshal(st.file)
+		if err := os.WriteFile(s.env["EDGE_TRUNK_WIRES_FILE"], raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		s.waitPool(t, st.what, st.pool)
+		t.Logf("%s %s: the pipe carries it", time.Now().Format("15:04:05.000"), st.what)
+	}
+	sent, back, gapMax := k.end()
+	if gapMax > 150*time.Millisecond || back < sent-sent/100 {
+		t.Errorf("the call through the changes: %d/%d back, the longest pause %s; want 99%% back, no pause over 150 ms", back, sent, gapMax)
+	}
+	t.Logf("the call through the changes: %d/%d back, the longest pause %s", back, sent, gapMax)
+	if err := <-errc; err != nil {
+		t.Fatalf("the stream's writes: %v", err)
+	}
+	if err := <-read; err != nil {
+		t.Fatalf("the stream through the changes: %v", err)
+	}
+	t.Logf("the stream through the changes: %d MiB byte for byte", size>>20)
+	logs := s.written()
+	for _, want := range []string{"pool of 2 members (was 4), no new process", "pool of 4 members (was 2), no new process"} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("the brain did not say %q", want)
+		}
+	}
+	if strings.Contains(logs, "generation 2") || entry.Process.Signal(syscall.Signal(0)) != nil {
+		t.Errorf("a new generation came up, or the entry %d ended", pid)
+	}
+}
+
 // pipeTick finds the wires of the pipe's tick lines: "| wire 3 up=2/2".
 var pipeTick = regexp.MustCompile(`(?m)^hk-pipe: flows=.*$`)
 var tickWire = regexp.MustCompile(`\| wire (\d+) up=(\d+)/(\d+)`)
@@ -149,6 +237,27 @@ func (s *pipeStand) waitWire(t *testing.T, what string, id, members int, route s
 		time.Sleep(500 * time.Millisecond)
 	}
 	t.Fatalf("%s: no tick of the pipe with wire %d of %d members in 40 s", what, id, members)
+}
+
+// tickPool finds the pool in a tick of the pipe: "| swire 0/<session> up=4/4".
+var tickPool = regexp.MustCompile(`\| swire 0/\d+ up=(\d+)/(\d+)`)
+
+// waitPool waits until a tick of the pipe since the call has the pool with
+// members members, all of them up, within 40 s (waitWire's reasons).
+func (s *pipeStand) waitPool(t *testing.T, what string, members int) {
+	t.Helper()
+	from := len(s.written())
+	deadline := time.Now().Add(40 * time.Second)
+	for time.Now().Before(deadline) {
+		if ticks := pipeTick.FindAllString(s.written()[from:], -1); len(ticks) > 0 {
+			m := tickPool.FindStringSubmatch(ticks[len(ticks)-1])
+			if m != nil && m[1] == strconv.Itoa(members) && m[2] == m[1] {
+				return
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("%s: no tick of the pipe with a pool of %d members up in 40 s", what, members)
 }
 
 // tail is the last n bytes of s.

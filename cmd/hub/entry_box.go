@@ -63,9 +63,11 @@ package main
 //	                                    # end on the exit (trunk-pipe-exit); voice=
 //	                                    # holds voice on that wire, no selector
 //	cmd/server entry-box trunk-pipe-off <box>
-//	cmd/server entry-box trunk-pipe-wires <box> <udp:2,h3dgram:4[:fate]|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
+//	cmd/server entry-box trunk-pipe-wires <box> <[pool:16,]udp:2,h3dgram:4[:fate]|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
 //	                                    # the stand's wires and their knobs, a file
-//	                                    # its brain follows (no new process)
+//	                                    # its brain follows (no new process);
+//	                                    # pool:N is the pool's members, left out
+//	                                    # the ones the stand was stood with
 //	cmd/server entry-box trunk-copies <box> stand|people <members>:<window_ms>|off
 //	                                    # the pool's members of copies and their
 //	                                    # window, a file the brain follows (no new
@@ -718,7 +720,7 @@ func runEntryBox(args []string) {
 		os.Exit(0)
 	}
 	if len(args) >= 3 && len(args) <= 5 && args[0] == "trunk-pipe-wires" {
-		// entry-box trunk-pipe-wires <box> <kind:members[:fate],...|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
+		// entry-box trunk-pipe-wires <box> <[pool:members,]kind:members[:fate],...|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
 		// — the stand's wires by its file alone: the brain follows it within
 		// 10 s with no new process (internal/entry/trunkpipe.go, roadmap 4.4).
 		if err := cryptobox.Configure(os.Getenv); err != nil {

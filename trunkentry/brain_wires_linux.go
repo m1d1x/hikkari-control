@@ -7,7 +7,8 @@ package main
 // wire added is given to the pipe, a wire gone is taken from it, a wire
 // whose members, port or usage changed is given again (pipectl.SetWire,
 // RemoveWire; the pipe keeps its flows: their next datagram goes by the
-// route), all in the same process and the same pipe. The selector and the
+// route), all in the same process and the same pipe. The file's "pool" is
+// the pool's members the same way (applyPool). The selector and the
 // calls on the wires go on through a change that leaves the same wires; a
 // change of the wires themselves, of steer or of voice starts them anew.
 
@@ -55,6 +56,33 @@ func pipeWiresOf(c Config, exit netip.AddrPort, roots string, f wiresSpec) []pip
 		out = append(out, pw)
 	}
 	return out
+}
+
+// poolMembers is the pool's members: the file's when it names them, the
+// env's otherwise.
+func poolMembers(c Config, f wiresSpec) int {
+	if f.Pool > 0 {
+		return f.Pool
+	}
+	return c.Members
+}
+
+// applyPool gives the pipe its pool with members members when they are not
+// what it has: the pipe takes the pool's members down and dials that many
+// anew, what they carried goes again and no stream is reset (rust/pipe
+// pool.rs set_pool).
+func (b *brain) applyPool(members int) error {
+	if members == b.pool.Members {
+		return nil
+	}
+	pool := b.pool
+	pool.Members = members
+	if err := b.pipe.SetPool(pool); err != nil {
+		return fmt.Errorf("pool of %d members: %w", members, err)
+	}
+	log.Printf("nekko-trunk-entry: pool of %d members (was %d), no new process", members, b.pool.Members)
+	b.pool = pool
+	return nil
 }
 
 // wireShape is a pipe wire's shape for the selector's warm pair: Chromium's
@@ -200,7 +228,11 @@ func (b *brain) followWires(ctx context.Context) {
 			continue
 		}
 		ws := pipeWiresOf(b.c, b.exit, b.roots, f)
-		if err := b.applyWires(ws); err != nil {
+		err = b.applyPool(poolMembers(b.c, f))
+		if err == nil {
+			err = b.applyWires(ws)
+		}
+		if err != nil {
 			// What the pipe took runs; the file is tried again on the next
 			// tick, its error said once.
 			if msg := err.Error(); msg != failed {

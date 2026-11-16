@@ -74,6 +74,10 @@ type wiresSpec struct {
 	Steer bool       `json:"steer"`
 	Wires []wireSpec `json:"wires"`
 	Voice string     `json:"voice,omitempty"`
+	// Pool is the pool's members over hk-pipe, in place of
+	// EDGE_TRUNK_MEMBERS (0: the env's); the Go entry's pool is its env's
+	// alone (brain_wires_linux.go poolMembers).
+	Pool int `json:"pool,omitempty"`
 }
 
 // wireIDs are the wires' ids on the trunk: fixed per kind, so the exit's
@@ -134,6 +138,9 @@ func readWires(path string) (wiresSpec, []byte, error) {
 			return f, raw, fmt.Errorf("%s: wire %q: fate %q", path, w.Name, w.Fate)
 		}
 		seen[w.Kind] = true
+	}
+	if f.Pool < 0 || f.Pool > maxMembers {
+		return f, raw, fmt.Errorf("%s: pool of %d members, 1-%d", path, f.Pool, maxMembers)
 	}
 	if f.Voice != "" && !seen[f.Voice] {
 		return f, raw, fmt.Errorf("%s: voice on wire %q, which the file has not", path, f.Voice)

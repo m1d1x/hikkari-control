@@ -53,6 +53,9 @@ type brain struct {
 	// steer whether the selector moves the route over them.
 	wires []pipectl.Wire
 	steer bool
+	// pool is the pool as the pipe was given it: its members are the
+	// file's when it names them, the env's otherwise (poolMembers).
+	pool pipectl.Pool
 	// exit and roots are the pool's end and the PEM roots, for the wires
 	// the file gives later (brain_wires_linux.go).
 	exit  netip.AddrPort
@@ -190,10 +193,17 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 		return nil, err
 	}
 	b.pipe = p
-	pool := pipectl.Pool{ID: trunk.PoolWire, Members: c.Members, Stall: c.Stall, Exit: exit,
+	// A file that cannot be read leaves the pool alone, as the Go entry's
+	// addWires: a wire less, not an entry less.
+	ws, f, werr := pipeWires(c, exit, roots)
+	if werr != nil {
+		log.Printf("nekko-trunk-entry: wires: %v (the pool alone)", werr)
+		ws, f = nil, wiresSpec{}
+	}
+	b.pool = pipectl.Pool{ID: trunk.PoolWire, Members: poolMembers(c, f), Stall: c.Stall, Exit: exit,
 		Ports:    [2]uint16{uint16(c.PortLo), uint16(c.PortHi)},
 		Chromium: &pipectl.ChromiumForm{SNI: c.SNI, Key: c.Key, Cronet: cronetBeside(c.Pipe), Roots: roots}}
-	if err := p.SetPool(pool); err != nil {
+	if err := p.SetPool(b.pool); err != nil {
 		p.Close()
 		return nil, fmt.Errorf("pool: %w", err)
 	}
@@ -207,12 +217,6 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 		return nil, fmt.Errorf("copies: %w", err)
 	} else if cp.Members > 0 {
 		log.Printf("nekko-trunk-entry: copies on %d members of the pool, a window of %v", cp.Members, cp.Window)
-	}
-	// A file that cannot be read leaves the pool alone, as the Go entry's
-	// addWires: a wire less, not an entry less.
-	ws, f, err := pipeWires(c, exit, roots)
-	if err != nil {
-		log.Printf("nekko-trunk-entry: wires: %v (the pool alone)", err)
 	}
 	for _, w := range ws {
 		if err := p.SetWire(w); err != nil {
@@ -498,7 +502,7 @@ func runPipeGeneration(c Config) error {
 		names = append(names, fmt.Sprintf("%s:%d", w.Name, w.Members))
 	}
 	log.Printf("nekko-trunk-entry: up: over hk-pipe (pid %d), generation %d, exit %s (%s), %d members, wires %v steer=%v, tcp %v, udp %v, udp one copy %v",
-		b.pipe.Pid(), s.gen, c.Exit, c.SNI, c.Members, names, b.steer, forwardList(c.TCP), forwardList(c.UDP), portList(c.OneCopy))
+		b.pipe.Pid(), s.gen, c.Exit, c.SNI, b.pool.Members, names, b.steer, forwardList(c.TCP), forwardList(c.UDP), portList(c.OneCopy))
 	if ctl != nil {
 		go ctl.serve()
 	}

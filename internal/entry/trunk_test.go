@@ -312,7 +312,20 @@ func TestTheStandsWiresAreTheKindsThePipeCarries(t *testing.T) {
 	if err != nil || w.Members["h3dgram"] != 6 || len(w.Fates) != 1 || w.Fates["h3dgram"] != "hop2" {
 		t.Fatalf("fates: %+v %v", w, err)
 	}
-	for _, raw := range []string{"quic:4", "udp:2,udp:3", "udp", "h3dgram:0", "udp:2:", "udp:2:Hop", "udp:2:a:b"} {
+	// The pool's members (roadmap Э7): no wire of the file, a number of its.
+	w, err = ParseTrunkPipeWires("pool:16,udp:2")
+	if err != nil || w.Pool != 16 || len(w.Members) != 1 || w.Members["udp"] != 2 {
+		t.Fatalf("pool: %+v %v", w, err)
+	}
+	pooled, err := trunkPipeWiresOf(map[string]int{"udp": 20447}, w)
+	if err != nil || pooled != `{"steer":true,"wires":[{"name":"udp","kind":"udp","port":20447,"members":2}],"pool":16}`+"\n" {
+		t.Fatalf("pool: %q %v", pooled, err)
+	}
+	if _, err := trunkPipeWiresOf(map[string]int{"udp": 20447}, TrunkPipeWires{Members: map[string]int{"udp": 2}, Voice: "pool"}); err == nil {
+		t.Fatal("voice held on the pool accepted")
+	}
+	for _, raw := range []string{"quic:4", "udp:2,udp:3", "udp", "h3dgram:0", "udp:2:", "udp:2:Hop", "udp:2:a:b",
+		"pool:0", "pool:129", "pool:8:tcp", "pool:8,pool:8", "pool"} {
 		if _, err := ParseTrunkPipeWires(raw); err == nil {
 			t.Fatalf("%q accepted", raw)
 		}
