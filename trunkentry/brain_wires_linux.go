@@ -71,12 +71,17 @@ func poolMembers(c Config, f wiresSpec) int {
 // what it has: the pipe takes the pool's members down and dials that many
 // anew, what they carried goes again and no stream is reset (rust/pipe
 // pool.rs set_pool).
+//
+// The pool goes to the active receiver: after a move (receivers_linux.go)
+// the one it started on is a standby, and the pipe's pool is the active
+// session's.
 func (b *brain) applyPool(members int) error {
 	if members == b.pool.Members {
 		return nil
 	}
 	pool := b.pool
 	pool.Members = members
+	pool.Exit = b.exitNow()
 	if err := b.pipe.SetPool(pool); err != nil {
 		return fmt.Errorf("pool of %d members: %w", members, err)
 	}
@@ -227,7 +232,7 @@ func (b *brain) followWires(ctx context.Context) {
 			log.Printf("nekko-trunk-entry: wires: %v (kept what runs)", err)
 			continue
 		}
-		ws := pipeWiresOf(b.c, b.exit, b.roots, f)
+		ws := pipeWiresOf(b.c, b.exitNow(), b.roots, f)
 		err = b.applyPool(poolMembers(b.c, f))
 		if err == nil {
 			err = b.applyWires(ws)

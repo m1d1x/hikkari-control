@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -122,6 +123,12 @@ type Config struct {
 	// system's roots for the relay's certificate: a relay no public root
 	// signs, as the bench's. Empty is the system's.
 	Roots string
+	// Receivers, over hk-pipe (EDGE_TRUNK_RECEIVERS), are the group's other
+	// receivers: the exit's relay at these addresses on the same ports; the
+	// brain moves off a dead one (receivers_linux.go). ReceiverPool is how
+	// many members a receiver on standby keeps (EDGE_TRUNK_RECEIVER_POOL).
+	Receivers    []netip.Addr
+	ReceiverPool int
 }
 
 const (
@@ -174,6 +181,10 @@ func ConfigFromEnv(get func(string) string) (Config, error) {
 		return c, fmt.Errorf("EDGE_TRUNK_PIPE: %q is not an absolute path", c.Pipe)
 	}
 	c.Roots = strings.TrimSpace(get("EDGE_TRUNK_ROOTS"))
+	exitIP, _ := netip.ParseAddr(host)
+	if err := receivers(&c, get, exitIP); err != nil {
+		return c, err
+	}
 	if c.TCP, err = forwards(get("EDGE_TRUNK_FORWARD"), "EDGE_TRUNK_FORWARD"); err != nil {
 		return c, err
 	}

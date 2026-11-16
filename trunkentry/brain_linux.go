@@ -60,6 +60,10 @@ type brain struct {
 	// the file gives later (brain_wires_linux.go).
 	exit  netip.AddrPort
 	roots string
+	// mu guards exit, the active receiver's once the brain moved the entry
+	// (receivers_linux.go); order is the receivers by the pipe's rx.
+	mu    sync.Mutex
+	order []netip.Addr
 	// voiceOn holds voice on that wire, bulk on the pool, no selector (the
 	// file's "voice"; 0 none: the pool is wire 0, never named so).
 	voiceOn trunk.WireID
@@ -184,7 +188,11 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 		}
 		roots = string(raw)
 	}
-	b := &brain{c: c, s: s, ctx: ctx, handed: make(chan struct{}), exit: exit, roots: roots}
+	// A generation starts on the receiver the previous one handed over.
+	start := startReceiver(exit.Addr(), c.Receivers, os.Getenv(envActiveReceiver))
+	exit = netip.AddrPortFrom(start, exit.Port())
+	b := &brain{c: c, s: s, ctx: ctx, handed: make(chan struct{}), exit: exit, roots: roots,
+		order: receiverOrder(netip.MustParseAddrPort(c.Exit).Addr(), c.Receivers, start)}
 	p, err := pipectl.Start(pipectl.Config{Bin: c.Pipe, Stderr: os.Stderr,
 		Logf:       func(format string, a ...any) { log.Printf("nekko-trunk-entry: "+format, a...) },
 		OnMember:   b.deaths.event,
@@ -223,6 +231,10 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 			p.Close()
 			return nil, fmt.Errorf("wire %s: %w", w.Name, err)
 		}
+	}
+	if err := b.setReceivers(); err != nil {
+		p.Close()
+		return nil, err
 	}
 	b.wires, b.steer = ws, f.Steer
 	if f.Voice != "" {
@@ -329,6 +341,7 @@ func (b *brain) startExtras() {
 		})
 	}
 	go b.followWires(ctx)
+	go b.runReceivers(ctx)
 }
 
 // handOver makes this generation an old one (its pipe already drains): no
@@ -398,7 +411,7 @@ func (b *brain) spawn(req handoffRequest) (int, int, error) {
 	}
 	defer readyR.Close()
 	cmd := exec.Command(binary, "run")
-	cmd.Env = childEnv(os.Environ(), req.Env, spec, next)
+	cmd.Env = append(childEnv(os.Environ(), req.Env, spec, next), envActiveReceiver+"="+b.exitNow().Addr().String())
 	cmd.ExtraFiles = append(files, readyW, newEnd)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	err = cmd.Start()
@@ -501,8 +514,8 @@ func runPipeGeneration(c Config) error {
 	for _, w := range b.wires {
 		names = append(names, fmt.Sprintf("%s:%d", w.Name, w.Members))
 	}
-	log.Printf("nekko-trunk-entry: up: over hk-pipe (pid %d), generation %d, exit %s (%s), %d members, wires %v steer=%v, tcp %v, udp %v, udp one copy %v",
-		b.pipe.Pid(), s.gen, c.Exit, c.SNI, b.pool.Members, names, b.steer, forwardList(c.TCP), forwardList(c.UDP), portList(c.OneCopy))
+	log.Printf("nekko-trunk-entry: up: over hk-pipe (pid %d), generation %d, exit %s (%s), %d members, wires %v steer=%v, tcp %v, udp %v, udp one copy %v, receivers %v",
+		b.pipe.Pid(), s.gen, b.exitNow(), c.SNI, b.pool.Members, names, b.steer, forwardList(c.TCP), forwardList(c.UDP), portList(c.OneCopy), b.order)
 	if ctl != nil {
 		go ctl.serve()
 	}

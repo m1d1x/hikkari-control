@@ -1002,7 +1002,7 @@ func childEnv(own []string, entry map[string]string, spec []string, gen int) []s
 	var out []string
 	for _, kv := range own {
 		k, _, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(k, "EDGE_TRUNK_") || k == envInherit || k == envGeneration {
+		if strings.HasPrefix(k, "EDGE_TRUNK_") || k == envInherit || k == envGeneration || k == envActiveReceiver {
 			continue
 		}
 		if _, set := entry[k]; set {
