@@ -214,7 +214,7 @@ func (n *naiveRuntime) startTrunkPipe(ctx context.Context, gen byte) error {
 	n.pipe = p
 	n.mu.Unlock()
 	if p.wires[pipeWireH3Dgram] != nil {
-		go p.giveH3Dgram(ctx, n.cfg.Storage, n.cfg.Host)
+		go p.giveH3Dgram(ctx, n.cfg)
 	}
 	go p.minutes(ctx)
 	go func() {
@@ -243,12 +243,21 @@ func pipeWireSocket(f *os.File, port int) (*net.UDPConn, error) {
 	return net.ListenUDP("udp4", &net.UDPAddr{Port: port})
 }
 
-// giveH3Dgram gives hk-exit Chromium's QUIC wire once the relay's ACME
-// certificate for its domain is in Caddy's storage (the trunk's SNI is the
-// relay's domain; the first start of a relay waits for its certificate).
-func (p *trunkPipe) giveH3Dgram(ctx context.Context, storage, host string) {
+// giveH3Dgram gives hk-exit Chromium's QUIC wire with the relay's
+// certificate for its domain (the trunk's SNI is the relay's domain): the
+// hub's group certificate when it gave one (P1; a spare receiver has no
+// other), else Caddy's own once it is in Caddy's storage (the first start of
+// a relay waits for it).
+func (p *trunkPipe) giveH3Dgram(ctx context.Context, cfg naiveConfig) {
 	for {
-		cert, key := relayCertificate(storage, host)
+		cert, key, err := cfg.groupCertFiles()
+		if err != nil {
+			log.Printf("nekko-edge: hk-exit wire h3dgram: group certificate: %v", err)
+			return
+		}
+		if cert == "" {
+			cert, key = relayCertificate(cfg.Storage, cfg.Host)
+		}
 		if cert != "" {
 			w := pipectl.ExitWire{ID: pipeWireIDs[pipeWireH3Dgram], Form: pipectl.FormH3Dgram, Conn: p.wires[pipeWireH3Dgram],
 				Keys: p.cfg.Keys, CertFile: cert, KeyFile: key}

@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -13,6 +14,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -150,5 +152,48 @@ func TestTheGroupCertificateReplacesCaddysOrder(t *testing.T) {
 		if _, err := naiveFromEnv(get); err == nil {
 			t.Fatalf("%s: started", name)
 		}
+	}
+}
+
+// The group's certificate is the datagram channel's and hk-exit's too
+// (P1): a spare receiver has no certificate of Caddy's own in its storage,
+// so a channel reading only that one never answers there.
+func TestTheGroupCertificateIsEveryChannels(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := &x509.Certificate{SerialNumber: big.NewInt(7), DNSNames: []string{"otter9119.lol"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour)}
+	der, _ := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
+	kder, _ := x509.MarshalECPrivateKey(key)
+	n := naiveConfig{Host: "otter9119.lol", Storage: t.TempDir(),
+		CertPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
+		KeyPEM:  string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kder}))}
+
+	get, err := n.groupCertificate()
+	if err != nil || get == nil {
+		t.Fatalf("no certificate for the datagram channel: %v", err)
+	}
+	c, err := get(&tls.ClientHelloInfo{ServerName: "otter9119.lol"})
+	if err != nil || len(c.Certificate) == 0 || string(c.Certificate[0]) != string(der) {
+		t.Fatalf("the datagram channel serves another certificate: %v", err)
+	}
+	cert, keyFile, err := n.groupCertFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tls.LoadX509KeyPair(cert, keyFile); err != nil {
+		t.Fatalf("hk-exit's files: %v", err)
+	}
+	if st, err := os.Stat(keyFile); err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("the key's file: %v %v", st.Mode(), err)
+	}
+
+	none := naiveConfig{Host: "otter9119.lol", Storage: t.TempDir()}
+	if get, _ := none.groupCertificate(); get != nil {
+		t.Fatal("a certificate without the hub's")
+	}
+	if cert, _, _ := none.groupCertFiles(); cert != "" {
+		t.Fatal("files without the hub's certificate")
 	}
 }

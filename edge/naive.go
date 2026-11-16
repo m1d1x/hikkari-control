@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -153,6 +154,45 @@ func groupCertFromEnv(get func(string) string, host string) (string, string, err
 		return "", "", fmt.Errorf("EDGE_HIKKARI_CERT: valid %s to %s, not now", leaf.NotBefore.Format(time.DateOnly), leaf.NotAfter.Format(time.DateOnly))
 	}
 	return string(certPEM), string(keyPEM), nil
+}
+
+// groupCertificate is the TLS certificate of the relay's datagram channel
+// when the hub gave the group's (P1): the same one Caddy serves on the
+// stream channel. nil: none given, the channel reads Caddy's own from its
+// storage (hkserver.CaddyCertificate).
+func (n naiveConfig) groupCertificate() (func(*tls.ClientHelloInfo) (*tls.Certificate, error), error) {
+	if n.CertPEM == "" {
+		return nil, nil
+	}
+	pair, err := tls.X509KeyPair([]byte(n.CertPEM), []byte(n.KeyPEM))
+	if err != nil {
+		return nil, err
+	}
+	return func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return &pair, nil }, nil
+}
+
+// groupCertFiles writes the group's certificate where hk-exit reads its
+// h3dgram wire's (it takes files) and says where: <storage>/group/<host>.crt
+// and .key, the key 0600. "" when the hub gave none.
+func (n naiveConfig) groupCertFiles() (cert, key string, err error) {
+	if n.CertPEM == "" {
+		return "", "", nil
+	}
+	dir := filepath.Join(n.Storage, "group")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", "", err
+	}
+	cert, key = filepath.Join(dir, n.Host+".crt"), filepath.Join(dir, n.Host+".key")
+	for path, body := range map[string]string{cert: n.CertPEM, key: n.KeyPEM} {
+		tmp := path + ".new"
+		if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
+			return "", "", err
+		}
+		if err := os.Rename(tmp, path); err != nil {
+			return "", "", err
+		}
+	}
+	return cert, key, nil
 }
 
 func (n naiveConfig) document() ([]byte, error) {

@@ -115,7 +115,15 @@ func (p *Provisioner) MoveTrunkEntry(ctx context.Context, entryBox, box string) 
 		}
 		for _, l := range strings.Split(out, "\n") {
 			if m := word.FindStringSubmatch(l); m != nil {
-				line := strings.ReplaceAll(l, ip, box)
+				// Boxes' addresses are sealed: the line goes out by names.
+				line := l
+				for _, b := range append([]string{exit}, receivers...) {
+					if a, _, _, _, err := p.svc.trunkPipeExitOf(ctx, b); err == nil {
+						if h, _, err := net.SplitHostPort(a); err == nil {
+							line = strings.ReplaceAll(line, h, b)
+						}
+					}
+				}
 				if strings.Contains(m[1], "refused") {
 					return line, fmt.Errorf("%w: вход не перешёл", ErrRejected)
 				}
