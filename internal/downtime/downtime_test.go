@@ -1,6 +1,7 @@
 package downtime
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -156,6 +157,46 @@ func TestAStallLineIsPerMinuteAndThreshold(t *testing.T) {
 	} {
 		if _, ok := ParseStallLine(bad, "t-a"); ok {
 			t.Fatalf("read a bad line %q", bad)
+		}
+	}
+}
+
+func TestUserChartAveragesOverThePeopleWhoseTunnelWasOn(t *testing.T) {
+	since := time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)
+	step := time.Hour
+	until := since.Add(3 * step)
+	c := assembleUsers("7d", since, until, step, []UserCount{
+		// Hour 0: two people, one lost 6 minutes; only one core timed stalls.
+		{Install: "t-a", Bucket: since, On: 60, Lost: 6, StallMinutes: 58, MS300: 4000, MS1000: 1500},
+		{Install: "t-b", Bucket: since, On: 30, Lost: 0},
+		// Hour 2: one person, nothing lost, stalls timed and none seen.
+		{Install: "t-a", Bucket: since.Add(2 * step), On: 10, StallMinutes: 9},
+		// Outside the window, and a row without a minute: neither is a person.
+		{Install: "t-c", Bucket: until, On: 60, Lost: 60},
+		{Install: "t-d", Bucket: since.Add(step), On: 0},
+	})
+	line := func(v []*float64) string {
+		out := ""
+		for _, x := range v {
+			if x == nil {
+				out += " -"
+			} else {
+				out += fmt.Sprintf(" %g", *x)
+			}
+		}
+		return out
+	}
+	if len(c.Buckets) != 3 {
+		t.Fatalf("buckets = %v", c.Buckets)
+	}
+	for name, got := range map[string][2]string{
+		"people":      {line(c.People), " 2 - 1"},
+		"lost":        {line(c.Lost), " 3 - 0"},
+		"stallMs":     {line(c.StallMS), " 4000 - 0"},
+		"stallLongMs": {line(c.StallLongMS), " 1500 - 0"},
+	} {
+		if got[0] != got[1] {
+			t.Errorf("%s =%s, want%s", name, got[0], got[1])
 		}
 	}
 }

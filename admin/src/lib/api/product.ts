@@ -1,7 +1,7 @@
 import { get } from './client';
 import type { Win } from '$lib/product/format';
 import { USE_MOCK } from '$lib/config/mock';
-import { mockProductDowntime, mockProductMetrics, mockTesterCharts } from './productMock';
+import { mockProductDowntime, mockProductMetrics, mockTesterCharts, mockUserDowntime } from './productMock';
 
 // The product section's screens, counted by the hub from the clients'
 // telemetry (internal/admin/product_metrics.go, product_errors.go). A person
@@ -140,6 +140,32 @@ export interface ProductDowntime {
 export function fetchProductDowntime(win: Win): Promise<ProductDowntime> {
 	if (USE_MOCK) return Promise.resolve(mockProductDowntime(win));
 	return get('/api/v1/admin/product/downtime', { window: win });
+}
+
+/**
+ * The main metric of everyone who is not a tester (hub internal/downtime
+ * users.go), from the telemetry event "tunnel". Averages over people only:
+ * an ordinary user has no line of their own. Every array has a value per
+ * bucket, null where nobody's tunnel was on.
+ */
+export interface UserDowntime {
+	window: Win;
+	bucketSeconds: number;
+	/** bucket starts, ISO, oldest first; the last one is still filling */
+	buckets: string[];
+	/** installs whose tunnel was on in the bucket: who the averages are over */
+	people: (number | null)[];
+	/** minutes the tunnel was on and carried nothing, per person */
+	lost: (number | null)[];
+	/** ms of the stalls of 300 ms or more, per person whose core timed them; null where nobody's did */
+	stallMs: (number | null)[];
+	/** the same for the stalls of 1 s or more */
+	stallLongMs: (number | null)[];
+}
+
+export function fetchUserDowntime(win: Win): Promise<UserDowntime> {
+	if (USE_MOCK) return Promise.resolve(mockUserDowntime(win));
+	return get('/api/v1/admin/product/downtime-users', { window: win });
 }
 
 /** One tester's lines (hub internal/downtime testers.go), a value per bucket, null where nothing was measured. */
