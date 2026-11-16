@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"net/netip"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -67,6 +68,35 @@ func receiverOrder(exit netip.Addr, rest []netip.Addr, start netip.Addr) []netip
 
 // startReceiver is the receiver a generation starts on: the one the previous
 // generation handed over when it is of the group, else EDGE_TRUNK_EXIT's.
+// receiverFilePath is the hub's word on which receiver carries the entry
+// (P5, entry-box trunk-entry-receiver): one IPv4 address beside the wires
+// file. The brain moves there when the file changes, if that receiver is
+// heard; a fresh start (no generation handed one over) starts there.
+func receiverFilePath() string {
+	return strings.TrimSuffix(wiresFilePath(), ".wires.json") + ".receiver"
+}
+
+// readReceiverFile reads the file: its bytes, and the address they name
+// (invalid when the file is missing or says nothing).
+func readReceiverFile(path string) ([]byte, netip.Addr, error) {
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, netip.Addr{}, nil
+	}
+	if err != nil {
+		return nil, netip.Addr{}, err
+	}
+	text := strings.TrimSpace(string(raw))
+	if text == "" {
+		return raw, netip.Addr{}, nil
+	}
+	ip, err := netip.ParseAddr(text)
+	if err != nil || !ip.Is4() {
+		return raw, netip.Addr{}, fmt.Errorf("receiver file: %q is not an IPv4 address", text)
+	}
+	return raw, ip, nil
+}
+
 func startReceiver(exit netip.Addr, rest []netip.Addr, handed string) netip.Addr {
 	ip, err := netip.ParseAddr(strings.TrimSpace(handed))
 	if err != nil {

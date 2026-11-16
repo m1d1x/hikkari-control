@@ -189,7 +189,14 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 		roots = string(raw)
 	}
 	// A generation starts on the receiver the previous one handed over.
-	start := startReceiver(exit.Addr(), c.Receivers, os.Getenv(envActiveReceiver))
+	// A fresh start, not a reload, starts where the hub last said (P5).
+	handed := os.Getenv(envActiveReceiver)
+	if handed == "" {
+		if _, ip, err := readReceiverFile(receiverFilePath()); err == nil && ip.IsValid() {
+			handed = ip.String()
+		}
+	}
+	start := startReceiver(exit.Addr(), c.Receivers, handed)
 	exit = netip.AddrPortFrom(start, exit.Port())
 	b := &brain{c: c, s: s, ctx: ctx, handed: make(chan struct{}), exit: exit, roots: roots,
 		order: receiverOrder(netip.MustParseAddrPort(c.Exit).Addr(), c.Receivers, start)}
