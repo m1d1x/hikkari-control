@@ -255,10 +255,14 @@ func run() error {
 			}
 		}
 	}()
+	// The product's main metric (ROADMAP 3.3): each minute a tunnel was on
+	// and what it was. Testers' minutes come by their log, everyone else's as
+	// the telemetry event "tunnel".
+	tunnelMinutes := downtime.NewStore(pool)
 	if store != nil {
 		// Client telemetry (hikkari-client docs/TELEMETRY.md). Shares /v1/
 		// with the downdetector; the more specific pattern wins.
-		mux.HandleFunc("POST /v1/events", (&telemetry.Server{Sink: store}).Handler())
+		mux.HandleFunc("POST /v1/events", (&telemetry.Server{Sink: store, Tunnel: tunnelMinutes}).Handler())
 		telemetry.NewLandingServer(store, config.Default().AllWebOrigins()).Register(mux)
 		mux.HandleFunc("POST /api/v1/internal/entry-probes", probesink.IngestEntry(store, svc))
 		entry.RegisterProberRoutes(mux, svc)
@@ -399,9 +403,7 @@ func run() error {
 		return id, err
 	}, testerAliases(testerStore), opsGate)
 	go voiceruns.NewIngester(voiceRuns, pool).Run(ctx, 2*time.Minute)
-	// The product's main metric (ROADMAP 3.3): each minute a tester's tunnel
-	// was on and what it was, per person on the product overview.
-	tunnelMinutes := downtime.NewStore(pool)
+	// Testers' minutes of the main metric, per person on the product overview.
 	go downtime.NewIngester(tunnelMinutes, pool).Run(ctx, 2*time.Minute)
 	downtime.RegisterAdminRoutes(adminMux, tunnelMinutes, downtime.Namer(testerAliases(testerStore)), func(h http.HandlerFunc) http.HandlerFunc {
 		return admin.RequireAdmin(adminKeys.Public, pool, h)

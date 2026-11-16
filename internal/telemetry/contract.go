@@ -31,12 +31,22 @@ const (
 	kBucket
 	kVersion
 	kErrCode
+	kUpTo // a whole number from 0 to the field's max
 )
 
 type spec struct {
 	kind   kind
 	values map[string]bool
+	max    float64
 }
+
+// The bounds of the "tunnel" event's numbers, as the client holds them
+// (hikkari-client engine/core/telemetry contract.go).
+var (
+	tunnelMinutes = spec{kind: kUpTo, max: 24 * 60}
+	tunnelStalls  = spec{kind: kUpTo, max: 1_000_000}
+	tunnelStallMS = spec{kind: kUpTo, max: 24 * 60 * 60 * 1000}
+)
 
 func enum(v map[string]bool) spec { return spec{kind: kEnum, values: v} }
 
@@ -69,6 +79,15 @@ var events = map[string]map[string]spec{
 	},
 	"ui_open": {"screen": enum(set("settings", "logs", "routing", "profiles", "support", "donate"))},
 	"cta":     {"kind": enum(set("subscribe", "renew", "donate"))},
+	// The main metric of an ordinary user (docs/TELEMETRY.md §4a): a period's
+	// minutes by state and its stalls. Numbers only.
+	"tunnel": {
+		"o": tunnelMinutes, "i": tunnelMinutes, "d": tunnelMinutes, "c": tunnelMinutes, "n": tunnelMinutes,
+		"stall_min": tunnelMinutes,
+		"s300":      tunnelStalls, "s300_ms": tunnelStallMS,
+		"s1000": tunnelStalls, "s1000_ms": tunnelStallMS,
+		"s3000": tunnelStalls, "s3000_ms": tunnelStallMS,
+	},
 }
 
 var errorCodes = set(
@@ -131,6 +150,9 @@ func checkValue(f spec, v any) bool {
 	case kUint:
 		n, ok := v.(float64)
 		return ok && n >= 0 && n <= maxSecs && n == float64(int64(n))
+	case kUpTo:
+		n, ok := v.(float64)
+		return ok && n >= 0 && n <= f.max && n == float64(int64(n))
 	case kBucket:
 		s, ok := v.(string)
 		return ok && countBkts[s]

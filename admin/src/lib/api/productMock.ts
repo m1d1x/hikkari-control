@@ -1,4 +1,12 @@
-import type { DowntimePerson, MetricsShare, ProductDowntime, ProductMetrics, TesterCharts, TimeSeries } from './product';
+import type {
+	DowntimePerson,
+	MetricsShare,
+	ProductDowntime,
+	ProductMetrics,
+	TesterCharts,
+	TimeSeries,
+	UserDowntime,
+} from './product';
 import type { Win } from '$lib/product/format';
 
 // Fixture for `VITE_USE_MOCK=true`: product overview with believable figures.
@@ -114,6 +122,24 @@ export function mockProductDowntime(win: Win): ProductDowntime {
 	});
 	const averageTotal = people.reduce((a, p) => a + p.lostTotal, 0) / people.length;
 	return { window: win, bucketSeconds: step, buckets, average, averageTotal, people };
+}
+
+/** Everyone who is not a tester: a few dozen installs, a bad evening, a night nobody was on; demo data for VITE_USE_MOCK. */
+export function mockUserDowntime(win: Win): UserDowntime {
+	const down = mockProductDowntime(win);
+	const n = down.buckets.length;
+	const off = (i: number) => i % 11 === 7;
+	const people = down.buckets.map((_, i) => (off(i) ? null : 18 + ((i * 5) % 9)));
+	const bad = (i: number) => i === n - 6 || i === n - 5;
+	return {
+		window: win,
+		bucketSeconds: down.bucketSeconds,
+		buckets: down.buckets,
+		people,
+		lost: people.map((p, i) => (p === null ? null : bad(i) ? 4.5 : ((i * 3) % 5) / 10)),
+		stallMs: people.map((p, i) => (p === null ? null : 2200 + 300 * ((i * 7) % 6) + (bad(i) ? 40000 : 0))),
+		stallLongMs: people.map((p, i) => (p === null ? null : 900 * ((i * 3) % 3) + (bad(i) ? 36000 : 0))),
+	};
 }
 
 /** The mock testers' lines: one with a bad evening of its own network, one whose tunnel failed on a good network. */

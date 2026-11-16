@@ -66,6 +66,8 @@ type EventRow struct {
 	Name    string
 	Fields  string // canonical JSON
 	Engine  string // copied out of Fields for the daily rollup
+	// tunnel is the period of a "tunnel" event, read out of its checked fields.
+	tunnel *TunnelPeriod
 }
 
 type ErrorRow struct {
@@ -85,10 +87,37 @@ type Sink interface {
 	InsertTelemetry(ctx context.Context, events []EventRow, errs []ErrorRow) error
 }
 
+// TunnelPeriod is one "tunnel" event: a stretch of an install's tunnel being
+// on, as minutes by state and the stalls its core timed. It is all the event
+// carries; the row has no column for anything else.
+type TunnelPeriod struct {
+	Install string
+	// At is the period's first minute.
+	At time.Time
+	// Minutes by state: something came back, idle, asked and unanswered, the
+	// core down, the user's own network down.
+	Flowing, Idle, Down, CoreDown, NetDown int
+	// StallMinutes is how many of the minutes had their stalls measured.
+	StallMinutes int
+	// Stalls of at least 300, 1000 and 3000 ms: how many, and their length.
+	N300, N1000, N3000    int
+	MS300, MS1000, MS3000 int64
+}
+
+// TunnelSink stores the periods the main metric is drawn from. Writing the
+// same period twice must leave one row: a client resends a batch the hub
+// answered 503 to.
+type TunnelSink interface {
+	InsertTunnelPeriods(ctx context.Context, periods []TunnelPeriod) error
+}
+
 // Server is POST /v1/events.
 type Server struct {
 	Sink Sink
-	Now  func() time.Time
+	// Tunnel takes the "tunnel" events next to the events table; nil keeps
+	// them in the events table only.
+	Tunnel TunnelSink
+	Now    func() time.Time
 
 	mu      sync.Mutex
 	window  time.Time
@@ -127,6 +156,15 @@ func (s *Server) Handler() http.HandlerFunc {
 			s.mu.Lock()
 			s.skipped += uint64(skipped)
 			s.mu.Unlock()
+		}
+		// The periods first: writing them again is harmless, so a failure
+		// after them costs nothing when the client sends the batch again.
+		if periods := tunnelPeriods(events); len(periods) > 0 && s.Tunnel != nil {
+			if err := s.Tunnel.InsertTunnelPeriods(r.Context(), periods); err != nil {
+				log.Printf("telemetry: store %d tunnel periods: %v", len(periods), err)
+				http.Error(w, "unavailable", http.StatusServiceUnavailable)
+				return
+			}
 		}
 		if len(events)+len(errs) > 0 {
 			if err := s.Sink.InsertTelemetry(r.Context(), events, errs); err != nil {
@@ -172,7 +210,18 @@ func (s *Server) rows(env envelope) ([]EventRow, []ErrorRow, int) {
 			continue
 		}
 		engine, _ := e.Fields["engine"].(string)
-		events = append(events, EventRow{TS: clamp(e.TS, now), Install: env.Install, App: env.App, Name: e.Name, Fields: fields, Engine: engine})
+		row := EventRow{TS: clamp(e.TS, now), Install: env.Install, App: env.App, Name: e.Name, Fields: fields, Engine: engine}
+		if e.Name == tunnelEvent {
+			// A period is kept under its own minute: one the clock cannot
+			// vouch for would be drawn where it did not happen.
+			p, ok := tunnelPeriod(env.Install, e, now)
+			if !ok {
+				skipped++
+				continue
+			}
+			row.tunnel = &p
+		}
+		events = append(events, row)
 	}
 	errs := make([]ErrorRow, 0, len(env.Errors))
 	for _, e := range env.Errors {
@@ -185,6 +234,48 @@ func (s *Server) rows(env envelope) ([]EventRow, []ErrorRow, int) {
 			Component: e.Component, FP: e.FP, Msg: e.Msg, Count: uint32(min(e.Count, 1<<20))})
 	}
 	return events, errs, skipped
+}
+
+const tunnelEvent = "tunnel"
+
+// tunnelPeriod reads a checked "tunnel" event into a period. It takes each
+// number by the name the contract gives it and nothing else. An event without
+// a minute, with more measured minutes than minutes, or timed outside what the
+// hub accepts is no period.
+func tunnelPeriod(install string, e inEvent, now time.Time) (TunnelPeriod, bool) {
+	num := func(key string) int64 {
+		v, _ := e.Fields[key].(float64)
+		return int64(v)
+	}
+	at := time.Unix(e.TS, 0).UTC()
+	if e.TS%60 != 0 || at.After(now.Add(clockSkew)) || at.Before(now.Add(-maxAge)) {
+		return TunnelPeriod{}, false
+	}
+	p := TunnelPeriod{
+		Install: install, At: at,
+		Flowing: int(num("o")), Idle: int(num("i")), Down: int(num("d")), CoreDown: int(num("c")), NetDown: int(num("n")),
+		StallMinutes: int(num("stall_min")),
+		N300:         int(num("s300")), N1000: int(num("s1000")), N3000: int(num("s3000")),
+		MS300: num("s300_ms"), MS1000: num("s1000_ms"), MS3000: num("s3000_ms"),
+	}
+	minutes := p.Flowing + p.Idle + p.Down + p.CoreDown + p.NetDown
+	if minutes == 0 || minutes > int(tunnelMinutes.max) || p.StallMinutes > minutes {
+		return TunnelPeriod{}, false
+	}
+	if p.StallMinutes == 0 && p.N300+p.N1000+p.N3000 > 0 {
+		return TunnelPeriod{}, false
+	}
+	return p, true
+}
+
+func tunnelPeriods(events []EventRow) []TunnelPeriod {
+	var out []TunnelPeriod
+	for _, e := range events {
+		if e.tunnel != nil {
+			out = append(out, *e.tunnel)
+		}
+	}
+	return out
 }
 
 // clamp keeps a client's clock from writing into the future or into
