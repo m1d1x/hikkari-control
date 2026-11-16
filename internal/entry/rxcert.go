@@ -98,7 +98,7 @@ func (s *Service) IssueReceiverCert(ctx context.Context, domain string, staging 
 		return IssuedReceiverCert{}, err
 	}
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO receiver_certs (domain, directory, chain_pem, key_ct, not_after)
+		INSERT INTO entry_receiver_certs (domain, directory, chain_pem, key_ct, not_after)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (domain) DO UPDATE SET directory = $2, chain_pem = $3, key_ct = $4, not_after = $5, issued_at = now()`,
 		domain, directory, string(cert.ChainPEM), keyCT, cert.NotAfter); err != nil {
@@ -140,7 +140,7 @@ func (s *Service) receiverZone(ctx context.Context, domain string) (string, erro
 // first use.
 func (s *Service) acmeAccountKey(ctx context.Context, directory string) (crypto.Signer, error) {
 	var ct []byte
-	err := s.pool.QueryRow(ctx, `SELECT key_ct FROM acme_accounts WHERE directory = $1`, directory).Scan(&ct)
+	err := s.pool.QueryRow(ctx, `SELECT key_ct FROM entry_acme_accounts WHERE directory = $1`, directory).Scan(&ct)
 	if err == nil {
 		plain, err := cryptobox.Decrypt(ct)
 		if err != nil {
@@ -159,10 +159,10 @@ func (s *Service) acmeAccountKey(ctx context.Context, directory string) (crypto.
 		return nil, err
 	}
 	// Two first uses at once: the one that lost reads the winner's key.
-	if _, err := s.pool.Exec(ctx, `INSERT INTO acme_accounts (directory, key_ct) VALUES ($1, $2) ON CONFLICT (directory) DO NOTHING`, directory, ct); err != nil {
+	if _, err := s.pool.Exec(ctx, `INSERT INTO entry_acme_accounts (directory, key_ct) VALUES ($1, $2) ON CONFLICT (directory) DO NOTHING`, directory, ct); err != nil {
 		return nil, err
 	}
-	if err := s.pool.QueryRow(ctx, `SELECT key_ct FROM acme_accounts WHERE directory = $1`, directory).Scan(&ct); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT key_ct FROM entry_acme_accounts WHERE directory = $1`, directory).Scan(&ct); err != nil {
 		return nil, err
 	}
 	plain, err := cryptobox.Decrypt(ct)
@@ -178,7 +178,7 @@ func (s *Service) receiverCertEnv(ctx context.Context, domain string) (map[strin
 	var chain string
 	var keyCT []byte
 	var notAfter time.Time
-	err := s.pool.QueryRow(ctx, `SELECT chain_pem, key_ct, not_after FROM receiver_certs WHERE domain = $1`,
+	err := s.pool.QueryRow(ctx, `SELECT chain_pem, key_ct, not_after FROM entry_receiver_certs WHERE domain = $1`,
 		strings.ToLower(domain)).Scan(&chain, &keyCT, &notAfter)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -208,7 +208,7 @@ type ReceiverCert struct {
 
 // ReceiverCerts lists the kept certificates.
 func (s *Service) ReceiverCerts(ctx context.Context) ([]ReceiverCert, error) {
-	rows, err := s.pool.Query(ctx, `SELECT domain, directory, not_after, issued_at FROM receiver_certs ORDER BY domain`)
+	rows, err := s.pool.Query(ctx, `SELECT domain, directory, not_after, issued_at FROM entry_receiver_certs ORDER BY domain`)
 	if err != nil {
 		return nil, err
 	}
