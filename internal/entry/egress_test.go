@@ -267,3 +267,18 @@ func TestTheKeyIsWhereWgMayReadIt(t *testing.T) {
 		t.Fatal("the scripts do not use the key in /etc/wireguard")
 	}
 }
+
+// TestTheGuardLooksAfterTheReroute: in the output hook the packet still
+// carries the device it had before the mark rerouted it, so a guard there
+// drops what goes into the tunnel (unl1, 16.11: guard_drop 7, the probe's
+// SYNs). The guard sits in postrouting.
+func TestTheGuardLooksAfterTheReroute(t *testing.T) {
+	_, guard, ok := strings.Cut(egressUpScript, "chain guard_post {")
+	if !ok {
+		t.Fatal("no guard chain")
+	}
+	guard, _, _ = strings.Cut(guard, "}\n")
+	if !strings.Contains(guard, "hook postrouting") || !strings.Contains(guard, `counter name "guard_drop" drop`) {
+		t.Fatalf("guard:\n%s", guard)
+	}
+}

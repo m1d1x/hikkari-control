@@ -120,8 +120,10 @@ table inet hikkari_egress {
 		type route hook output priority mangle; policy accept;
 		meta skuid $uid ct direction original fib daddr type != local meta mark set 0x4377
 	}
-	chain guard_out {
-		type filter hook output priority filter; policy accept;
+	# In postrouting, not output: output keeps the device it had before the
+	# mark rerouted the packet, and would drop what goes into the tunnel.
+	chain guard_post {
+		type filter hook postrouting priority filter; policy accept;
 		meta skuid $uid ct direction original oifname != { "lo", "$ifc" } counter name "guard_drop" drop
 	}
 	chain nat_out {
