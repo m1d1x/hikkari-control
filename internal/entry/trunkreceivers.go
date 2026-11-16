@@ -106,7 +106,9 @@ func (p *Provisioner) MoveTrunkEntry(ctx context.Context, entryBox, box string) 
 		return "", fmt.Errorf("файл приёмника: %w", err)
 	}
 	applog.Info(ctx, "entry", "operator trunk entry receiver", applog.F("box", entryBox), applog.F("receiver", box))
-	word := regexp.MustCompile(`trunk: (receiver moved from \S+ to ` + regexp.QuoteMeta(ip) + `: by hand|receiver ` + regexp.QuoteMeta(ip) + ` by hand refused: .*)$`)
+	// The brain answers every write of the file: a move, a refusal, or that
+	// the receiver is already the active one.
+	word := regexp.MustCompile(`trunk: (receiver moved from \S+ to ` + regexp.QuoteMeta(ip) + `: by hand|receiver ` + regexp.QuoteMeta(ip) + ` by hand refused: .*|receiver ` + regexp.QuoteMeta(ip) + ` by hand: already the active one)$`)
 	deadline := time.Now().Add(receiverMoveWait)
 	for time.Now().Before(deadline) {
 		out, err := r.Run(ctx, fmt.Sprintf("journalctl -u %s --since @%d --no-pager -o short-iso-precise", trunkEntryUnit, since), nil)
