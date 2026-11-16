@@ -112,10 +112,19 @@ func startHikkariUDP(ctx context.Context, n *naiveRuntime, socks *sockets) (*hik
 	if err != nil {
 		return nil, fmt.Errorf("hikkari udp: %w", err)
 	}
+	// The datagram channel serves the certificate the stream channel does:
+	// the hub's group certificate when it gave one, else Caddy's own.
+	certificate, err := n.cfg.groupCertificate()
+	if err != nil {
+		return nil, fmt.Errorf("hikkari udp: group certificate: %w", err)
+	}
+	if certificate == nil {
+		certificate = hkserver.CaddyCertificate(n.cfg.Storage, n.cfg.Host)
+	}
 	d, err := hkserver.ListenDatagram(ctx, hkserver.DatagramOptions{
 		Conn:          conn,
 		ConnectionIDs: hkserver.GenerationIDs{Gen: socks.gen},
-		Certificate:   hkserver.CaddyCertificate(n.cfg.Storage, n.cfg.Host),
+		Certificate:   certificate,
 		Masquerade:    http.FileServer(http.Dir(n.cfg.Root)),
 		ProbePassword: n.cfg.Pass,
 		Admitter:      n,
