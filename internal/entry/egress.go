@@ -94,7 +94,10 @@ link_up() {
 	ip link del "$ifc" 2>/dev/null || true
 	ip link add "$ifc" type wireguard
 	if [ "$ROLE" = receiver ]; then
-		wg set "$ifc" private-key "$key" listen-port "$port" \
+		# fwmark: the tunnel's own packets carry the socket of the packet they
+		# wrap, and without a mark of their own they would be marked into the
+		# tunnel again (unl1, 16.11: each lap 64 bytes longer, 300k packets).
+		wg set "$ifc" private-key "$key" listen-port "$port" fwmark 0x4378 \
 			peer "$PEER_PUB" endpoint "$PEER_ENDPOINT" allowed-ips 0.0.0.0/0,::/0 persistent-keepalive 25
 		ip addr add 10.231.0.1/30 dev "$ifc"
 		ip -6 addr add fd77:231::1/126 dev "$ifc"
@@ -118,13 +121,13 @@ table inet hikkari_egress {
 	counter guard_drop {}
 	chain route_out {
 		type route hook output priority mangle; policy accept;
-		meta skuid $uid ct direction original fib daddr type != local meta mark set 0x4377
+		meta mark != 0x4378 meta skuid $uid ct direction original fib daddr type != local meta mark set 0x4377
 	}
 	# In postrouting, not output: output keeps the device it had before the
 	# mark rerouted the packet, and would drop what goes into the tunnel.
 	chain guard_post {
 		type filter hook postrouting priority filter; policy accept;
-		meta skuid $uid ct direction original oifname != { "lo", "$ifc" } counter name "guard_drop" drop
+		meta mark != 0x4378 meta skuid $uid ct direction original oifname != { "lo", "$ifc" } counter name "guard_drop" drop
 	}
 	chain nat_out {
 		type nat hook postrouting priority srcnat; policy accept;

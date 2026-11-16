@@ -282,3 +282,20 @@ func TestTheGuardLooksAfterTheReroute(t *testing.T) {
 		t.Fatalf("guard:\n%s", guard)
 	}
 }
+
+// TestTheTunnelsOwnPacketsAreNotMarkedAgain: WireGuard's packet keeps the
+// socket of the packet it wraps, so the routed user's uid is on it too; its
+// own fwmark keeps it out of the mark and past the guard (unl1, 16.11: a
+// loop, each lap 64 bytes longer).
+func TestTheTunnelsOwnPacketsAreNotMarkedAgain(t *testing.T) {
+	s := egressUpScript
+	for _, want := range []string{
+		`listen-port "$port" fwmark 0x4378`,
+		"meta mark != 0x4378 meta skuid $uid ct direction original fib daddr type != local meta mark set 0x4377",
+		`meta mark != 0x4378 meta skuid $uid ct direction original oifname != { "lo", "$ifc" } counter name "guard_drop" drop`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("no %q", want)
+		}
+	}
+}
