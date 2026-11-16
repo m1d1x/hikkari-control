@@ -28,7 +28,7 @@ func TestTheReceiverGroupCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, q := range []string{`DELETE FROM receiver_certs`, `DELETE FROM acme_accounts`, `DELETE FROM entry_domains WHERE domain IN ('otter9119.lol', 'seeded4242.lol')`} {
+	for _, q := range []string{`DELETE FROM entry_receiver_certs`, `DELETE FROM entry_acme_accounts`, `DELETE FROM entry_domains WHERE domain IN ('otter9119.lol', 'seeded4242.lol')`} {
 		if _, err := pool.Exec(ctx, q); err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +60,7 @@ func TestTheReceiverGroupCertificate(t *testing.T) {
 		chain := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 		kct, _ := cryptobox.Encrypt(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kder}))
 		if _, err := pool.Exec(ctx, `
-			INSERT INTO receiver_certs (domain, directory, chain_pem, key_ct, not_after) VALUES ('otter9119.lol', $1, $2, $3, $4)
+			INSERT INTO entry_receiver_certs (domain, directory, chain_pem, key_ct, not_after) VALUES ('otter9119.lol', $1, $2, $3, $4)
 			ON CONFLICT (domain) DO UPDATE SET chain_pem = $2, key_ct = $3, not_after = $4`, rxcert.LetsEncrypt, chain, kct, notAfter); err != nil {
 			t.Fatal(err)
 		}
@@ -107,7 +107,7 @@ func TestASpareReceiverIsThePrimaryAgain(t *testing.T) {
 	}
 	primary, spare := "rxprim903", "rxspare904"
 	domain := "reef9043.lol"
-	for _, q := range []string{`DELETE FROM receiver_certs WHERE domain = 'reef9043.lol'`, `DELETE FROM entry_domains WHERE domain = 'reef9043.lol'`} {
+	for _, q := range []string{`DELETE FROM entry_receiver_certs WHERE domain = 'reef9043.lol'`, `DELETE FROM entry_domains WHERE domain = 'reef9043.lol'`} {
 		if _, err := pool.Exec(ctx, q); err != nil {
 			t.Fatal(err)
 		}
@@ -151,7 +151,7 @@ func TestASpareReceiverIsThePrimaryAgain(t *testing.T) {
 	der, _ := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
 	kder, _ := x509.MarshalECPrivateKey(key)
 	kct, _ := cryptobox.Encrypt(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kder}))
-	if _, err := pool.Exec(ctx, `INSERT INTO receiver_certs (domain, directory, chain_pem, key_ct, not_after) VALUES ($1, $2, $3, $4, $5)`,
+	if _, err := pool.Exec(ctx, `INSERT INTO entry_receiver_certs (domain, directory, chain_pem, key_ct, not_after) VALUES ($1, $2, $3, $4, $5)`,
 		domain, rxcert.LetsEncrypt, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), kct, tpl.NotAfter); err != nil {
 		t.Fatal(err)
 	}

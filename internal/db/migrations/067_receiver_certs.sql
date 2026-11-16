@@ -4,7 +4,7 @@
 -- env каждого релея Hikkari с этим доменом (EDGE_HIKKARI_CERT, EDGE_HIKKARI_KEY).
 -- Ключ сертификата и ключ аккаунта ACME зашифрованы ключом содержимого
 -- (internal/cryptobox), как identity_ct релея.
-CREATE TABLE receiver_certs (
+CREATE TABLE entry_receiver_certs (
 	domain     text PRIMARY KEY,
 	directory  text NOT NULL,
 	chain_pem  text NOT NULL,
@@ -15,7 +15,7 @@ CREATE TABLE receiver_certs (
 
 -- Ключ аккаунта ACME на каждый каталог (боевой и staging Let's Encrypt):
 -- ключ, который CA уже знает, сам находит свой аккаунт.
-CREATE TABLE acme_accounts (
+CREATE TABLE entry_acme_accounts (
 	directory  text PRIMARY KEY,
 	key_ct     bytea NOT NULL,
 	created_at timestamptz NOT NULL DEFAULT now()
