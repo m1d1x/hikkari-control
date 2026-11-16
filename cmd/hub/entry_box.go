@@ -759,9 +759,33 @@ func runEntryBox(args []string) {
 		fmt.Printf("%s: stand wires %s, voice=%s (the brain follows them within 10 s, no new process)\n", args[1], args[2], w.Voice)
 		os.Exit(0)
 	}
-	if (len(args) >= 4 && len(args) <= 9 && args[0] == "trunk-entry") || (len(args) == 2 && args[0] == "trunk-entry-off") {
+	if len(args) == 3 && args[0] == "trunk-entry-receiver" {
+		// entry-box trunk-entry-receiver <entry-box> <box> — the entry moves
+		// to the group's receiver on box by hand (P5, internal/entry/trunkreceivers.go).
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		_, cancel, pool := adminCLIPool()
+		cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		ctx, stop := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer stop()
+		line, err := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir).MoveTrunkEntry(ctx, args[1], args[2])
+		if line != "" {
+			fmt.Println(line)
+		}
+		if err != nil {
+			fail(err)
+		}
+		os.Exit(0)
+	}
+	if (len(args) >= 4 && len(args) <= 11 && args[0] == "trunk-entry") || (len(args) == 2 && args[0] == "trunk-entry-off") {
 		// entry-box trunk-entry <box> <exit-box> <listen=port,...> [members] [hikkari-udp-copies=1|2]
-		//     [pipe [h3dgram=<port>[:proxy]] [voice=<wire>]]
+		//     [pipe [h3dgram=<port>[:proxy]] [voice=<wire>] [receivers=<box>[,<box>]] [receiver-pool=N]]
 		// — the cascade's trunk entry on a box in Russia (internal/entry/trunk.go);
 		// pipe: the entry over hk-pipe to the exit's hk-exit.
 		if err := cryptobox.Configure(os.Getenv); err != nil {
@@ -800,6 +824,16 @@ func runEntryBox(args []string) {
 			}
 			if a == "pipe" {
 				o.Pipe = true
+				continue
+			}
+			if v, ok := strings.CutPrefix(a, "receivers="); ok {
+				o.Receivers = strings.Split(v, ",")
+				continue
+			}
+			if v, ok := strings.CutPrefix(a, "receiver-pool="); ok {
+				if o.ReceiverPool, err = strconv.Atoi(v); err != nil || o.ReceiverPool < 1 {
+					fail(fmt.Errorf("receiver-pool %q", v))
+				}
 				continue
 			}
 			if v, ok := strings.CutPrefix(a, "voice="); ok {

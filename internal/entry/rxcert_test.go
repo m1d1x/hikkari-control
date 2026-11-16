@@ -192,3 +192,109 @@ func TestASpareReceiverIsThePrimaryAgain(t *testing.T) {
 		t.Fatalf("a spare made twice: %v", err)
 	}
 }
+
+// An entry's group of receivers (P5): a spare that is the exit's relay again
+// joins with its address; a box whose relay differs is refused; the entry's
+// receivers are kept and the watch names each by its address.
+func TestAnEntryHoldsItsGroupOfReceivers(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	s, err := NewService(pool, nil, DefaultBatchSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	primary, spare, other, entryBox := "rxprim905", "rxspare906", "rxother907", "rxentry908"
+	domain := "reef9055.lol"
+	for _, q := range []string{`DELETE FROM entry_receiver_certs WHERE domain = 'reef9055.lol'`, `DELETE FROM entry_domains WHERE domain = 'reef9055.lol'`, `DELETE FROM trunk_entries WHERE entry_box = 'rxentry908'`} {
+		if _, err := pool.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, addr := range map[string]string{primary: "203.0.113.95", spare: "203.0.113.96", other: "203.0.113.97", entryBox: "203.0.113.98"} {
+		spec := BoxSpec{Name: name, Address: addr, Provider: "test", Location: "eu"}
+		if name == primary || name == other {
+			spec.Proto, spec.Domain = ProtoHikkari, domain
+			if name == other {
+				spec.Domain = "pine9077.lol"
+			}
+		}
+		if err := s.CreateBox(ctx, spec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO entry_domains (domain, tld, status, source, box) VALUES ($1, 'lol', 'assigned', 'purchased', $2)`, domain, primary); err != nil {
+		t.Fatal(err)
+	}
+	withTrunk := func(box, pipeKey string) {
+		name, err := s.AddRelay(ctx, box, KindPersonal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := s.RelayIdentity(ctx, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h := *id.Hikkari
+		h.TrunkKey, h.TrunkPorts, h.TrunkPipeKey, h.TrunkPipeWires = "aa", []int{443, 2053}, pipeKey, map[string]int{"udp": 20461}
+		id.Hikkari = &h
+		if err := s.setRelayIdentity(ctx, name, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	withTrunk(primary, "pipe-key-0123")
+	withTrunk(other, "another-pipe-key")
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tpl := &x509.Certificate{SerialNumber: big.NewInt(3), DNSNames: []string{domain}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(60 * 24 * time.Hour)}
+	der, _ := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
+	kder, _ := x509.MarshalECPrivateKey(key)
+	kct, _ := cryptobox.Encrypt(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kder}))
+	if _, err := pool.Exec(ctx, `INSERT INTO entry_receiver_certs (domain, directory, chain_pem, key_ct, not_after) VALUES ($1, $2, $3, $4, $5)`,
+		domain, rxcert.LetsEncrypt, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), kct, tpl.NotAfter); err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.PrepareReceiverSpare(ctx, spare, primary, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.finishJob(ctx, job, errors.New("test finishes job")); err != nil {
+		t.Fatal(err)
+	}
+
+	addr, sni, pkey, _, err := s.trunkPipeExitOf(ctx, primary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ips, err := s.receiverAddresses(ctx, primary, []string{spare}, addr, sni, pkey)
+	if err != nil || len(ips) != 1 || ips[0] != "203.0.113.96" {
+		t.Fatalf("the spare's address: %v %v", ips, err)
+	}
+	for _, bad := range [][]string{{other}, {primary}, {spare, spare}} {
+		if _, err := s.receiverAddresses(ctx, primary, bad, addr, sni, pkey); !errors.Is(err, ErrRejected) {
+			t.Fatalf("%v joined: %v", bad, err)
+		}
+	}
+
+	if err := s.recordTrunkEntry(ctx, entryBox, TrunkEntryOptions{Exit: primary, Forward: map[int]int{8443: 443}, Members: 32, Receivers: []string{spare}}); err != nil {
+		t.Fatal(err)
+	}
+	exit, receivers, err := s.trunkEntryReceivers(ctx, entryBox)
+	if err != nil || exit != primary || len(receivers) != 1 || receivers[0] != spare {
+		t.Fatalf("the entry's receivers: %s %v %v", exit, receivers, err)
+	}
+	pairs, err := s.TrunkPairs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range pairs {
+		if p.Entry == entryBox && (p.Receivers["203.0.113.95"] != primary || p.Receivers["203.0.113.96"] != spare) {
+			t.Fatalf("the watch's names: %v", p.Receivers)
+		}
+	}
+	if err := s.recordTrunkEntry(ctx, entryBox, TrunkEntryOptions{Exit: primary, Forward: map[int]int{8443: 443}, Members: 32}); err != nil {
+		t.Fatal(err)
+	}
+	if _, receivers, _ := s.trunkEntryReceivers(ctx, entryBox); len(receivers) != 0 {
+		t.Fatalf("stood again without receivers, kept %v", receivers)
+	}
+}
