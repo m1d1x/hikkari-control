@@ -63,39 +63,43 @@ type groupJSON struct {
 }
 
 type releaseJSON struct {
-	ID        int64     `json:"id"`
-	V         int       `json:"v"`
-	Services  []Service `json:"services"`
-	CreatedBy string    `json:"createdBy"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID          int64     `json:"id"`
+	V           int       `json:"v"`
+	Services    []Service `json:"services"`
+	DefaultMode string    `json:"defaultMode"`
+	CreatedBy   string    `json:"createdBy"`
+	CreatedAt   time.Time `json:"createdAt"`
 }
 
 type presetJSON struct {
-	ID        string       `json:"id"`
-	Name      string       `json:"name"`
-	Default   bool         `json:"default"`
-	Countries []string     `json:"countries"`
-	Bypass    []string     `json:"bypass"`
-	Proxy     []string     `json:"proxy"`
-	Disabled  []string     `json:"disabled"`
-	Current   *releaseJSON `json:"current"`
-	Next      *releaseJSON `json:"next"`
-	Stage     int          `json:"stage"`
-	UpdatedAt time.Time    `json:"updatedAt"`
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Default   bool     `json:"default"`
+	Countries []string `json:"countries"`
+	Bypass    []string `json:"bypass"`
+	Proxy     []string `json:"proxy"`
+	Disabled  []string `json:"disabled"`
+	// DefaultMode is the draft's routing mode for a person who never picked one.
+	DefaultMode string       `json:"defaultMode"`
+	Current     *releaseJSON `json:"current"`
+	Next        *releaseJSON `json:"next"`
+	Stage       int          `json:"stage"`
+	UpdatedAt   time.Time    `json:"updatedAt"`
 }
 
 func toReleaseJSON(r *Release) *releaseJSON {
 	if r == nil {
 		return nil
 	}
-	return &releaseJSON{ID: r.ID, V: r.V, Services: r.Services, CreatedBy: r.CreatedBy, CreatedAt: r.CreatedAt}
+	return &releaseJSON{ID: r.ID, V: r.V, Services: r.Services, DefaultMode: r.DefaultMode, CreatedBy: r.CreatedBy, CreatedAt: r.CreatedAt}
 }
 
 func toPresetJSON(p Preset) presetJSON {
 	return presetJSON{
 		ID: p.ID, Name: p.Name, Default: p.Default,
 		Countries: nonNil(p.Countries), Bypass: nonNil(p.Bypass), Proxy: nonNil(p.Proxy), Disabled: nonNil(p.Disabled),
-		Current: toReleaseJSON(p.Current), Next: toReleaseJSON(p.Next),
+		DefaultMode: p.DefaultMode,
+		Current:     toReleaseJSON(p.Current), Next: toReleaseJSON(p.Next),
 		Stage: p.Stage, UpdatedAt: p.UpdatedAt,
 	}
 }
@@ -108,6 +112,9 @@ type draftJSON struct {
 	Bypass    []string `json:"bypass"`
 	Proxy     []string `json:"proxy"`
 	Disabled  []string `json:"disabled"`
+	// DefaultMode is "", "bypass" or "proxy"; a body without it keeps the
+	// client's own default.
+	DefaultMode string `json:"defaultMode"`
 }
 
 // ---------- groups ----------
@@ -242,7 +249,11 @@ func (h *AdminHandlers) UpdatePreset(w http.ResponseWriter, r *http.Request) {
 }
 
 func draft(w http.ResponseWriter, body draftJSON) (PresetDraft, bool) {
-	d := PresetDraft{Name: body.Name, Default: body.Default, Countries: body.Countries, Bypass: body.Bypass, Proxy: body.Proxy, Disabled: body.Disabled}
+	d := PresetDraft{Name: body.Name, Default: body.Default, Countries: body.Countries, Bypass: body.Bypass, Proxy: body.Proxy, Disabled: body.Disabled, DefaultMode: body.DefaultMode}
+	if !ValidDefaultMode(d.DefaultMode) {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "режим по умолчанию: bypass, proxy или пусто"})
+		return d, false
+	}
 	if len(d.Name) == 0 || len(d.Name) > 100 {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "название пресета: от 1 до 100 символов"})
 		return d, false

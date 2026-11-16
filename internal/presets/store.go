@@ -66,12 +66,15 @@ type Service struct {
 }
 
 type Release struct {
-	ID        int64
-	PresetID  string
-	V         int
-	Services  []Service
-	CreatedBy string
-	CreatedAt time.Time
+	ID       int64
+	PresetID string
+	V        int
+	Services []Service
+	// DefaultMode is the routing mode a device whose person never picked
+	// one takes with this release: "", "bypass" or "proxy".
+	DefaultMode string
+	CreatedBy   string
+	CreatedAt   time.Time
 }
 
 type Preset struct {
@@ -82,6 +85,9 @@ type Preset struct {
 	Bypass    []string
 	Proxy     []string
 	Disabled  []string
+	// DefaultMode is the draft's routing mode for a person who never picked
+	// one; a release freezes it with the groups.
+	DefaultMode string
 	// Current is what every device of the preset gets; Next, while set,
 	// goes to the buckets below Stage instead.
 	Current   *Release
@@ -92,12 +98,13 @@ type Preset struct {
 
 // PresetDraft is what an admin edits on a preset.
 type PresetDraft struct {
-	Name      string
-	Default   bool
-	Countries []string
-	Bypass    []string
-	Proxy     []string
-	Disabled  []string
+	Name        string
+	Default     bool
+	Countries   []string
+	Bypass      []string
+	Proxy       []string
+	Disabled    []string
+	DefaultMode string
 }
 
 type Store struct {
@@ -169,9 +176,9 @@ func (s *Store) DeleteGroup(ctx context.Context, id string) error {
 // ---------- presets ----------
 
 const presetColumns = `
-	p.id, p.name, p.is_default, p.countries, p.bypass, p.proxy, p.disabled, p.stage, p.updated_at,
-	c.id, c.v, c.services, c.created_by, c.created_at,
-	n.id, n.v, n.services, n.created_by, n.created_at
+	p.id, p.name, p.is_default, p.countries, p.bypass, p.proxy, p.disabled, p.default_mode, p.stage, p.updated_at,
+	c.id, c.v, c.services, c.default_mode, c.created_by, c.created_at,
+	n.id, n.v, n.services, n.default_mode, n.created_by, n.created_at
 	FROM presets p
 	LEFT JOIN preset_releases c ON c.id = p.current_release
 	LEFT JOIN preset_releases n ON n.id = p.next_release`
@@ -179,9 +186,9 @@ const presetColumns = `
 func scanPreset(row pgx.CollectableRow) (Preset, error) {
 	var p Preset
 	var cur, next releaseCols
-	err := row.Scan(&p.ID, &p.Name, &p.Default, &p.Countries, &p.Bypass, &p.Proxy, &p.Disabled, &p.Stage, &p.UpdatedAt,
-		&cur.id, &cur.v, &cur.services, &cur.by, &cur.at,
-		&next.id, &next.v, &next.services, &next.by, &next.at)
+	err := row.Scan(&p.ID, &p.Name, &p.Default, &p.Countries, &p.Bypass, &p.Proxy, &p.Disabled, &p.DefaultMode, &p.Stage, &p.UpdatedAt,
+		&cur.id, &cur.v, &cur.services, &cur.mode, &cur.by, &cur.at,
+		&next.id, &next.v, &next.services, &next.mode, &next.by, &next.at)
 	if err != nil {
 		return p, err
 	}
@@ -196,6 +203,7 @@ type releaseCols struct {
 	id       *int64
 	v        *int
 	services []byte
+	mode     *string
 	by       *string
 	at       *time.Time
 }
@@ -204,7 +212,7 @@ func (c releaseCols) release(preset string) (*Release, error) {
 	if c.id == nil {
 		return nil, nil
 	}
-	r := &Release{ID: *c.id, PresetID: preset, V: *c.v, CreatedBy: *c.by, CreatedAt: *c.at}
+	r := &Release{ID: *c.id, PresetID: preset, V: *c.v, DefaultMode: *c.mode, CreatedBy: *c.by, CreatedAt: *c.at}
 	return r, json.Unmarshal(c.services, &r.Services)
 }
 
@@ -233,9 +241,9 @@ func (s *Store) Preset(ctx context.Context, id string) (Preset, error) {
 func (s *Store) CreatePreset(ctx context.Context, id string, d PresetDraft) error {
 	return s.writePreset(ctx, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
-			INSERT INTO presets (id, name, is_default, countries, bypass, proxy, disabled)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			id, d.Name, d.Default, nonNil(d.Countries), nonNil(d.Bypass), nonNil(d.Proxy), nonNil(d.Disabled))
+			INSERT INTO presets (id, name, is_default, countries, bypass, proxy, disabled, default_mode)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			id, d.Name, d.Default, nonNil(d.Countries), nonNil(d.Bypass), nonNil(d.Proxy), nonNil(d.Disabled), d.DefaultMode)
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "presets_pkey" {
 			return ErrExists
@@ -249,9 +257,9 @@ func (s *Store) CreatePreset(ctx context.Context, id string, d PresetDraft) erro
 func (s *Store) UpdatePreset(ctx context.Context, id string, d PresetDraft) error {
 	return s.writePreset(ctx, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
-			UPDATE presets SET name = $2, is_default = $3, countries = $4, bypass = $5, proxy = $6, disabled = $7, updated_at = now()
+			UPDATE presets SET name = $2, is_default = $3, countries = $4, bypass = $5, proxy = $6, disabled = $7, default_mode = $8, updated_at = now()
 			WHERE id = $1`,
-			id, d.Name, d.Default, nonNil(d.Countries), nonNil(d.Bypass), nonNil(d.Proxy), nonNil(d.Disabled))
+			id, d.Name, d.Default, nonNil(d.Countries), nonNil(d.Bypass), nonNil(d.Proxy), nonNil(d.Disabled), d.DefaultMode)
 		if err == nil && tag.RowsAffected() == 0 {
 			return ErrNotFound
 		}
@@ -262,6 +270,9 @@ func (s *Store) UpdatePreset(ctx context.Context, id string, d PresetDraft) erro
 func (s *Store) writePreset(ctx context.Context, write func(pgx.Tx) error, d PresetDraft) error {
 	if err := checkSides(d.Bypass, d.Proxy, d.Disabled); err != nil {
 		return err
+	}
+	if !ValidDefaultMode(d.DefaultMode) {
+		return fmt.Errorf("%w: режим по умолчанию %q", ErrInvalid, d.DefaultMode)
 	}
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		// Serializes with DeleteGroup and with other writers of the default.
@@ -337,7 +348,8 @@ func (s *Store) Release(ctx context.Context, id string, stage int, by string) (R
 	var r Release
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var bypass, proxy, disabled []string
-		err := tx.QueryRow(ctx, `SELECT bypass, proxy, disabled FROM presets WHERE id = $1 FOR UPDATE`, id).Scan(&bypass, &proxy, &disabled)
+		var mode string
+		err := tx.QueryRow(ctx, `SELECT bypass, proxy, disabled, default_mode FROM presets WHERE id = $1 FOR UPDATE`, id).Scan(&bypass, &proxy, &disabled, &mode)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -361,11 +373,11 @@ func (s *Store) Release(ctx context.Context, id string, stage int, by string) (R
 		if err != nil {
 			return err
 		}
-		r = Release{PresetID: id, Services: services, CreatedBy: by}
+		r = Release{PresetID: id, Services: services, DefaultMode: mode, CreatedBy: by}
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO preset_releases (preset_id, v, services, created_by)
-			VALUES ($1, (SELECT coalesce(max(v), 0) + 1 FROM preset_releases WHERE preset_id = $1), $2, $3)
-			RETURNING id, v, created_at`, id, raw, by).Scan(&r.ID, &r.V, &r.CreatedAt); err != nil {
+			INSERT INTO preset_releases (preset_id, v, services, created_by, default_mode)
+			VALUES ($1, (SELECT coalesce(max(v), 0) + 1 FROM preset_releases WHERE preset_id = $1), $2, $3, $4)
+			RETURNING id, v, created_at`, id, raw, by, mode).Scan(&r.ID, &r.V, &r.CreatedAt); err != nil {
 			return err
 		}
 		if err := setRollout(ctx, tx, id, r.ID, stage); err != nil {
@@ -492,9 +504,10 @@ func bumpEpoch(ctx context.Context, tx pgx.Tx) error {
 
 // Served is the catalog one device gets.
 type Served struct {
-	Version  int64
-	Release  int64
-	Services []Service
+	Version     int64
+	Release     int64
+	DefaultMode string
+	Services    []Service
 }
 
 // Serve picks the preset claiming the country, else the default, and its
@@ -512,10 +525,10 @@ func (s *Store) Serve(ctx context.Context, country string, bucket int, tester bo
 			ORDER BY ($1 = ANY(countries)) DESC
 			LIMIT 1
 		)
-		SELECT e.value, r.id, r.services
+		SELECT e.value, r.id, r.default_mode, r.services
 		FROM e, p JOIN preset_releases r
 		  ON r.id = CASE WHEN p.next_release IS NOT NULL AND ($3 OR $2 < p.stage) THEN p.next_release ELSE p.current_release END`,
-		country, bucket, tester).Scan(&sv.Version, &sv.Release, &raw)
+		country, bucket, tester).Scan(&sv.Version, &sv.Release, &sv.DefaultMode, &raw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sv, false, nil
 	}

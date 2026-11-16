@@ -21,9 +21,18 @@ export interface Release {
 	bypass: Group[];
 	proxy: Group[];
 	disabled: Group[];
+	/** the routing mode frozen with the release, see Preset.defaultMode */
+	defaultMode: DefaultMode;
 	createdBy: string;
 	createdAt: string;
 }
+
+/**
+ * The routing mode a client takes while its person never picked one:
+ * '' keeps the client's own (everything through the VPN but exceptions),
+ * 'proxy' is only the blocked through the VPN. Old clients never see it.
+ */
+export type DefaultMode = '' | 'bypass' | 'proxy';
 
 export interface Preset {
 	id: string;
@@ -35,6 +44,7 @@ export interface Preset {
 	bypass: string[];
 	proxy: string[];
 	disabled: string[];
+	defaultMode: DefaultMode;
 	/** what every device of the preset gets */
 	current: Release | null;
 	/** the release rolling out, to the buckets below stage */
@@ -54,6 +64,7 @@ interface WireRelease {
 	id: number;
 	v: number;
 	services: CatalogService[];
+	defaultMode?: DefaultMode;
 	createdBy: string;
 	createdAt: string;
 }
@@ -70,6 +81,7 @@ function release(r: WireRelease | null): Release | null {
 		bypass: side('bypass'),
 		proxy: side('proxy'),
 		disabled,
+		defaultMode: r.defaultMode ?? '',
 		createdBy: r.createdBy,
 		createdAt: r.createdAt,
 	};
@@ -79,6 +91,7 @@ function preset(p: WirePreset): Preset {
 	return {
 		...p,
 		disabled: p.disabled ?? [],
+		defaultMode: p.defaultMode ?? '',
 		current: release(p.current),
 		next: release(p.next),
 	};
@@ -115,7 +128,8 @@ export async function fetchPresets(): Promise<Preset[]> {
 	return presets.map(preset);
 }
 
-type Draft = Pick<Preset, 'name' | 'default' | 'countries' | 'bypass' | 'proxy' | 'disabled'>;
+type Draft = Pick<Preset, 'name' | 'default' | 'countries' | 'bypass' | 'proxy' | 'disabled'> &
+	Partial<Pick<Preset, 'defaultMode'>>;
 
 export async function createPreset(id: string, d: Draft): Promise<Preset> {
 	return preset((await post<{ preset: WirePreset }>('/api/v1/admin/presets', { id, ...d })).preset);

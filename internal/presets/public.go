@@ -82,7 +82,13 @@ func (p *Public) Catalog(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	body, err := json.Marshal(catalogDoc{SchemaVersion: 1, Version: sv.Version, Services: sv.Services})
+	doc := catalogDoc{SchemaVersion: 1, Version: sv.Version, Services: sv.Services}
+	// Only a client that asks takes the default mode: an older one refuses
+	// the whole catalog over a field it does not know.
+	if r.URL.Query().Get("defaultmode") == "1" {
+		doc.DefaultMode = sv.DefaultMode
+	}
+	body, err := json.Marshal(doc)
 	if err != nil {
 		http.Error(w, "internal", http.StatusInternalServerError)
 		return

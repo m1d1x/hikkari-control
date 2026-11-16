@@ -11,6 +11,7 @@
 		saveGroup,
 		savePreset,
 		setStage,
+		type DefaultMode,
 		type Preset,
 		type Release,
 	} from '$lib/api/presets';
@@ -34,6 +35,7 @@
 		bypass: string[];
 		proxy: string[];
 		disabled: string[];
+		defaultMode: DefaultMode;
 	}
 
 	// The editor works on a copy of the draft; «сохранить» writes it, and
@@ -58,6 +60,7 @@
 		bypass: [...x.bypass],
 		proxy: [...x.proxy],
 		disabled: [...(x.disabled ?? [])],
+		defaultMode: x.defaultMode,
 	});
 	const dirty = $derived(!!edit && (fresh || !p || JSON.stringify(edit) !== JSON.stringify(draftOf(p))));
 
@@ -181,7 +184,7 @@
 
 	async function create() {
 		if (dirty && !confirm('несохранённые правки пропадут')) return;
-		edit = { id: '', name: '', default: db.presets.length === 0, bypass: [], proxy: [], disabled: [] };
+		edit = { id: '', name: '', default: db.presets.length === 0, bypass: [], proxy: [], disabled: [], defaultMode: '' };
 		fresh = true;
 		error = '';
 		await tick();
@@ -206,6 +209,7 @@
 				bypass: d.bypass,
 				proxy: d.proxy,
 				disabled: d.disabled ?? [],
+				defaultMode: d.defaultMode,
 			};
 			const saved = fresh ? await createPreset(d.id, body) : await savePreset(d.id, body);
 			// Taking the default flag clears it elsewhere: reread them all.
@@ -337,6 +341,14 @@
 							<span>по умолчанию: его получают все устройства</span>
 						</label>
 					{/if}
+					<label class="check">
+						<span>режим у тех, кто не выбирал сам</span>
+						<select bind:value={edit.defaultMode}>
+							<option value="">как в клиенте: всё через vpn, кроме исключений</option>
+							<option value="proxy">через vpn только заблокированное</option>
+							<option value="bypass">всё через vpn, кроме исключений</option>
+						</select>
+					</label>
 				</div>
 				{#if p && unserved(p)}
 					<div class="dim hint">не раздаётся: устройства получают только пресет по умолчанию</div>

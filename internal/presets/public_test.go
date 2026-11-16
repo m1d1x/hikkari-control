@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -137,4 +138,65 @@ func TestAStreamHearsAChange(t *testing.T) {
 		}
 	}
 	t.Fatalf("no event: %v", lines.Err())
+}
+
+// D3 of the client's default-mode plan: a release carries the routing mode
+// for a person who never picked one, rolled out by stage like its groups,
+// and only a client that asks with defaultmode=1 gets the field; an older
+// client parses the catalog strictly and would refuse it.
+func TestTheDefaultModeRollsOutWithItsReleaseToClientsThatAsk(t *testing.T) {
+	s, ctx := liveStore(t), context.Background()
+	mux := http.NewServeMux()
+	NewPublic(s, nil).Register(mux)
+	must(t, s.PutGroup(ctx, steam()))
+	must(t, s.PutGroup(ctx, discord()))
+	must(t, s.CreatePreset(ctx, "ru", PresetDraft{Name: "россия", Default: true, Bypass: []string{"steam"}}))
+	_, err := s.Release(ctx, "ru", 100, "owner")
+	must(t, err)
+	if err := s.UpdatePreset(ctx, "ru", PresetDraft{Name: "россия", Default: true, Proxy: []string{"discord"}, DefaultMode: "all"}); !errors.Is(err, ErrInvalid) {
+		t.Fatal("an unknown default mode was saved:", err)
+	}
+	must(t, s.UpdatePreset(ctx, "ru", PresetDraft{Name: "россия", Default: true, Bypass: []string{"steam"}, Proxy: []string{"discord"}, DefaultMode: "proxy"}))
+	rel, err := s.Release(ctx, "ru", 0, "owner")
+	must(t, err)
+	if rel.DefaultMode != "proxy" {
+		t.Fatal("the release did not freeze the mode:", rel.DefaultMode)
+	}
+
+	mode := func(path string) string {
+		t.Helper()
+		rec := get(t, mux, path, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d", path, rec.Code)
+		}
+		var doc struct {
+			SchemaVersion int       `json:"schemaVersion"`
+			Version       int64     `json:"version"`
+			DefaultMode   string    `json:"defaultMode"`
+			Services      []Service `json:"services"`
+		}
+		must(t, json.Unmarshal(rec.Body.Bytes(), &doc))
+		if !strings.Contains(path, "defaultmode=1") {
+			old := json.NewDecoder(strings.NewReader(rec.Body.String()))
+			old.DisallowUnknownFields()
+			var strict struct {
+				SchemaVersion int       `json:"schemaVersion"`
+				Version       int64     `json:"version"`
+				Services      []Service `json:"services"`
+			}
+			if err := old.Decode(&strict); err != nil {
+				t.Fatalf("%s: an older client would refuse it: %v", path, err)
+			}
+		}
+		return doc.DefaultMode
+	}
+	if got := mode("/v1/presets/catalog?bucket=5&tester=1&defaultmode=1"); got != "proxy" {
+		t.Fatalf("a tester that asks got mode %q", got)
+	}
+	if got := mode("/v1/presets/catalog?bucket=5&tester=1"); got != "" {
+		t.Fatalf("a tester that did not ask got mode %q", got)
+	}
+	if got := mode("/v1/presets/catalog?bucket=5&defaultmode=1"); got != "" {
+		t.Fatalf("stage 0 gave the mode to a device that is not a tester: %q", got)
+	}
 }

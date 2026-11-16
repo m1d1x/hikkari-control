@@ -79,8 +79,13 @@ func ValidateCatalog(services []Service) error {
 type catalogDoc struct {
 	SchemaVersion int       `json:"schemaVersion"`
 	Version       int64     `json:"version"`
+	DefaultMode   string    `json:"defaultMode,omitempty"`
 	Services      []Service `json:"services"`
 }
+
+// ValidDefaultMode is a preset's routing mode for a person who never picked
+// one: "" (the client keeps its own default), "bypass" or "proxy".
+func ValidDefaultMode(m string) bool { return m == "" || m == "bypass" || m == "proxy" }
 
 func validateService(s Service) error {
 	if !validID.MatchString(s.ID) || strings.TrimSpace(s.Name) == "" || len(s.Name) > 100 || (s.Icon != "" && !validID.MatchString(s.Icon)) {
