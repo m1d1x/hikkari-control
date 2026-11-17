@@ -299,3 +299,64 @@ func TestTheTunnelsOwnPacketsAreNotMarkedAgain(t *testing.T) {
 		}
 	}
 }
+
+// relayBox answers the relay move like a receiver whose relay came up
+// under the uid it is given.
+type relayBox struct {
+	*egressBox
+	uid string
+}
+
+func (r *relayBox) Run(ctx context.Context, cmd string, stdin io.Reader) (string, error) {
+	if strings.HasPrefix(cmd, "sh -s -- ") {
+		r.egressBox.cmds = append(r.egressBox.cmds, cmd)
+		in := "no"
+		if r.uid == "999" {
+			in = "yes"
+		}
+		return "unl9-2 in=" + in + " uids=" + r.uid + " \n", nil
+	}
+	return r.egressBox.Run(ctx, cmd, stdin)
+}
+
+// TestARelayGoesOutOnlyThroughTheTunnel: a relay moved in runs as the routed
+// user, resolves through the tunnel, waits for the tunnel and does not start
+// without the guard; a relay that came up under another uid fails the move.
+func TestARelayGoesOutOnlyThroughTheTunnel(t *testing.T) {
+	ctx := context.Background()
+	for _, want := range []string{"User=" + EgressUser, "Group=" + EgressUser, "After=" + egressUnit + ".service", "ExecStartPre=+/usr/sbin/nft list chain inet hikkari_egress guard_post", "BindReadOnlyPaths=" + egressDir + "/resolv.conf:/etc/resolv.conf"} {
+		if !strings.Contains(egressRelayDropIn, want) {
+			t.Fatalf("drop-in has no %q", want)
+		}
+	}
+	if strings.Contains(egressRelayDropIn, "Requires=") || strings.Contains(egressRelayDropIn, "BindsTo=") {
+		t.Fatal("a relay must not stop with the tunnel's unit: the guard holds it, a stop would cut people")
+	}
+	if !strings.Contains(egressRelaysScript, egressRelayDropIn) {
+		t.Fatal("the script does not write the drop-in")
+	}
+	p := newEgressPair()
+	rx := &relayBox{egressBox: p.rx, uid: "999"}
+	p.ends.rx = rx
+	if err := egressRelays(ctx, p.ends, true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(p.rx.files[egressDir+"/resolv.conf"], "nameserver 1.1.1.1") {
+		t.Fatalf("resolver: %q", p.rx.files[egressDir+"/resolv.conf"])
+	}
+	rx.uid = "61234"
+	if err := egressRelays(ctx, p.ends, true); err == nil {
+		t.Fatal("a relay under another uid passed the move")
+	}
+	p.rx.sees = "198.51.100.10"
+	rx.uid = "999"
+	n := len(p.rx.cmds)
+	if err := egressRelays(ctx, p.ends, true); err == nil {
+		t.Fatal("relays moved onto a tunnel the internet sees through")
+	}
+	for _, c := range p.rx.cmds[n:] {
+		if strings.HasPrefix(c, "sh -s -- ") {
+			t.Fatal("relays restarted before the tunnel was checked")
+		}
+	}
+}

@@ -101,6 +101,9 @@ package main
 //	                                    # egress, then the check (internal/entry/egress.go)
 //	cmd/server entry-box egress-check <receiver-box> <egress-box>
 //	cmd/server entry-box egress-off <receiver-box> <egress-box>
+//	cmd/server entry-box egress-relays <receiver-box> <egress-box> on|off
+//	                                    # the receiver's relays through the egress
+//	                                    # or back to its own address; a restart
 //	cmd/server entry-box lab-reality <box> [port] [cover]
 //	                                    # stand up or update the опыт 0 lab
 //	                                    # Reality relay on a recorded box
@@ -978,6 +981,26 @@ func runEntryBox(args []string) {
 			err = prov.StopEgress(ctx, args[1], args[2])
 		}
 		if err != nil {
+			fail(err)
+		}
+		os.Exit(0)
+	}
+	if len(args) == 4 && args[0] == "egress-relays" && (args[3] == "on" || args[3] == "off") {
+		// entry-box egress-relays <receiver-box> <egress-box> on|off — the
+		// receiver's relays go out through the egress or from its own
+		// address (internal/entry/egress_relays.go). A restart of each relay.
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+		if err := prov.EgressRelays(ctx, args[1], args[2], args[3] == "on"); err != nil {
 			fail(err)
 		}
 		os.Exit(0)

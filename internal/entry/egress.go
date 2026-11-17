@@ -354,6 +354,13 @@ func (p *Provisioner) StopEgress(ctx context.Context, rxBox, egBox string) error
 	}
 	defer ends.closeRemotes()
 	applog.Info(ctx, "entry", "operator egress off", applog.F("receiver", rxBox), applog.F("egress", egBox))
+	// Without the tunnel's rules a relay in it would go out from the
+	// receiver's own address.
+	if attached, err := egressRelaysAttached(ctx, ends.rx); err != nil {
+		return err
+	} else if attached {
+		return fmt.Errorf("%w: релеи %s ходят через выход, сначала egress-relays %s %s off", ErrRejected, rxBox, rxBox, egBox)
+	}
 	for _, side := range []struct {
 		r    Remote
 		logf func(string, ...any)
@@ -448,19 +455,9 @@ func egressCounter(ctx context.Context, r Remote, name string) (string, error) {
 // checkEgress is CheckEgress's work on open boxes.
 func checkEgress(ctx context.Context, e *egressEnds) error {
 	// 1. The internet sees the egress.
-	out, err := e.rx.Run(ctx, egressProbe("curl -4 -s -m 10 "+egressCheckV4), nil)
-	if err != nil {
-		return fmt.Errorf("проба через выход не прошла: %w", err)
+	if err := checkEgressAddress(ctx, e); err != nil {
+		return err
 	}
-	m := traceIPRe.FindStringSubmatch(out)
-	if m == nil || m[1] != e.egAddr.String() {
-		got := "ничего"
-		if m != nil {
-			got = remoteWord(m[1])
-		}
-		return fmt.Errorf("через туннель интернет видит %s, а не адрес выхода %s", got, e.egBox)
-	}
-	e.rxLog("интернет видит адрес выхода %s по IPv4", e.egBox)
 	if out, err := e.rx.Run(ctx, egressProbe("curl -6 -s -m 10 "+egressCheckV6), nil); err != nil {
 		e.rxLog("IPv6 через выход не прошёл: %v", err)
 	} else if m := traceIPRe.FindStringSubmatch(out); m != nil {
@@ -483,6 +480,15 @@ func checkEgress(ctx context.Context, e *egressEnds) error {
 	}
 	e.egLog("выход отказал адресу в сети РФ (запрет: %s → %s пакетов)", before, after)
 	// 3. Tunnel down: the routed user reaches nothing, the guard drops.
+	// Not with relays in the tunnel: taking it down cuts their people.
+	attached, err := egressRelaysAttached(ctx, e.rx)
+	if err != nil {
+		return fmt.Errorf("релеи в туннеле: %w", err)
+	}
+	if attached {
+		e.rxLog("релеи в туннеле: проверка лежащим туннелем пропущена, она оборвала бы людей")
+		return nil
+	}
 	if _, err := e.rx.Run(ctx, "systemctl stop "+egressUnit, nil); err != nil {
 		return fmt.Errorf("остановка туннеля: %w", err)
 	}
