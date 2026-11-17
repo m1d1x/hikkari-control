@@ -52,8 +52,11 @@ const (
 var pipeWireIDs = map[string]trunk.WireID{pipeWireUDP: 3, pipeWireH3Dgram: 6}
 
 // pipeCopyWindow is how long hk-exit holds answers on the pool's members of
-// copies, as the entry holds its copies (trunkentry copies.go).
-const pipeCopyWindow = 4 * time.Millisecond
+// copies, as the entry holds its copies (trunkentry copies.go). Zero while
+// no entry coalesces copies (frozen by the owner 17.11): one hk-exit serves
+// the pools of people and of the stand, and a window held people's copies
+// down the pool up to 4 ms on every member that carried no stream yet.
+const pipeCopyWindow = 0 * time.Millisecond
 
 // envPipeInherit names what a generation inherits for hk-exit: each wire's
 // socket by kind and the new end of the handoff socket, as kind=fd pairs.
@@ -192,7 +195,7 @@ func (n *naiveRuntime) startTrunkPipe(ctx context.Context, gen byte) error {
 	}
 	// Answers on a member of copies (one the entry sends no stream on) go
 	// down a window at a time (hikkari-protocol spec/trunk.md, "Copies on
-	// the pool"): the entry's window, the owner's 4 ms of 15.11.
+	// the pool"): none while coalescing is frozen, see pipeCopyWindow.
 	if err := x.SetCopyWindow(pipeCopyWindow); err != nil {
 		return fail(err)
 	}
