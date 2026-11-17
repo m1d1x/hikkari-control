@@ -98,7 +98,9 @@ package main
 //	cmd/server entry-box wire-stand-off <entry-box> <exit-box>
 //	cmd/server entry-box egress <receiver-box> <egress-box>
 //	                                    # the receiver's WireGuard tunnel to its
-//	                                    # egress, then the check (internal/entry/egress.go)
+//	                                    # egress, then the check (internal/entry/egress.go);
+//	                                    # a receiver with another egress moves to this
+//	                                    # one in place, relays untouched (egress_links.go)
 //	cmd/server entry-box egress-check <receiver-box> <egress-box>
 //	cmd/server entry-box egress-off <receiver-box> <egress-box>
 //	cmd/server entry-box egress-relays <receiver-box> <egress-box> on|off
