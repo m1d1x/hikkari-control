@@ -17,8 +17,9 @@ import (
 // default routes, and the spare, warm, with only the spare's own address. The
 // watch on the receiver (hikkari-egress-watch, the tunnel program's watch
 // verb, egress.go) pings through the tunnel to each egress's own address and,
-// through the one that carries, to the internet, once a second. The one that
-// carries silent for 5 s and the spare heard within 3 s: the spare takes the
+// through the one that carries, to the internet, every 200 ms. The one that
+// carries silent through the tunnel for 1.5 s (pinged every 200 ms), or its
+// internet silent for 5 s, and the spare heard within 1 s: the spare takes the
 // default routes in one wg call. No relay, no unit, no link restarts; the
 // people's connections to the internet change their address and break, as a
 // change of egress does (H3), and what reopens goes out at once. The watch

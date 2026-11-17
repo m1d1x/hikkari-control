@@ -56,13 +56,21 @@ func TestTheWatchMovesInOneCallToASpareItHears(t *testing.T) {
 	if !strings.Contains(w, move) {
 		t.Fatal("the watch does not move in one wg call")
 	}
-	guard := `[ -n "$sb" ] && [ $((now - sb_heard)) -le 3 ] && [ $((now - moved_at)) -ge "$hold" ]`
+	guard := `if [ "$heard" = 1 ] && [ $((now - moved_at)) -ge "$hold" ]; then`
 	if !strings.Contains(w, guard) || strings.Index(w, guard) > strings.Index(w, move) {
 		t.Fatal("the watch moves without hearing the spare or within the hold")
 	}
+	// The tunnel is judged faster than the internet behind the egress: a
+	// move breaks every connection, and public resolvers blink on their own.
+	if !strings.Contains(w, "red_tun=${RED_TUN_MS:-1500}") || !strings.Contains(w, "red_net=${RED_NET_MS:-5000}") {
+		t.Fatal("the watch's thresholds are not 1.5 s for the tunnel and 5 s for the internet")
+	}
+	if !strings.Contains(egressUpScript, "ping -D -n -i 0.2 -I") {
+		t.Fatal("the tunnel is not pinged every 200 ms")
+	}
 	// The why is found after the move: the ping past the tunnel costs up
 	// to a second.
-	if strings.Index(w, move) > strings.Index(w, `ping_rtt "$(host_of "$act")"`) {
+	if strings.Index(w, move) > strings.Index(w, `ping_rtt "$(host_of "$dead")"`) {
 		t.Fatal("the watch pings past the tunnel before it moves")
 	}
 	for _, line := range strings.Split(w, "\n") {

@@ -189,7 +189,7 @@ done | sort | uniq -c | while read -r n kind rest; do
 done
 info "wg $ifc → $endpoint:51821 (kernel)"
 [ -z "$spare" ] || info "wg $ifc → $spare:51821, the spare egress (kernel)"
-systemctl is-active --quiet hikkari-egress-watch && info "hikkari-egress-watch pings both egresses through the tunnel and 1.1.1.1, 8.8.8.8 through the one that carries" ||
+systemctl is-active --quiet hikkari-egress-watch && info "hikkari-egress-watch pings both egresses through the tunnel every 200 ms and 1.1.1.1, 8.8.8.8 through the one that carries" ||
 	warn "hikkari-egress-watch is not running: nothing moves the receiver off a dead egress"
 info "DNS of the box: $(resolvectl dns 2>/dev/null | awk -F': ' 'NF > 1 && $2 != "" {print $2}' | tr '\n' ' ')$(systemctl is-active --quiet unbound && echo ' unbound (recursive from the box)')"
 info "NTP: $(timedatectl show-timesync -p ServerName --value 2>/dev/null || echo none)"
