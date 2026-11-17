@@ -326,7 +326,7 @@ func TestApplyMovesTheLinkInPlace(t *testing.T) {
 	}
 	_, peer, _ := strings.Cut(egressUpScript, "receiver_peer() {")
 	peer, _, _ = strings.Cut(peer, "\n}\n")
-	if strings.Index(peer, `peer "$PEER_PUB" endpoint`) > strings.Index(peer, "remove") {
+	if strings.Index(peer, `allowed-ips 0.0.0.0/0,::/0`) > strings.Index(peer, "remove") {
 		t.Fatal("the old egress goes before the new one holds the routes")
 	}
 	if !strings.Contains(egressApplyScript, egressScript+" apply") {

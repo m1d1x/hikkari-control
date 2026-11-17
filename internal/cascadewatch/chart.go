@@ -280,6 +280,21 @@ func RegisterAdminRoutes(mux *http.ServeMux, w *Watch, auth func(http.HandlerFun
 		}
 		writeJSON(rw, http.StatusOK, c)
 	}))
+	// GET /api/v1/admin/trunk/egress?window=24h: the receivers' watches of
+	// their egresses (egress.go, H4).
+	mux.HandleFunc("GET /api/v1/admin/trunk/egress", auth(func(rw http.ResponseWriter, r *http.Request) {
+		c, err := w.store.BuildEgressChart(r.Context(), r.URL.Query().Get("window"), w.now())
+		if err != nil {
+			if errors.Is(err, errChartWindow) {
+				writeJSON(rw, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			applog.Error(r.Context(), "cascadewatch", "egress chart failed", applog.F("err", err.Error()))
+			writeJSON(rw, http.StatusInternalServerError, map[string]string{"error": "internal"})
+			return
+		}
+		writeJSON(rw, http.StatusOK, c)
+	}))
 	// GET /api/v1/admin/trunk/hearing?window=24h&entry=&view=trunk|voice:
 	// what a listener heard of the calls and sets (hearing.go), a minute a
 	// bucket.
