@@ -181,6 +181,13 @@ table inet hikkari_egress {
 		type filter hook postrouting priority filter; policy accept;
 		meta mark != 0x4378 meta skuid $uid ct direction original oifname != { "lo", "$ifc" } counter name "guard_drop" drop
 	}
+	# Nothing on the box answers through the tunnel (H6): whoever holds the
+	# egress reaches no port of the receiver, only replies come back in.
+	chain guard_in {
+		type filter hook input priority filter; policy accept;
+		iifname "$ifc" ct state established,related accept
+		iifname "$ifc" drop
+	}
 	chain nat_out {
 		type nat hook postrouting priority srcnat; policy accept;
 		oifname "$ifc" masquerade
@@ -193,8 +200,12 @@ table inet hikkari_egress {
 EOF
 	for fam in -4 -6; do
 		ip $fam route replace unreachable default metric 4096 table 4377
-		ip $fam rule del priority 4377 2>/dev/null || true
-		ip $fam rule add fwmark 0x4377 lookup 4377 priority 4377
+		# Kept when it stands: a guard reloaded under people leaves no
+		# moment without the rule (the guard would drop, not leak, but drop).
+		if ! ip $fam rule show priority 4377 | grep -q "fwmark 0x4377 lookup 4377"; then
+			ip $fam rule del priority 4377 2>/dev/null || true
+			ip $fam rule add fwmark 0x4377 lookup 4377 priority 4377
+		fi
 	done
 }
 
@@ -270,6 +281,9 @@ apply)
 	if ! has_link; then
 		if [ "$ROLE" = receiver ]; then receiver_up; else egress_up; fi
 	elif [ "$ROLE" = receiver ]; then
+		# The guard as this program has it, in one nft transaction: a
+		# receiver stood up by an older hub gets the newer guard in place.
+		receiver_guard
 		receiver_peer
 		receiver_addrs
 	else
@@ -470,7 +484,7 @@ func checkEgress(ctx context.Context, e *egressEnds) error {
 	}
 	if attached {
 		e.rxLog("релеи в туннеле: проверка лежащим туннелем пропущена, она оборвала бы людей")
-		return nil
+		return checkEgressRule(ctx, e)
 	}
 	if _, err := e.rx.Run(ctx, "systemctl stop "+egressUnit, nil); err != nil {
 		return fmt.Errorf("остановка туннеля: %w", err)

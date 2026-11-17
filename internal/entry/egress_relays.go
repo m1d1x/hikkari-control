@@ -144,7 +144,10 @@ func egressRelays(ctx context.Context, e *egressEnds, on bool) error {
 		}
 	}
 	if on {
-		return checkEgressAddress(ctx, e)
+		if err := checkEgressAddress(ctx, e); err != nil {
+			return err
+		}
+		return checkEgressRule(ctx, e)
 	}
 	return nil
 }
