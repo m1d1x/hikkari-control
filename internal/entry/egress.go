@@ -203,7 +203,9 @@ pinger() {
 # caught mid-write reads empty and the tag keeps its last value.
 heard_ms() {
 	l=
-	read -r l < "$run/last.$1" 2>/dev/null || true
+	# Tested first: a failed open is said before 2>/dev/null takes hold,
+	# ten times a second while an egress has never answered.
+	[ ! -r "$run/last.$1" ] || read -r l < "$run/last.$1" || true
 	case "$l" in
 	"["*"]"*)
 		t=${l#[}
@@ -212,6 +214,13 @@ heard_ms() {
 		;;
 	esac
 	eval "hm=\${h_$1:-0}"
+}
+
+# now_ms sets now: ms since the epoch, from /proc/uptime (hundredths) and the
+# watch's clock_off, with no process.
+now_ms() {
+	read -r up _ < /proc/uptime
+	now=$((${up%.*} * 1000 + 1${up#*.} * 10 - 1000 + clock_off))
 }
 
 # stop_pingers ends the watch's pingers; each ping goes with its reader.
@@ -274,7 +283,13 @@ watch_egresses() {
 	done
 	trap stop_pingers EXIT
 	trap 'exit 0' INT TERM
-	started=$(date +%s%3N)
+	# The clock without a process: /proc/uptime by the shell's own read,
+	# moved to the epoch (ping -D's clock) once. A date per look was 10
+	# processes a second, 2.7% of unl1's one core (17.11).
+	read -r up _ < /proc/uptime
+	clock_off=$(($(date +%s%3N) - ${up%.*} * 1000 - 1${up#*.} * 10 + 1000))
+	now_ms
+	started=$now
 	moved_at=0
 	said_at=0
 	changed_at=$started
@@ -285,7 +300,7 @@ watch_egresses() {
 	last=$(cat "$run/last" 2>/dev/null || true)
 	minute=$((started / 60000))
 	while :; do
-		now=$(date +%s%3N)
+		now_ms
 		if [ $((tick % 10)) = 0 ]; then
 			# Once a second: the pingers alive, and who carries (the hub may
 			# have moved the link).
