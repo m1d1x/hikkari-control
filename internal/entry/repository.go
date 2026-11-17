@@ -179,7 +179,7 @@ const (
 	grantCandidates = `
 		SELECT r.id, r.name, b.proto, coalesce(b.region, ''), b.name
 		FROM entry_relays r JOIN entry_boxes b ON b.name = r.box
-		WHERE r.kind = 'personal' AND r.status = 'alive' AND r.expires_at > $2
+		WHERE r.kind = 'personal' AND r.status = 'alive' AND r.expires_at > $2 AND b.role IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM entry_grants g JOIN entry_relays gr ON gr.id = g.relay_id
 		                  WHERE g.account_id = $1 AND g.revoked_at IS NULL AND gr.box = r.box)
 		  AND (SELECT count(DISTINCT g.account_id) FROM entry_grants g JOIN entry_relays gr ON gr.id = g.relay_id
@@ -188,21 +188,25 @@ const (
 	// A tester account (hub_accounts.all_relays) holds every alive personal
 	// relay it does not hold yet: no slots, no one-per-machine rule, no
 	// capacity of a machine (and it takes none from others, see above).
+	// Neither query grants a relay on a box with a role (migration 070): a
+	// hidden receiver holds no grants, so its address rides in no batch
+	// (rxspare.go), and takes the keys of its primary (KeysOf).
 	grantCandidatesAll = `
 		SELECT r.id, r.name, b.proto, coalesce(b.region, ''), b.name
 		FROM entry_relays r JOIN entry_boxes b ON b.name = r.box
-		WHERE r.kind = 'personal' AND r.status = 'alive' AND r.expires_at > $2
+		WHERE r.kind = 'personal' AND r.status = 'alive' AND r.expires_at > $2 AND b.role IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM entry_grants g
 		                  WHERE g.account_id = $1 AND g.relay_id = r.id AND g.revoked_at IS NULL)`
 	selectAllRelays     = `SELECT all_relays FROM hub_accounts WHERE id = $1`
 	selectAliveEnvelope = `
 		SELECT envelope_ct FROM entry_relays WHERE name = $1 AND status = 'alive'`
 	// The relays a subscriber can be handed (grantCandidates without the
-	// account's own terms): what the stand measures.
+	// account's own terms): what the stand measures. A hidden receiver is
+	// none of them, and the stand's vantages in Russia must not dial it.
 	servingEnvelopes = `
-		SELECT name, envelope_ct FROM entry_relays
-		WHERE kind = 'personal' AND status = 'alive' AND expires_at > $1
-		ORDER BY name`
+		SELECT r.name, r.envelope_ct FROM entry_relays r JOIN entry_boxes b ON b.name = r.box
+		WHERE r.kind = 'personal' AND r.status = 'alive' AND r.expires_at > $1 AND b.role IS NULL
+		ORDER BY r.name`
 	insertGrant = `
 		INSERT INTO entry_grants (account_id, relay_id, trigger, meta_ct)
 		VALUES ($1, $2, $3, $4)`

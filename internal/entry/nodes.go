@@ -34,6 +34,16 @@ func (s *Service) bindNode(ctx context.Context, tx pgx.Tx, relayID int64, proto,
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(84002)`); err != nil {
 		return err
 	}
+	// A relay on a box with a role (a hidden receiver, rxspare.go) is no
+	// node: a node is a link in subscriptions, a target of the stand and a
+	// row of the admin's profiles, and its address must reach none of them.
+	var roled bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM entry_relays r JOIN entry_boxes b ON b.name = r.box
+		WHERE r.id = $1 AND b.role IS NOT NULL)`, relayID).Scan(&roled); err != nil {
+		return err
+	} else if roled {
+		return nil
+	}
 	// An old slot is reusable only after its relay left service permanently or
 	// was evicted on suspicion. Rollout testing/draining keeps its identity.
 	_, err := tx.Exec(ctx, `WITH vacant AS (

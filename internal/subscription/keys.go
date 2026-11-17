@@ -106,6 +106,10 @@ func withKey(rec entry.RelayRecord, k accessKey) entry.RelayRecord {
 // moves only on its next subscription fetch, and a key gone from the relay
 // before that turns the profile it still dials into «invalid request user id»
 // (incident 09.11). The restart of the swap cuts the holder off soon enough.
+//
+// A hidden receiver's relay (entry_relays.keys_from, migration 071) holds no
+// grants of its own: it lets through the keys of the primary relay it was
+// copied from, so a key that opens the primary opens it.
 const relayKeys = `
 	SELECT DISTINCT CASE $2
 		WHEN 'hysteria2' THEN k.hy2_auth
@@ -113,10 +117,11 @@ const relayKeys = `
  WHEN 'hikkari' THEN k.hy2_auth
 		WHEN 'amneziawg' THEN k.awg_public || ' ' || host(k.awg_address)
 		ELSE k.vless_id::text END AS key
-	FROM entry_grants g
-	JOIN entry_relays r ON r.id = g.relay_id
+	FROM entry_relays me
+	JOIN entry_relays r ON r.id = coalesce(me.keys_from, me.id)
+	JOIN entry_grants g ON g.relay_id = r.id
 	JOIN hub_access_keys k ON k.account_id = g.account_id
-	WHERE r.name = $1
+	WHERE me.name = $1
 	  AND (g.revoked_at IS NULL
 	       OR (g.revoke_reason = 'drained' AND r.status IN ('testing', 'draining')
 	           AND g.revoked_at >= r.drained_at))

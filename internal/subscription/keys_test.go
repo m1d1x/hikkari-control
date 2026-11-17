@@ -134,6 +134,44 @@ func TestARelayLearnsTheKeysOfItsLiveGrants(t *testing.T) {
 	}
 }
 
+// A hidden receiver's relay (keys_from, migration 071) holds no grants: it
+// lets through exactly the keys its primary lets through, so a tester's key
+// opens it although no subscription names its address (H5 of hikkari-client
+// plans/2026-11-16-hidden-border-receiver-and-egress.md).
+func TestAHiddenReceiverTakesItsPrimarysKeys(t *testing.T) {
+	pool := livePool(t)
+	s := New(pool, &fakeBatch{}, nil)
+	ctx := context.Background()
+	a, b := "t-"+uuid.NewString()[:8], "t-"+uuid.NewString()[:8]
+	for _, n := range []string{a, b} {
+		if _, err := s.Add(ctx, n, unlimited(t, s)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ka := keyOf(t, pool, a)
+	primary, _ := grantRelay(t, pool, entry.ProtoHikkari, a)
+	hidden, _ := grantRelay(t, pool, entry.ProtoHikkari, b) // a stray grant of its own does not count
+	if _, err := pool.Exec(ctx, `UPDATE entry_relays SET keys_from = (SELECT id FROM entry_relays WHERE name = $2) WHERE name = $1`, hidden, primary); err != nil {
+		t.Fatal(err)
+	}
+	want, err := s.KeysOf(ctx, primary, entry.ProtoHikkari)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(want, []string{ka.hy2Auth}) {
+		t.Fatalf("primary keys %v", want)
+	}
+	if got, err := s.KeysOf(ctx, hidden, entry.ProtoHikkari); err != nil || !slices.Equal(got, want) {
+		t.Fatalf("hidden receiver keys %v %v, want the primary's %v", got, err, want)
+	}
+	if err := s.Revoke(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.KeysOf(ctx, hidden, entry.ProtoHikkari); len(got) != 0 {
+		t.Fatalf("a key revoked at the primary stays on the hidden receiver: %v", got)
+	}
+}
+
 // Usage adds up across relays and edge runs; within one run a late pulse
 // never rolls a total back; a key the hub does not know counts for nobody.
 func TestUsageIsSummedPerSubscription(t *testing.T) {
