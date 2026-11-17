@@ -68,6 +68,12 @@ func TestTheWatchMovesInOneCallToASpareItHears(t *testing.T) {
 	if !strings.Contains(egressUpScript, "ping -D -n -i 0.2 -I") {
 		t.Fatal("the tunnel is not pinged every 200 ms")
 	}
+	// The look every 100 ms starts no process for the clock: a date there
+	// was 2.7% of unl1's one core.
+	_, loop, _ := strings.Cut(w, "while :; do")
+	if strings.Contains(loop, "date") || !strings.Contains(loop, "now_ms") {
+		t.Fatal("the watch's loop starts a process for the clock")
+	}
 	// The why is found after the move: the ping past the tunnel costs up
 	// to a second.
 	if strings.Index(w, move) > strings.Index(w, `ping_rtt "$(host_of "$dead")"`) {
