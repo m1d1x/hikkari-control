@@ -3,7 +3,6 @@ package entry
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/netip"
 	"regexp"
 	"strings"
@@ -33,9 +32,12 @@ import (
 // Russian destinations go past the tunnel on the client in both of its modes;
 // this is the egress's own guard should one slip through.
 //
-//	cmd/server entry-box egress <receiver-box> <egress-box>        # stand up or update, then check
+// An egress carries any number of receivers, and a receiver moves between
+// egresses in place (egress_links.go).
+//
+//	cmd/server entry-box egress <receiver-box> <egress-box>        # stand up, update or move, then check
 //	cmd/server entry-box egress-check <receiver-box> <egress-box>  # address, Russian cut, tunnel cut
-//	cmd/server entry-box egress-off <receiver-box> <egress-box>    # take it all away
+//	cmd/server entry-box egress-off <receiver-box> <egress-box>    # the receiver off the egress
 
 const (
 	egressDir    = "/etc/hikkari-egress"
@@ -51,6 +53,10 @@ const (
 	EgressUser = "hikkari-egress"
 	// EgressPort is WireGuard's UDP port on both ends.
 	EgressPort = 51821
+	// egressTunnelV4 and egressTunnelV6 are the egress's end of every tunnel
+	// it carries; a receiver's end is its slot's (egressSlotAddrs).
+	egressTunnelV4 = "10.231.0.2"
+	egressTunnelV6 = "fd77:231::2"
 	// egressCheckV4 and egressCheckV6 answer with the address they see,
 	// without a name to resolve (Cloudflare's trace on 1.1.1.1).
 	egressCheckV4 = "https://1.1.1.1/cdn-cgi/trace"
@@ -78,8 +84,16 @@ ExecStop=` + egressScript + ` down
 WantedBy=multi-user.target
 `
 
-// egressUpScript is the tunnel's own program on a box: up, down, off. It
-// reads ROLE and the peer from the env the hub writes.
+// egressUpScript is the tunnel's own program on a box: up, apply, down, off.
+// It reads ROLE and the rest from the env the hub writes; an egress reads its
+// receivers from the peers file, one line each: public key, tunnel IPv4,
+// tunnel IPv6, the receiver's own address.
+//
+// up builds the link from nothing (boot, first stand). apply brings a link
+// that is up to what the files say without taking it down: on a receiver the
+// new egress takes the default routes from the old one in one wg call, so
+// nothing on the box restarts and the receiver's tunnel address stays; on an
+// egress receivers come and go beside the ones it carries.
 const egressUpScript = `#!/bin/sh
 # Installed by the nekko hub: the tunnel between a receiver and its egress
 # (hikkari-control internal/entry/egress.go).
@@ -90,27 +104,65 @@ port=` + "51821" + `
 key=` + egressKey + `
 . "$dir/env"
 
-link_up() {
-	ip link del "$ifc" 2>/dev/null || true
-	ip link add "$ifc" type wireguard
-	if [ "$ROLE" = receiver ]; then
-		# fwmark: the tunnel's own packets carry the socket of the packet they
-		# wrap, and without a mark of their own they would be marked into the
-		# tunnel again (unl1, 16.11: each lap 64 bytes longer, 300k packets).
-		wg set "$ifc" private-key "$key" listen-port "$port" fwmark 0x4378 \
-			peer "$PEER_PUB" endpoint "$PEER_ENDPOINT" allowed-ips 0.0.0.0/0,::/0 persistent-keepalive 25
-		ip addr add 10.231.0.1/30 dev "$ifc"
-		ip -6 addr add fd77:231::1/126 dev "$ifc"
-	else
-		wg set "$ifc" private-key "$key" listen-port "$port" \
-			peer "$PEER_PUB" allowed-ips 10.231.0.1/32,fd77:231::1/128
-		ip addr add 10.231.0.2/30 dev "$ifc"
-		ip -6 addr add fd77:231::2/126 dev "$ifc"
-	fi
-	ip link set "$ifc" mtu 1420 up
+has_link() {
+	ip link show "$ifc" >/dev/null 2>&1
 }
 
-receiver_up() {
+# A receiver's own tunnel address; the egress is ` + egressTunnelV4 + ` and ` + egressTunnelV6 + `.
+receiver_addrs() {
+	ip -4 addr show dev "$ifc" | grep -q " $ADDR4/" || ip addr add "$ADDR4/32" dev "$ifc"
+	ip -6 addr show dev "$ifc" | grep -q " $ADDR6/" || ip -6 addr add "$ADDR6/128" dev "$ifc"
+}
+
+# receiver_peer points the link at the egress of the env. allowed-ips are one
+# peer's alone in WireGuard: the new peer takes 0.0.0.0/0 and ::/0 from the
+# old one in this one call, and then the old one goes.
+receiver_peer() {
+	# fwmark: the tunnel's own packets carry the socket of the packet they
+	# wrap, and without a mark of their own they would be marked into the
+	# tunnel again (unl1, 16.11: each lap 64 bytes longer, 300k packets).
+	wg set "$ifc" private-key "$key" listen-port "$port" fwmark 0x4378 \
+		peer "$PEER_PUB" endpoint "$PEER_ENDPOINT" allowed-ips 0.0.0.0/0,::/0 persistent-keepalive 25
+	for p in $(wg show "$ifc" peers); do
+		[ "$p" = "$PEER_PUB" ] || wg set "$ifc" peer "$p" remove
+	done
+}
+
+# egress_peers makes the link's peers the peers file: each receiver may send
+# from its own tunnel address only.
+egress_peers() {
+	wg set "$ifc" private-key "$key" listen-port "$port"
+	keep=
+	while read -r pub a4 a6 rx; do
+		[ -n "$pub" ] || continue
+		wg set "$ifc" peer "$pub" allowed-ips "$a4/32,$a6/128"
+		keep="$keep $pub"
+	done < "$dir/peers"
+	for p in $(wg show "$ifc" peers); do
+		case " $keep " in *" $p "*) ;; *) wg set "$ifc" peer "$p" remove ;; esac
+	done
+	ip -4 route replace 10.231.0.0/16 dev "$ifc"
+	ip -6 route replace fd77:231::/64 dev "$ifc"
+}
+
+# egress_ufw lets each receiver of the peers file reach the port and takes the
+# rules of receivers that left.
+egress_ufw() {
+	if ! command -v ufw >/dev/null 2>&1 || ! ufw status | grep -q "Status: active"; then
+		return 0
+	fi
+	ufw route allow in on "$ifc" out on "$ext" comment hikkari-egress >/dev/null
+	want=" $(awk 'NF == 4 { printf "%s ", $4 }' "$dir/peers")"
+	for rx in $want; do
+		ufw allow from "$rx" to any port "$port" proto udp comment "hikkari-egress-rx $rx" >/dev/null
+	done
+	ufw status numbered | sed -n 's/^\[ *\([0-9]*\)\].*# hikkari-egress-rx \([^ ]*\).*$/\1 \2/p' | sort -rn |
+		while read -r n rx; do
+			case "$want" in *" $rx "*) ;; *) ufw --force delete "$n" >/dev/null ;; esac
+		done
+}
+
+receiver_guard() {
 	uid=$(id -u ` + EgressUser + `)
 	# The guard first: from here on the routed user's connections leave
 	# through the tunnel or not at all.
@@ -144,14 +196,26 @@ EOF
 		ip $fam rule del priority 4377 2>/dev/null || true
 		ip $fam rule add fwmark 0x4377 lookup 4377 priority 4377
 	done
-	link_up
+}
+
+receiver_up() {
+	receiver_guard
+	ip link del "$ifc" 2>/dev/null || true
+	ip link add "$ifc" type wireguard
+	receiver_peer
+	receiver_addrs
+	ip link set "$ifc" mtu 1420 up
 	ip -4 route replace default dev "$ifc" table 4377
 	ip -6 route replace default dev "$ifc" table 4377
 }
 
-egress_up() {
+egress_ext() {
 	ext=$(ip -o -4 route get 1.1.1.1 | sed -n 's/.* dev \([^ ]*\).*/\1/p')
 	[ -n "$ext" ] || { echo "нет внешнего интерфейса" >&2; exit 1; }
+}
+
+egress_up() {
+	egress_ext
 	# The Russian cut and the table come in one transaction, before the
 	# box forwards a single packet.
 	{
@@ -189,16 +253,30 @@ net.ipv4.ip_forward = 1
 net.ipv6.conf.all.forwarding = 1
 EOF
 	sysctl -q -p /etc/sysctl.d/60-hikkari-egress.conf
-	if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
-		ufw allow from "$PEER_ADDR" to any port "$port" proto udp comment hikkari-egress >/dev/null
-		ufw route allow in on "$ifc" out on "$ext" comment hikkari-egress >/dev/null
-	fi
-	link_up
+	ip link del "$ifc" 2>/dev/null || true
+	ip link add "$ifc" type wireguard
+	ip addr add ` + egressTunnelV4 + `/16 dev "$ifc"
+	ip -6 addr add ` + egressTunnelV6 + `/64 dev "$ifc"
+	ip link set "$ifc" mtu 1420 up
+	egress_peers
+	egress_ufw
 }
 
 case "${1:-}" in
 up)
 	if [ "$ROLE" = receiver ]; then receiver_up; else egress_up; fi
+	;;
+apply)
+	if ! has_link; then
+		if [ "$ROLE" = receiver ]; then receiver_up; else egress_up; fi
+	elif [ "$ROLE" = receiver ]; then
+		receiver_peer
+		receiver_addrs
+	else
+		egress_ext
+		egress_peers
+		egress_ufw
+	fi
 	;;
 down)
 	ip link del "$ifc" 2>/dev/null || true
@@ -220,7 +298,7 @@ off)
 	fi
 	;;
 *)
-	echo "usage: $0 up|down|off" >&2
+	echo "usage: $0 up|apply|down|off" >&2
 	exit 2
 	;;
 esac
@@ -248,18 +326,6 @@ chmod 700 ` + egressDir + `
 wg pubkey < ` + egressKey + `
 `
 
-// egressStartScript installs the program and the unit and brings the tunnel
-// up (again: up rebuilds the link).
-const egressStartScript = `set -eu
-chmod 755 ` + egressScript + `
-chmod 600 ` + egressDir + `/env
-systemctl daemon-reload
-systemctl enable ` + egressUnit + ` >/dev/null 2>&1
-systemctl restart ` + egressUnit + `
-systemctl is-active --quiet ` + egressUnit + `
-ip -br link show hk-egress
-`
-
 // wgKeyRe is a WireGuard public key as wg prints it.
 var wgKeyRe = regexp.MustCompile(`^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]=$`)
 
@@ -272,6 +338,9 @@ type egressEnds struct {
 	ruNets       string // nft elements of ru4 and ru6
 	rxBox, egBox string
 	closeRemotes func()
+	// back points the receiver at the egress it went through before a move
+	// (egress_links.go); nil when the receiver is not moving.
+	back func(ctx context.Context, slot int) error
 }
 
 func (p *Provisioner) openEgress(ctx context.Context, rxBox, egBox string) (*egressEnds, error) {
@@ -315,24 +384,6 @@ func (p *Provisioner) openEgress(ctx context.Context, rxBox, egBox string) (*egr
 	}, nil
 }
 
-// StandEgress stands up or updates the tunnel from rxBox to egBox and then
-// checks it (CheckEgress).
-func (p *Provisioner) StandEgress(ctx context.Context, rxBox, egBox string) error {
-	ends, err := p.openEgress(ctx, rxBox, egBox)
-	if err != nil {
-		return err
-	}
-	defer ends.closeRemotes()
-	applog.Info(ctx, "entry", "operator egress", applog.F("receiver", rxBox), applog.F("egress", egBox))
-	if ends.ruNets, err = fetchRUNets(ctx, ripeDelegatedURL); err != nil {
-		return fmt.Errorf("сети РФ для запрета на выходе: %w", err)
-	}
-	if err := standEgress(ctx, ends); err != nil {
-		return err
-	}
-	return checkEgress(ctx, ends)
-}
-
 // CheckEgress checks the tunnel from rxBox to egBox as it stands: the
 // internet sees the egress's address over IPv4 and IPv6, a Russian address
 // is refused by the egress, and with the tunnel down the routed user reaches
@@ -344,74 +395,6 @@ func (p *Provisioner) CheckEgress(ctx context.Context, rxBox, egBox string) erro
 	}
 	defer ends.closeRemotes()
 	return checkEgress(ctx, ends)
-}
-
-// StopEgress takes the tunnel and every rule of it off both boxes.
-func (p *Provisioner) StopEgress(ctx context.Context, rxBox, egBox string) error {
-	ends, err := p.openEgress(ctx, rxBox, egBox)
-	if err != nil {
-		return err
-	}
-	defer ends.closeRemotes()
-	applog.Info(ctx, "entry", "operator egress off", applog.F("receiver", rxBox), applog.F("egress", egBox))
-	// Without the tunnel's rules a relay in it would go out from the
-	// receiver's own address.
-	if attached, err := egressRelaysAttached(ctx, ends.rx); err != nil {
-		return err
-	} else if attached {
-		return fmt.Errorf("%w: релеи %s ходят через выход, сначала egress-relays %s %s off", ErrRejected, rxBox, rxBox, egBox)
-	}
-	for _, side := range []struct {
-		r    Remote
-		logf func(string, ...any)
-	}{{ends.rx, ends.rxLog}, {ends.eg, ends.egLog}} {
-		cmd := "if [ -x " + egressScript + " ]; then " + egressScript + " off; fi; systemctl disable --now " + egressUnit + " >/dev/null 2>&1 || true; rm -f /etc/systemd/system/" + egressUnit + ".service " + egressScript + "; systemctl daemon-reload"
-		if _, err := side.r.Run(ctx, cmd, nil); err != nil {
-			return fmt.Errorf("снятие туннеля: %w", err)
-		}
-		side.logf("туннель выхода снят")
-	}
-	return nil
-}
-
-// standEgress is StandEgress's work on open boxes: keys on both ends, the
-// egress first (it only listens), then the receiver.
-func standEgress(ctx context.Context, e *egressEnds) error {
-	rxPub, err := egressPrepare(ctx, e.rx, "receiver")
-	if err != nil {
-		return fmt.Errorf("%s: %w", e.rxBox, err)
-	}
-	egPub, err := egressPrepare(ctx, e.eg, "egress")
-	if err != nil {
-		return fmt.Errorf("%s: %w", e.egBox, err)
-	}
-	egEnv := fmt.Sprintf("# Written by the nekko hub: this box is the egress of %s.\nROLE=egress\nPEER_PUB=%s\nPEER_ADDR=%s\n", e.rxBox, rxPub, e.rxAddr)
-	rxEnv := fmt.Sprintf("# Written by the nekko hub: this box goes to the internet through %s.\nROLE=receiver\nPEER_PUB=%s\nPEER_ENDPOINT=%s\n", e.egBox, egPub, net.JoinHostPort(e.egAddr.String(), fmt.Sprint(EgressPort)))
-	if _, err := e.eg.Run(ctx, "umask 077; cat > "+egressDir+"/ru.nft", strings.NewReader(e.ruNets)); err != nil {
-		return fmt.Errorf("%s: сети РФ: %w", e.egBox, err)
-	}
-	for _, side := range []struct {
-		r    Remote
-		box  string
-		env  string
-		logf func(string, ...any)
-	}{{e.eg, e.egBox, egEnv, e.egLog}, {e.rx, e.rxBox, rxEnv, e.rxLog}} {
-		if _, err := side.r.Run(ctx, "umask 077; cat > "+egressDir+"/env", strings.NewReader(side.env)); err != nil {
-			return fmt.Errorf("%s: env: %w", side.box, err)
-		}
-		if _, err := side.r.Run(ctx, "cat > "+egressScript, strings.NewReader(egressUpScript)); err != nil {
-			return fmt.Errorf("%s: программа туннеля: %w", side.box, err)
-		}
-		if _, err := side.r.Run(ctx, "cat > /etc/systemd/system/"+egressUnit+".service", strings.NewReader(egressUnitFile)); err != nil {
-			return fmt.Errorf("%s: unit-файл: %w", side.box, err)
-		}
-		out, err := side.r.Run(ctx, "sh -s", strings.NewReader(egressStartScript))
-		if err != nil {
-			return fmt.Errorf("%s: туннель не встал: %w", side.box, err)
-		}
-		side.logf("туннель выхода поднят: %s", strings.TrimSpace(out))
-	}
-	return nil
 }
 
 // egressPrepare readies one end and returns its public key.

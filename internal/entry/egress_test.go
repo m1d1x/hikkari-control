@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 )
 
 func TestRIPEsRussianBlocksBecomePrefixes(t *testing.T) {
@@ -160,19 +162,24 @@ func (r *ruCounting) Run(ctx context.Context, cmd string, stdin io.Reader) (stri
 func TestTheTunnelStandsOnBothEndsAndChecksItself(t *testing.T) {
 	p := newEgressPair()
 	ctx := context.Background()
-	if err := standEgress(ctx, p.ends); err != nil {
+	rxPub, err := standEgress(ctx, p.ends, 1, nil, false)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if rxPub != p.rx.pub {
+		t.Fatalf("receiver's key %q", rxPub)
+	}
 	rxEnv, egEnv := p.rx.files[egressDir+"/env"], p.eg.files[egressDir+"/env"]
-	for _, want := range []string{"ROLE=receiver", "PEER_PUB=" + p.eg.pub, "PEER_ENDPOINT=203.0.113.20:51821"} {
+	for _, want := range []string{"ROLE=receiver", "ADDR4=10.231.0.1\n", "ADDR6=fd77:231::1\n", "PEER_PUB=" + p.eg.pub, "PEER_ENDPOINT=203.0.113.20:51821"} {
 		if !strings.Contains(rxEnv, want) {
 			t.Fatalf("receiver env has no %q:\n%s", want, rxEnv)
 		}
 	}
-	for _, want := range []string{"ROLE=egress", "PEER_PUB=" + p.rx.pub, "PEER_ADDR=198.51.100.10"} {
-		if !strings.Contains(egEnv, want) {
-			t.Fatalf("egress env has no %q:\n%s", want, egEnv)
-		}
+	if !strings.Contains(egEnv, "ROLE=egress") {
+		t.Fatalf("egress env:\n%s", egEnv)
+	}
+	if peers := p.eg.files[egressDir+"/peers"]; peers != p.rx.pub+" 10.231.0.1 fd77:231::1 198.51.100.10\n" {
+		t.Fatalf("egress peers:\n%s", peers)
 	}
 	if !strings.Contains(p.eg.files[egressDir+"/ru.nft"], "77.88.0.0/18") || p.rx.files[egressDir+"/ru.nft"] != "" {
 		t.Fatalf("Russian blocks: egress %q, receiver %q", p.eg.files[egressDir+"/ru.nft"], p.rx.files[egressDir+"/ru.nft"])
@@ -236,8 +243,94 @@ func TestTheReceiversGuardIsTheKernels(t *testing.T) {
 	}
 	// The guard is loaded before the link exists.
 	_, rx, _ := strings.Cut(s, "receiver_up() {")
-	if strings.Index(rx, "nft -f -") > strings.Index(rx, "link_up") {
+	if strings.Index(rx, "receiver_guard") > strings.Index(rx, "ip link add") {
 		t.Fatal("the receiver's link comes up before its guard")
+	}
+}
+
+func TestASlotIsTheReceiversTunnelAddress(t *testing.T) {
+	for slot, want := range map[int][2]string{1: {"10.231.0.1", "fd77:231::1"}, 3: {"10.231.0.3", "fd77:231::3"}, 258: {"10.231.1.2", "fd77:231::102"}} {
+		if v4, v6 := egressSlotAddrs(slot); v4 != want[0] || v6 != want[1] {
+			t.Fatalf("slot %d: %s %s", slot, v4, v6)
+		}
+	}
+	if v4, v6 := egressSlotAddrs(2); v4 != egressTunnelV4 || v6 != egressTunnelV6 {
+		t.Fatal("slot 2 is not the egress's own end, which no receiver may take")
+	}
+}
+
+// An egress carries every receiver of its peers: a second receiver stands
+// beside the first, and the first keeps its line.
+func TestAnEgressCarriesEveryReceiverBesideTheOthers(t *testing.T) {
+	p := newEgressPair()
+	first := egressPeer{box: "unl8", pub: "unl8PubAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", slot: 1, addr: netip.MustParseAddr("198.51.100.8")}
+	if _, err := standEgress(context.Background(), p.ends, 3, []egressPeer{first}, false); err != nil {
+		t.Fatal(err)
+	}
+	want := first.pub + " 10.231.0.1 fd77:231::1 198.51.100.8\n" + p.rx.pub + " 10.231.0.3 fd77:231::3 198.51.100.10\n"
+	if peers := p.eg.files[egressDir+"/peers"]; peers != want {
+		t.Fatalf("egress peers:\n%s", peers)
+	}
+	if !strings.Contains(p.rx.files[egressDir+"/env"], "ADDR4=10.231.0.3\n") {
+		t.Fatal("the second receiver took another's tunnel address")
+	}
+}
+
+// A move the internet does not see through points the receiver back at the
+// egress it went through and lets it go from the new one; the probe call runs
+// on the receiver as the routed user, around the swap.
+func TestAMoveThatDoesNotCarryGoesBack(t *testing.T) {
+	lead, lookup := egressCallLead, egressCallLookup
+	egressCallLead = 0
+	egressCallLookup = func(context.Context, string, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("162.159.207.0")}, nil
+	}
+	defer func() { egressCallLead, egressCallLookup = lead, lookup }()
+
+	p := newEgressPair()
+	p.rx.sees = "198.51.100.10"
+	var backTo int
+	p.ends.back = func(_ context.Context, slot int) error {
+		backTo = slot
+		return nil
+	}
+	other := egressPeer{box: "unl8", pub: "unl8PubAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", slot: 1, addr: netip.MustParseAddr("198.51.100.8")}
+	if _, err := standEgress(context.Background(), p.ends, 4, []egressPeer{other}, true); err == nil || !strings.Contains(err.Error(), "не адрес выхода") {
+		t.Fatalf("a move through a dead egress passed: %v", err)
+	}
+	if backTo != 4 {
+		t.Fatal("the receiver did not go back to its egress")
+	}
+	if peers := p.eg.files[egressDir+"/peers"]; peers != other.pub+" 10.231.0.1 fd77:231::1 198.51.100.8\n" {
+		t.Fatalf("the new egress kept the receiver:\n%s", peers)
+	}
+	call := ""
+	for _, c := range p.rx.cmds {
+		if strings.Contains(c, egressCallUnit) && strings.Contains(c, "systemd-run") {
+			call = c
+		}
+	}
+	if !strings.Contains(call, "--uid="+EgressUser) || !strings.Contains(call, "162.159.207.0") {
+		t.Fatalf("the probe call is not the routed user's: %q", call)
+	}
+}
+
+// apply on a live link never takes it down: the receiver's new peer takes the
+// default routes before the old one goes, and its address stays.
+func TestApplyMovesTheLinkInPlace(t *testing.T) {
+	_, apply, _ := strings.Cut(egressUpScript, "\napply)\n")
+	apply, _, _ = strings.Cut(apply, ";;")
+	_, live, _ := strings.Cut(apply, "elif")
+	if strings.Contains(live, "link del") || strings.Contains(live, "_up") {
+		t.Fatalf("apply rebuilds a live link:\n%s", live)
+	}
+	_, peer, _ := strings.Cut(egressUpScript, "receiver_peer() {")
+	peer, _, _ = strings.Cut(peer, "\n}\n")
+	if strings.Index(peer, `peer "$PEER_PUB" endpoint`) > strings.Index(peer, "remove") {
+		t.Fatal("the old egress goes before the new one holds the routes")
+	}
+	if !strings.Contains(egressApplyScript, egressScript+" apply") {
+		t.Fatal("the hub does not apply a live link in place")
 	}
 }
 
@@ -358,5 +451,77 @@ func TestARelayGoesOutOnlyThroughTheTunnel(t *testing.T) {
 		if strings.HasPrefix(c, "sh -s -- ") {
 			t.Fatal("relays restarted before the tunnel was checked")
 		}
+	}
+}
+
+// The hub keeps who goes through whom (migration 072): the first receiver gets
+// slot 1, the address the single tunnel of H1 had; slot 2 is the egress's own
+// end; a move keeps the receiver's slot; an egress's peers are the receivers
+// it carries, each with its own address.
+func TestTheHubKeepsWhoGoesOutThroughWhom(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	s := &Service{pool: pool}
+	ctx := t.Context()
+	if _, err := pool.Exec(ctx, `DELETE FROM entry_egress_links`); err != nil {
+		t.Fatal(err)
+	}
+	for box, addr := range map[string]string{"egrx1": "198.51.100.1", "egrx2": "198.51.100.2", "egeg1": "203.0.113.1", "egeg2": "203.0.113.2"} {
+		ct, err := cryptobox.Encrypt([]byte(addr))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO entry_boxes (name, address_ct, provider, location, proto)
+			VALUES ($1, $2, 'test', 'test', 'hikkari') ON CONFLICT (name) DO UPDATE SET address_ct = $2`, box, ct); err != nil {
+			t.Fatal(err)
+		}
+	}
+	free := func() int {
+		n, err := s.freeEgressSlot(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := free(); n != 1 {
+		t.Fatalf("first slot %d", n)
+	}
+	if err := s.saveEgressLink(ctx, "egrx1", "egeg1", 1, "rx1pub"); err != nil {
+		t.Fatal(err)
+	}
+	if n := free(); n != 3 {
+		t.Fatalf("second slot %d, want 3: 2 is the egress's end", n)
+	}
+	if err := s.saveEgressLink(ctx, "egrx2", "egeg1", 3, "rx2pub"); err != nil {
+		t.Fatal(err)
+	}
+	peers, err := s.egressPeersOf(ctx, "egeg1", "egrx2")
+	if err != nil || len(peers) != 1 || peers[0].box != "egrx1" || peers[0].pub != "rx1pub" || peers[0].slot != 1 || peers[0].addr.String() != "198.51.100.1" {
+		t.Fatalf("egeg1 without egrx2: %+v %v", peers, err)
+	}
+	// A move keeps the slot.
+	if err := s.saveEgressLink(ctx, "egrx1", "egeg2", 1, "rx1pub"); err != nil {
+		t.Fatal(err)
+	}
+	if eg, slot, ok, err := s.egressLink(ctx, "egrx1"); err != nil || !ok || eg != "egeg2" || slot != 1 {
+		t.Fatalf("egrx1 after the move: %s %d %v %v", eg, slot, ok, err)
+	}
+	if peers, err := s.egressPeersOf(ctx, "egeg1", ""); err != nil || len(peers) != 1 || peers[0].box != "egrx2" {
+		t.Fatalf("egeg1 after egrx1 left: %+v %v", peers, err)
+	}
+	if err := s.saveEgressLink(ctx, "egrx2", "egeg2", 1, "rx2pub"); err == nil {
+		t.Fatal("two receivers hold one slot")
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO entry_egress_links (receiver, egress, slot, rx_pub) VALUES ('egeg1', 'egeg2', 2, 'x')`); err == nil {
+		t.Fatal("a receiver took the egress's end")
+	}
+	if err := s.deleteEgressLink(ctx, "egrx1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok, err := s.egressLink(ctx, "egrx1"); err != nil || ok {
+		t.Fatalf("egrx1 still linked: %v %v", ok, err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM entry_egress_links`); err != nil {
+		t.Fatal(err)
 	}
 }
