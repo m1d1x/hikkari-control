@@ -763,15 +763,20 @@ func (j *jobRun) back() {
 	}
 }
 
-// swap puts the build under every relay of the box.
+// swap puts the build under every relay of the box. On a receiver whose
+// relays go out through an egress the rule of the egress is checked before
+// (red: the box is not touched) and after (red: the swap is rolled back).
 func (j *jobRun) swap(b boxOpened, build EdgeBuild) error {
+	if err := j.egressRule(b.r, "до разворота"); err != nil {
+		return err
+	}
 	for _, rel := range b.relays {
 		j.step("deploy " + rel.name)
 		if err := j.deploy(b.r, build, rel); err != nil {
 			return fmt.Errorf("разворот %s: %w", rel.name, err)
 		}
 	}
-	return nil
+	return j.egressRule(b.r, "после разворота")
 }
 
 // bench runs one bench of the box — beside the control box when there is
@@ -1276,6 +1281,9 @@ func (j *jobRun) reconfigure(o *Orchestrator) error {
 		return err
 	}
 	defer j.back()
+	if err := j.egressRule(r, "до разворота"); err != nil {
+		return err
+	}
 	for _, rel := range relays {
 		j.step("deploy " + rel.name)
 		if err := j.install(r, rel); err != nil {
@@ -1286,6 +1294,9 @@ func (j *jobRun) reconfigure(o *Orchestrator) error {
 				return fmt.Errorf("nginx-фронт %s: %w", rel.name, err)
 			}
 		}
+	}
+	if err := j.egressRule(r, "после разворота"); err != nil {
+		return err
 	}
 	j.step("probe")
 	return j.probe(relays)
