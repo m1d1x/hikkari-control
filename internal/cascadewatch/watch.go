@@ -198,6 +198,7 @@ func (w *Watch) Tick(ctx context.Context) {
 		}
 		w.startRound(ctx, p)
 	}
+	w.collectEgresses(ctx)
 }
 
 // collect reads the entry's journal since the last line read.

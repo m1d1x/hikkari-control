@@ -84,6 +84,24 @@ ExecStop=` + egressScript + ` down
 WantedBy=multi-user.target
 `
 
+// egressWatchUnit is the receiver's watch of its egresses (H4): the tunnel's
+// program in its watch verb, for as long as the box is a receiver.
+const egressWatchUnit = "hikkari-egress-watch"
+
+const egressWatchUnitFile = `# Installed by the nekko hub: the receiver watches its egresses and moves to the spare.
+[Unit]
+Description=Hikkari receiver's watch of its egresses
+After=` + egressUnit + `.service
+
+[Service]
+ExecStart=` + egressScript + ` watch
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+`
+
 // egressUpScript is the tunnel's own program on a box: up, apply, down, off.
 // It reads ROLE and the rest from the env the hub writes; an egress reads its
 // receivers from the peers file, one line each: public key, tunnel IPv4,
@@ -114,17 +132,282 @@ receiver_addrs() {
 	ip -6 addr show dev "$ifc" | grep -q " $ADDR6/" || ip -6 addr add "$ADDR6/128" dev "$ifc"
 }
 
-# receiver_peer points the link at the egress of the env. allowed-ips are one
-# peer's alone in WireGuard: the new peer takes 0.0.0.0/0 and ::/0 from the
-# old one in this one call, and then the old one goes.
+# The env's egresses by key: the one the hub named (PEER_*) and the spare
+# (SPARE_*, H4), which may be empty.
+endpoint_of() {
+	if [ "$1" = "$PEER_PUB" ]; then echo "$PEER_ENDPOINT"; else echo "${SPARE_ENDPOINT:-}"; fi
+}
+host_of() {
+	h=$(endpoint_of "$1")
+	echo "${h%:*}"
+}
+box_of() {
+	if [ "$1" = "$PEER_PUB" ]; then echo "${PEER_BOX:-egress}"; else echo "${SPARE_BOX:-spare}"; fi
+}
+
+# active_pub is the peer that holds the default routes: the egress the
+# receiver goes out through now.
+active_pub() {
+	wg show "$ifc" allowed-ips 2>/dev/null | awk '/0\.0\.0\.0\/0/ { print $1; exit }'
+}
+
+# receiver_peer points the link at the egresses of the env. allowed-ips are
+# one peer's alone in WireGuard: the egress that carries takes 0.0.0.0/0 and
+# ::/0 from whoever had them in this one call, the spare keeps only its own
+# address (the watch's probe through it, H4), and peers the env no longer
+# names go after. The hub's egress carries, unless "keep" says to leave the
+# spare carrying where the watch moved to it.
 receiver_peer() {
+	out=$PEER_PUB
+	if [ "${1:-}" = keep ] && [ -n "${SPARE_PUB:-}" ] && [ "$(active_pub)" = "$SPARE_PUB" ]; then
+		out=$SPARE_PUB
+	fi
+	set -- peer "$out" endpoint "$(endpoint_of "$out")" allowed-ips 0.0.0.0/0,::/0 persistent-keepalive 25
+	if [ -n "${SPARE_PUB:-}" ]; then
+		other=$SPARE_PUB
+		[ "$out" = "$PEER_PUB" ] || other=$PEER_PUB
+		set -- "$@" peer "$other" endpoint "$(endpoint_of "$other")" allowed-ips "$(host_of "$other")/32" persistent-keepalive 25
+	fi
 	# fwmark: the tunnel's own packets carry the socket of the packet they
 	# wrap, and without a mark of their own they would be marked into the
 	# tunnel again (unl1, 16.11: each lap 64 bytes longer, 300k packets).
-	wg set "$ifc" private-key "$key" listen-port "$port" fwmark 0x4378 \
-		peer "$PEER_PUB" endpoint "$PEER_ENDPOINT" allowed-ips 0.0.0.0/0,::/0 persistent-keepalive 25
+	wg set "$ifc" private-key "$key" listen-port "$port" fwmark 0x4378 "$@"
 	for p in $(wg show "$ifc" peers); do
-		[ "$p" = "$PEER_PUB" ] || wg set "$ifc" peer "$p" remove
+		[ "$p" = "$PEER_PUB" ] || [ "$p" = "${SPARE_PUB:-}" ] || wg set "$ifc" peer "$p" remove
+	done
+}
+
+# ping_rtt pings once past the tunnel and prints the round trip in ms,
+# nothing when no answer came within a second.
+ping_rtt() {
+	ping -n -q -c1 -W1 "$1" 2>/dev/null | sed -n 's|^rtt [^=]*= [0-9.]*/\([0-9.]*\)/.*|\1|p'
+}
+
+# pinger <tag> <address>: a ping through the tunnel every 200 ms for as long
+# as the watch lives. Each reply (ping -D, its own time) is the newest in
+# $run/last.<tag> and goes to $run/m.<tag> for the minute line; the shell's
+# own printf, no process per reply.
+pinger() {
+	ping -D -n -i 0.2 -I "$ifc" "$2" 2>/dev/null | while IFS= read -r l; do
+		case "$l" in
+		*time=*)
+			printf '%s\n' "$l" > "$run/last.$1"
+			printf '%s\n' "$l" >> "$run/m.$1"
+			;;
+		esac
+	done
+}
+
+# heard_ms <tag> sets hm: when the tag's newest reply came, ms since the
+# epoch; 0 for none yet. In the watch's own shell, not a subshell: a file
+# caught mid-write reads empty and the tag keeps its last value.
+heard_ms() {
+	l=
+	read -r l < "$run/last.$1" 2>/dev/null || true
+	case "$l" in
+	"["*"]"*)
+		t=${l#[}
+		t=${t%%]*}
+		eval "h_$1=\$(( ${t%.*} * 1000 + (1${t#*.} - 1000000) / 1000 ))"
+		;;
+	esac
+	eval "hm=\${h_$1:-0}"
+}
+
+# stop_pingers ends the watch's pingers; each ping goes with its reader.
+stop_pingers() {
+	for tp in $pingers; do
+		eval "pid=\${pid_${tp%%=*}:-}"
+		[ -z "$pid" ] || kill "$pid" 2>/dev/null || true
+	done
+}
+
+# spawn_pingers starts whichever pinger is not running: one per egress (its
+# own address, which the link routes to that peer whatever its role) and one
+# per NET_PROBES address, which goes through the egress that carries.
+spawn_pingers() {
+	for tp in $pingers; do
+		tag=${tp%%=*}
+		eval "pid=\${pid_$tag:-}"
+		if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+			pinger "$tag" "${tp#*=}" &
+			eval "pid_$tag=$!"
+		fi
+	done
+}
+
+# watch_egresses is the receiver's own watch of its egresses (H4 of the plan).
+# A ping through the tunnel every 200 ms to each egress's own address (the
+# tunnel and the box alive) and, through the egress that carries, to the
+# internet (NET_PROBES). Looked at every 100 ms: the one that carries silent
+# through the tunnel RED_TUN_MS (1500), or its internet silent RED_NET_MS
+# (5000: public resolvers blink on their own, and a move breaks every
+# connection of the people), and the spare heard within the last second: the
+# spare takes the default routes in one wg call, nothing restarts. No move
+# within HOLD_S (60) of the last one. A move changes the people's address on
+# the internet and every connection there breaks, so the watch moves on a
+# death only, never on a lag. The hub reads the lines (hikkari-control
+# internal/cascadewatch egress.go), boxes by name, no address:
+#
+#	egress: minute from=<unix> <box> active tun=N/M rtt_ms=R net=N/M; <box> standby tun=N/M rtt_ms=R
+#	egress: moved from <box> to <box>: <why>
+#	egress: <box> red, not moved: <why>; <why not>
+#	egress: <box> carries now: by the hub
+#
+# tun and net are seconds of the minute with a reply out of the seconds
+# watched. The env is read once: the hub restarts the watch on every apply.
+watch_egresses() {
+	run=/run/hikkari-egress
+	mkdir -p "$run"
+	rm -f "$run"/last.* "$run"/m.*
+	red_tun=${RED_TUN_MS:-1500}
+	red_net=${RED_NET_MS:-5000}
+	hold=$((${HOLD_S:-60} * 1000))
+	pingers="p=$(host_of "$PEER_PUB")"
+	[ -z "${SPARE_PUB:-}" ] || pingers="$pingers s=$(host_of "$SPARE_PUB")"
+	i=0
+	nets=
+	for t in ${NET_PROBES:-1.1.1.1 8.8.8.8}; do
+		pingers="$pingers n$i=$t"
+		nets="$nets n$i"
+		i=$((i + 1))
+	done
+	trap stop_pingers EXIT
+	trap 'exit 0' INT TERM
+	started=$(date +%s%3N)
+	moved_at=0
+	said_at=0
+	changed_at=$started
+	act=
+	tick=0
+	# The egress that carried when the watch last looked, kept across its
+	# restarts, so a move by the hub is told too.
+	last=$(cat "$run/last" 2>/dev/null || true)
+	minute=$((started / 60000))
+	while :; do
+		now=$(date +%s%3N)
+		if [ $((tick % 10)) = 0 ]; then
+			# Once a second: the pingers alive, and who carries (the hub may
+			# have moved the link).
+			spawn_pingers
+			act=$(active_pub)
+		fi
+		tick=$((tick + 1))
+		if [ -z "$act" ]; then
+			# No link or no egress holds the routes: nothing to watch, the
+			# guard keeps the relays in.
+			sleep 0.1
+			continue
+		fi
+		if [ "$act" = "$PEER_PUB" ]; then at=p; else at=s; fi
+		sb=
+		st=
+		if [ -n "${SPARE_PUB:-}" ]; then
+			if [ "$at" = p ]; then sb=$SPARE_PUB; st=s; else sb=$PEER_PUB; st=p; fi
+		fi
+		if [ "$act" != "$last" ]; then
+			[ -z "$last" ] || echo "egress: $(box_of "$act") carries now: by the hub"
+			last=$act
+			echo "$last" > "$run/last"
+			changed_at=$now
+		fi
+		# Silence since the newest reply, but never before the watch began
+		# or, for the internet, before this egress began to carry.
+		heard_ms "$at"
+		h=$hm
+		[ "$h" -ge "$started" ] || h=$started
+		tun=$((now - h))
+		h=$changed_at
+		for n in $nets; do
+			heard_ms "$n"
+			[ "$hm" -le "$h" ] || h=$hm
+		done
+		net=$((now - h))
+		why=
+		if [ "$tun" -ge "$red_tun" ]; then
+			why="tunnel silent $tun ms"
+		elif [ "$net" -ge "$red_net" ]; then
+			why="internet silent $net ms through a live tunnel"
+		fi
+		if [ -n "$why" ]; then
+			heard=0
+			if [ -n "$st" ]; then
+				heard_ms "$st"
+				[ $((now - hm)) -gt 1000 ] || heard=1
+			fi
+			if [ "$heard" = 1 ] && [ $((now - moved_at)) -ge "$hold" ]; then
+				wg set "$ifc" peer "$sb" allowed-ips 0.0.0.0/0,::/0 peer "$act" allowed-ips "$(host_of "$act")/32"
+				moved_at=$now
+				changed_at=$now
+				dead=$act
+				act=$sb
+				last=$sb
+				echo "$last" > "$run/last"
+				# What died is told after the move, not before it: a ping
+				# past the tunnel to the box it left.
+				case "$why" in
+				tunnel*)
+					if [ -n "$(ping_rtt "$(host_of "$dead")")" ]; then
+						why="$why, the box answers past it"
+					else
+						why="$why, the box silent past it too"
+					fi
+					;;
+				esac
+				echo "egress: moved from $(box_of "$dead") to $(box_of "$sb"): $why"
+			elif [ $((now - said_at)) -ge 60000 ]; then
+				if [ -z "$sb" ]; then
+					not="no spare"
+				elif [ "$heard" = 0 ]; then
+					not="spare $(box_of "$sb") silent"
+				else
+					not="moved $(((now - moved_at) / 1000)) s ago, holding $((hold / 1000)) s"
+				fi
+				echo "egress: $(box_of "$act") red, not moved: $why; $not"
+				said_at=$now
+			fi
+		fi
+		m=$((now / 60000))
+		if [ "$m" != "$minute" ]; then
+			from=$((minute * 60))
+			to=$((m * 60))
+			for f in "$run"/m.*; do
+				[ -f "$f" ] || continue
+				tag=${f##*.}
+				mv "$f" "$run/minute.$tag"
+				sed "s/^/$tag /" "$run/minute.$tag"
+				rm -f "$run/minute.$tag"
+			done | awk -v from="$from" -v to="$to" -v start=$((started / 1000)) -v at="$at" \
+				-v pbox="$(box_of "$PEER_PUB")" -v sbox="${SPARE_PUB:+$(box_of "$SPARE_PUB")}" '
+			{
+				t = substr($2, 2) + 0
+				s = int(t)
+				if (s < from || s >= to) next
+				tag = $1
+				if (tag ~ /^n/) { net[s] = 1; next }
+				if (!((tag, s) in sec)) { sec[tag, s] = 1; ok[tag]++ }
+				if (match($0, /time=[0-9.]+/)) { sum[tag] += substr($0, RSTART + 5, RLENGTH - 5); cnt[tag]++ }
+			}
+			END {
+				n = to - (start > from ? start : from)
+				if (n <= 0) exit
+				for (s in net) netok++
+				line = "egress: minute from=" from
+				k = 0
+				for (j = 1; j <= 2; j++) {
+					tag = j == 1 ? "p" : "s"
+					box = tag == "p" ? pbox : sbox
+					if (box == "") continue
+					rtt = cnt[tag] ? sprintf("%.1f", sum[tag] / cnt[tag]) : "-1"
+					part = sprintf("%s %s tun=%d/%d rtt_ms=%s", box, tag == at ? "active" : "standby", ok[tag], n, rtt)
+					if (tag == at) part = part sprintf(" net=%d/%d", netok + 0, n)
+					line = line (k++ ? "; " : " ") part
+				}
+				if (k) print line
+			}'
+			minute=$m
+		fi
+		sleep 0.1
 	done
 }
 
@@ -284,7 +567,7 @@ apply)
 		# The guard as this program has it, in one nft transaction: a
 		# receiver stood up by an older hub gets the newer guard in place.
 		receiver_guard
-		receiver_peer
+		receiver_peer "${2:-}"
 		receiver_addrs
 	else
 		egress_ext
@@ -294,6 +577,10 @@ apply)
 	;;
 down)
 	ip link del "$ifc" 2>/dev/null || true
+	;;
+watch)
+	[ "$ROLE" = receiver ] || { echo "watch: not a receiver" >&2; exit 2; }
+	watch_egresses
 	;;
 off)
 	ip link del "$ifc" 2>/dev/null || true
@@ -312,7 +599,7 @@ off)
 	fi
 	;;
 *)
-	echo "usage: $0 up|apply|down|off" >&2
+	echo "usage: $0 up|apply [keep]|down|off|watch" >&2
 	exit 2
 	;;
 esac
@@ -355,6 +642,9 @@ type egressEnds struct {
 	// back points the receiver at the egress it went through before a move
 	// (egress_links.go); nil when the receiver is not moving.
 	back func(ctx context.Context, slot int) error
+	// spare is the receiver's spare egress, which its env keeps through a
+	// move (H4); nil when it has none.
+	spare *egressSpare
 }
 
 func (p *Provisioner) openEgress(ctx context.Context, rxBox, egBox string) (*egressEnds, error) {

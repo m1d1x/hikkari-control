@@ -4,6 +4,7 @@
 	import TrendChart, { type TrendMark, type TrendSeries } from '$components/entry/TrendChart.svelte';
 	import { fetchTrunkWires, type TrunkWindow, type TrunkWireChart } from '$lib/api/trunkWires';
 	import { fetchTrunkHearing } from '$lib/api/trunkHearing';
+	import { fetchTrunkEgress } from '$lib/api/trunkEgress';
 
 	// The trunk's wires through the border (stage 4): the entry's call over
 	// each wire every 20 ms and its 1 MiB every 10 minutes, as history. The
@@ -173,15 +174,51 @@
 		},
 	];
 
+	// The receivers' egresses (H4): each receiver's own watch pings both of
+	// its egresses through the tunnel once a second and moves to the spare
+	// when the one that carries dies. Keys are "receiver → egress".
+	const EGRESS_CHARTS: ChartSpec[] = [
+		{
+			group: 'egress_carry',
+			title: 'Выход: кто везёт',
+			hint: 'минуты отрезка, когда этот выход вёз приёмник. Смена цвета это уход сторожа или смена с hub.',
+			format: count,
+		},
+		{
+			group: 'egress_tun',
+			title: 'Выход: туннель молчал',
+			hint: 'секунды без ответа выхода через туннель (пинг раз в 200 мс). 1,5 с тишины у везущего, и сторож уходит на запасной.',
+			format: count,
+		},
+		{
+			group: 'egress_net',
+			title: 'Выход: интернет молчал',
+			hint: 'секунды, когда через везущий выход не ответили ни 1.1.1.1, ни 8.8.8.8. 5 с тишины при живом туннеле, и сторож уходит. У запасного интернет не меряется.',
+			format: count,
+		},
+		{
+			group: 'egress_rtt',
+			title: 'Выход: задержка туннеля',
+			hint: 'круг приёмник → выход через туннель, медиана минут.',
+			format: ms,
+		},
+	];
+	const EGRESS_COLORS = ['#3987e5', '#c98500', '#9085e9', '#199e70', '#e66767'];
+
 	let data = $state<TrunkWireChart | null>(null);
 	let hearing = $state<TrunkWireChart | null>(null);
+	let egress = $state<TrunkWireChart | null>(null);
 	let loadError = $state<string | null>(null);
 	let window = $state<TrunkWindow>('24h');
 	let timer: ReturnType<typeof setInterval> | undefined;
 
 	async function load() {
 		try {
-			[data, hearing] = await Promise.all([fetchTrunkWires(window), fetchTrunkHearing(window, 'trunk')]);
+			[data, hearing, egress] = await Promise.all([
+				fetchTrunkWires(window),
+				fetchTrunkHearing(window, 'trunk'),
+				fetchTrunkEgress(window),
+			]);
 			loadError = null;
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : 'не удалось загрузить';
@@ -224,6 +261,31 @@
 
 	const charts = $derived(CHARTS.map((c) => ({ ...c, lines: linesOf(data, c, (k) => k.startsWith('trunk-')) })));
 	const hearingCharts = $derived(HEARING_CHARTS.map((c) => ({ ...c, lines: linesOf(hearing, c, (k) => k.endsWith('-voice')) })));
+
+	const egressKeys = $derived([...new Set((egress?.lines ?? []).map((l) => l.key))].sort());
+	const egressMarks = $derived<TrendMark[]>(
+		(egress?.marks ?? []).map((m) => ({
+			at: m.at,
+			label: m.label,
+			color: m.why === 'red' ? '#e66767' : m.why === 'stuck' ? '#c98500' : '#7e7e7e',
+		})),
+	);
+	const egressCharts = $derived(
+		EGRESS_CHARTS.map((c) => ({
+			...c,
+			lines: (egress?.lines ?? [])
+				.filter((l) => l.group === c.group)
+				.sort((a, b) => a.key.localeCompare(b.key))
+				.map<TrendSeries>((l) => ({
+					key: l.key,
+					label: l.key,
+					color: EGRESS_COLORS[egressKeys.indexOf(l.key) % EGRESS_COLORS.length],
+					values: l.values,
+					format: c.format,
+					primary: true,
+				})),
+		})),
+	);
 </script>
 
 <PageShell>
@@ -291,6 +353,34 @@
 								{marks}
 								height={190}
 								empty="слух не мерили за окно"
+							/>
+						</section>
+					{/each}
+				</div>
+			{/if}
+			{#if egress}
+				<h2 class="section">выходы приёмников</h2>
+				<p class="hint">
+					Приёмник ходит в интернет через выход и держит запасной тёплым. Сторож на приёмнике раз в секунду пингует оба
+					выхода через туннель раз в 200 мс и интернет через везущий; туннель везущего молчит 1,5 с (интернет за ним 5 с), и сторож отдаёт маршруты запасному одним
+					вызовом wg. Отметки: красная уход сторожа, жёлтая уйти некуда, серая смена с hub.
+				</p>
+				<div class="grid">
+					{#each egressCharts as c (c.group)}
+						<section class="card">
+							<h2>{c.title}</h2>
+							<p class="hint small">{c.hint}</p>
+							<div class="legend">
+								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
+							</div>
+							<TrendChart
+								buckets={egress.buckets}
+								bucketSeconds={egress.bucketSeconds}
+								series={c.lines}
+								formatAxis={c.format}
+								marks={egressMarks}
+								height={190}
+								empty="сторож выходов молчал за окно"
 							/>
 						</section>
 					{/each}

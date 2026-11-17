@@ -103,6 +103,11 @@ package main
 //	                                    # one in place, relays untouched (egress_links.go)
 //	cmd/server entry-box egress-check <receiver-box> <egress-box>
 //	cmd/server entry-box egress-off <receiver-box> <egress-box>
+//	cmd/server entry-box egress-spare <receiver-box> <egress-box>|off
+//	                                    # the receiver's spare egress: a second
+//	                                    # peer, warm; the receiver's own watch moves
+//	                                    # to it when the egress dies (egress_spare.go);
+//	                                    # egress <receiver> <spare> swaps the two by hand
 //	cmd/server entry-box egress-relays <receiver-box> <egress-box> on|off
 //	                                    # the receiver's relays through the egress
 //	                                    # or back to its own address; a restart
@@ -981,6 +986,31 @@ func runEntryBox(args []string) {
 			err = prov.CheckEgress(ctx, args[1], args[2])
 		default:
 			err = prov.StopEgress(ctx, args[1], args[2])
+		}
+		if err != nil {
+			fail(err)
+		}
+		os.Exit(0)
+	}
+	if len(args) == 3 && args[0] == "egress-spare" {
+		// entry-box egress-spare <receiver-box> <egress-box>|off — the
+		// receiver's spare egress, which its own watch moves to when the
+		// egress dies (internal/entry/egress_spare.go, H4). No relay restarts.
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+		if args[2] == "off" {
+			err = prov.StopEgressSpare(ctx, args[1])
+		} else {
+			err = prov.StandEgressSpare(ctx, args[1], args[2])
 		}
 		if err != nil {
 			fail(err)

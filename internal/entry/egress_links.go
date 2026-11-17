@@ -60,10 +60,23 @@ func egressPeersFile(peers []egressPeer) string {
 	return b.String()
 }
 
-func receiverEnv(egBox, egPub string, egAddr netip.Addr, slot int) string {
+// egressSpare is a receiver's spare egress (H4): a second peer of its link,
+// warm, which the receiver's own watch moves to when the egress dies.
+type egressSpare struct {
+	box  string
+	pub  string
+	addr netip.Addr
+}
+
+func receiverEnv(egBox, egPub string, egAddr netip.Addr, slot int, spare *egressSpare) string {
 	v4, v6 := egressSlotAddrs(slot)
-	return fmt.Sprintf("# Written by the nekko hub: this box goes to the internet through %s.\nROLE=receiver\nADDR4=%s\nADDR6=%s\nPEER_PUB=%s\nPEER_ENDPOINT=%s\n",
-		egBox, v4, v6, egPub, net.JoinHostPort(egAddr.String(), strconv.Itoa(EgressPort)))
+	env := fmt.Sprintf("# Written by the nekko hub: this box goes to the internet through %s.\nROLE=receiver\nADDR4=%s\nADDR6=%s\nPEER_BOX=%s\nPEER_PUB=%s\nPEER_ENDPOINT=%s\n",
+		egBox, v4, v6, egBox, egPub, net.JoinHostPort(egAddr.String(), strconv.Itoa(EgressPort)))
+	if spare != nil {
+		env += fmt.Sprintf("SPARE_BOX=%s\nSPARE_PUB=%s\nSPARE_ENDPOINT=%s\n",
+			spare.box, spare.pub, net.JoinHostPort(spare.addr.String(), strconv.Itoa(EgressPort)))
+	}
+	return env
 }
 
 func egressEnv(peers []egressPeer) string {
@@ -95,10 +108,11 @@ func (s *Service) freeEgressSlot(ctx context.Context) (int, error) {
 	return slot, err
 }
 
-// egressPeersOf are the receivers egBox carries, but except.
+// egressPeersOf are the receivers egBox carries, as their egress or their
+// spare, but except.
 func (s *Service) egressPeersOf(ctx context.Context, egBox, except string) ([]egressPeer, error) {
 	rows, err := s.pool.Query(ctx, `SELECT receiver, rx_pub, slot FROM entry_egress_links
-		WHERE egress = $1 AND receiver <> $2 ORDER BY slot`, egBox, except)
+		WHERE (egress = $1 OR spare = $1) AND receiver <> $2 ORDER BY slot`, egBox, except)
 	if err != nil {
 		return nil, err
 	}
@@ -132,25 +146,64 @@ func (s *Service) deleteEgressLink(ctx context.Context, rx string) error {
 	return err
 }
 
+// egressSpareOf is the receiver's spare egress as its link needs it; nil
+// when it has none.
+func (s *Service) egressSpareOf(ctx context.Context, rx string) (*egressSpare, error) {
+	var box, pub *string
+	err := s.pool.QueryRow(ctx, `SELECT spare, spare_pub FROM entry_egress_links WHERE receiver = $1`, rx).Scan(&box, &pub)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && (box == nil || pub == nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	acc, err := s.boxAccess(ctx, *box)
+	if err != nil {
+		return nil, err
+	}
+	addr, err := netip.ParseAddr(acc.address)
+	if err != nil {
+		return nil, fmt.Errorf("адрес запасного выхода %s: %w", *box, err)
+	}
+	return &egressSpare{box: *box, pub: *pub, addr: addr}, nil
+}
+
+// saveEgressSpare sets the receiver's spare; "" takes it away.
+func (s *Service) saveEgressSpare(ctx context.Context, rx, spare, pub string) error {
+	var box, key any
+	if spare != "" {
+		box, key = spare, pub
+	}
+	_, err := s.pool.Exec(ctx, `UPDATE entry_egress_links SET spare = $2, spare_pub = $3, updated_at = now() WHERE receiver = $1`, rx, box, key)
+	return err
+}
+
 // egressApplyScript installs the program and the unit and brings the link to
 // what the files say: a live link is applied in place, anything else comes up
-// from nothing.
+// from nothing. "keep" ($1) leaves a receiver going out through its spare
+// where its watch moved it. A receiver's watch starts or restarts with the
+// program it was just given.
 const egressApplyScript = `set -eu
 chmod 755 ` + egressScript + `
 chmod 600 ` + egressDir + `/env
 systemctl daemon-reload
 systemctl enable ` + egressUnit + ` >/dev/null 2>&1
 if ip link show hk-egress >/dev/null 2>&1 && systemctl is-active --quiet ` + egressUnit + `; then
-	` + egressScript + ` apply
+	` + egressScript + ` apply ${1:-}
 else
 	systemctl restart ` + egressUnit + `
 fi
 systemctl is-active --quiet ` + egressUnit + `
+if grep -q '^ROLE=receiver' ` + egressDir + `/env; then
+	systemctl enable ` + egressWatchUnit + ` >/dev/null 2>&1
+	systemctl restart ` + egressWatchUnit + `
+fi
 ip -br link show hk-egress
 `
 
-// egressInstall writes a box's files and applies them.
-func egressInstall(ctx context.Context, r Remote, box string, files map[string]string) error {
+// egressInstall writes a box's files and applies them; keep is the apply's
+// "keep" (egressApplyScript).
+func egressInstall(ctx context.Context, r Remote, box string, files map[string]string, keep bool) error {
 	for path, body := range files {
 		if _, err := r.Run(ctx, "umask 077; cat > "+path, strings.NewReader(body)); err != nil {
 			return fmt.Errorf("%s: %s: %w", box, path, err)
@@ -162,7 +215,16 @@ func egressInstall(ctx context.Context, r Remote, box string, files map[string]s
 	if _, err := r.Run(ctx, "cat > /etc/systemd/system/"+egressUnit+".service", strings.NewReader(egressUnitFile)); err != nil {
 		return fmt.Errorf("%s: unit-файл: %w", box, err)
 	}
-	if _, err := r.Run(ctx, "sh -s", strings.NewReader(egressApplyScript)); err != nil {
+	if strings.Contains(files[egressDir+"/env"], "ROLE=receiver") {
+		if _, err := r.Run(ctx, "cat > /etc/systemd/system/"+egressWatchUnit+".service", strings.NewReader(egressWatchUnitFile)); err != nil {
+			return fmt.Errorf("%s: unit-файл сторожа: %w", box, err)
+		}
+	}
+	apply := "sh -s"
+	if keep {
+		apply = "sh -s -- keep"
+	}
+	if _, err := r.Run(ctx, apply, strings.NewReader(egressApplyScript)); err != nil {
 		return fmt.Errorf("%s: туннель не встал: %w", box, err)
 	}
 	return nil
@@ -170,7 +232,8 @@ func egressInstall(ctx context.Context, r Remote, box string, files map[string]s
 
 // egressSideOff takes the tunnel and every rule of it off one box.
 func egressSideOff(ctx context.Context, r Remote) error {
-	cmd := "if [ -x " + egressScript + " ]; then " + egressScript + " off; fi; systemctl disable --now " + egressUnit + " >/dev/null 2>&1 || true; rm -f /etc/systemd/system/" + egressUnit + ".service " + egressScript + " " + egressDir + "/peers; systemctl daemon-reload"
+	cmd := "systemctl disable --now " + egressWatchUnit + " >/dev/null 2>&1 || true; rm -f /etc/systemd/system/" + egressWatchUnit + ".service; rm -rf /run/hikkari-egress; " +
+		"if [ -x " + egressScript + " ]; then " + egressScript + " off; fi; systemctl disable --now " + egressUnit + " >/dev/null 2>&1 || true; rm -f /etc/systemd/system/" + egressUnit + ".service " + egressScript + " " + egressDir + "/peers; systemctl daemon-reload"
 	if _, err := r.Run(ctx, cmd, nil); err != nil {
 		return fmt.Errorf("снятие туннеля: %w", err)
 	}
@@ -190,7 +253,7 @@ func egressCarry(ctx context.Context, r Remote, egBox string, peers []egressPeer
 	if ruNets != "" {
 		files[egressDir+"/ru.nft"] = ruNets
 	}
-	return egressInstall(ctx, r, egBox, files)
+	return egressInstall(ctx, r, egBox, files, false)
 }
 
 // StandEgress stands up the tunnel from rxBox to egBox, or moves rxBox there
@@ -217,6 +280,13 @@ func (p *Provisioner) StandEgress(ctx context.Context, rxBox, egBox string) erro
 	others, err := p.svc.egressPeersOf(ctx, egBox, rxBox)
 	if err != nil {
 		return err
+	}
+	if ends.spare, err = p.svc.egressSpareOf(ctx, rxBox); err != nil {
+		return err
+	}
+	if ends.spare != nil && ends.spare.box == egBox {
+		// By hand to the spare: the two swap (egress_spare.go).
+		return p.swapEgress(ctx, ends, old, slot)
 	}
 	moving := linked && old != egBox
 	var leave func(context.Context) error
@@ -267,7 +337,7 @@ func (p *Provisioner) leaveEgress(ctx context.Context, rxBox, old string, ends *
 		return fail(err)
 	}
 	ends.back = func(ctx context.Context, slot int) error {
-		return egressInstall(ctx, ends.rx, ends.rxBox, map[string]string{egressDir + "/env": receiverEnv(old, oldPub, oldAddr, slot)})
+		return egressInstall(ctx, ends.rx, ends.rxBox, map[string]string{egressDir + "/env": receiverEnv(old, oldPub, oldAddr, slot, ends.spare)}, false)
 	}
 	return oldR, func(ctx context.Context) error {
 		if err := egressCarry(ctx, oldR, old, stay, ""); err != nil {
@@ -301,7 +371,7 @@ func standEgress(ctx context.Context, e *egressEnds, slot int, others []egressPe
 	if moving {
 		call = startEgressCall(ctx, e)
 	}
-	err = egressInstall(ctx, e.rx, e.rxBox, map[string]string{egressDir + "/env": receiverEnv(e.egBox, egPub, e.egAddr, slot)})
+	err = egressInstall(ctx, e.rx, e.rxBox, map[string]string{egressDir + "/env": receiverEnv(e.egBox, egPub, e.egAddr, slot, e.spare)}, false)
 	if err == nil {
 		e.rxLog("приёмник смотрит в выход %s", e.egBox)
 		err = checkEgressAddress(ctx, e)
@@ -336,6 +406,11 @@ func (p *Provisioner) StopEgress(ctx context.Context, rxBox, egBox string) error
 		return fmt.Errorf("%w: %s ходит через %s, а не через %s", ErrRejected, rxBox, cur, egBox)
 	}
 	applog.Info(ctx, "entry", "operator egress off", applog.F("receiver", rxBox), applog.F("egress", egBox))
+	if spare, err := p.svc.egressSpareOf(ctx, rxBox); err != nil {
+		return err
+	} else if spare != nil {
+		return fmt.Errorf("%w: у %s запасной выход %s, сначала egress-spare %s off", ErrRejected, rxBox, spare.box, rxBox)
+	}
 	// Without the tunnel's rules a relay in it would go out from the
 	// receiver's own address.
 	if attached, err := egressRelaysAttached(ctx, ends.rx); err != nil {

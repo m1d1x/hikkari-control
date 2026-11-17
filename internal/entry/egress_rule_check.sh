@@ -124,6 +124,8 @@ via=$(ip -4 route get 1.1.1.1 mark 0x4377 2>/dev/null | sed -n 's/.* dev \([^ ]*
 [ "$via" = "$ifc" ] && ok "route of the routed user to 1.1.1.1: dev $ifc" || fail "route of the routed user to 1.1.1.1: dev ${via:-unreachable}"
 own=" $(ip -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | tr '\n' ' ')"
 endpoint=$(sed -n 's/^PEER_ENDPOINT=\(.*\):[0-9]*$/\1/p' /etc/hikkari-egress/env 2>/dev/null | tr -d '[]')
+# The spare egress (H4): the receiver's watch may have moved to it.
+spare=$(sed -n 's/^SPARE_ENDPOINT=\(.*\):[0-9]*$/\1/p' /etc/hikkari-egress/env 2>/dev/null | tr -d '[]')
 seen=$(systemd-run --quiet --wait --pipe --collect --uid="$user" -p RuntimeMaxSec=20 \
 	curl -4 -s -m 10 https://1.1.1.1/cdn-cgi/trace 2>/dev/null | sed -n 's/^ip=//p')
 case "$own " in
@@ -133,6 +135,8 @@ case "$own " in
 		fail "the probe through the tunnel got no answer"
 	elif [ "$seen" = "$endpoint" ]; then
 		ok "the internet sees the routed user as the egress ($endpoint)"
+	elif [ -n "$spare" ] && [ "$seen" = "$spare" ]; then
+		ok "the internet sees the routed user as the spare egress ($spare): the watch moved to it"
 	else
 		warn "the internet sees the routed user as $seen, the tunnel's endpoint is $endpoint"
 	fi
@@ -184,6 +188,9 @@ done | sort | uniq -c | while read -r n kind rest; do
 	fi
 done
 info "wg $ifc → $endpoint:51821 (kernel)"
+[ -z "$spare" ] || info "wg $ifc → $spare:51821, the spare egress (kernel)"
+systemctl is-active --quiet hikkari-egress-watch && info "hikkari-egress-watch pings both egresses through the tunnel every 200 ms and 1.1.1.1, 8.8.8.8 through the one that carries" ||
+	warn "hikkari-egress-watch is not running: nothing moves the receiver off a dead egress"
 info "DNS of the box: $(resolvectl dns 2>/dev/null | awk -F': ' 'NF > 1 && $2 != "" {print $2}' | tr '\n' ' ')$(systemctl is-active --quiet unbound && echo ' unbound (recursive from the box)')"
 info "NTP: $(timedatectl show-timesync -p ServerName --value 2>/dev/null || echo none)"
 info "apt sources: $(grep -rhoE '(https?://[^ /]+)|^URIs: *[^ ]+' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | sed 's/^URIs: *//' | sort -u | tr '\n' ' ')"
