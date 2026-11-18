@@ -35,6 +35,17 @@ import (
 // free.
 func RequireAdmin(verifier *rsa.PublicKey, pool db.Pool, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if role, ok := warmRole(r.Context()); ok {
+			// The hub's own warmer (warm.go), in this process: no cookie,
+			// a chart only, computed into the cache and nowhere else.
+			if r.Method != http.MethodGet || !isChartPath(r.URL.Path) {
+				writeError(w, http.StatusForbidden, "admin access required")
+				return
+			}
+			ctx := auth.WithAdmin(r.Context(), &auth.AdminInfo{Login: "hub-warmer", Role: role})
+			charts.recompute(r.WithContext(ctx), string(role), next)
+			return
+		}
 		if verifier == nil {
 			// Configuration failure, not an auth failure. Refusing loudly
 			// beats falling back to some other key that would "work".
@@ -79,6 +90,10 @@ func RequireAdmin(verifier *rsa.PublicKey, pool db.Pool, next http.HandlerFunc) 
 		// "show me this user's logs" answer with a staff member's activity —
 		// the same conflation the split removed everywhere else. Admin
 		// attribution belongs in admin_audit_log, which records it per action.
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			// What an action changed must show on the next look at a chart.
+			charts.dropAll()
+		}
 		if r.Method == http.MethodGet && isChartPath(r.URL.Path) {
 			charts.serve(w, r.WithContext(ctx), string(st.Admin.Role), next)
 			return
