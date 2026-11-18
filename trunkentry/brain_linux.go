@@ -224,14 +224,14 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 	}
 	// Copies before the pool's members come up would be the same; after is
 	// what a reload of the file does. A file that cannot be read leaves the
-	// copies going round the pool, as before.
+	// copies going round the pool on every datagram, as before.
 	if cp, _, err := readCopies(copiesFilePath()); err != nil {
-		log.Printf("nekko-trunk-entry: copies: %v (round the pool)", err)
-	} else if err := p.SetCopies(cp); err != nil {
+		log.Printf("nekko-trunk-entry: copies: %v (round the pool, every datagram)", err)
+	} else if err := setCopies(p, cp); err != nil {
 		p.Close()
 		return nil, fmt.Errorf("copies: %w", err)
-	} else if cp.Members > 0 {
-		log.Printf("nekko-trunk-entry: copies on %d members of the pool, a window of %v", cp.Members, cp.Window)
+	} else if cp != (copiesFile{}) {
+		log.Printf("nekko-trunk-entry: %v", cp)
 	}
 	for _, w := range ws {
 		if err := p.SetWire(w); err != nil {
