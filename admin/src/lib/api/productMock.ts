@@ -156,7 +156,6 @@ export function mockTesterCharts(win: Win): TesterCharts {
 			stallMs: p.lost.map((v, i) => (v === null ? null : 400 * ((i * 5) % 7) + (v ?? 0) * 5000)),
 			stallLongMs: p.lost.map((v, i) => (v === null ? null : 1100 * ((i * 3) % 2) + (v ?? 0) * 5000)),
 			tunnelMb: p.lost.map((v, i) => (v === null ? null : 40 + ((i * 13) % 90))),
-			directMb: p.lost.map((v, i) => (v === null ? null : 300 + ((i * 29) % 700))),
 		};
 	}
 	const states: NonNullable<TesterCharts['states']> = {};

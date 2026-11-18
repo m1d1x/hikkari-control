@@ -113,11 +113,11 @@ func TestTesterChartKeepsTunnelAndNetworkApart(t *testing.T) {
 			{Install: "t-a", Bucket: since, BoundMS: 3000},
 		},
 		[]TrafficCount{
-			{Install: "t-a", Bucket: since.Add(time.Hour), Tunnel: 3 << 20, Direct: 1 << 19},
+			{Install: "t-a", Bucket: since.Add(time.Hour), Tunnel: 3 << 20},
 		})
 	a, b := c.Testers["t-a"], c.Testers["t-b"]
-	if a.TunnelMB[0] != nil || *a.TunnelMB[1] != 3 || *a.DirectMB[1] != 0.5 || b.TunnelMB[1] != nil {
-		t.Fatalf("traffic: t-a %v %v, t-b %v", a.TunnelMB, a.DirectMB, b.TunnelMB)
+	if a.TunnelMB[0] != nil || *a.TunnelMB[1] != 3 || b.TunnelMB[1] != nil {
+		t.Fatalf("traffic: t-a %v, t-b %v", a.TunnelMB, b.TunnelMB)
 	}
 	if *a.Lost[0] != 5 || *a.RuMS[0] != 30 || *a.RuMissed[0] != 2 || a.Lost[1] != nil {
 		t.Fatalf("t-a: %+v", a)
@@ -207,24 +207,32 @@ func TestUserChartAveragesOverThePeopleWhoseTunnelWasOn(t *testing.T) {
 	}
 }
 
-// A tester's bytes per minute through the tunnel and past it (client newer
-// than 1.0.92, owner 18.11).
-func TestABytesLineIsPerMinute(t *testing.T) {
-	got, ok := ParseBytesLine("2026-11-18 [downtime] bytes from=1800000000 v=1200,56000,300,900;.;-", "t-a")
-	if !ok {
-		t.Fatal("line not read")
-	}
+// A tester's bytes per minute through the tunnel (client newer than 1.0.93,
+// owner 18.11). Client 1.0.93 wrote the bytes past the tunnel too: they are
+// dropped, what went past the VPN is the tester's own business.
+func TestABytesLineIsPerMinuteThroughTheTunnelOnly(t *testing.T) {
 	at := func(k int64) time.Time { return time.Unix(1800000000+k*60, 0).UTC() }
 	want := []TrafficMinute{
-		{Install: "t-a", At: at(0), TunnelUp: 1200, TunnelDown: 56000, DirectUp: 300, DirectDown: 900},
+		{Install: "t-a", At: at(0), TunnelUp: 1200, TunnelDown: 56000},
 		{Install: "t-a", At: at(1)},
 	}
-	if fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Fatalf("got %v, want %v", got, want)
+	for _, line := range []string{
+		"2026-11-18 [downtime] bytes from=1800000000 v=1200,56000;.;-",
+		"2026-11-18 [downtime] bytes from=1800000000 v=1200,56000,300,900;.;-",
+	} {
+		got, ok := ParseBytesLine(line, "t-a")
+		if !ok {
+			t.Fatalf("%q not read", line)
+		}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("%q: got %v, want %v", line, got, want)
+		}
 	}
 	for _, bad := range []string{
-		"[downtime] bytes from=1800000001 v=1,2,3,4",
+		"[downtime] bytes from=1800000001 v=1,2",
 		"[downtime] bytes from=1800000000 v=1,2,3",
+		"[downtime] bytes from=1800000000 v=1",
+		"[downtime] bytes from=1800000000 v=1,-2",
 		"[downtime] bytes from=1800000000 v=1,-2,3,4",
 		"[downtime] bytes from=1800000000 v=",
 	} {

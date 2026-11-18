@@ -37,11 +37,10 @@ type TesterLines struct {
 	StallMS []*float64 `json:"stallMs"`
 	// StallLongMS: the same for the stalls of at least StallLongBoundMS.
 	StallLongMS []*float64 `json:"stallLongMs"`
-	// TunnelMB and DirectMB: megabytes up and down together through the
-	// tunnel and past it (client newer than 1.0.92); null where the client
-	// wrote nothing.
+	// TunnelMB: megabytes up and down together through the tunnel (client
+	// newer than 1.0.92); null where the client wrote nothing. What went past
+	// the VPN is not counted (owner, 18.11).
 	TunnelMB []*float64 `json:"tunnelMb"`
-	DirectMB []*float64 `json:"directMb"`
 }
 
 // The thresholds the testers screen draws, of the ones the client counts.
@@ -100,7 +99,7 @@ func assembleTesters(win string, since, until time.Time, step time.Duration, cou
 			l = TesterLines{
 				Lost: make([]*float64, n), RuMS: make([]*float64, n), RuMissed: make([]*float64, n),
 				StallMS: make([]*float64, n), StallLongMS: make([]*float64, n),
-				TunnelMB: make([]*float64, n), DirectMB: make([]*float64, n),
+				TunnelMB: make([]*float64, n),
 			}
 			c.Testers[install] = l
 		}
@@ -154,7 +153,6 @@ func assembleTesters(win string, since, until time.Time, step time.Duration, cou
 		}
 		l := lines(k.Install)
 		add(l.TunnelMB, i, float64(k.Tunnel)/mb)
-		add(l.DirectMB, i, float64(k.Direct)/mb)
 	}
 	return c
 }

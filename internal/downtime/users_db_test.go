@@ -103,3 +103,39 @@ func TestDBUserPeriodsAreKeptOnceAndReadWithoutTesters(t *testing.T) {
 		t.Fatalf("columns = %s", got)
 	}
 }
+
+// A tester's bytes go to the hub through the tunnel only: a 1.0.93 line's
+// figures past the tunnel are dropped, and the table has no place for them
+// (owner, 18.11: what went past the VPN is the tester's own business).
+func TestDBTesterTrafficKeepsTheTunnelOnly(t *testing.T) {
+	pool := dbPool(t)
+	ctx := context.Background()
+	s := NewStore(pool)
+	old, ok := ParseBytesLine("[downtime] bytes from=1800000000 v=100,200,300,400;.", "t-a")
+	if !ok {
+		t.Fatal("1.0.93 line not read")
+	}
+	fresh, ok := ParseBytesLine("[downtime] bytes from=1800000120 v=10,20", "t-a")
+	if !ok {
+		t.Fatal("1.0.94 line not read")
+	}
+	if n, err := s.InsertTraffic(ctx, append(old, fresh...)); err != nil || n != 3 {
+		t.Fatalf("insert: %d %v", n, err)
+	}
+	since := time.Unix(1800000000, 0).UTC()
+	got, err := s.TrafficCounts(ctx, since, since.Add(time.Hour), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Tunnel != 330 {
+		t.Fatalf("counts %+v, want 330 through the tunnel", got)
+	}
+	var direct int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns
+		WHERE table_name = 'product_tester_traffic_minutes' AND column_name LIKE 'direct%'`).Scan(&direct); err != nil {
+		t.Fatal(err)
+	}
+	if direct != 0 {
+		t.Fatalf("the table still has %d columns for traffic past the tunnel", direct)
+	}
+}

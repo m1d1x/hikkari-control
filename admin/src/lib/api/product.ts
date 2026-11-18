@@ -182,8 +182,6 @@ export interface TesterLines {
 	stallLongMs: (number | null)[];
 	/** megabytes up and down through the tunnel; null where the client wrote nothing (newer than 1.0.92) */
 	tunnelMb?: (number | null)[];
-	/** megabytes up and down past the tunnel */
-	directMb?: (number | null)[];
 }
 
 export interface TesterCharts {
