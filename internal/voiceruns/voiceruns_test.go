@@ -115,3 +115,21 @@ func TestSummarizeAppliesTheStopRule(t *testing.T) {
 		t.Fatalf("newest group not first: %+v", groups[0])
 	}
 }
+
+// A 1.0.92 series counts pauses over 40 ms; an older one in the same group
+// does not, so gaps40 a minute stands on the newer series' minutes alone.
+func TestGaps40StandsOnTheSeriesThatCountedIt(t *testing.T) {
+	line := "2026/11/18 15:00:01.250 [diag:voice] path=tun profile=p-102 proto=hikkari isp=AS8402 isp_at=card mobile=0 target=cloudflare sent=1500 recv=1499 loss=0.07 loss_run=1 rtt_p50=57 rtt_p95=60 rtt_max=90 jitter=1.0 gaps40=4 gaps60=1 gaps150=0 gap_max=62 reorder=0 dup=0"
+	r, ok := parseLine(line, "t-1", at, "1.0.92")
+	if !ok || r.Gaps40 == nil || *r.Gaps40 != 4 || r.Gaps60 != 1 {
+		t.Fatalf("1.0.92 line: %+v", r)
+	}
+	old, _ := parseLine("2026/11/18 14:30:01.250 [diag:voice] path=tun profile=p-102 proto=hikkari isp=AS8402 isp_at=card mobile=0 target=cloudflare sent=1500 recv=1500 loss=0.00 loss_run=0 rtt_p50=57 rtt_p95=60 rtt_max=70 jitter=1.0 gaps60=0 gaps150=0 gap_max=30 reorder=0 dup=0", "t-1", at, "1.0.91")
+	if old.Gaps40 != nil {
+		t.Fatalf("an older line reads gaps40 %v", *old.Gaps40)
+	}
+	g := Summarize([]Row{r, old})
+	if len(g) != 1 || g[0].Gaps40PerMin == nil || *g[0].Gaps40PerMin != 8 || g[0].Gaps60PerMin != 1 {
+		t.Fatalf("group: %+v", g)
+	}
+}
