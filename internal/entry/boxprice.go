@@ -185,6 +185,34 @@ func (s *Service) SetBoxPrice(ctx context.Context, box string, amount float64, c
 	return cents, nil
 }
 
+// SetProviderPlanTB is how many terabytes a month one machine's plan at the
+// provider includes; zero forgets it. Only the provider table reads it.
+func (s *Service) SetProviderPlanTB(ctx context.Context, provider string, tb float64) error {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return fmt.Errorf("%w: провайдер не назван", ErrRejected)
+	}
+	if tb < 0 || tb > 1e6 {
+		return fmt.Errorf("%w: ТБ в тарифе от 0 до миллиона", ErrRejected)
+	}
+	var known bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM entry_boxes WHERE provider = $1)`, provider).Scan(&known); err != nil {
+		return err
+	}
+	if !known {
+		return fmt.Errorf("%w: машин провайдера %s нет", ErrNoSuchBox, provider)
+	}
+	if tb == 0 {
+		_, err := s.pool.Exec(ctx, `DELETE FROM entry_provider_plans WHERE provider = $1`, provider)
+		return err
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO entry_provider_plans (provider, plan_tb) VALUES ($1, $2)
+		ON CONFLICT (provider) DO UPDATE SET plan_tb = EXCLUDED.plan_tb, updated_at = now()
+	`, provider, tb)
+	return err
+}
+
 // PriceSyncLoop runs a price pass at start and then every `every`.
 func (s *Service) PriceSyncLoop(ctx context.Context, every time.Duration) {
 	if every <= 0 {

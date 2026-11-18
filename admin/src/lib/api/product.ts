@@ -180,6 +180,10 @@ export interface TesterLines {
 	stallMs: (number | null)[];
 	/** the same for the stalls of 1 s or more */
 	stallLongMs: (number | null)[];
+	/** megabytes up and down through the tunnel; null where the client wrote nothing (newer than 1.0.92) */
+	tunnelMb?: (number | null)[];
+	/** megabytes up and down past the tunnel */
+	directMb?: (number | null)[];
 }
 
 export interface TesterCharts {
@@ -189,6 +193,16 @@ export interface TesterCharts {
 	buckets: string[];
 	/** by install id; a tester with no minutes in the window is absent */
 	testers: Record<string, TesterLines>;
+	/** each tester's last state line: what the tunnel runs on, or ran on when it was last on */
+	states?: Record<string, TesterState>;
+}
+
+export interface TesterState {
+	at: string;
+	/** proxy: only the list through the VPN; bypass: everything but the list; off: everything */
+	mode: string;
+	proto: string;
+	profile: string;
 }
 
 export function fetchTesterCharts(win: Win): Promise<TesterCharts> {

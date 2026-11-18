@@ -3,7 +3,7 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import TrendChart, { type TrendMark } from '$components/entry/TrendChart.svelte';
 	import { describeApiError } from '$lib/api/client';
-	import type { TesterCharts, TesterLines } from '$lib/api/product';
+	import type { TesterCharts, TesterLines, TesterState } from '$lib/api/product';
 	import {
 		fetchTesterInstalls,
 		fetchTesterRelays,
@@ -27,7 +27,9 @@
 	async function load() {
 		try {
 			const [list, relays] = await Promise.all([fetchTesterInstalls(), fetchTesterRelays('24h')]);
-			installs = [...list.installs].sort((a, b) => Number(b.online) - Number(a.online) || b.last_seen.localeCompare(a.last_seen));
+			installs = [...list.installs].sort(
+				(a, b) => Number(b.online) - Number(a.online) || b.last_seen.localeCompare(a.last_seen),
+			);
 			rounds = Object.fromEntries(relays.installs.map((r) => [r.install_id, r]));
 			error = '';
 		} catch (e) {
@@ -60,6 +62,32 @@
 	function toggle(id: string) {
 		if (open.has(id)) open.delete(id);
 		else open.add(id);
+	}
+
+	const stateOf = (id: string): TesterState | null => charts?.states?.[id] ?? null;
+
+	const MODE: Record<string, { text: string; hint: string }> = {
+		proxy: { text: 'прокси', hint: 'через VPN только заблокированное (список), остальное напрямую' },
+		bypass: { text: 'байпасс', hint: 'всё через VPN, кроме списка исключений' },
+		off: { text: 'всё через VPN', hint: 'раздельная маршрутизация выключена' },
+	};
+
+	/** traffic in a bucket: MB under a gigabyte, GB above */
+	const mbytes = (v: number) =>
+		v < 1024 ? `${v < 10 ? v.toFixed(1) : Math.round(v)} МБ` : `${(v / 1024).toFixed(v < 10240 ? 2 : 1)} ГБ`;
+
+	/** megabytes over the window, tunnel and past it */
+	function windowMb(values: (number | null)[] | undefined): number | null {
+		if (!values) return null;
+		let sum = 0;
+		let any = false;
+		for (const v of values) {
+			if (v !== null && v !== undefined) {
+				sum += v;
+				any = true;
+			}
+		}
+		return any ? sum : null;
 	}
 
 	const alive = (id: string) => rounds[id]?.relays.filter((r) => r.up).length ?? null;
@@ -115,6 +143,9 @@
 					<th>тестер</th>
 					<th>клиент</th>
 					<th>профили</th>
+					<th>профиль сейчас</th>
+					<th>режим</th>
+					<th class="r">через VPN</th>
 					<th class="r">простой</th>
 					<th class="r">сеть до РФ</th>
 					<th class="r">на связи</th>
@@ -125,6 +156,9 @@
 					{@const l = linesOf(i.install_id)}
 					{@const lost = last(l?.lost)}
 					{@const ru = last(l?.ruMs)}
+					{@const st = stateOf(i.install_id)}
+					{@const via = windowMb(l?.tunnelMb)}
+					{@const past = windowMb(l?.directMb)}
 					<tr class="row" class:opened={open.has(i.install_id)} onclick={() => toggle(i.install_id)}>
 						<td>
 							<span class="caret">{open.has(i.install_id) ? '▾' : '▸'}</span>
@@ -156,7 +190,26 @@
 						</td>
 						<td class="mono dim">{i.platform} {i.version}</td>
 						<td class="mono">
-							{#if alive(i.install_id) === null}-{:else}{alive(i.install_id)} из {rounds[i.install_id].relays.length}{/if}
+							{#if alive(i.install_id) === null}-{:else}{alive(i.install_id)} из {rounds[i.install_id].relays
+									.length}{/if}
+						</td>
+						<td
+							class="now"
+							title={st ? `профиль с ${bucketTime(st.at)}, ${st.proto}` : 'клиент не присылал (нужен новее 1.0.92)'}
+						>
+							{#if st}{st.profile}{:else}<span class="dim">-</span>{/if}
+						</td>
+						<td title={st ? (MODE[st.mode]?.hint ?? st.mode) : 'клиент не присылал (нужен новее 1.0.92)'}>
+							{#if st}<span class="mode mono" class:proxy={st.mode === 'proxy'}>{MODE[st.mode]?.text ?? st.mode}</span
+								>{:else}<span class="dim">-</span>{/if}
+						</td>
+						<td
+							class="r mono"
+							title={via !== null || past !== null
+								? `за окно через VPN ${mbytes(via ?? 0)}, мимо ${mbytes(past ?? 0)}`
+								: 'клиент не присылал (нужен новее 1.0.92)'}
+						>
+							{#if via !== null || past !== null}{mbytes(via ?? 0)}{:else}<span class="dim">-</span>{/if}
 						</td>
 						<td class="r mono" title={lost ? `отрезок с ${bucketTime(lost.at)}` : 'туннель не включали за сутки'}>
 							{#if lost}<span class:warn={lost.v > 0}>{minutes(lost.v)}</span>{:else}<span class="dim">-</span>{/if}
@@ -168,7 +221,7 @@
 					</tr>
 					{#if open.has(i.install_id)}
 						<tr class="charts-row">
-							<td colspan="6">
+							<td colspan="9">
 								{#if !charts || !l}
 									<p class="dim">загружаю графики…</p>
 								{:else}
@@ -180,7 +233,17 @@
 												bucketSeconds={charts.bucketSeconds}
 												formatAxis={minutes}
 												height={135}
-												series={[{ key: 'lost', label: 'Простой', color: C.orange, primary: true, values: l.lost, format: minutes, missing: 'туннель выключен' }]}
+												series={[
+													{
+														key: 'lost',
+														label: 'Простой',
+														color: C.orange,
+														primary: true,
+														values: l.lost,
+														format: minutes,
+														missing: 'туннель выключен',
+													},
+												]}
 											/>
 										</div>
 										<div class="chart-card">
@@ -191,8 +254,52 @@
 												formatAxis={stall}
 												height={135}
 												series={[
-													{ key: 'stall', label: 'от 0,3 с', color: C.violet, primary: true, values: l.stallMs, format: stall, missing: 'не мерили' },
-													{ key: 'stall-long', label: 'от 1 с', color: C.red, values: l.stallLongMs, format: stall, missing: 'не мерили' },
+													{
+														key: 'stall',
+														label: 'от 0,3 с',
+														color: C.violet,
+														primary: true,
+														values: l.stallMs,
+														format: stall,
+														missing: 'не мерили',
+													},
+													{
+														key: 'stall-long',
+														label: 'от 1 с',
+														color: C.red,
+														values: l.stallLongMs,
+														format: stall,
+														missing: 'не мерили',
+													},
+												]}
+											/>
+										</div>
+										<div class="chart-card">
+											<h3 class="card-title">Трафик</h3>
+											<TrendChart
+												buckets={charts.buckets}
+												bucketSeconds={charts.bucketSeconds}
+												formatAxis={mbytes}
+												height={135}
+												empty="клиент не присылал трафик (нужен новее 1.0.92)"
+												series={[
+													{
+														key: 'tunnel',
+														label: 'через VPN',
+														color: C.blue,
+														primary: true,
+														values: l.tunnelMb ?? charts.buckets.map(() => null),
+														format: mbytes,
+														missing: 'не мерили',
+													},
+													{
+														key: 'direct',
+														label: 'мимо VPN',
+														color: C.orange,
+														values: l.directMb ?? charts.buckets.map(() => null),
+														format: mbytes,
+														missing: 'не мерили',
+													},
 												]}
 											/>
 										</div>
@@ -204,7 +311,17 @@
 												formatAxis={ms}
 												height={135}
 												marks={missedMarks(l)}
-												series={[{ key: 'ru', label: 'Сеть до РФ', color: C.blue, primary: true, values: l.ruMs, format: ms, missing: 'не мерили' }]}
+												series={[
+													{
+														key: 'ru',
+														label: 'Сеть до РФ',
+														color: C.blue,
+														primary: true,
+														values: l.ruMs,
+														format: ms,
+														missing: 'не мерили',
+													},
+												]}
 											/>
 										</div>
 									</div>
@@ -224,24 +341,48 @@
 	}
 
 	.testers th:nth-child(1) {
-		width: 28%;
+		width: 16%;
 	}
 
 	.testers th:nth-child(2) {
-		width: 20%;
+		width: 12%;
 	}
 
 	.testers th:nth-child(3) {
-		width: 12%;
+		width: 7%;
 	}
 
-	.testers th:nth-child(4),
+	.testers th:nth-child(4) {
+		width: 17%;
+	}
+
 	.testers th:nth-child(5) {
-		width: 14%;
+		width: 10%;
 	}
 
-	.testers th:nth-child(6) {
-		width: 12%;
+	.testers th:nth-child(6),
+	.testers th:nth-child(7),
+	.testers th:nth-child(8),
+	.testers th:nth-child(9) {
+		width: 9.5%;
+	}
+
+	.now {
+		overflow: hidden;
+		white-space: nowrap;
+		text-overflow: ellipsis;
+	}
+
+	.mode {
+		padding: 1px 6px;
+		font-size: 11px;
+		border: 1px solid var(--border, oklch(0.3 0 0));
+		border-radius: 4px;
+	}
+
+	.mode.proxy {
+		color: oklch(0.78 0.12 160);
+		border-color: oklch(0.5 0.1 160);
 	}
 
 	.r {
@@ -306,7 +447,7 @@
 
 	.pair {
 		display: grid;
-		grid-template-columns: repeat(3, 1fr);
+		grid-template-columns: repeat(2, 1fr);
 		gap: 16px;
 	}
 

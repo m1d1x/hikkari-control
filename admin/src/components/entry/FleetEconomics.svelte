@@ -1,5 +1,12 @@
 <script lang="ts">
-	import { formatCents, type EntryProviderCompare, type ProviderStats, providerLabel } from '$lib/api/entry';
+	import { describeApiError } from '$lib/api/client';
+	import {
+		formatCents,
+		setHosterPlanTb,
+		type EntryProviderCompare,
+		type ProviderStats,
+		providerLabel,
+	} from '$lib/api/entry';
 
 	// What each hoster's machines cost and carried, from the provider
 	// comparison (internal/admin/entry_providers.go). Every figure here is
@@ -7,11 +14,69 @@
 	// pulses, the spend from the rent accrued while the machines were in
 	// service. A plan's traffic allowance is a ceiling, not a measurement, and
 	// the table used to divide a made-up allowance per hoster into the price.
+	//
+	// The owner may type the terabytes a plan includes (18.11): with them the
+	// cost of a terabyte is a machine's rent over its plan, the figure a hoster
+	// is chosen by. Without them it stays the measured one, which three testers
+	// carrying a few gigabytes turn into thousands of dollars.
 	interface Props {
 		compare: EntryProviderCompare | null;
+		/** a plan changed here: the fleet is read again */
+		onChanged?: () => void;
 	}
 
-	let { compare }: Props = $props();
+	let { compare, onChanged }: Props = $props();
+
+	let editing = $state<string | null>(null);
+	let draft = $state('');
+	let planError = $state<string | null>(null);
+	/** plans saved here before the next answer carries them; 0 is forgotten */
+	let saved = $state<Record<string, number>>({});
+
+	function planOf(h: ProviderStats): number | null {
+		const s = saved[h.provider];
+		if (s !== undefined) return s > 0 ? s : null;
+		return h.planTb;
+	}
+
+	function startPlan(h: ProviderStats) {
+		planError = null;
+		draft = planOf(h)?.toString() ?? '';
+		editing = h.provider;
+	}
+
+	async function finishPlan(h: ProviderStats, keep: boolean) {
+		if (editing !== h.provider) return;
+		editing = null;
+		if (!keep) return;
+		const text = draft
+			.trim()
+			.replace(',', '.')
+			.replace(/\s*тб$/i, '');
+		const tb = text === '' ? 0 : Number(text);
+		if (!Number.isFinite(tb) || tb < 0) {
+			planError = `${providerLabel(h.provider)}: «${draft}» не число терабайт`;
+			return;
+		}
+		if (tb === (planOf(h) ?? 0)) return;
+		try {
+			await setHosterPlanTb(h.provider, tb);
+			saved = { ...saved, [h.provider]: tb };
+			onChanged?.();
+		} catch (e) {
+			planError = `${providerLabel(h.provider)}: ${describeApiError(e)}`;
+		}
+	}
+
+	function planKey(e: KeyboardEvent, h: ProviderStats) {
+		if (e.key === 'Enter') finishPlan(h, true);
+		else if (e.key === 'Escape') finishPlan(h, false);
+	}
+
+	function focusSelect(node: HTMLInputElement) {
+		node.focus();
+		node.select();
+	}
 
 	const PROVIDER_COLORS: Record<string, string> = {
 		vultr: '#ec4899',
@@ -50,16 +115,24 @@
 		return `${gb < 10 ? gb.toFixed(2) : gb.toFixed(0)} ГБ`;
 	}
 
-	/** What a terabyte actually carried cost: the accrued rent over the measured traffic. */
-	function costPerTb(h: ProviderStats): string | null {
+	/**
+	 * What a terabyte costs: one machine's rent over its plan's terabytes when
+	 * the owner gave them, else the accrued rent over the measured traffic.
+	 */
+	function costPerTb(h: ProviderStats): { text: string; byPlan: boolean } | null {
+		const plan = planOf(h);
+		if (plan !== null && h.perBoxMonthlyCents !== null) {
+			return { text: formatCents(Math.round(h.perBoxMonthlyCents / plan)), byPlan: true };
+		}
 		if (h.trafficGb === null || h.trafficGb <= 0 || h.spentCents <= 0) return null;
-		return formatCents(Math.round(h.spentCents / (h.trafficGb / 1000)));
+		return { text: formatCents(Math.round(h.spentCents / (h.trafficGb / 1000))), byPlan: false };
 	}
 </script>
 
 <section class="card">
 	<div class="card-head">
 		<h2>провайдеры и себестоимость</h2>
+		{#if planError}<span class="plan-err" role="alert">{planError}</span>{/if}
 	</div>
 
 	<!-- Allocation bar -->
@@ -93,7 +166,10 @@
 						<th class="num">доля</th>
 						<th class="num">аренда / мес</th>
 						<th class="num">тариф / мес</th>
-						<th class="num">трафик за {compare?.windowDays ?? 30} дн</th>
+						<th class="num">использовано за {compare?.windowDays ?? 30} дн</th>
+						<th class="num" title="сколько ТБ в месяц входит в тариф одной машины; двойной клик по ячейке: вписать">
+							тб в тарифе
+						</th>
 						<th class="num">себес / тб</th>
 						<th class="num">жизнь ip до бана</th>
 					</tr>
@@ -101,6 +177,8 @@
 				<tbody>
 					{#each hosters as h, i (h.provider)}
 						{@const pct = sharePct(h.aliveCount)}
+						{@const cost = costPerTb(h)}
+						{@const planTb = planOf(h)}
 						<tr>
 							<td class="col-prov">
 								<div class="prov-name-cell">
@@ -119,22 +197,60 @@
 								{/if}
 							</td>
 							<td class="num m">
-								{#if h.trafficGb !== null}
+								{#if planTb !== null && h.aliveCount > 0}
+									<span
+										title="за {compare?.windowDays ??
+											30} дн прошло через машины провайдера / {planTb} ТБ в тарифе × {h.aliveCount} маш."
+									>
+										{formatTraffic(h.trafficGb ?? 0)}
+										<span class="muted">из {formatTraffic(planTb * 1000 * h.aliveCount)}</span>
+									</span>
+								{:else if h.trafficGb !== null}
 									{formatTraffic(h.trafficGb)}
 								{:else}
 									<span class="muted">-</span>
 								{/if}
 							</td>
 							<td class="num m">
-								{#if costPerTb(h) !== null}
-									<span class="cost-val">{costPerTb(h)}</span>
+								{#if editing === h.provider}
+									<input
+										class="plan-input m"
+										placeholder="32"
+										aria-label="тб в тарифе у {providerLabel(h.provider)}"
+										bind:value={draft}
+										use:focusSelect
+										onkeydown={(e) => planKey(e, h)}
+										onblur={() => finishPlan(h, true)}
+									/>
+								{:else}
+									{@const plan = planOf(h)}
+									<button
+										class="plan-btn m"
+										ondblclick={() => startPlan(h)}
+										title="двойной клик: сколько ТБ в месяц входит в тариф одной машины, пусто или 0 стирает"
+									>
+										{#if plan !== null}{plan} ТБ{:else}<span class="muted">-</span>{/if}
+									</button>
+								{/if}
+							</td>
+							<td class="num m">
+								{#if cost !== null}
+									<span
+										class="cost-val"
+										class:measured={!cost.byPlan}
+										title={cost.byPlan
+											? 'тариф одной машины / тб в тарифе'
+											: 'аренда за окно / трафик за окно; впиши тб в тарифе, чтобы считать по тарифу'}>{cost.text}</span
+									>
 								{:else}
 									<span class="muted">-</span>
 								{/if}
 							</td>
 							<td class="num m">
 								{#if h.medianLifeDays !== null}
-									{h.medianLifeDays < 2 ? `${Math.round(h.medianLifeDays * 24)} ч` : `${h.medianLifeDays.toFixed(1)} дн`}
+									{h.medianLifeDays < 2
+										? `${Math.round(h.medianLifeDays * 24)} ч`
+										: `${h.medianLifeDays.toFixed(1)} дн`}
 								{:else}
 									<span class="muted">-</span>
 								{/if}
@@ -148,6 +264,40 @@
 </section>
 
 <style>
+	.plan-btn {
+		padding: 0;
+		font: inherit;
+		color: inherit;
+		background: none;
+		border: none;
+		cursor: text;
+	}
+
+	.plan-btn:hover {
+		color: var(--primary, oklch(0.75 0.14 350));
+	}
+
+	.plan-input {
+		width: 8ch;
+		padding: 1px 4px;
+		font: inherit;
+		text-align: right;
+		color: var(--text, oklch(0.93 0 0));
+		background: var(--surface-2, oklch(0.22 0 0));
+		border: 1px solid var(--primary, oklch(0.75 0.14 350));
+		border-radius: 4px;
+		outline: none;
+	}
+
+	.plan-err {
+		font-size: 11px;
+		color: var(--bad, oklch(0.7 0.18 25));
+	}
+
+	.cost-val.measured {
+		color: var(--text-3, oklch(0.42 0 0));
+	}
+
 	.card {
 		background: var(--card-bg, oklch(0.2 0 0));
 		border: 1px solid var(--border-subtle, oklch(0.19 0 0));

@@ -51,9 +51,14 @@ type fleetPool struct {
 	// InDistribution is the relays the pool hands out now; PendingCount and
 	// RollingCount the ones on their way in and the ones a rollout holds.
 	InDistribution int `json:"inDistribution"`
-	BoxesCount     int `json:"boxesCount"`
-	PendingCount   int `json:"pendingCount"`
-	RollingCount   int `json:"rollingCount"`
+	// RelaysCount and BoxesCount are now as the series counts every bucket:
+	// relays not dead, machines not retired (the park lists the same ones).
+	// The figures above the chart are these, so the chart's right end and
+	// the figures never disagree.
+	RelaysCount  int `json:"relaysCount"`
+	BoxesCount   int `json:"boxesCount"`
+	PendingCount int `json:"pendingCount"`
+	RollingCount int `json:"rollingCount"`
 	// Series is the pool's size at the end of every bucket of the window
 	// (seriesBucket), read off the rows' own timestamps.
 	Series []fleetPoolPoint `json:"series"`
@@ -113,24 +118,31 @@ type fleetJob struct {
 // anyone glancing at the screen sees, and the address is opened on the
 // machine's card (entry_box_card.go), where the owner asks for it.
 type fleetBox struct {
-	Name           string       `json:"name"`
-	Provider       string       `json:"provider"`
-	Location       string       `json:"location"`
-	Proto          string       `json:"proto"`
-	Region         string       `json:"region,omitempty"`
-	RentedUntil    *time.Time   `json:"rentedUntil,omitempty"`
-	CreatedAt      time.Time    `json:"createdAt"`
-	RetiredAt      *time.Time   `json:"retiredAt,omitempty"`
-	Domain         string       `json:"domain,omitempty"`
-	Arch           string       `json:"arch,omitempty"`
-	EdgeSHA        string       `json:"edgeSha,omitempty"`
-	OpenIncident   *string      `json:"openIncident,omitempty"`
-	Verdict        string       `json:"verdict"`      // "ok", "warn", "bad", "mute"
-	VerdictLabel   string       `json:"verdictLabel"` // "чисто", "ip забанен целиком", etc.
-	Relays         []fleetRelay `json:"relays"`
-	MonthlyCents   *int         `json:"monthlyCents,omitempty"`
-	Plan           string       `json:"plan,omitempty"`
-	ProviderRegion string       `json:"providerRegion,omitempty"`
+	Name string `json:"name"`
+	// Label is the owner's own name for the machine on the screen, "" when
+	// none was given (migration 076).
+	Label        string       `json:"label,omitempty"`
+	Provider     string       `json:"provider"`
+	Location     string       `json:"location"`
+	Proto        string       `json:"proto"`
+	Region       string       `json:"region,omitempty"`
+	RentedUntil  *time.Time   `json:"rentedUntil,omitempty"`
+	CreatedAt    time.Time    `json:"createdAt"`
+	RetiredAt    *time.Time   `json:"retiredAt,omitempty"`
+	Domain       string       `json:"domain,omitempty"`
+	Arch         string       `json:"arch,omitempty"`
+	EdgeSHA      string       `json:"edgeSha,omitempty"`
+	OpenIncident *string      `json:"openIncident,omitempty"`
+	Verdict      string       `json:"verdict"`      // "ok", "warn", "bad", "mute"
+	VerdictLabel string       `json:"verdictLabel"` // "чисто", "ip забанен целиком", etc.
+	Relays       []fleetRelay `json:"relays"`
+	MonthlyCents *int         `json:"monthlyCents,omitempty"`
+	// PriceAmount and PriceCurrency are the price as the hoster bills it,
+	// what the owner typed or the hoster's plan list gave.
+	PriceAmount    *float64 `json:"priceAmount,omitempty"`
+	PriceCurrency  string   `json:"priceCurrency,omitempty"`
+	Plan           string   `json:"plan,omitempty"`
+	ProviderRegion string   `json:"providerRegion,omitempty"`
 }
 
 // fleetRelay is one relay as the park shows it. Port, protocol and cover are
@@ -212,9 +224,10 @@ func (h *Handlers) fillFleetPool(ctx context.Context, out *entryFleet, window ti
 			count(*) FILTER (WHERE status = 'alive'),
 			count(*) FILTER (WHERE status = 'pending'),
 			count(*) FILTER (WHERE status IN ('testing', 'draining')),
-			count(DISTINCT box) FILTER (WHERE status = 'alive')
+			count(*) FILTER (WHERE died_at IS NULL),
+			(SELECT count(*) FROM entry_boxes WHERE retired_at IS NULL)
 		FROM entry_relays
-	`).Scan(&out.Pool.InDistribution, &out.Pool.PendingCount, &out.Pool.RollingCount, &out.Pool.BoxesCount)
+	`).Scan(&out.Pool.InDistribution, &out.Pool.PendingCount, &out.Pool.RollingCount, &out.Pool.RelaysCount, &out.Pool.BoxesCount)
 	if err != nil {
 		return fmt.Errorf("pool counts: %w", err)
 	}
@@ -464,7 +477,10 @@ func (h *Handlers) fillFleetBoxes(ctx context.Context, out *entryFleet) error {
 			coalesce(edge_sha, ''),
 			monthly_cents,
 			coalesce(plan, ''),
-			coalesce(provider_region, '')
+			coalesce(provider_region, ''),
+			coalesce(label, ''),
+			price_amount::float8,
+			coalesce(price_currency, '')
 		FROM entry_boxes
 		ORDER BY name ASC
 	`)
@@ -493,6 +509,9 @@ func (h *Handlers) fillFleetBoxes(ctx context.Context, out *entryFleet) error {
 			&monthlyCents,
 			&plan,
 			&provRegion,
+			&b.Label,
+			&b.PriceAmount,
+			&b.PriceCurrency,
 		); err != nil {
 			return err
 		}

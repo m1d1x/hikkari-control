@@ -240,6 +240,21 @@ export function forgetHostKey(name: string): Promise<unknown> {
 	return post(`/api/v1/admin/entry/boxes/${encodeURIComponent(name)}/forget-host-key`);
 }
 
+/** Terabytes a month one machine's plan at a hoster includes; 0 forgets it. */
+export function setHosterPlanTb(provider: string, tb: number): Promise<unknown> {
+	return put(`/api/v1/admin/entry/hosters/${encodeURIComponent(provider)}/plan-tb`, { tb });
+}
+
+/** What a machine costs a month as the hoster bills it (USD, EUR, RUB). */
+export function setBoxPrice(name: string, amount: number, currency: string): Promise<{ monthlyCents: number }> {
+	return put(`/api/v1/admin/entry/boxes/${encodeURIComponent(name)}/price`, { amount, currency });
+}
+
+/** The owner's own name for a machine on the fleet screen; "" takes it back. */
+export function setBoxLabel(name: string, label: string): Promise<unknown> {
+	return put(`/api/v1/admin/entry/boxes/${encodeURIComponent(name)}/label`, { label });
+}
+
 export function fetchJobs(): Promise<{ jobs: Job[] }> {
 	return get('/api/v1/admin/entry/jobs');
 }
@@ -603,6 +618,8 @@ export interface ProviderStats {
 	bansWindow: number;
 	/** What this hoster's relays carried over the window; null when none pulsed. */
 	trafficGb: number | null;
+	/** terabytes a month one machine's plan includes, as the owner typed it */
+	planTb: number | null;
 	/** The rent its machines accrued over the same window. */
 	spentCents: number;
 }
@@ -1235,6 +1252,8 @@ export interface FleetPoolPoint {
 
 export interface FleetPool {
 	inDistribution: number;
+	/** relays not dead, machines not retired: what the chart counts, now */
+	relaysCount: number;
 	boxesCount: number;
 	pendingCount: number;
 	rollingCount: number;
@@ -1300,6 +1319,11 @@ export interface FleetRelay {
 /** One machine as the list shows it. No address: that is opened on the card. */
 export interface FleetBox {
 	name: string;
+	/** the owner's own name for the machine, shown instead of `name` */
+	label?: string;
+	/** the price as the hoster bills it */
+	priceAmount?: number;
+	priceCurrency?: string;
 	provider: string;
 	location: string;
 	proto: string;

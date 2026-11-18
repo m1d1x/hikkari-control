@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/m1d1x/hikkari-control/internal/auth"
+	"github.com/m1d1x/hikkari-control/internal/fx"
 )
 
 // stepUpMux mounts the pool's admin routes behind an owner gate that always
@@ -117,5 +121,131 @@ func TestDestructiveBoxActionsNeedAStepUp(t *testing.T) {
 	}
 	if got := h.host.deletedIDs(); len(got) != 1 {
 		t.Fatalf("deleted = %v, want the retired machine's instance", got)
+	}
+}
+
+// The owner names a machine on the screen (18.11, «мейн хаб»): a label is set,
+// taken back with "", and refused when it is not one short line.
+func TestABoxTakesTheOwnersLabel(t *testing.T) {
+	h := newHostHarness(t)
+	box := h.inService()
+	touched := false
+	do := h.stepUpMux(&touched)
+	label := func() *string {
+		var l *string
+		if err := h.pool.QueryRow(context.Background(), `SELECT label FROM entry_boxes WHERE name = $1`, box).Scan(&l); err != nil {
+			t.Fatal(err)
+		}
+		return l
+	}
+	path := "/api/v1/admin/entry/boxes/" + box + "/label"
+	if code, body := do("PUT", path, map[string]string{"label": "  мейн хаб "}); code != http.StatusOK {
+		t.Fatalf("label without a touch: %d %s, want 200 (a label acts on nothing)", code, body)
+	}
+	if l := label(); l == nil || *l != "мейн хаб" {
+		t.Errorf("label = %v, want «мейн хаб» trimmed", l)
+	}
+	for _, bad := range []string{strings.Repeat("я", MaxBoxLabel+1), "две\nстроки"} {
+		if code, _ := do("PUT", path, map[string]string{"label": bad}); code != http.StatusBadRequest {
+			t.Errorf("label %q: %d, want 400", bad, code)
+		}
+	}
+	if l := label(); l == nil || *l != "мейн хаб" {
+		t.Errorf("a refused label changed it to %v", l)
+	}
+	if code, _ := do("PUT", path, map[string]string{"label": ""}); code != http.StatusOK {
+		t.Errorf("clearing the label: %d, want 200", code)
+	}
+	if l := label(); l != nil {
+		t.Errorf("label = %q after clearing, want NULL", *l)
+	}
+	if code, _ := do("PUT", "/api/v1/admin/entry/boxes/no-such-box/label", map[string]string{"label": "x"}); code != http.StatusNotFound {
+		t.Errorf("label of an unknown box: %d, want 404", code)
+	}
+}
+
+// The owner prices a machine from the screen, not the console (18.11: «флот
+// часто меняется»): the same price `entry-box price` sets, counted in cents.
+func TestABoxIsPricedFromTheScreen(t *testing.T) {
+	h := newHostHarness(t)
+	h.svc.SetRates(fx.Fixed(map[string]float64{fx.USD: 82, fx.EUR: 91}))
+	box := h.inService()
+	touched := false
+	do := h.stepUpMux(&touched)
+	path := "/api/v1/admin/entry/boxes/" + box + "/price"
+
+	code, body := do("PUT", path, map[string]any{"amount": 469, "currency": "руб"})
+	if code != http.StatusOK {
+		t.Fatalf("price without a touch: %d %s, want 200 (no money moves)", code, body)
+	}
+	var got struct {
+		MonthlyCents int `json:"monthlyCents"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil || got.MonthlyCents != 572 {
+		t.Errorf("answer %s, want monthlyCents 572 (469 / 82)", body)
+	}
+	var amount float64
+	var cur string
+	var cents int
+	if err := h.pool.QueryRow(context.Background(),
+		`SELECT price_amount::float8, price_currency, monthly_cents FROM entry_boxes WHERE name = $1`, box).
+		Scan(&amount, &cur, &cents); err != nil {
+		t.Fatal(err)
+	}
+	if amount != 469 || cur != fx.RUB || cents != 572 {
+		t.Errorf("stored %v %s %d, want 469 RUB 572", amount, cur, cents)
+	}
+	for _, bad := range []map[string]any{{"amount": 0, "currency": "USD"}, {"amount": 5, "currency": "GBP"}} {
+		if code, _ := do("PUT", path, bad); code != http.StatusBadRequest {
+			t.Errorf("price %v: %d, want 400", bad, code)
+		}
+	}
+	if code, _ := do("PUT", "/api/v1/admin/entry/boxes/no-such-box/price", map[string]any{"amount": 1, "currency": "USD"}); code != http.StatusNotFound {
+		t.Errorf("price of an unknown box: %d, want 404", code)
+	}
+}
+
+// The terabytes in a hoster's plan are typed on the screen (18.11: «у аезы щас
+// миллиарды за тб»): set, changed, forgotten with 0.
+func TestAHostersPlanTerabytesAreSetFromTheScreen(t *testing.T) {
+	h := newHostHarness(t)
+	box := h.inService()
+	var provider string
+	if err := h.pool.QueryRow(context.Background(), `SELECT provider FROM entry_boxes WHERE name = $1`, box).Scan(&provider); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = h.pool.Exec(context.Background(), `DELETE FROM entry_provider_plans WHERE provider = $1`, provider)
+	})
+	touched := false
+	do := h.stepUpMux(&touched)
+	path := "/api/v1/admin/entry/hosters/" + provider + "/plan-tb"
+	planTB := func() *float64 {
+		var tb *float64
+		err := h.pool.QueryRow(context.Background(), `SELECT plan_tb::float8 FROM entry_provider_plans WHERE provider = $1`, provider).Scan(&tb)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatal(err)
+		}
+		return tb
+	}
+	for _, tb := range []float64{32, 2.5} {
+		if code, body := do("PUT", path, map[string]any{"tb": tb}); code != http.StatusOK {
+			t.Fatalf("plan %v TB without a touch: %d %s, want 200", tb, code, body)
+		}
+		if got := planTB(); got == nil || *got != tb {
+			t.Errorf("plan_tb = %v, want %v", got, tb)
+		}
+	}
+	if code, _ := do("PUT", path, map[string]any{"tb": -1}); code != http.StatusBadRequest {
+		t.Errorf("negative plan: %d, want 400", code)
+	}
+	if code, _ := do("PUT", path, map[string]any{"tb": 0}); code != http.StatusOK {
+		t.Errorf("forgetting the plan: %d, want 200", code)
+	}
+	if got := planTB(); got != nil {
+		t.Errorf("plan_tb = %v after 0, want none", *got)
+	}
+	if code, _ := do("PUT", "/api/v1/admin/entry/hosters/no-such-hoster/plan-tb", map[string]any{"tb": 1}); code != http.StatusNotFound {
+		t.Errorf("plan of an unknown hoster: %d, want 404", code)
 	}
 }

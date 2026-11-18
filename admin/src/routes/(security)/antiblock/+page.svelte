@@ -184,7 +184,7 @@
 										values: data.traffic.series.map((p) =>
 											p.trendGbPerPersonDay === null ? null : p.trendGbPerPersonDay * 30,
 										),
-										format: (v) => `${gb(v)}/мес`,
+										format: (v) => `${gb(v)}/чел`,
 									},
 									{
 										key: 'down',

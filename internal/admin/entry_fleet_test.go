@@ -77,6 +77,9 @@ func TestEntryFleet(t *testing.T) {
 	seedFleetRelay(t, pool, tag+"r1", box1, "alive")
 	seedFleetRelay(t, pool, tag+"r2", box1, "pending")
 	seedFleetRelay(t, pool, tag+"r3", box2, "dead")
+	if _, err := pool.Exec(context.Background(), `UPDATE entry_boxes SET label = 'мейн хаб', price_amount = 469, price_currency = 'RUB', monthly_cents = 572 WHERE name = $1`, box1); err != nil {
+		t.Fatal(err)
+	}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/entry/machines?window=7d", nil)
@@ -99,6 +102,33 @@ func TestEntryFleet(t *testing.T) {
 	}
 	if res.Pool.PendingCount < 1 {
 		t.Errorf("pendingCount = %d, want >= 1", res.Pool.PendingCount)
+	}
+	// The figures above the chart count what the chart counts: relays not
+	// dead (the pending one too), machines not retired. They used to count
+	// alive relays and the machines under them — 4 and 3 over a chart at 4
+	// and 6 (owner, 18.11).
+	if res.Pool.RelaysCount < 2 {
+		t.Errorf("relaysCount = %d, want the alive and the pending relay counted", res.Pool.RelaysCount)
+	}
+	if res.Pool.BoxesCount < 2 {
+		t.Errorf("boxesCount = %d, want the box with only a dead relay counted too", res.Pool.BoxesCount)
+	}
+	if n := len(res.Pool.Series); n > 0 {
+		last := res.Pool.Series[n-1]
+		if last.Size < res.Pool.RelaysCount-1 || last.Boxes < res.Pool.BoxesCount-1 {
+			t.Errorf("chart ends at %d relays and %d boxes, figures say %d and %d",
+				last.Size, last.Boxes, res.Pool.RelaysCount, res.Pool.BoxesCount)
+		}
+	}
+	labels := map[string]string{}
+	for _, b := range res.Boxes {
+		labels[b.Name] = b.Label
+		if b.Name == box1 && (b.PriceAmount == nil || *b.PriceAmount != 469 || b.PriceCurrency != "RUB") {
+			t.Errorf("box1 price = %v %q, want 469 RUB as the hoster bills it", b.PriceAmount, b.PriceCurrency)
+		}
+	}
+	if labels[box1] != "мейн хаб" || labels[box2] != "" {
+		t.Errorf("labels = %q and %q, want the owner's name on the first box only", labels[box1], labels[box2])
 	}
 	if res.Strip.DeathsVsReplacements.DeathsDay < 1 {
 		t.Errorf("deathsDay = %d, want the ip ban counted", res.Strip.DeathsVsReplacements.DeathsDay)

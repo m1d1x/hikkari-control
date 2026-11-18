@@ -118,6 +118,15 @@ func TestEntryProviderCompare(t *testing.T) {
 	// A machine too young to be asked the window's question at all.
 	seedCompareBox(t, pool, tag+"g4", good, 3, &price, 0, "")
 
+	// The owner read 32 TB a month off the good hoster's plan page.
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO entry_provider_plans (provider, plan_tb) VALUES ($1, 32)`, good); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entry_provider_plans WHERE provider = $1`, good)
+	})
+
 	res := fetchCompare(t, h)
 
 	if res.WindowDays != compareWindow {
@@ -146,6 +155,9 @@ func TestEntryProviderCompare(t *testing.T) {
 	if g.PerBoxMonthlyCents == nil || *g.PerBoxMonthlyCents != price {
 		t.Errorf("good perBoxMonthlyCents = %v, want %d", g.PerBoxMonthlyCents, price)
 	}
+	if g.PlanTB == nil || *g.PlanTB != 32 {
+		t.Errorf("good planTb = %v, want 32", ptrVal(g.PlanTB))
+	}
 	// Its one retired machine was handed back healthy: let go, not burned.
 	// A life cut short by the owner's own rotation is no life the censor
 	// ended, and it must not put a short "IP life" on a hoster that never had
@@ -162,6 +174,9 @@ func TestEntryProviderCompare(t *testing.T) {
 	}
 
 	b := statsOf(t, res, bad)
+	if b.PlanTB != nil {
+		t.Errorf("bad planTb = %v, want none: the owner gave none", *b.PlanTB)
+	}
 	if b.CohortCount != 2 {
 		t.Errorf("bad cohortCount = %d, want 2", b.CohortCount)
 	}
