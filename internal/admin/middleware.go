@@ -90,6 +90,10 @@ func RequireAdmin(verifier *rsa.PublicKey, pool db.Pool, next http.HandlerFunc) 
 		// "show me this user's logs" answer with a staff member's activity —
 		// the same conflation the split removed everywhere else. Admin
 		// attribution belongs in admin_audit_log, which records it per action.
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			// What an action changed must show on the next look at a chart.
+			charts.dropAll()
+		}
 		if r.Method == http.MethodGet && isChartPath(r.URL.Path) {
 			charts.serve(w, r.WithContext(ctx), string(st.Admin.Role), next)
 			return

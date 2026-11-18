@@ -43,6 +43,7 @@ var chartPaths = []string{
 	"/api/v1/admin/entry/overview",
 	"/api/v1/admin/entry/fleet",
 	"/api/v1/admin/entry/fleet/chart",
+	"/api/v1/admin/entry/machines",
 	"/api/v1/admin/entry/pressure",
 	"/api/v1/admin/entry/domains/metrics",
 	"/api/v1/admin/entry/providers/compare",
@@ -109,7 +110,7 @@ func (c *chartCache) serve(w http.ResponseWriter, r *http.Request, role string, 
 	}
 	if a := e.answer; a != nil {
 		age := now.Sub(a.at)
-		if age < max(chartFresh, warmEvery(r.URL.Query().Get("window"))) {
+		if age < max(chartFresh, warmEvery(chartWindow(r.URL.Query()))) {
 			c.mu.Unlock()
 			a.write(w)
 			return
@@ -142,6 +143,16 @@ func (c *chartCache) serve(w http.ResponseWriter, r *http.Request, role string, 
 		return
 	}
 	a.write(w)
+}
+
+// dropAll forgets every kept answer: an action may have changed what any chart
+// shows. The warmer computes them again on its next tick.
+func (c *chartCache) dropAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, e := range c.entries {
+		e.answer = nil
+	}
 }
 
 // recompute computes the answer of r now and waits for it, whatever the age

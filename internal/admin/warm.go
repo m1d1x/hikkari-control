@@ -17,22 +17,61 @@ import (
 
 // The hub computes the panel's charts itself, on each chart's own step, so an
 // operator opening a tab gets an answer already made instead of waiting for
-// raw rows to be read (cache.go). Which charts: every chart URL an operator
-// opened within warmKeep, by role, kept in admin_warm_charts so a restart of
-// the hub picks them up again. A chart nobody opened for warmKeep stops being
-// computed.
+// raw rows to be read (cache.go). Every chart of the panel in every window it
+// offers is computed all the time (warmCharts), for the owner. A chart drawn
+// for one entry, knob or profile (the fleet's voice per cascade, the relay
+// runs) has as many URLs as there are of those: each one an operator opened is
+// computed too, for warmKeep after it was last opened, and kept in
+// admin_warm_charts so a restart of the hub picks them up again.
 //
 // One chart at a time: the hub has two cores and the trunk's own journals to
-// read too, and a warm round of every chart is a few seconds of one core.
+// read too.
 const (
-	warmKeep  = 7 * 24 * time.Hour
+	warmKeep  = 30 * 24 * time.Hour
 	warmTick  = 10 * time.Second
-	warmMax   = 200 // URLs warmed at most; past it the least recently asked go
+	warmMax   = 200 // opened URLs warmed at most; past it the least recently opened go
 	warmFlush = time.Minute
 )
 
-// warmEvery is the step on which a chart over `window` is recomputed: the
-// width of its smallest bucket, a minute at least.
+// warmCharts is every chart URL the panel asks for, byte for byte as
+// admin/src/lib/api builds it: the cache keys on the URL.
+func warmCharts() []string {
+	var out []string
+	add := func(path, param string, values ...string) {
+		if len(values) == 0 {
+			out = append(out, path)
+			return
+		}
+		for _, v := range values {
+			out = append(out, path+"?"+param+"="+v)
+		}
+	}
+	day3 := []string{"24h", "7d", "30d"}
+	add("/api/v1/admin/entry/overview", "window", day3...)
+	add("/api/v1/admin/entry/machines", "window", day3...)
+	add("/api/v1/admin/entry/protocols", "window", day3...)
+	add("/api/v1/admin/entry/fleet", "")
+	add("/api/v1/admin/entry/fleet/chart", "")
+	add("/api/v1/admin/entry/spend", "")
+	add("/api/v1/admin/entry/providers/compare", "")
+	add("/api/v1/admin/entry/pressure", "range", "15m", "1h", "6h", "24h")
+	add("/api/v1/admin/entry/domains/metrics", "window", "7d", "30d", "90d")
+	add("/api/v1/admin/fleet/profiles", "window", day3...)
+	add("/api/v1/admin/hikkari/chart", "window", "6h", "24h", "7d")
+	for _, p := range []string{"metrics", "errors", "downtime", "downtime-users", "testers"} {
+		add("/api/v1/admin/product/"+p, "window", day3...)
+	}
+	add("/api/v1/admin/trunk/wires", "window", "6h", "24h", "7d")
+	add("/api/v1/admin/trunk/egress", "window", "6h", "24h", "7d")
+	for _, w := range []string{"6h", "24h", "7d", "30d"} {
+		out = append(out, "/api/v1/admin/trunk/hearing?window="+w+"&view=trunk")
+	}
+	add("/api/v1/admin/support/tester-relays", "window", "24h", "7d")
+	return out
+}
+
+// warmEvery is the step on which a chart over `window` (or `range`) is
+// recomputed: the width of its smallest bucket, a minute at least.
 func warmEvery(window string) time.Duration {
 	switch window {
 	case "7d":
@@ -42,6 +81,15 @@ func warmEvery(window string) time.Duration {
 	default: // 6h, 24h and charts with no window
 		return time.Minute
 	}
+}
+
+// chartWindow is the span a chart URL asks for: `window`, or `range` on the
+// censor's pressure.
+func chartWindow(q url.Values) string {
+	if w := q.Get("window"); w != "" {
+		return w
+	}
+	return q.Get("range")
 }
 
 // warmKey marks a request the warmer made in this process. A request off the
@@ -165,7 +213,19 @@ func (w *ChartWarmer) Run(ctx context.Context) {
 // how many it computed.
 func (w *ChartWarmer) round(ctx context.Context) int {
 	n := 0
+	owner := string(auth.AdminRoleOwner)
+	all := make([]warmChart, 0, 64)
+	seen := map[string]bool{}
+	for _, uri := range warmCharts() {
+		all = append(all, warmChart{role: owner, uri: uri})
+		seen[owner+"\x00"+uri] = true
+	}
 	for _, c := range warmed.list(w.now()) {
+		if !seen[c.role+"\x00"+c.uri] {
+			all = append(all, c)
+		}
+	}
+	for _, c := range all {
 		if ctx.Err() != nil {
 			return n
 		}
@@ -173,7 +233,7 @@ func (w *ChartWarmer) round(ctx context.Context) int {
 		if err != nil || !isChartPath(u.Path) {
 			continue
 		}
-		every := warmEvery(u.Query().Get("window"))
+		every := warmEvery(chartWindow(u.Query()))
 		// A little early, so a click on the step's edge still finds it fresh.
 		if age, ok := charts.age(c.role, c.uri); ok && age < every-warmTick {
 			continue

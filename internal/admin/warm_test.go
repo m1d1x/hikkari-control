@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,46 +13,76 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/auth"
 )
 
-// warmMux is the admin mux of a test: one chart and one live screen behind the
-// real gate (no admin key: a request off the network is refused).
+// warmMux is the admin mux of a test: every chart and one live screen behind
+// the real gate (no admin key: a request off the network is refused).
 func warmMux(t *testing.T, n *atomic.Int64) http.Handler {
 	t.Helper()
 	charts = &chartCache{entries: map[string]*chartEntry{}, now: time.Now}
 	warmed = &warmSet{asked: map[string]time.Time{}, dirty: map[string]bool{}}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/admin/trunk/wires", RequireAdmin(nil, nil, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v1/admin/security", RequireAdmin(nil, nil, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("the warmer reached a screen that is not a chart")
+	}))
+	mux.HandleFunc("GET /api/v1/admin/", RequireAdmin(nil, nil, func(w http.ResponseWriter, r *http.Request) {
 		if a := auth.GetAdmin(r); a == nil || a.Role != auth.AdminRoleOwner {
 			t.Errorf("the chart computed without the owner's role: %+v", a)
 		}
 		fmt.Fprintf(w, `{"n":%d}`, n.Add(1))
 	}))
-	mux.HandleFunc("GET /api/v1/admin/security", RequireAdmin(nil, nil, func(w http.ResponseWriter, r *http.Request) {
-		t.Error("the warmer reached a screen that is not a chart")
-	}))
 	return mux
 }
 
-func TestTheHubComputesAnOpenedChartOnItsStep(t *testing.T) {
+func TestTheHubComputesEveryChartOnItsStep(t *testing.T) {
 	var n atomic.Int64
 	mux := warmMux(t, &n)
-	const uri = "/api/v1/admin/trunk/wires?window=24h"
-	warmed.note(string(auth.AdminRoleOwner), uri, time.Now())
+	all := int64(len(warmCharts()))
+	owner := string(auth.AdminRoleOwner)
 
 	w := NewChartWarmer(nil, mux)
-	if got := w.round(context.Background()); got != 1 || n.Load() != 1 {
-		t.Fatalf("round computed %d charts, the chart ran %d times", got, n.Load())
+	if got := w.round(context.Background()); int64(got) != all || n.Load() != all {
+		t.Fatalf("round computed %d charts, ran %d, want every one of %d", got, n.Load(), all)
 	}
-	if age, ok := charts.age(string(auth.AdminRoleOwner), uri); !ok || age > time.Second {
-		t.Fatalf("the warmed answer is not kept: %v %v", age, ok)
+	for _, uri := range warmCharts() {
+		if age, ok := charts.age(owner, uri); !ok || age > time.Second {
+			t.Fatalf("%s is not kept: %v %v", uri, age, ok)
+		}
 	}
-	// Within its step the chart is not computed again.
-	if got := w.round(context.Background()); got != 0 || n.Load() != 1 {
-		t.Fatalf("a fresh chart was recomputed: round %d, ran %d", got, n.Load())
+	// Within their step no chart is computed again.
+	if got := w.round(context.Background()); got != 0 {
+		t.Fatalf("fresh charts were recomputed: round %d", got)
 	}
-	// Past its step it is.
-	charts.now = func() time.Time { return time.Now().Add(warmEvery("24h")) }
-	if got := w.round(context.Background()); got != 1 || n.Load() != 2 {
-		t.Fatalf("a chart past its step was not recomputed: round %d, ran %d", got, n.Load())
+	// A minute on, the charts on a minute's step are; the ones over days wait.
+	charts.now = func() time.Time { return time.Now().Add(time.Minute) }
+	minute := 0
+	for _, uri := range warmCharts() {
+		u, _ := url.ParseRequestURI(uri)
+		if warmEvery(chartWindow(u.Query())) == time.Minute {
+			minute++
+		}
+	}
+	if got := w.round(context.Background()); got != minute || minute == 0 || minute == int(all) {
+		t.Fatalf("a minute on, round recomputed %d charts, want the %d on a minute's step", got, minute)
+	}
+}
+
+func TestAChartOpenedForOneEntryIsComputedToo(t *testing.T) {
+	var n atomic.Int64
+	mux := warmMux(t, &n)
+	const uri = "/api/v1/admin/trunk/hearing?window=24h&view=voice&entry=aezamsk1"
+	warmed.note(string(auth.AdminRoleOwner), uri, time.Now())
+	NewChartWarmer(nil, mux).round(context.Background())
+	if _, ok := charts.age(string(auth.AdminRoleOwner), uri); !ok {
+		t.Fatal("the entry's chart was not computed")
+	}
+}
+
+func TestAnActionDropsTheKeptCharts(t *testing.T) {
+	var n atomic.Int64
+	mux := warmMux(t, &n)
+	NewChartWarmer(nil, mux).round(context.Background())
+	charts.dropAll()
+	if _, ok := charts.age(string(auth.AdminRoleOwner), warmCharts()[0]); ok {
+		t.Fatal("a chart outlived an action")
 	}
 }
 
@@ -81,12 +112,14 @@ func TestARequestOffTheNetworkIsNotTheWarmer(t *testing.T) {
 	}
 }
 
-func TestAChartNobodyOpenedForAWeekIsNotWarmed(t *testing.T) {
+func TestAnEntrysChartNobodyOpenedFor30DaysIsNotWarmed(t *testing.T) {
 	var n atomic.Int64
 	mux := warmMux(t, &n)
-	warmed.note(string(auth.AdminRoleOwner), "/api/v1/admin/trunk/wires?window=7d", time.Now().Add(-warmKeep))
-	if got := NewChartWarmer(nil, mux).round(context.Background()); got != 0 {
-		t.Fatalf("a chart unopened for %v was warmed", warmKeep)
+	const uri = "/api/v1/admin/trunk/hearing?window=7d&view=voice&entry=gone"
+	warmed.note(string(auth.AdminRoleOwner), uri, time.Now().Add(-warmKeep))
+	NewChartWarmer(nil, mux).round(context.Background())
+	if _, ok := charts.age(string(auth.AdminRoleOwner), uri); ok {
+		t.Fatalf("an entry's chart unopened for %v was warmed", warmKeep)
 	}
 }
 
