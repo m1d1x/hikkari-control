@@ -218,9 +218,9 @@ func TestEntryReachRTTAndBenchPeaks(t *testing.T) {
 }
 
 // The analytics database holds the fleet's datasets, the clients'
-// telemetry, what Hikkari sessions saw (hikkari_obs) and testers' legs
-// through the cascade (tester_legs) — nothing carried over from the
-// messenger.
+// telemetry, what Hikkari sessions saw (hikkari_obs), testers' legs
+// through the cascade (tester_legs) and the archive of what Postgres lets go
+// (archive_*, internal/archive) — nothing carried over from the messenger.
 func TestFreshAnalyticsContainsOnlyFleetTables(t *testing.T) {
 	s := liveStore(t)
 	rows, err := s.Query(context.Background(), `SELECT name FROM system.tables WHERE database=currentDatabase()`)
@@ -235,14 +235,14 @@ func TestFreshAnalyticsContainsOnlyFleetTables(t *testing.T) {
 			t.Fatal(err)
 		}
 		count++
-		if !strings.HasPrefix(name, "entry_") && !strings.HasPrefix(name, "telemetry_") && !strings.HasPrefix(name, "landing_") && name != "hikkari_obs" && name != "tester_legs" {
+		if !strings.HasPrefix(name, "entry_") && !strings.HasPrefix(name, "telemetry_") && !strings.HasPrefix(name, "landing_") && !strings.HasPrefix(name, "archive_") && name != "hikkari_obs" && name != "tester_legs" {
 			t.Errorf("unexpected dataset: %s", name)
 		}
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if count != 7+len(telemetrySchema) {
-		t.Errorf("datasets=%d, want %d", count, 7+len(telemetrySchema))
+	if count != 9+len(telemetrySchema) {
+		t.Errorf("datasets=%d, want %d", count, 9+len(telemetrySchema))
 	}
 }
