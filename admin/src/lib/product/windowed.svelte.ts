@@ -1,3 +1,5 @@
+import { untrack } from 'svelte';
+import { onFreshAnswers } from '$lib/api/fresh';
 import { describeApiError } from '$lib/api/client';
 import type { Win } from './format';
 
@@ -17,8 +19,7 @@ export class Windowed<T> {
 
 	constructor(initial: Win, fetch: (w: Win) => Promise<T>) {
 		this.win = initial;
-		$effect(() => {
-			const w = this.win;
+		const load = (w: Win) => {
 			const seq = ++this.#seq;
 			this.loading = true;
 			fetch(w)
@@ -34,6 +35,10 @@ export class Windowed<T> {
 				.finally(() => {
 					if (seq === this.#seq) this.loading = false;
 				});
-		});
+		};
+		$effect(() => load(this.win));
+		// The first answer may be the one kept from the last visit: redraw
+		// when the hub's new one differs.
+		onFreshAnswers(() => load(untrack(() => this.win)));
 	}
 }

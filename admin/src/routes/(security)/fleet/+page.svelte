@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { formatRate } from '$lib/utils/rate';
 	import { onDestroy, onMount } from 'svelte';
+	import { onFreshAnswers } from '$lib/api/fresh';
 	import PageShell from '$components/layout/PageShell.svelte';
 	import ProtoBadge from '$components/entry/ProtoBadge.svelte';
 	import TrendChart from '$components/entry/TrendChart.svelte';
@@ -85,6 +86,7 @@
 		void load();
 	}
 
+	onFreshAnswers(load);
 	onMount(() => {
 		void load();
 		timer = setInterval(load, REFRESH_MS);

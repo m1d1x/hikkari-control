@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { onFreshAnswers } from '$lib/api/fresh';
 	import PageShell from '$components/layout/PageShell.svelte';
 	import Panel from '$components/entry/ui/Panel.svelte';
 	import Knob from '$components/entry/ui/Knob.svelte';
@@ -209,6 +210,7 @@
 			await loadCharts();
 		});
 
+	onFreshAnswers(load);
 	onMount(() => {
 		void load();
 	});

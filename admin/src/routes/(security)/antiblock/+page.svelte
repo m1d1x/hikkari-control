@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { onFreshAnswers } from '$lib/api/fresh';
 	import PageShell from '$components/layout/PageShell.svelte';
 	import TrendChart from '$components/entry/TrendChart.svelte';
 	import {
@@ -42,6 +43,7 @@
 		void load();
 	}
 
+	onFreshAnswers(load);
 	onMount(load);
 
 	/** Days the window spans; a 24h window is one day. */

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { onFreshAnswers } from '$lib/api/fresh';
 	import PageShell from '$components/layout/PageShell.svelte';
 	import Panel from '$components/entry/ui/Panel.svelte';
 	import MetricHero from '$components/entry/ui/MetricHero.svelte';
@@ -56,6 +57,7 @@
 		return WINDOWS.find((x) => x.key === w)?.label ?? w;
 	}
 
+	onFreshAnswers(load);
 	onMount(load);
 
 	// ---------- 1. how much the hub closed alone ----------

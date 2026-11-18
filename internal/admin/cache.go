@@ -48,6 +48,7 @@ var chartPaths = []string{
 	"/api/v1/admin/fleet/profiles",
 	"/api/v1/admin/hikkari/chart",
 	"/api/v1/admin/relay-runs/chart",
+	"/api/v1/admin/support/tester-relays",
 	"/api/v1/admin/product/downtime",
 	"/api/v1/admin/product/downtime-users",
 	"/api/v1/admin/product/errors",
