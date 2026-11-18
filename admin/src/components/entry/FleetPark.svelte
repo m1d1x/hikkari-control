@@ -1,5 +1,15 @@
 <script lang="ts">
-	import { formatCents, type EntryFleet, type FleetBox, type FleetRelay, type ProviderStats, providerLabel } from '$lib/api/entry';
+	import { describeApiError } from '$lib/api/client';
+	import {
+		formatCents,
+		setBoxLabel,
+		setBoxPrice,
+		type EntryFleet,
+		type FleetBox,
+		type FleetRelay,
+		type ProviderStats,
+		providerLabel,
+	} from '$lib/api/entry';
 
 	interface Props {
 		fleet: EntryFleet;
@@ -8,9 +18,11 @@
 		onMarkDeadRelay: (relay: FleetRelay) => void;
 		/** opens the machine's card */
 		onOpenBox: (box: FleetBox) => void;
+		/** a machine's name or price changed here: the fleet is read again */
+		onChanged?: () => void;
 	}
 
-	let { fleet, onRetireBox, onForgetBox, onMarkDeadRelay, onOpenBox }: Props = $props();
+	let { fleet, onRetireBox, onForgetBox, onMarkDeadRelay, onOpenBox, onChanged }: Props = $props();
 
 	type FleetViewMode = 'tree' | 'locations' | 'eyes' | 'all';
 	let mode = $state<FleetViewMode>('tree');
@@ -333,12 +345,121 @@
 		});
 	}
 
+	// ── The owner's own name for a machine: a double click on the name ──────
+	// A single click still opens the card, a moment later, so that the first
+	// click of a double one does not.
+
+	const OPEN_DELAY_MS = 250;
+	let openTimer: ReturnType<typeof setTimeout> | undefined;
+	let renaming = $state<string | null>(null);
+	let draft = $state('');
+	let labelError = $state<string | null>(null);
+	/** labels saved here before the next fleet answer carries them */
+	let savedLabels = $state<Record<string, string>>({});
+
+	function labelOf(box: FleetBox): string {
+		return savedLabels[box.name] ?? box.label ?? '';
+	}
+
+	function clickName(box: FleetBox) {
+		clearTimeout(openTimer);
+		openTimer = setTimeout(() => onOpenBox(box), OPEN_DELAY_MS);
+	}
+
+	function startRename(box: FleetBox) {
+		clearTimeout(openTimer);
+		labelError = null;
+		draft = labelOf(box);
+		renaming = box.name;
+	}
+
+	async function finishRename(box: FleetBox, keep: boolean) {
+		if (renaming !== box.name) return;
+		renaming = null;
+		const next = draft.trim();
+		if (!keep || next === labelOf(box)) return;
+		const before = savedLabels[box.name];
+		savedLabels = { ...savedLabels, [box.name]: next };
+		try {
+			await setBoxLabel(box.name, next);
+			onChanged?.();
+		} catch (e) {
+			const rest = { ...savedLabels };
+			if (before === undefined) delete rest[box.name];
+			else rest[box.name] = before;
+			savedLabels = rest;
+			labelError = `${box.name}: ${describeApiError(e)}`;
+		}
+	}
+
+	function renameKey(e: KeyboardEvent, box: FleetBox) {
+		if (e.key === 'Enter') finishRename(box, true);
+		else if (e.key === 'Escape') finishRename(box, false);
+	}
+
+	// ── The price, the same way: a double click, "6 usd", "469 руб", "5,5 €" ──
+
+	let pricing = $state<string | null>(null);
+	let priceDraft = $state('');
+	/** prices saved here before the next fleet answer carries them, in cents */
+	let savedCents = $state<Record<string, number>>({});
+
+	function centsOf(box: FleetBox): number | undefined {
+		return savedCents[box.name] ?? box.monthlyCents ?? undefined;
+	}
+
+	function startPrice(box: FleetBox) {
+		labelError = null;
+		priceDraft = box.priceAmount != null ? `${box.priceAmount} ${box.priceCurrency ?? 'USD'}` : '';
+		pricing = box.name;
+	}
+
+	/** "469 руб" → [469, "руб"]; no currency keeps the box's own, else USD */
+	function parsePrice(text: string, box: FleetBox): [number, string] | null {
+		const m = text.trim().match(/^([$€₽]?)\s*(\d+(?:[.,]\d+)?)\s*([^\d\s]*)$/u);
+		if (!m) return null;
+		const amount = Number(m[2].replace(',', '.'));
+		const cur = m[3] || m[1] || box.priceCurrency || 'USD';
+		return amount > 0 ? [amount, cur] : null;
+	}
+
+	async function finishPrice(box: FleetBox, keep: boolean) {
+		if (pricing !== box.name) return;
+		pricing = null;
+		const text = priceDraft.trim();
+		if (!keep || text === '') return;
+		const parsed = parsePrice(text, box);
+		if (!parsed) {
+			labelError = `${box.name}: цена «${text}» не читается, пиши «6 usd», «469 руб» или «5,5 €»`;
+			return;
+		}
+		if (parsed[0] === box.priceAmount && parsed[1].toUpperCase() === box.priceCurrency) return;
+		try {
+			const res = await setBoxPrice(box.name, parsed[0], parsed[1]);
+			savedCents = { ...savedCents, [box.name]: res.monthlyCents };
+			onChanged?.();
+		} catch (e) {
+			labelError = `${box.name}: ${describeApiError(e)}`;
+		}
+	}
+
+	function priceKey(e: KeyboardEvent, box: FleetBox) {
+		if (e.key === 'Enter') finishPrice(box, true);
+		else if (e.key === 'Escape') finishPrice(box, false);
+	}
+
+	function focusSelect(node: HTMLInputElement) {
+		node.focus();
+		node.select();
+	}
+
 	const filteredAllBoxes = $derived.by(() => {
 		if (!searchQuery.trim()) return activeBoxes;
 		const q = searchQuery.toLowerCase().trim();
 		return activeBoxes.filter(
 			(b) =>
 				b.name.toLowerCase().includes(q) ||
+				labelOf(b).toLowerCase().includes(q) ||
 				b.provider.toLowerCase().includes(q) ||
 				b.location.toLowerCase().includes(q) ||
 				b.proto.toLowerCase().includes(q),
@@ -346,11 +467,63 @@
 	});
 </script>
 
+{#snippet boxPrice(box: FleetBox, suffix: boolean)}
+	{#if pricing === box.name}
+		<input
+			class="rename-input price-input m"
+			placeholder="6 usd"
+			aria-label="цена машины {box.name} в месяц"
+			bind:value={priceDraft}
+			use:focusSelect
+			onkeydown={(e) => priceKey(e, box)}
+			onblur={() => finishPrice(box, true)}
+		/>
+	{:else}
+		{@const cents = centsOf(box)}
+		<button
+			class="price-btn m"
+			ondblclick={() => startPrice(box)}
+			title={box.priceAmount != null
+				? `${box.priceAmount} ${box.priceCurrency} в месяц у хостера; двойной клик: поменять`
+				: 'двойной клик: вписать цену'}
+		>
+			{#if cents == null}<i class="nodata">нет цены</i>{:else}{formatCents(cents)}{#if suffix}<small>/мес</small
+					>{/if}{/if}
+		</button>
+	{/if}
+{/snippet}
+
+{#snippet boxName(box: FleetBox, cls: string)}
+	{#if renaming === box.name}
+		<input
+			class="rename-input m"
+			maxlength="40"
+			placeholder={box.name}
+			aria-label="своё имя машины {box.name}"
+			bind:value={draft}
+			use:focusSelect
+			onkeydown={(e) => renameKey(e, box)}
+			onblur={() => finishRename(box, true)}
+		/>
+	{:else}
+		{@const label = labelOf(box)}
+		<button
+			class={cls}
+			onclick={() => clickName(box)}
+			ondblclick={() => startRename(box)}
+			title="клик: карточка машины, двойной клик: своё имя"
+		>
+			{#if label}{label} <small class="real-name">{box.name}</small>{:else}{box.name}{/if}
+		</button>
+	{/if}
+{/snippet}
+
 <section class="card fleet-card">
 	<div class="card-head">
 		<div class="head-left">
 			<h2>парк машин</h2>
 			<span class="sub">{activeBoxes.length} в строю</span>
+			{#if labelError}<span class="label-err" role="alert">{labelError}</span>{/if}
 		</div>
 
 		<div class="right filters">
@@ -418,15 +591,11 @@
 								>
 									{boxOpen ? '▾' : '▸'}
 								</button>
-								<button class="t-box-name m" onclick={() => onOpenBox(box)} title="карточка машины">{box.name}</button>
+								{@render boxName(box, 't-box-name m')}
 								<span class="ip-sealed" title="ip запечатан, открывается в карточке">ip в конверте</span>
 								<span class="t-cell">{boxRegion(box)}</span>
 								<span class="t-cell m">{boxLifetime(box.createdAt)}</span>
-								<span class="t-cell m">
-									{#if box.monthlyCents == null}<i class="nodata">нет цены</i>{:else}{formatCents(
-											box.monthlyCents,
-										)}<small>/мес</small>{/if}
-								</span>
+								<span class="t-cell m">{@render boxPrice(box, true)}</span>
 								<span class="t-cell">
 									{#if box.openIncident}
 										<span class="status-bad"><span class="bad-dot"></span>{box.openIncident}</span>
@@ -687,9 +856,7 @@
 						<tr class="m-row" class:has-incident={box.openIncident}>
 							<td class="col-host">
 								<div class="host-cell">
-									<button class="box-name m as-link" onclick={() => onOpenBox(box)} title="карточка машины"
-										>{box.name}</button
-									>
+									{@render boxName(box, 'box-name m as-link')}
 								</div>
 							</td>
 							<td>
@@ -699,11 +866,7 @@
 								<span class="badge {protoBadgeClass(box.proto)}">{shortProto(box.proto)}</span>
 							</td>
 							<td class="num">
-								{#if box.monthlyCents}
-									<span class="price-val m">{formatCents(box.monthlyCents)}</span>
-								{:else}
-									<span class="muted">нет цены</span>
-								{/if}
+								<span class="price-val">{@render boxPrice(box, false)}</span>
 							</td>
 							<td class="num">
 								<span class="m font-bold">{box.relays.length}</span>
@@ -887,6 +1050,48 @@
 	.as-link:hover {
 		color: var(--primary, oklch(0.75 0.14 350));
 		text-decoration: underline;
+	}
+
+	.label-err {
+		font-size: 11px;
+		color: var(--bad, oklch(0.7 0.18 25));
+	}
+
+	.price-btn {
+		padding: 0;
+		font: inherit;
+		color: inherit;
+		background: none;
+		border: none;
+		cursor: text;
+	}
+
+	.price-btn:hover {
+		color: var(--primary, oklch(0.75 0.14 350));
+	}
+
+	.price-input {
+		width: 11ch;
+		text-align: right;
+	}
+
+	.real-name {
+		margin-left: 4px;
+		font-size: 10px;
+		font-weight: 400;
+		color: var(--text-3, oklch(0.42 0 0));
+	}
+
+	.rename-input {
+		width: 16ch;
+		padding: 1px 4px;
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--text, oklch(0.93 0 0));
+		background: var(--surface-2, oklch(0.22 0 0));
+		border: 1px solid var(--primary, oklch(0.75 0.14 350));
+		border-radius: 4px;
+		outline: none;
 	}
 
 	.ip-sealed {

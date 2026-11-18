@@ -89,6 +89,11 @@ type providerStats struct {
 	// measurement.
 	TrafficGB  *float64 `json:"trafficGb"`
 	SpentCents int      `json:"spentCents"`
+
+	// PlanTB is how many terabytes a month one machine's plan includes, as
+	// the owner typed it (migration 077); nil when not given. The screen
+	// divides PerBoxMonthlyCents by it: a terabyte at the plan's ceiling.
+	PlanTB *float64 `json:"planTb"`
 }
 
 type providerBanDay struct {
@@ -283,7 +288,30 @@ func (h *Handlers) fillProviderStats(ctx context.Context, out *entryProviderComp
 	if err := banRows.Err(); err != nil {
 		return err
 	}
+	if err := h.fillProviderPlans(ctx, out, at); err != nil {
+		return err
+	}
 	return h.fillProviderCost(ctx, out, at)
+}
+
+// fillProviderPlans reads the terabytes in each provider's plan.
+func (h *Handlers) fillProviderPlans(ctx context.Context, out *entryProviderCompare, at map[string]int) error {
+	rows, err := h.pool.Query(ctx, `SELECT provider, plan_tb::float8 FROM entry_provider_plans`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var provider string
+		var tb float64
+		if err := rows.Scan(&provider, &tb); err != nil {
+			return err
+		}
+		if i, ok := at[provider]; ok {
+			out.Hosting[i].PlanTB = &tb
+		}
+	}
+	return rows.Err()
 }
 
 // fillProviderCost is what each provider's machines carried and cost over the

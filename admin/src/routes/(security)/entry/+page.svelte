@@ -205,15 +205,15 @@
 			<section class="card pool-card-compact">
 				<div class="pool-metrics">
 					<div class="p-cell">
-						<span class="p-label">релеи в пуле</span>
-						<div class="p-val m v-ok">
-							{fleet.pool.inDistribution.toLocaleString('ru-RU')}
+						<span class="p-label">релеи</span>
+						<div class="p-val m v-ok" title="живые релеи, как на графике; в раздаче {fleet.pool.inDistribution}">
+							{fleet.pool.relaysCount.toLocaleString('ru-RU')}
 						</div>
 					</div>
 
 					<div class="p-cell">
 						<span class="p-label">машины</span>
-						<div class="p-val m">
+						<div class="p-val m" title="все не сданные машины парка, как на графике">
 							{fleet.pool.boxesCount.toLocaleString('ru-RU')}
 						</div>
 					</div>
@@ -269,7 +269,7 @@
 			</section>
 
 			<!-- ======== 3. PRODUCT & BIZOPS ECONOMICS ======== -->
-			<FleetEconomics compare={fleet.providers} />
+			<FleetEconomics compare={fleet.providers} onChanged={load} />
 
 			<!-- ======== 4. FLEET PARK (GEO GROUPS & EXPANDABLE LIST) ======== -->
 			<FleetPark
@@ -278,6 +278,7 @@
 				onForgetBox={onForget}
 				onMarkDeadRelay={askDead}
 				onOpenBox={(b) => (cardBox = b.name)}
+				onChanged={load}
 			/>
 
 			<!-- ======== 5. ROLLOUTS IN FLIGHT (BOTTOM PANEL) ======== -->

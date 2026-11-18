@@ -12,7 +12,8 @@ import (
 
 // Ingester moves clients' minutes from testers' log stream into
 // product_tunnel_minutes, product_tester_ru_minutes and
-// product_tester_stall_minutes.
+// product_tester_stall_minutes, and what a tester's tunnel carried and ran on
+// into product_tester_traffic_minutes and product_tester_state.
 type Ingester struct {
 	store *Store
 	pool  db.Pool
@@ -53,7 +54,7 @@ func (in *Ingester) Once(ctx context.Context) (int, error) {
 	for {
 		rows, err := in.pool.Query(ctx, `
 			SELECT id, install_id, body FROM support_tester_log_chunks
-			WHERE id > $1 AND (body LIKE '%`+linePrefix+`%' OR body LIKE '%`+ruPrefix+`%' OR body LIKE '%`+stallPrefix+`%')
+			WHERE id > $1 AND (body LIKE '%`+linePrefix+`%' OR body LIKE '%`+ruPrefix+`%' OR body LIKE '%`+stallPrefix+`%' OR body LIKE '%`+bytesPrefix+`%' OR body LIKE '%`+statePrefix+`%')
 			ORDER BY id ASC LIMIT 200`, cursor)
 		if err != nil {
 			return total, fmt.Errorf("read chunks: %w", err)
@@ -83,6 +84,8 @@ func (in *Ingester) Once(ctx context.Context) (int, error) {
 			var minutes []Minute
 			var ru []RuMinute
 			var stalls []StallMinute
+			var traffic []TrafficMinute
+			var states []TesterState
 			for _, line := range strings.Split(c.body, "\n") {
 				if m, ok := ParseLine(line, c.install); ok {
 					minutes = append(minutes, m...)
@@ -92,6 +95,12 @@ func (in *Ingester) Once(ctx context.Context) (int, error) {
 				}
 				if m, ok := ParseStallLine(line, c.install); ok {
 					stalls = append(stalls, m...)
+				}
+				if m, ok := ParseBytesLine(line, c.install); ok {
+					traffic = append(traffic, m...)
+				}
+				if st, ok := ParseStateLine(line, c.install); ok {
+					states = append(states, st)
 				}
 			}
 			n, err := in.store.Insert(ctx, minutes)
@@ -104,6 +113,14 @@ func (in *Ingester) Once(ctx context.Context) (int, error) {
 			}
 			total += n
 			if n, err = in.store.InsertStalls(ctx, stalls); err != nil {
+				return total, fmt.Errorf("chunk %d: %w", c.id, err)
+			}
+			total += n
+			if n, err = in.store.InsertTraffic(ctx, traffic); err != nil {
+				return total, fmt.Errorf("chunk %d: %w", c.id, err)
+			}
+			total += n
+			if n, err = in.store.InsertStates(ctx, states); err != nil {
 				return total, fmt.Errorf("chunk %d: %w", c.id, err)
 			}
 			total += n

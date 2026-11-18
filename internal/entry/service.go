@@ -18,6 +18,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -594,6 +596,30 @@ func (s *Service) setBoxEdge(ctx context.Context, box, arch, sha string) error {
 // run (jobRun.firstUse).
 func (s *Service) ForgetHostKey(ctx context.Context, box string) error {
 	tag, err := s.pool.Exec(ctx, clearBoxHostKey, box)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: %s", ErrNoSuchBox, box)
+	}
+	return nil
+}
+
+// MaxBoxLabel is the longest name the owner may give a machine on the screen.
+const MaxBoxLabel = 40
+
+// SetBoxLabel gives a machine the owner's own name for the fleet screen. An
+// empty label takes it back to the machine's name. The label is only shown:
+// nothing in the hub looks a machine up by it.
+func (s *Service) SetBoxLabel(ctx context.Context, box, label string) error {
+	label = strings.TrimSpace(label)
+	if utf8.RuneCountInString(label) > MaxBoxLabel {
+		return fmt.Errorf("%w: a label is at most %d characters", ErrRejected, MaxBoxLabel)
+	}
+	if strings.ContainsFunc(label, unicode.IsControl) {
+		return fmt.Errorf("%w: a label is one line of text", ErrRejected)
+	}
+	tag, err := s.pool.Exec(ctx, setBoxLabel, box, label)
 	if err != nil {
 		return err
 	}

@@ -18,6 +18,9 @@ type TesterChart struct {
 	Buckets       []string `json:"buckets"`
 	// Testers are keyed by install; one absent has no minutes in the window.
 	Testers map[string]TesterLines `json:"testers"`
+	// States is each tester's last state line, whenever it was: what the
+	// tunnel runs on now, or ran on when it was last on.
+	States map[string]TesterState `json:"states"`
 }
 
 // TesterLines are one tester's lines, a value per bucket, null where nothing
@@ -34,6 +37,11 @@ type TesterLines struct {
 	StallMS []*float64 `json:"stallMs"`
 	// StallLongMS: the same for the stalls of at least StallLongBoundMS.
 	StallLongMS []*float64 `json:"stallLongMs"`
+	// TunnelMB and DirectMB: megabytes up and down together through the
+	// tunnel and past it (client newer than 1.0.92); null where the client
+	// wrote nothing.
+	TunnelMB []*float64 `json:"tunnelMb"`
+	DirectMB []*float64 `json:"directMb"`
 }
 
 // The thresholds the testers screen draws, of the ones the client counts.
@@ -62,11 +70,24 @@ func BuildTesterChart(ctx context.Context, s *Store, name string, now time.Time)
 	if err != nil {
 		return TesterChart{}, err
 	}
-	return assembleTesters(win, since, until, step, counts, ru, stalls), nil
+	traffic, err := s.TrafficCounts(ctx, since, until, step)
+	if err != nil {
+		return TesterChart{}, err
+	}
+	states, err := s.LatestStates(ctx)
+	if err != nil {
+		return TesterChart{}, err
+	}
+	c := assembleTesters(win, since, until, step, counts, ru, stalls, traffic)
+	c.States = states
+	return c, nil
 }
 
-func assembleTesters(win string, since, until time.Time, step time.Duration, counts []Count, ru []RuCount, stalls []StallCount) TesterChart {
-	c := TesterChart{Window: win, BucketSeconds: int64(step / time.Second), Buckets: []string{}, Testers: map[string]TesterLines{}}
+func assembleTesters(win string, since, until time.Time, step time.Duration, counts []Count, ru []RuCount, stalls []StallCount, traffic []TrafficCount) TesterChart {
+	c := TesterChart{
+		Window: win, BucketSeconds: int64(step / time.Second), Buckets: []string{},
+		Testers: map[string]TesterLines{}, States: map[string]TesterState{},
+	}
 	index := map[int64]int{}
 	for b := since; b.Before(until); b = b.Add(step) {
 		index[b.Unix()] = len(c.Buckets)
@@ -79,6 +100,7 @@ func assembleTesters(win string, since, until time.Time, step time.Duration, cou
 			l = TesterLines{
 				Lost: make([]*float64, n), RuMS: make([]*float64, n), RuMissed: make([]*float64, n),
 				StallMS: make([]*float64, n), StallLongMS: make([]*float64, n),
+				TunnelMB: make([]*float64, n), DirectMB: make([]*float64, n),
 			}
 			c.Testers[install] = l
 		}
@@ -123,6 +145,16 @@ func assembleTesters(win string, since, until time.Time, step time.Duration, cou
 		case StallLongBoundMS:
 			add(lines(k.Install).StallLongMS, i, float64(k.MS))
 		}
+	}
+	const mb = 1 << 20
+	for _, k := range traffic {
+		i, ok := index[k.Bucket.Unix()]
+		if !ok {
+			continue
+		}
+		l := lines(k.Install)
+		add(l.TunnelMB, i, float64(k.Tunnel)/mb)
+		add(l.DirectMB, i, float64(k.Direct)/mb)
 	}
 	return c
 }

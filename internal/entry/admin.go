@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -67,6 +68,14 @@ func RegisterAdminRoutes(mux *http.ServeMux, h *AdminHandlers, gate, stepUp func
 	mux.HandleFunc("GET /api/v1/admin/entry/hosting/instances", gate(h.HostingInstances))
 	mux.HandleFunc("POST /api/v1/admin/entry/boxes/order", stepUp(h.OrderBox))
 	mux.HandleFunc("POST /api/v1/admin/entry/boxes/{name}/reboot", gate(h.RebootBox))
+	// The owner's own name for a machine on the screen: shown, never acted on.
+	mux.HandleFunc("PUT /api/v1/admin/entry/boxes/{name}/label", gate(h.SetBoxLabel))
+	// What a machine costs a month, as the console's `entry-box price` sets
+	// it: a figure in the economics, no money moves.
+	mux.HandleFunc("PUT /api/v1/admin/entry/boxes/{name}/price", gate(h.SetBoxPrice))
+	// Terabytes a month in one machine's plan at a hoster: a figure in the
+	// provider table, nothing acts on it.
+	mux.HandleFunc("PUT /api/v1/admin/entry/hosters/{provider}/plan-tb", gate(h.SetProviderPlanTB))
 	mux.HandleFunc("DELETE /api/v1/admin/entry/boxes/{name}/instance", stepUp(h.DeleteBoxInstance))
 	mux.HandleFunc("GET /api/v1/admin/entry/domains", gate(h.Domains))
 	mux.HandleFunc("GET /api/v1/admin/entry/domains/suggest", gate(h.SuggestDomains))
@@ -357,6 +366,87 @@ func (h *AdminHandlers) ForgetHostKey(w http.ResponseWriter, r *http.Request) {
 	}
 	audit.Log(r.Context(), h.audit, r, audit.Entry{
 		AdminID: actor.ID, Action: "entry.box.forget_host_key", TargetType: "entry_box", TargetID: box,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{})
+}
+
+// SetBoxLabel — PUT /api/v1/admin/entry/boxes/{name}/label: body {"label"}.
+// The machine shows under that name on the fleet screen; "" takes it back.
+func (h *AdminHandlers) SetBoxLabel(w http.ResponseWriter, r *http.Request) {
+	actor := auth.GetAdmin(r)
+	if actor == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		Label string `json:"label"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "body is {\"label\"}"})
+		return
+	}
+	box := r.PathValue("name")
+	if h.refused(w, h.svc.SetBoxLabel(r.Context(), box, body.Label)) {
+		return
+	}
+	audit.Log(r.Context(), h.audit, r, audit.Entry{
+		AdminID: actor.ID, Action: "entry.box.label", TargetType: "entry_box", TargetID: box,
+		Payload: map[string]any{"label": strings.TrimSpace(body.Label)},
+	})
+	writeJSON(w, http.StatusOK, map[string]any{})
+}
+
+// SetBoxPrice — PUT /api/v1/admin/entry/boxes/{name}/price: body {"amount",
+// "currency"} (USD, EUR, RUB), a month as the hoster bills it. Answers the
+// price in US cents the hub counts it at (monthlyCents).
+func (h *AdminHandlers) SetBoxPrice(w http.ResponseWriter, r *http.Request) {
+	actor := auth.GetAdmin(r)
+	if actor == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		Amount   float64 `json:"amount"`
+		Currency string  `json:"currency"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "body is {\"amount\", \"currency\"}"})
+		return
+	}
+	box := r.PathValue("name")
+	cents, err := h.svc.SetBoxPrice(r.Context(), box, body.Amount, body.Currency)
+	if h.refused(w, err) {
+		return
+	}
+	audit.Log(r.Context(), h.audit, r, audit.Entry{
+		AdminID: actor.ID, Action: "entry.box.price", TargetType: "entry_box", TargetID: box,
+		Payload: map[string]any{"amount": body.Amount, "currency": body.Currency, "monthly_cents": cents},
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"monthlyCents": cents})
+}
+
+// SetProviderPlanTB — PUT /api/v1/admin/entry/hosters/{provider}/plan-tb:
+// body {"tb"}, terabytes a month one machine's plan includes; 0 forgets it.
+func (h *AdminHandlers) SetProviderPlanTB(w http.ResponseWriter, r *http.Request) {
+	actor := auth.GetAdmin(r)
+	if actor == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		TB float64 `json:"tb"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "body is {\"tb\"}"})
+		return
+	}
+	provider := r.PathValue("provider")
+	if h.refused(w, h.svc.SetProviderPlanTB(r.Context(), provider, body.TB)) {
+		return
+	}
+	audit.Log(r.Context(), h.audit, r, audit.Entry{
+		AdminID: actor.ID, Action: "entry.hoster.plan_tb", TargetType: "hoster", TargetID: provider,
+		Payload: map[string]any{"tb": body.TB},
 	})
 	writeJSON(w, http.StatusOK, map[string]any{})
 }

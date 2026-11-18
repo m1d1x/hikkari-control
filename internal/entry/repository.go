@@ -46,6 +46,7 @@ const (
 		FROM prev WHERE b.name = prev.name
 		RETURNING prev.forgotten`
 	clearBoxHostKey = `UPDATE entry_boxes SET host_key = NULL, host_key_forgotten_at = now() WHERE name = $1`
+	setBoxLabel     = `UPDATE entry_boxes SET label = nullif($2, '') WHERE name = $1`
 	setBoxEdge      = `
 		UPDATE entry_boxes SET arch = $2, edge_sha = $3, edge_seen_at = now() WHERE name = $1`
 	lockBox = `
