@@ -35,6 +35,17 @@ import (
 // free.
 func RequireAdmin(verifier *rsa.PublicKey, pool db.Pool, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if role, ok := warmRole(r.Context()); ok {
+			// The hub's own warmer (warm.go), in this process: no cookie,
+			// a chart only, computed into the cache and nowhere else.
+			if r.Method != http.MethodGet || !isChartPath(r.URL.Path) {
+				writeError(w, http.StatusForbidden, "admin access required")
+				return
+			}
+			ctx := auth.WithAdmin(r.Context(), &auth.AdminInfo{Login: "hub-warmer", Role: role})
+			charts.recompute(r.WithContext(ctx), string(role), next)
+			return
+		}
 		if verifier == nil {
 			// Configuration failure, not an auth failure. Refusing loudly
 			// beats falling back to some other key that would "work".

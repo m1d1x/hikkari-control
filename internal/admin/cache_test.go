@@ -92,7 +92,7 @@ func TestAStaleChartIsHandedOutAtOnceAndRecomputedBehind(t *testing.T) {
 	const url = "/api/v1/admin/trunk/wires?window=24h"
 
 	askChart(c, "owner", url, h)
-	clk.add(chartFresh + time.Second)
+	clk.add(warmEvery("24h") + time.Second)
 	if got := askChart(c, "owner", url, h); got != `{"n":1}` {
 		t.Fatalf("a stale ask waited for the new answer: %s", got)
 	}

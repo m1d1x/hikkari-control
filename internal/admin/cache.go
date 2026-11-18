@@ -23,10 +23,13 @@ import (
 // request waits. Two requests for the same chart never compute it twice.
 //
 // The data under these charts lands a minute at a time, so an answer up to
-// chartFresh old says nothing the operator could act on differently.
+// chartFresh old says nothing the operator could act on differently. A chart
+// over days is drawn in buckets of 10 minutes and more: its answer is fresh
+// for as long as warmEvery says (warm.go), and the warmer recomputes it on
+// that step, so the operator never waits for it.
 const (
 	chartFresh   = 30 * time.Second
-	chartStale   = 10 * time.Minute
+	chartStale   = 30 * time.Minute
 	chartTimeout = 2 * time.Minute
 	// chartMaxBody bounds what one entry may hold: a chart answer is tens of
 	// kilobytes, anything far larger is a list that should not live here.
@@ -95,6 +98,7 @@ var charts = &chartCache{entries: map[string]*chartEntry{}, now: time.Now}
 func (c *chartCache) serve(w http.ResponseWriter, r *http.Request, role string, next http.Handler) {
 	key := role + "\x00" + r.URL.RequestURI()
 	now := c.now()
+	warmed.note(role, r.URL.RequestURI(), now)
 
 	c.mu.Lock()
 	e := c.entries[key]
@@ -105,7 +109,7 @@ func (c *chartCache) serve(w http.ResponseWriter, r *http.Request, role string, 
 	}
 	if a := e.answer; a != nil {
 		age := now.Sub(a.at)
-		if age < chartFresh {
+		if age < max(chartFresh, warmEvery(r.URL.Query().Get("window"))) {
 			c.mu.Unlock()
 			a.write(w)
 			return
@@ -138,6 +142,40 @@ func (c *chartCache) serve(w http.ResponseWriter, r *http.Request, role string, 
 		return
 	}
 	a.write(w)
+}
+
+// recompute computes the answer of r now and waits for it, whatever the age
+// of the kept one: the warmer's call. A computation already running is
+// joined, not repeated.
+func (c *chartCache) recompute(r *http.Request, role string, next http.Handler) {
+	key := role + "\x00" + r.URL.RequestURI()
+	c.mu.Lock()
+	e := c.entries[key]
+	if e == nil {
+		e = &chartEntry{}
+		c.entries[key] = e
+	}
+	if e.wait == nil {
+		c.start(e, key, r, next)
+	}
+	wait := e.wait
+	c.mu.Unlock()
+	select {
+	case <-wait:
+	case <-r.Context().Done():
+	}
+}
+
+// age is how old the kept answer of role and uri is; ok is false when there
+// is none.
+func (c *chartCache) age(role, uri string) (time.Duration, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e := c.entries[role+"\x00"+uri]
+	if e == nil || e.answer == nil {
+		return 0, false
+	}
+	return c.now().Sub(e.answer.at), true
 }
 
 // start computes the answer in its own goroutine, detached from the request

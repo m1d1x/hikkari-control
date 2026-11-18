@@ -464,6 +464,9 @@ func run() error {
 		MaxHeaderBytes:    16 << 10,
 		ErrorLog:          log.New(io.Discard, "", 0),
 	}
+	// The panel's charts computed on their own step, so a tab opens on an
+	// answer already made (internal/admin/warm.go).
+	go admin.NewChartWarmer(pool, adminMux).Run(ctx)
 	adminSrv := newAdminServer(adminListenAddr(), adminMux)
 	errc := make(chan error, 2)
 	go func() { errc <- srv.ListenAndServe() }()
