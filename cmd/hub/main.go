@@ -40,6 +40,7 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/support"
 	"github.com/m1d1x/hikkari-control/internal/telemetry"
 	"github.com/m1d1x/hikkari-control/internal/testerlegs"
+	"github.com/m1d1x/hikkari-control/internal/testertimeline"
 	"github.com/m1d1x/hikkari-control/internal/voiceruns"
 )
 
@@ -433,6 +434,9 @@ func run() error {
 	}
 	standRuns.SetCascade(cascadeWatch)
 	cascadewatch.RegisterOpsRoutes(adminMux, cascadeWatch, opsGate)
+	// A tester's minutes beside our side's events, for a lag the tester saw
+	// (tool timeline, internal/testertimeline).
+	testertimeline.RegisterOpsRoutes(adminMux, testertimeline.Sources{Testers: testerStore, Trunk: cascadeWatch.Store()}, opsGate)
 	// Stage 4: every wire's call and downloads as history, the selector's
 	// moves as marks (admin /protocols/trunk).
 	cascadewatch.RegisterAdminRoutes(adminMux, cascadeWatch, func(h http.HandlerFunc) http.HandlerFunc {

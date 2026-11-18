@@ -51,6 +51,7 @@ type Row struct {
 	RTTP95        *int      `json:"rtt_p95_ms,omitempty"`
 	RTTMax        *int      `json:"rtt_max_ms,omitempty"`
 	Jitter        *float64  `json:"jitter_ms,omitempty"`
+	Gaps40        *int      `json:"gaps40,omitempty"` // clients from 1.0.92
 	Gaps60        int       `json:"gaps60"`
 	Gaps150       int       `json:"gaps150"`
 	GapMax        *int      `json:"gap_max_ms,omitempty"`
@@ -121,6 +122,7 @@ func parseLine(line, install string, receivedAt time.Time, version string) (Row,
 	if j, err := strconv.ParseFloat(f["jitter"], 64); err == nil {
 		r.Jitter = &j
 	}
+	r.Gaps40 = opt("gaps40")
 	r.Gaps60, r.Gaps150, r.Reorder, r.Dup = num("gaps60"), num("gaps150"), num("reorder"), num("dup")
 	if r.Sent == 0 && r.Error == "" {
 		return Row{}, false // neither a measurement nor a reason there is none
@@ -150,13 +152,13 @@ func (s *Store) Insert(ctx context.Context, rows []Row) (int, error) {
 			INSERT INTO voice_runs (source_key, install_id, measured_at, client_version, on_request, path,
 			                        profile, proto, iface, network, network_at, mobile, sent, recv, loss_run,
 			                        rtt_p50_ms, rtt_p95_ms, rtt_max_ms, jitter_ms, gaps60, gaps150, gap_max_ms,
-			                        reorder, dup, error)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+			                        reorder, dup, error, gaps40)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
 			ON CONFLICT (source_key) DO NOTHING
 		`, r.key, r.InstallID, r.MeasuredAt.UTC(), r.ClientVersion, r.OnRequest, r.Path,
 			r.Profile, r.Proto, r.Iface, r.Network, r.NetworkAt, r.Mobile, r.Sent, r.Recv, r.LossRun,
 			r.RTTP50, r.RTTP95, r.RTTMax, r.Jitter, r.Gaps60, r.Gaps150, r.GapMax,
-			r.Reorder, r.Dup, r.Error)
+			r.Reorder, r.Dup, r.Error, r.Gaps40)
 		if err != nil {
 			return added, fmt.Errorf("insert voice run: %w", err)
 		}
@@ -177,7 +179,7 @@ func (s *Store) Rows(ctx context.Context, q Query) ([]Row, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, install_id, measured_at, client_version, on_request, path, profile, proto, iface,
 		       network, network_at, mobile, sent, recv, loss_run, rtt_p50_ms, rtt_p95_ms, rtt_max_ms,
-		       jitter_ms, gaps60, gaps150, gap_max_ms, reorder, dup, error
+		       jitter_ms, gaps60, gaps150, gap_max_ms, reorder, dup, error, gaps40
 		FROM voice_runs
 		WHERE measured_at >= $1 AND ($2 = '' OR install_id = $2) AND ($3 = '' OR proto = $3)
 		ORDER BY measured_at ASC
@@ -194,7 +196,7 @@ func (s *Store) Rows(ctx context.Context, q Query) ([]Row, error) {
 		if err := rows.Scan(&r.ID, &r.InstallID, &r.MeasuredAt, &r.ClientVersion, &r.OnRequest, &r.Path,
 			&r.Profile, &r.Proto, &r.Iface, &r.Network, &r.NetworkAt, &r.Mobile, &r.Sent, &r.Recv, &r.LossRun,
 			&r.RTTP50, &r.RTTP95, &r.RTTMax, &jitter, &r.Gaps60, &r.Gaps150, &r.GapMax,
-			&r.Reorder, &r.Dup, &r.Error); err != nil {
+			&r.Reorder, &r.Dup, &r.Error, &r.Gaps40); err != nil {
 			return nil, fmt.Errorf("scan voice run: %w", err)
 		}
 		if jitter != nil {
@@ -232,6 +234,9 @@ type Group struct {
 	Minutes   float64 `json:"minutes"`
 	LossPct   float64 `json:"loss_pct"`
 	// Gaps60PerMin and Gaps150PerMin are the silences a call hears, a minute.
+	// Gaps40PerMin counts only the series that measured it (clients from
+	// 1.0.92), over their own minutes; nil when none did.
+	Gaps40PerMin  *float64  `json:"gaps40_per_min,omitempty"`
 	Gaps60PerMin  float64   `json:"gaps60_per_min"`
 	Gaps150PerMin float64   `json:"gaps150_per_min"`
 	GapMaxMs      *int      `json:"gap_max_ms,omitempty"`
@@ -247,6 +252,7 @@ func Summarize(rows []Row) []Group {
 		g               Group
 		sent, recv      int
 		gaps60, gaps150 int
+		gaps40, sent40  int
 		p50s            []int
 		jitters         []float64
 	}
@@ -278,6 +284,10 @@ func Summarize(rows []Row) []Group {
 		a.sent += r.Sent
 		a.recv += r.Recv
 		a.gaps60 += r.Gaps60
+		if r.Gaps40 != nil {
+			a.gaps40 += *r.Gaps40
+			a.sent40 += r.Sent
+		}
 		a.gaps150 += r.Gaps150
 		if r.GapMax != nil && (a.g.GapMaxMs == nil || *r.GapMax > *a.g.GapMaxMs) {
 			v := *r.GapMax
@@ -304,6 +314,10 @@ func Summarize(rows []Row) []Group {
 		g.LossPct = round2(float64(a.sent-a.recv) / float64(a.sent) * 100)
 		g.Gaps60PerMin = round2(float64(a.gaps60) / minutes)
 		g.Gaps150PerMin = round2(float64(a.gaps150) / minutes)
+		if a.sent40 > 0 {
+			v := round2(float64(a.gaps40) / (time.Duration(a.sent40) * seriesInterval).Minutes())
+			g.Gaps40PerMin = &v
+		}
 		if len(a.p50s) > 0 {
 			sort.Ints(a.p50s)
 			v := a.p50s[(len(a.p50s)-1)/2]
