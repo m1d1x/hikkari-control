@@ -15,16 +15,18 @@ const (
 	statePrefix = "[downtime] state at="
 )
 
-// TrafficMinute is one minute of a tester's bytes through the tunnel and past it.
+// TrafficMinute is one minute of a tester's bytes through the tunnel.
 type TrafficMinute struct {
-	Install                                    string
-	At                                         time.Time
-	TunnelUp, TunnelDown, DirectUp, DirectDown int64
+	Install              string
+	At                   time.Time
+	TunnelUp, TunnelDown int64
 }
 
-// ParseBytesLine reads a run of minutes' bytes:
-// "[downtime] bytes from=<unix> v=1200,56000,300,900;.;-". "." is a minute
-// that carried nothing, stored as zeros; "-" was not measured.
+// ParseBytesLine reads a run of minutes' bytes through the tunnel:
+// "[downtime] bytes from=<unix> v=1200,56000;.;-". "." is a minute that
+// carried nothing, stored as zeros; "-" was not measured. Client 1.0.93 wrote
+// two more figures per minute, up and down past the tunnel: they are read and
+// dropped, what went past the VPN is the tester's own business (owner, 18.11).
 func ParseBytesLine(line, install string) ([]TrafficMinute, bool) {
 	i := strings.Index(line, bytesPrefix)
 	if i < 0 || install == "" {
@@ -54,18 +56,20 @@ func ParseBytesLine(line, install string) ([]TrafficMinute, bool) {
 			continue
 		}
 		parts := strings.Split(v, ",")
-		if len(parts) != 4 {
+		if len(parts) != 2 && len(parts) != 4 {
 			return nil, false
 		}
-		var n [4]int64
+		var n [2]int64
 		for j, p := range parts {
 			x, err := strconv.ParseInt(p, 10, 64)
 			if err != nil || x < 0 {
 				return nil, false
 			}
-			n[j] = x
+			if j < len(n) {
+				n[j] = x
+			}
 		}
-		out = append(out, TrafficMinute{Install: install, At: at, TunnelUp: n[0], TunnelDown: n[1], DirectUp: n[2], DirectDown: n[3]})
+		out = append(out, TrafficMinute{Install: install, At: at, TunnelUp: n[0], TunnelDown: n[1]})
 	}
 	return out, true
 }
@@ -119,18 +123,17 @@ func (s *Store) InsertTraffic(ctx context.Context, minutes []TrafficMinute) (int
 	}
 	installs := make([]string, len(minutes))
 	ats := make([]time.Time, len(minutes))
-	tu, td, du, dd := make([]int64, len(minutes)), make([]int64, len(minutes)), make([]int64, len(minutes)), make([]int64, len(minutes))
+	tu, td := make([]int64, len(minutes)), make([]int64, len(minutes))
 	for i, m := range minutes {
 		installs[i], ats[i] = m.Install, m.At
-		tu[i], td[i], du[i], dd[i] = m.TunnelUp, m.TunnelDown, m.DirectUp, m.DirectDown
+		tu[i], td[i] = m.TunnelUp, m.TunnelDown
 	}
 	tag, err := s.pool.Exec(ctx, `
-		INSERT INTO product_tester_traffic_minutes (install_id, minute, tunnel_up, tunnel_down, direct_up, direct_down)
-		SELECT * FROM unnest($1::text[], $2::timestamptz[], $3::bigint[], $4::bigint[], $5::bigint[], $6::bigint[])
+		INSERT INTO product_tester_traffic_minutes (install_id, minute, tunnel_up, tunnel_down)
+		SELECT * FROM unnest($1::text[], $2::timestamptz[], $3::bigint[], $4::bigint[])
 		ON CONFLICT (install_id, minute) DO UPDATE SET
-			tunnel_up = EXCLUDED.tunnel_up, tunnel_down = EXCLUDED.tunnel_down,
-			direct_up = EXCLUDED.direct_up, direct_down = EXCLUDED.direct_down`,
-		installs, ats, tu, td, du, dd)
+			tunnel_up = EXCLUDED.tunnel_up, tunnel_down = EXCLUDED.tunnel_down`,
+		installs, ats, tu, td)
 	if err != nil {
 		return 0, fmt.Errorf("insert traffic minutes: %w", err)
 	}
@@ -159,11 +162,11 @@ func (s *Store) InsertStates(ctx context.Context, states []TesterState) (int, er
 	return int(tag.RowsAffected()), nil
 }
 
-// TrafficCount is one install's bytes in one bucket.
+// TrafficCount is one install's bytes through the tunnel in one bucket.
 type TrafficCount struct {
-	Install        string
-	Bucket         time.Time
-	Tunnel, Direct int64
+	Install string
+	Bucket  time.Time
+	Tunnel  int64
 }
 
 // TrafficCounts reads the bytes in [since, until) grouped into step buckets,
@@ -172,7 +175,7 @@ func (s *Store) TrafficCounts(ctx context.Context, since, until time.Time, step 
 	rows, err := s.pool.Query(ctx, `
 		SELECT install_id,
 		       to_timestamp(floor(extract(epoch FROM minute) / $3) * $3) AS bucket,
-		       sum(tunnel_up + tunnel_down)::bigint, sum(direct_up + direct_down)::bigint
+		       sum(tunnel_up + tunnel_down)::bigint
 		FROM product_tester_traffic_minutes
 		WHERE minute >= $1 AND minute < $2
 		GROUP BY 1, 2`,
@@ -184,7 +187,7 @@ func (s *Store) TrafficCounts(ctx context.Context, since, until time.Time, step 
 	var out []TrafficCount
 	for rows.Next() {
 		var c TrafficCount
-		if err := rows.Scan(&c.Install, &c.Bucket, &c.Tunnel, &c.Direct); err != nil {
+		if err := rows.Scan(&c.Install, &c.Bucket, &c.Tunnel); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
