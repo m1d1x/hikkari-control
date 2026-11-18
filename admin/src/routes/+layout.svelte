@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import { onMount, onDestroy } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { goto, preloadCode } from '$app/navigation';
 	import { page } from '$app/stores';
 	import Sidebar from '$components/layout/Sidebar.svelte';
 	import { accessDenied } from '$lib/stores/access';
@@ -52,6 +52,11 @@
 		}
 		bootState = 'ready';
 		startKeepalive();
+		// Every tab's code is fetched once now, not when its link is first
+		// clicked: through the tunnel a route's chunks are a few round trips.
+		for (const path of Object.keys(ROUTE_TITLES)) {
+			if (path !== '/login') void preloadCode(path).catch(() => {});
+		}
 	});
 
 	const ROUTE_TITLES: Record<string, string> = {
@@ -129,12 +134,6 @@
 {/if}
 
 <style>
-
-
-
-
-
-
 	.app {
 		display: flex;
 		height: 100vh;

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
+	import { onFreshAnswers } from '$lib/api/fresh';
 	import PageShell from '$components/layout/PageShell.svelte';
 	import TrendChart, { type TrendSeries } from '$components/entry/TrendChart.svelte';
 	import { fetchHikkariChart, type HikkariChart, type HikkariWindow } from '$lib/api/hikkari';
@@ -141,6 +142,7 @@
 		void load();
 	}
 
+	onFreshAnswers(load);
 	onMount(() => {
 		void load();
 		timer = setInterval(load, REFRESH_MS);

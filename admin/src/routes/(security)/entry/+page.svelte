@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { onFreshAnswers } from '$lib/api/fresh';
 	import PageShell from '$components/layout/PageShell.svelte';
 	import FleetPoolChart from '$components/entry/FleetPoolChart.svelte';
 	import FleetCensorTimeline from '$components/entry/FleetCensorTimeline.svelte';
@@ -75,6 +76,7 @@
 	// The page does not open a run's log by itself: a rollout the autopilot
 	// started is a line in the list at the bottom, and its log is one click
 	// away there. Only a run the operator started from this page is followed.
+	onFreshAnswers(load);
 	onMount(load);
 
 	function follow(jobId: string) {

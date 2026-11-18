@@ -1,3 +1,4 @@
+import { writable } from 'svelte/store';
 import { accessDenied } from '$lib/stores/access';
 import { ensureFreshAdminAccess } from '$lib/auth/refresh';
 import { apiUrl } from '$lib/config/api';
@@ -128,7 +129,7 @@ async function request<T>(
 		body: body ? JSON.stringify(body) : undefined,
 	};
 
-	if (isMutating(method)) dropKeptCharts();
+	if (isMutating(method)) dropKeptAnswers();
 	let res = await fetch(apiUrl(path), init);
 	if (res.status === 401 && shouldRefreshOn401(path)) {
 		try {
@@ -167,66 +168,90 @@ function withParams(path: string, params?: Record<string, string | number | unde
 	return url.pathname + url.search;
 }
 
-// Charts and summaries over minutes of data (the same list the hub keeps an
-// answer of, internal/admin/cache.go chartPaths). Every tab asks for its
-// charts on mount, so clicking between tabs asked the hub the same questions
-// again and waited for them each time. An answer younger than CHART_FRESH_MS
-// is handed back at once; the pages poll once a minute, so a poll always gets
-// a new one. Any action (POST, PUT, PATCH, DELETE) drops everything kept: what
-// it changed must show at once.
-const CHART_PATHS = new Set([
-	'/api/v1/admin/entry/overview',
-	'/api/v1/admin/entry/fleet',
-	'/api/v1/admin/entry/fleet/chart',
-	'/api/v1/admin/entry/pressure',
-	'/api/v1/admin/entry/domains/metrics',
-	'/api/v1/admin/entry/providers/compare',
-	'/api/v1/admin/entry/spend',
-	'/api/v1/admin/entry/protocols',
-	'/api/v1/admin/fleet/profiles',
-	'/api/v1/admin/hikkari/chart',
-	'/api/v1/admin/relay-runs/chart',
-	'/api/v1/admin/product/downtime',
-	'/api/v1/admin/product/downtime-users',
-	'/api/v1/admin/product/errors',
-	'/api/v1/admin/product/metrics',
-	'/api/v1/admin/product/testers',
-	'/api/v1/admin/trunk/egress',
-	'/api/v1/admin/trunk/hearing',
-	'/api/v1/admin/trunk/wires',
-]);
-const CHART_FRESH_MS = 55_000;
+// Every tab asks for its data on mount, and every answer crosses the SSH
+// tunnel to the hub (a third of a second at best), so clicking between tabs
+// meant looking at «загрузка» each time for data seen a minute ago.
+//
+// So a GET answer is kept for KEEP_MS and handed back at once on the next ask
+// of the same URL. When it is older than FRESH_MS it is asked again behind the
+// page; if the new answer differs, `freshAnswers` ticks and the page on
+// screen reloads from the kept answer (onFreshAnswers). Any action (POST,
+// PUT, PATCH, DELETE) drops everything kept: what it changed must show at
+// once. Live screens (logs, jobs, security, the audit trail) are never kept.
+const FRESH_MS = 10_000;
+const KEEP_MS = 30 * 60_000;
+const LIVE_PREFIXES = [
+	'/api/v1/admin/support/tester-logs',
+	'/api/v1/admin/entry/jobs',
+	'/api/v1/admin/entry/hub-key',
+	'/api/v1/admin/security',
+	'/api/v1/admin/ws-ticket',
+	'/api/v1/admin/logs',
+	'/api/v1/admin/system/logs',
+	'/api/v1/admin/trace',
+	'/api/v1/admin/spans',
+	'/api/v1/admin/audit',
+];
 const kept = new Map<string, { at: number; value: unknown }>();
 const asking = new Map<string, Promise<unknown>>();
 
-function isChart(url: string): boolean {
-	const q = url.indexOf('?');
-	return CHART_PATHS.has(q < 0 ? url : url.slice(0, q));
+/** Ticks when an answer asked again behind a page came back different. */
+export const freshAnswers = writable(0);
+let tickQueued = false;
+
+function isKept(url: string): boolean {
+	if (!url.startsWith('/api/v1/admin/')) return false;
+	return !LIVE_PREFIXES.some((p) => url === p || url.startsWith(p + '/') || url.startsWith(p + '?'));
 }
 
-/** Forget every kept chart: called on every action. */
-export function dropKeptCharts(): void {
+/** Forget every kept answer: called on every action. */
+export function dropKeptAnswers(): void {
 	kept.clear();
+	asking.clear();
+	generation++;
 }
 
-function getChart<T>(url: string): Promise<T> {
-	const k = kept.get(url);
-	if (k && Date.now() - k.at < CHART_FRESH_MS) return Promise.resolve(k.value as T);
+// An answer asked for before an action must not be kept after it.
+let generation = 0;
+
+function ask<T>(url: string): Promise<T> {
 	const inflight = asking.get(url);
 	if (inflight) return inflight as Promise<T>;
+	const gen = generation;
 	const p = request<T>('GET', url)
 		.then((value) => {
+			if (gen !== generation) return value;
+			const before = kept.get(url);
 			kept.set(url, { at: Date.now(), value });
+			if (before && JSON.stringify(before.value) !== JSON.stringify(value) && !tickQueued) {
+				// Several answers landing together reload the page once.
+				tickQueued = true;
+				setTimeout(() => {
+					tickQueued = false;
+					freshAnswers.update((n) => n + 1);
+				}, 50);
+			}
 			return value;
 		})
-		.finally(() => asking.delete(url));
+		.finally(() => {
+			if (asking.get(url) === p) asking.delete(url);
+		});
 	asking.set(url, p);
 	return p;
 }
 
+function getKept<T>(url: string): Promise<T> {
+	const k = kept.get(url);
+	if (k && Date.now() - k.at < KEEP_MS) {
+		if (Date.now() - k.at >= FRESH_MS) ask<T>(url).catch(() => {});
+		return Promise.resolve(k.value as T);
+	}
+	return ask<T>(url);
+}
+
 export function get<T>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
 	const url = withParams(path, params);
-	return isChart(url) ? getChart<T>(url) : request<T>('GET', url);
+	return isKept(url) ? getKept<T>(url) : request<T>('GET', url);
 }
 
 /** A GET whose body is not JSON (an NDJSON export, a log file). */
