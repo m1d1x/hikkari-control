@@ -22,9 +22,12 @@ chat=$(value HUB_TELEGRAM_CHAT_ID)
 [[ $token =~ ^[0-9]+:[A-Za-z0-9_-]{30,}$ ]] || { echo "HUB_TELEGRAM_BOT_TOKEN in $file is not a bot token (digits:letters)" >&2; exit 1; }
 [[ $chat =~ ^-?[0-9]+$ ]] || { echo "HUB_TELEGRAM_CHAT_ID in $file is not a number" >&2; exit 1; }
 
-# The token goes to curl on its stdin, not in its arguments.
-answer=$(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$token" |
-	curl -sS -K - --data-urlencode "chat_id=$chat" --data-urlencode "text=Hikkari hub: бот на связи, тревоги магистрали придут сюда." || true)
+# The token and the text go to curl on its stdin, not in its arguments: the
+# token stays off the command line, and curl on Windows reads its arguments in
+# the ANSI code page, which breaks the Cyrillic of the text.
+answer=$(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\ndata-urlencode = "chat_id=%s"\ndata-urlencode = "text=%s"\n' \
+	"$token" "$chat" "Hikkari hub: бот на связи, тревоги магистрали придут сюда." |
+	curl -sS -K - || true)
 case $answer in
 *'"ok":true'*) echo "the bot wrote to the chat" ;;
 *)
