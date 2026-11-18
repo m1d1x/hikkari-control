@@ -71,10 +71,12 @@ package main
 //	                                    # its brain follows (no new process);
 //	                                    # pool:N is the pool's members, left out
 //	                                    # the ones the stand was stood with
-//	cmd/server entry-box trunk-copies <box> stand|people <members>:<window_ms>|off
+//	cmd/server entry-box trunk-copies <box> stand|people <members>:<window_ms>|demand:<s>|off
 //	                                    # the pool's members of copies and their
-//	                                    # window, a file the brain follows (no new
-//	                                    # process; internal/entry/trunkcopies.go)
+//	                                    # window, or the copies on demand held s
+//	                                    # seconds after a loss; a file the brain
+//	                                    # follows (no new process;
+//	                                    # internal/entry/trunkcopies.go)
 //	cmd/server entry-box trunk-pipe-exit <exit-box> udp=<port>[,h3dgram=<port>]|off
 //	                                    # hk-exit under the exit's relay, the
 //	                                    # stand's exit by a key of its own, every
@@ -719,7 +721,7 @@ func runEntryBox(args []string) {
 		os.Exit(0)
 	}
 	if len(args) == 4 && args[0] == "trunk-copies" {
-		// entry-box trunk-copies <box> stand|people <members>:<window_ms>|off
+		// entry-box trunk-copies <box> stand|people <members>:<window_ms>|demand:<s>|off
 		if err := cryptobox.Configure(os.Getenv); err != nil {
 			fail(fmt.Errorf("content key: %w", err))
 		}

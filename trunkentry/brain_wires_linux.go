@@ -280,10 +280,10 @@ func (b *brain) followCopies(path string, last []byte) []byte {
 		log.Printf("nekko-trunk-entry: copies: %v (kept what runs)", err)
 		return raw
 	}
-	if err := b.pipe.SetCopies(cp); err != nil {
+	if err := setCopies(b.pipe, cp); err != nil {
 		log.Printf("nekko-trunk-entry: copies: %v (tried again in %s)", err, wiresEvery)
 		return last
 	}
-	log.Printf("nekko-trunk-entry: copies on %d members of the pool, a window of %v, no new process", cp.Members, cp.Window)
+	log.Printf("nekko-trunk-entry: %v, no new process", cp)
 	return raw
 }
