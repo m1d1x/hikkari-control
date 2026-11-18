@@ -128,6 +128,7 @@ async function request<T>(
 		body: body ? JSON.stringify(body) : undefined,
 	};
 
+	if (isMutating(method)) dropKeptCharts();
 	let res = await fetch(apiUrl(path), init);
 	if (res.status === 401 && shouldRefreshOn401(path)) {
 		try {
@@ -166,8 +167,66 @@ function withParams(path: string, params?: Record<string, string | number | unde
 	return url.pathname + url.search;
 }
 
+// Charts and summaries over minutes of data (the same list the hub keeps an
+// answer of, internal/admin/cache.go chartPaths). Every tab asks for its
+// charts on mount, so clicking between tabs asked the hub the same questions
+// again and waited for them each time. An answer younger than CHART_FRESH_MS
+// is handed back at once; the pages poll once a minute, so a poll always gets
+// a new one. Any action (POST, PUT, PATCH, DELETE) drops everything kept: what
+// it changed must show at once.
+const CHART_PATHS = new Set([
+	'/api/v1/admin/entry/overview',
+	'/api/v1/admin/entry/fleet',
+	'/api/v1/admin/entry/fleet/chart',
+	'/api/v1/admin/entry/pressure',
+	'/api/v1/admin/entry/domains/metrics',
+	'/api/v1/admin/entry/providers/compare',
+	'/api/v1/admin/entry/spend',
+	'/api/v1/admin/entry/protocols',
+	'/api/v1/admin/fleet/profiles',
+	'/api/v1/admin/hikkari/chart',
+	'/api/v1/admin/relay-runs/chart',
+	'/api/v1/admin/product/downtime',
+	'/api/v1/admin/product/downtime-users',
+	'/api/v1/admin/product/errors',
+	'/api/v1/admin/product/metrics',
+	'/api/v1/admin/product/testers',
+	'/api/v1/admin/trunk/egress',
+	'/api/v1/admin/trunk/hearing',
+	'/api/v1/admin/trunk/wires',
+]);
+const CHART_FRESH_MS = 55_000;
+const kept = new Map<string, { at: number; value: unknown }>();
+const asking = new Map<string, Promise<unknown>>();
+
+function isChart(url: string): boolean {
+	const q = url.indexOf('?');
+	return CHART_PATHS.has(q < 0 ? url : url.slice(0, q));
+}
+
+/** Forget every kept chart: called on every action. */
+export function dropKeptCharts(): void {
+	kept.clear();
+}
+
+function getChart<T>(url: string): Promise<T> {
+	const k = kept.get(url);
+	if (k && Date.now() - k.at < CHART_FRESH_MS) return Promise.resolve(k.value as T);
+	const inflight = asking.get(url);
+	if (inflight) return inflight as Promise<T>;
+	const p = request<T>('GET', url)
+		.then((value) => {
+			kept.set(url, { at: Date.now(), value });
+			return value;
+		})
+		.finally(() => asking.delete(url));
+	asking.set(url, p);
+	return p;
+}
+
 export function get<T>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
-	return request<T>('GET', withParams(path, params));
+	const url = withParams(path, params);
+	return isChart(url) ? getChart<T>(url) : request<T>('GET', url);
 }
 
 /** A GET whose body is not JSON (an NDJSON export, a log file). */

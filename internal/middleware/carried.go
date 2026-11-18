@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -101,16 +102,43 @@ func Trace(next http.Handler) http.Handler {
 		span.SetAttr("http.method", r.Method)
 
 		sw := &statusWriter{ResponseWriter: w, status: 200}
+		start := time.Now()
 		defer func() {
 			span.SetAttr("http.status", sw.status)
 			if sw.status >= 500 {
 				span.SetError(errors.New(http.StatusText(sw.status)))
 			}
 			span.End()
+			logSlowRequest(ctx, r, sw.status, time.Since(start))
 		}()
 
 		next.ServeHTTP(sw, r.WithContext(ctx))
 	})
+}
+
+// slowRequest is the time past which a request is written to the log. No span
+// sink is configured on the hub, so this line is the only place where a page
+// of the panel that waits on the hub shows which call it waits on.
+const slowRequest = 300 * time.Millisecond
+
+// logSlowRequest writes one line for a request slower than slowRequest: the
+// normalized path (ids replaced), the chart window when there is one, status
+// and milliseconds. No addresses, no other query parameters. A WebSocket or a
+// streamed export lives as long as it is open, so those are not "slow".
+func logSlowRequest(ctx context.Context, r *http.Request, status int, took time.Duration) {
+	if took < slowRequest || status == http.StatusSwitchingProtocols || isUploadPath(r.URL.Path) {
+		return
+	}
+	fields := []applog.Field{
+		applog.F("method", r.Method),
+		applog.F("path", normalizePath(r.URL.Path)),
+		applog.F("status", status),
+		applog.F("ms", took.Milliseconds()),
+	}
+	if win := r.URL.Query().Get("window"); win != "" && len(win) <= 8 {
+		fields = append(fields, applog.F("window", win))
+	}
+	applog.Warn(ctx, "http", "slow request", fields...)
 }
 
 // RelaxDeadlinesForUploads extends per-connection Read/Write deadlines for the
