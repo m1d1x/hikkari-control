@@ -96,7 +96,6 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 		) ENGINE = MergeTree()
 		PARTITION BY toYYYYMMDD(ts)
 		ORDER BY (relay_name, source_region, ts)
-		TTL ts + INTERVAL 180 DAY
 	`); err != nil {
 		return fmt.Errorf("fleet analytics schema 1: %w", err)
 	}
@@ -135,7 +134,6 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 		) ENGINE = MergeTree()
 		PARTITION BY toYYYYMM(ts)
 		ORDER BY (box, ts)
-		TTL ts + INTERVAL 180 DAY
 	`); err != nil {
 		return fmt.Errorf("fleet analytics schema 3: %w", err)
 	}
@@ -157,7 +155,6 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 		) ENGINE = MergeTree()
 		PARTITION BY toYYYYMMDD(ts)
 		ORDER BY (ts, outcome)
-		TTL ts + INTERVAL 180 DAY
 	`); err != nil {
 		return fmt.Errorf("fleet analytics schema 5: %w", err)
 	}
@@ -176,7 +173,6 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 		) ENGINE = MergeTree()
 		PARTITION BY toYYYYMMDD(ts)
 		ORDER BY (relay_name, ts)
-		TTL ts + INTERVAL 180 DAY
 	`); err != nil {
 		return fmt.Errorf("fleet analytics schema 6: %w", err)
 	}
@@ -196,7 +192,6 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 		) ENGINE = MergeTree()
 		PARTITION BY toYYYYMMDD(ts)
 		ORDER BY (ts, account)
-		TTL ts + INTERVAL 180 DAY
 	`); err != nil {
 		return fmt.Errorf("fleet analytics schema 9: %w", err)
 	}
@@ -231,7 +226,6 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 		) ENGINE = MergeTree()
 		PARTITION BY toYYYYMM(ts)
 		ORDER BY (metric, side, relay, path, subject, ts)
-		TTL ts + INTERVAL 180 DAY
 	`); err != nil {
 		return fmt.Errorf("fleet analytics schema 11: %w", err)
 	}
@@ -272,9 +266,11 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 		) ENGINE = MergeTree()
 		PARTITION BY toYYYYMM(ts)
 		ORDER BY (id, side, phase, ts)
-		TTL toDateTime(ts) + INTERVAL 180 DAY
 	`); err != nil {
 		return fmt.Errorf("fleet analytics schema 12: %w", err)
+	}
+	if err := s.migrateArchive(ctx); err != nil {
+		return err
 	}
 	return s.migrateTelemetry(ctx)
 }

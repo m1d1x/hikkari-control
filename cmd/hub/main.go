@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/m1d1x/hikkari-control/internal/archive"
 	"io"
 	"log"
 	"net/http"
@@ -237,6 +238,13 @@ func run() error {
 	// Tester log stream: a tester ships a chunk a minute, so 30 per 10 minutes
 	// leaves room for the catch-up burst after an outage.
 	testerStore := support.NewTesterStore(pool)
+	// Our measurements are kept forever: copied to the ClickHouse archive as
+	// they land, pruned from Postgres only once the archive holds them
+	// (internal/archive). The testers' logs read on into the archive.
+	if store != nil && pool != nil {
+		support.SetChunkArchive(testerStore, chunkArchive{store})
+		go archive.New(pool, store).Run(ctx)
+	}
 	testerLimiter := support.NewLimiter(30, 10*time.Minute)
 	support.RegisterTesterRoutes(mux, testerStore, testerLimiter)
 	go func() {

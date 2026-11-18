@@ -384,6 +384,23 @@ func (s *MemTesterStore) PurgeChunks(_ context.Context, olderThan time.Duration)
 
 type DBTesterStore struct {
 	pool db.Pool
+	// archive holds every chunk forever (internal/archive): read past what
+	// Postgres keeps, and the one that prunes chunks when it is set.
+	archive ChunkArchive
+}
+
+// ChunkArchive is the ClickHouse archive of the testers' log chunks.
+type ChunkArchive interface {
+	ReadArchivedChunks(ctx context.Context, installID string, since, until time.Time, limit int) ([]TesterChunk, error)
+}
+
+// SetChunkArchive gives a Postgres-backed store its archive: reads reach past
+// TesterLogRetention, and PurgeChunks leaves chunks to the archive's mover
+// (it deletes a chunk only once the archive holds it).
+func SetChunkArchive(store TesterStore, a ChunkArchive) {
+	if s, ok := store.(*DBTesterStore); ok {
+		s.archive = a
+	}
 }
 
 func (s *DBTesterStore) AppendChunk(ctx context.Context, req TesterChunkRequest) error {
@@ -439,6 +456,43 @@ func (s *DBTesterStore) ReadChunks(ctx context.Context, installID string, since,
 	if until.IsZero() {
 		until = time.Now()
 	}
+	hot, err := s.readHotChunks(ctx, installID, since, until, limit)
+	if err != nil || s.archive == nil || len(hot) >= limit || !since.Before(time.Now().Add(-TesterLogRetention+time.Hour)) {
+		return hot, err
+	}
+	// Past what Postgres keeps: the archive, joined by id with what is hot.
+	old, err := s.archive.ReadArchivedChunks(ctx, installID, since, until, limit)
+	if err != nil {
+		return hot, nil
+	}
+	return mergeChunks(old, hot, limit), nil
+}
+
+// mergeChunks is the newest `limit` chunks of a and b by id, oldest first.
+func mergeChunks(a, b []TesterChunk, limit int) []TesterChunk {
+	seen := make(map[int64]bool, len(a)+len(b))
+	out := make([]TesterChunk, 0, len(a)+len(b))
+	for _, list := range [][]TesterChunk{a, b} {
+		for _, c := range list {
+			if !seen[c.ID] {
+				seen[c.ID] = true
+				out = append(out, c)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].ReceivedAt.Equal(out[j].ReceivedAt) {
+			return out[i].ReceivedAt.Before(out[j].ReceivedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	if len(out) > limit {
+		out = out[len(out)-limit:]
+	}
+	return out
+}
+
+func (s *DBTesterStore) readHotChunks(ctx context.Context, installID string, since, until time.Time, limit int) ([]TesterChunk, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, platform, version, lines, dropped, body, received_at FROM (
 			SELECT * FROM support_tester_log_chunks
@@ -490,14 +544,18 @@ func (s *DBTesterStore) ReadReachLines(ctx context.Context, installID string, si
 }
 
 func (s *DBTesterStore) PurgeChunks(ctx context.Context, olderThan time.Duration) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM support_tester_log_chunks WHERE received_at < $1`, time.Now().Add(-olderThan))
-	if err != nil {
-		return 0, fmt.Errorf("purge tester chunks: %w", err)
+	var purged int64
+	if s.archive == nil {
+		tag, err := s.pool.Exec(ctx, `DELETE FROM support_tester_log_chunks WHERE received_at < $1`, time.Now().Add(-olderThan))
+		if err != nil {
+			return 0, fmt.Errorf("purge tester chunks: %w", err)
+		}
+		purged = tag.RowsAffected()
 	}
 	if _, err := s.pool.Exec(ctx, `DELETE FROM support_tester_commands WHERE created_at < $1`, time.Now().Add(-olderThan)); err != nil {
 		return 0, fmt.Errorf("purge tester commands: %w", err)
 	}
-	return tag.RowsAffected(), nil
+	return purged, nil
 }
 
 // AgeInstallForTest moves an install's last signal into the past.
