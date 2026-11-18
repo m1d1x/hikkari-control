@@ -76,7 +76,7 @@
 	const mbytes = (v: number) =>
 		v < 1024 ? `${v < 10 ? v.toFixed(1) : Math.round(v)} МБ` : `${(v / 1024).toFixed(v < 10240 ? 2 : 1)} ГБ`;
 
-	/** megabytes over the window, tunnel and past it */
+	/** megabytes through the VPN over the window */
 	function windowMb(values: (number | null)[] | undefined): number | null {
 		if (!values) return null;
 		let sum = 0;
@@ -158,7 +158,6 @@
 					{@const ru = last(l?.ruMs)}
 					{@const st = stateOf(i.install_id)}
 					{@const via = windowMb(l?.tunnelMb)}
-					{@const past = windowMb(l?.directMb)}
 					<tr class="row" class:opened={open.has(i.install_id)} onclick={() => toggle(i.install_id)}>
 						<td>
 							<span class="caret">{open.has(i.install_id) ? '▾' : '▸'}</span>
@@ -205,11 +204,9 @@
 						</td>
 						<td
 							class="r mono"
-							title={via !== null || past !== null
-								? `за окно через VPN ${mbytes(via ?? 0)}, мимо ${mbytes(past ?? 0)}`
-								: 'клиент не присылал (нужен новее 1.0.92)'}
+							title={via !== null ? `за окно через VPN ${mbytes(via)}` : 'клиент не присылал (нужен новее 1.0.92)'}
 						>
-							{#if via !== null || past !== null}{mbytes(via ?? 0)}{:else}<span class="dim">-</span>{/if}
+							{#if via !== null}{mbytes(via)}{:else}<span class="dim">-</span>{/if}
 						</td>
 						<td class="r mono" title={lost ? `отрезок с ${bucketTime(lost.at)}` : 'туннель не включали за сутки'}>
 							{#if lost}<span class:warn={lost.v > 0}>{minutes(lost.v)}</span>{:else}<span class="dim">-</span>{/if}
@@ -275,7 +272,7 @@
 											/>
 										</div>
 										<div class="chart-card">
-											<h3 class="card-title">Трафик</h3>
+											<h3 class="card-title">Трафик через VPN</h3>
 											<TrendChart
 												buckets={charts.buckets}
 												bucketSeconds={charts.bucketSeconds}
@@ -289,14 +286,6 @@
 														color: C.blue,
 														primary: true,
 														values: l.tunnelMb ?? charts.buckets.map(() => null),
-														format: mbytes,
-														missing: 'не мерили',
-													},
-													{
-														key: 'direct',
-														label: 'мимо VPN',
-														color: C.orange,
-														values: l.directMb ?? charts.buckets.map(() => null),
 														format: mbytes,
 														missing: 'не мерили',
 													},
