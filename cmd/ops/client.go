@@ -341,6 +341,18 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 			return "", err
 		}
 		return prettyJSON(data), nil
+	case "timeline":
+		q := url.Values{}
+		for _, k := range []string{"who", "last", "from", "to"} {
+			if v := args[k]; v != "" {
+				q.Set(k, v)
+			}
+		}
+		data, err := c.request(http.MethodGet, "/api/v1/ops/timeline", q, nil)
+		if err != nil {
+			return "", err
+		}
+		return prettyJSON(data), nil
 	case "legs":
 		q := url.Values{}
 		for _, k := range []string{"who", "last"} {
