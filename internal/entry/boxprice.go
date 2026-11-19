@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/m1d1x/hikkari-control/internal/applog"
 	"github.com/m1d1x/hikkari-control/internal/fx"
@@ -210,6 +212,39 @@ func (s *Service) SetProviderPlanTB(ctx context.Context, provider string, tb flo
 		INSERT INTO entry_provider_plans (provider, plan_tb) VALUES ($1, $2)
 		ON CONFLICT (provider) DO UPDATE SET plan_tb = EXCLUDED.plan_tb, updated_at = now()
 	`, provider, tb)
+	return err
+}
+
+// SetProviderLabel gives a hoster the owner's own name for the fleet screen,
+// as SetBoxLabel does a machine; "" takes it back to the hoster's code. The
+// label is only shown.
+func (s *Service) SetProviderLabel(ctx context.Context, provider, label string) error {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return fmt.Errorf("%w: провайдер не назван", ErrRejected)
+	}
+	label = strings.TrimSpace(label)
+	if utf8.RuneCountInString(label) > MaxBoxLabel {
+		return fmt.Errorf("%w: a label is at most %d characters", ErrRejected, MaxBoxLabel)
+	}
+	if strings.ContainsFunc(label, unicode.IsControl) {
+		return fmt.Errorf("%w: a label is one line of text", ErrRejected)
+	}
+	var known bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM entry_boxes WHERE provider = $1)`, provider).Scan(&known); err != nil {
+		return err
+	}
+	if !known {
+		return fmt.Errorf("%w: машин провайдера %s нет", ErrNoSuchBox, provider)
+	}
+	if label == "" {
+		_, err := s.pool.Exec(ctx, `DELETE FROM entry_provider_labels WHERE provider = $1`, provider)
+		return err
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO entry_provider_labels (provider, label) VALUES ($1, $2)
+		ON CONFLICT (provider) DO UPDATE SET label = EXCLUDED.label, updated_at = now()
+	`, provider, label)
 	return err
 }
 

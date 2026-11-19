@@ -108,9 +108,9 @@ func TestTesterChartKeepsTunnelAndNetworkApart(t *testing.T) {
 			{Install: "t-b", Bucket: since.Add(time.Hour), Answered: 0, Missed: 60},
 		},
 		[]StallCount{
-			{Install: "t-a", Bucket: since, BoundMS: 300, N: 4, MS: 2100},
-			{Install: "t-a", Bucket: since, BoundMS: 1000, N: 1, MS: 1200},
-			{Install: "t-a", Bucket: since, BoundMS: 3000},
+			{Install: "t-a", Bucket: since, BoundMS: 300, N: 4, MS: 2100, Minutes: 7},
+			{Install: "t-a", Bucket: since, BoundMS: 1000, N: 1, MS: 1200, Minutes: 7},
+			{Install: "t-a", Bucket: since, BoundMS: 3000, Minutes: 7},
 		},
 		[]TrafficCount{
 			{Install: "t-a", Bucket: since.Add(time.Hour), Tunnel: 3 << 20},
@@ -125,7 +125,11 @@ func TestTesterChartKeepsTunnelAndNetworkApart(t *testing.T) {
 	if *a.StallMS[0] != 2100 || *a.StallLongMS[0] != 1200 || a.StallMS[1] != nil {
 		t.Fatalf("t-a stalls: %+v", a)
 	}
-	if b.StallMS[1] != nil {
+	// 2.1 s of 7 measured minutes is 0.5%, not 2.1 s of the wall-clock hour.
+	if *a.StallPct[0] != 0.5 || a.StallLongPct[0] == nil || *a.StallLongPct[0] > 0.29 || *a.StallLongPct[0] < 0.28 || a.StallPct[1] != nil {
+		t.Fatalf("t-a stall shares: %v %v", a.StallPct, a.StallLongPct)
+	}
+	if b.StallMS[1] != nil || b.StallPct[1] != nil {
 		t.Fatalf("t-b: no stall line is not measured, not zero: %+v", b)
 	}
 	if b.Lost[1] != nil || b.RuMS[1] != nil || *b.RuMissed[1] != 60 {

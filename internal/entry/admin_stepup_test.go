@@ -249,3 +249,49 @@ func TestAHostersPlanTerabytesAreSetFromTheScreen(t *testing.T) {
 		t.Errorf("plan of an unknown hoster: %d, want 404", code)
 	}
 }
+
+// A hoster is named on the screen like a machine (19.11, «легко
+// переименовывать»): set trimmed, refused when not one short line, taken
+// back with "".
+func TestAHosterTakesTheOwnersLabel(t *testing.T) {
+	h := newHostHarness(t)
+	box := h.inService()
+	var provider string
+	if err := h.pool.QueryRow(context.Background(), `SELECT provider FROM entry_boxes WHERE name = $1`, box).Scan(&provider); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = h.pool.Exec(context.Background(), `DELETE FROM entry_provider_labels WHERE provider = $1`, provider)
+	})
+	touched := false
+	do := h.stepUpMux(&touched)
+	path := "/api/v1/admin/entry/hosters/" + provider + "/label"
+	label := func() *string {
+		var l *string
+		err := h.pool.QueryRow(context.Background(), `SELECT label FROM entry_provider_labels WHERE provider = $1`, provider).Scan(&l)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatal(err)
+		}
+		return l
+	}
+	if code, body := do("PUT", path, map[string]string{"label": "  аеза выход "}); code != http.StatusOK {
+		t.Fatalf("label without a touch: %d %s, want 200", code, body)
+	}
+	if l := label(); l == nil || *l != "аеза выход" {
+		t.Errorf("label = %v, want «аеза выход» trimmed", l)
+	}
+	for _, bad := range []string{strings.Repeat("я", MaxBoxLabel+1), "две\nстроки"} {
+		if code, _ := do("PUT", path, map[string]string{"label": bad}); code != http.StatusBadRequest {
+			t.Errorf("label %q: %d, want 400", bad, code)
+		}
+	}
+	if code, _ := do("PUT", path, map[string]string{"label": ""}); code != http.StatusOK {
+		t.Errorf("clearing the label: %d, want 200", code)
+	}
+	if l := label(); l != nil {
+		t.Errorf("label = %q after clearing, want none", *l)
+	}
+	if code, _ := do("PUT", "/api/v1/admin/entry/hosters/no-such-hoster/label", map[string]string{"label": "x"}); code != http.StatusNotFound {
+		t.Errorf("label of an unknown hoster: %d, want 404", code)
+	}
+}

@@ -180,6 +180,10 @@ export interface TesterLines {
 	stallMs: (number | null)[];
 	/** the same for the stalls of 1 s or more */
 	stallLongMs: (number | null)[];
+	/** percent of the bucket's measured time (tunnel on, core timing stalls) spent in stalls of 300 ms or more */
+	stallPct?: (number | null)[];
+	/** the same for the stalls of 1 s or more */
+	stallLongPct?: (number | null)[];
 	/** megabytes up and down through the tunnel; null where the client wrote nothing (newer than 1.0.92) */
 	tunnelMb?: (number | null)[];
 }

@@ -4,7 +4,6 @@
 	import PageShell from '$components/layout/PageShell.svelte';
 	import FleetPoolChart from '$components/entry/FleetPoolChart.svelte';
 	import FleetCensorTimeline from '$components/entry/FleetCensorTimeline.svelte';
-	import FleetEconomics from '$components/entry/FleetEconomics.svelte';
 	import FleetPark from '$components/entry/FleetPark.svelte';
 	import BoxCard from '$components/entry/BoxCard.svelte';
 	import OrderBoxCard from '$components/entry/OrderBoxCard.svelte';
@@ -268,10 +267,7 @@
 				</div>
 			</section>
 
-			<!-- ======== 3. PRODUCT & BIZOPS ECONOMICS ======== -->
-			<FleetEconomics compare={fleet.providers} onChanged={load} />
-
-			<!-- ======== 4. FLEET PARK (GEO GROUPS & EXPANDABLE LIST) ======== -->
+			<!-- ======== 3. PROVIDERS AND MACHINES (ONE LINE PER HOSTER, MACHINES BELOW) ======== -->
 			<FleetPark
 				{fleet}
 				onRetireBox={askRetire}

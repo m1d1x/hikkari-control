@@ -1,6 +1,6 @@
 import { ApiError, del, describeApiError, get, post, put } from './client';
 import { USE_MOCK } from '$lib/config/mock';
-import { mockOverview } from './entryMock';
+import { mockFleet, mockOverview } from './entryMock';
 
 // The entry pool (roadmap 42 П6.2, П6.15, internal/entry/admin.go). Owner-only
 // on the server. Relays are born, deployed and signed on the hub; addresses and
@@ -243,6 +243,11 @@ export function forgetHostKey(name: string): Promise<unknown> {
 /** Terabytes a month one machine's plan at a hoster includes; 0 forgets it. */
 export function setHosterPlanTb(provider: string, tb: number): Promise<unknown> {
 	return put(`/api/v1/admin/entry/hosters/${encodeURIComponent(provider)}/plan-tb`, { tb });
+}
+
+/** The owner's own name for a hoster on the fleet screen; "" takes it back. */
+export function setHosterLabel(provider: string, label: string): Promise<unknown> {
+	return put(`/api/v1/admin/entry/hosters/${encodeURIComponent(provider)}/label`, { label });
 }
 
 /** What a machine costs a month as the hoster bills it (USD, EUR, RUB). */
@@ -622,6 +627,8 @@ export interface ProviderStats {
 	planTb: number | null;
 	/** The rent its machines accrued over the same window. */
 	spentCents: number;
+	/** the owner's own name for the hoster on the fleet screen; absent when not given */
+	label?: string;
 }
 
 export interface EntryProviderCompare {
@@ -1361,6 +1368,7 @@ export interface EntryFleet {
 
 /** The whole fleet screen in one request (roadmap 42 К1). */
 export function fetchFleet(window: OverviewWindow = '7d'): Promise<EntryFleet> {
+	if (USE_MOCK) return Promise.resolve(mockFleet(window));
 	return get(`/api/v1/admin/entry/machines?window=${encodeURIComponent(window)}`);
 }
 

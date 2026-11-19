@@ -62,7 +62,8 @@ type providerStats struct {
 	LifeSampleCount int      `json:"lifeSampleCount"`
 
 	// MonthlyCents is what the live machines cost per month together;
-	// PerBoxMonthlyCents the median price of one. Nil while no machine of this
+	// PerBoxMonthlyCents the median price of one in service (of any ever
+	// bought when none is left). Nil while no machine of this
 	// provider carries a price (П9.2 writes it; machines imported before it
 	// do not have one).
 	MonthlyCents       int  `json:"monthlyCents"`
@@ -94,6 +95,10 @@ type providerStats struct {
 	// the owner typed it (migration 077); nil when not given. The screen
 	// divides PerBoxMonthlyCents by it: a terabyte at the plan's ceiling.
 	PlanTB *float64 `json:"planTb"`
+
+	// Label is the owner's own name for the hoster on the fleet screen
+	// (migration 080); empty when not given, and the screen shows the code.
+	Label string `json:"label,omitempty"`
 }
 
 type providerBanDay struct {
@@ -171,8 +176,16 @@ func (h *Handlers) fillProviderStats(ctx context.Context, out *entryProviderComp
 				FILTER (WHERE retired_reason = ANY($2)),
 			count(*) FILTER (WHERE retired_reason = ANY($2)),
 			coalesce(sum(monthly_cents) FILTER (WHERE retired_at IS NULL), 0)::int,
-			percentile_cont(0.5) WITHIN GROUP (ORDER BY monthly_cents)
-				FILTER (WHERE monthly_cents IS NOT NULL),
+			-- One machine's price as it stands: over the machines in service
+			-- when any is priced, the machines long gone only for a hoster
+			-- with none left (19.11: vdsina showed $15 a machine, its old
+			-- price, for the one it rents today at $2.10).
+			coalesce(
+				percentile_cont(0.5) WITHIN GROUP (ORDER BY monthly_cents)
+					FILTER (WHERE monthly_cents IS NOT NULL AND retired_at IS NULL),
+				percentile_cont(0.5) WITHIN GROUP (ORDER BY monthly_cents)
+					FILTER (WHERE monthly_cents IS NOT NULL)
+			),
 			count(*) FILTER (WHERE retired_at IS NULL AND monthly_cents IS NULL)
 		FROM boxes
 		GROUP BY provider
@@ -294,7 +307,8 @@ func (h *Handlers) fillProviderStats(ctx context.Context, out *entryProviderComp
 	return h.fillProviderCost(ctx, out, at)
 }
 
-// fillProviderPlans reads the terabytes in each provider's plan.
+// fillProviderPlans reads the terabytes in each provider's plan and the
+// owner's name for it.
 func (h *Handlers) fillProviderPlans(ctx context.Context, out *entryProviderCompare, at map[string]int) error {
 	rows, err := h.pool.Query(ctx, `SELECT provider, plan_tb::float8 FROM entry_provider_plans`)
 	if err != nil {
@@ -311,7 +325,24 @@ func (h *Handlers) fillProviderPlans(ctx context.Context, out *entryProviderComp
 			out.Hosting[i].PlanTB = &tb
 		}
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	labels, err := h.pool.Query(ctx, `SELECT provider, label FROM entry_provider_labels`)
+	if err != nil {
+		return err
+	}
+	defer labels.Close()
+	for labels.Next() {
+		var provider, label string
+		if err := labels.Scan(&provider, &label); err != nil {
+			return err
+		}
+		if i, ok := at[provider]; ok {
+			out.Hosting[i].Label = label
+		}
+	}
+	return labels.Err()
 }
 
 // fillProviderCost is what each provider's machines carried and cost over the
