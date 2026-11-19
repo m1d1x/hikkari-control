@@ -26,7 +26,24 @@ const (
 	// ownerFresh: only a minute this recent tells; a journal read back
 	// after a hub restart replays its old minutes without a word.
 	ownerFresh = 5 * time.Minute
+	// ownerWireLoss: a wire of the people's entry losing more of its call's
+	// datagrams than this ownerWireMinutes minutes in a row tells the owner
+	// (the owner, 18.11: «если потери пакетов больше 10% на каком-то пути»).
+	// A clean wire loses 0–0.2%; 18.11 udp and h3dgram lost 13–23% in each
+	// wave of the entry's network, the pool up to 5%.
+	ownerWireLoss    = 0.10
+	ownerWireMinutes = 2
 )
+
+// lossStreak is one wire of an entry as the owner hears of it: the minutes
+// in a row past ownerWireLoss, the worst of them, and whether told.
+type lossStreak struct {
+	since time.Time
+	n     int
+	worst float64
+	told  bool
+	last  time.Time
+}
 
 // callStreak is the people's call of one entry as the owner hears of it:
 // the red minutes in a row and whether the owner was told of them.
@@ -81,6 +98,64 @@ func (w *Watch) hearPeoplesCall(ctx context.Context, p entry.TrunkPair, run Run)
 	if text != "" {
 		w.tellOwner(ctx, p, text)
 	}
+}
+
+// hearWire takes a minute of the people's entry's call on one wire
+// (trunk-udp, trunk-h3dgram, trunk-pool: the entry's own journal, not the
+// stand's pipe-*): ownerWireMinutes minutes in a row losing more than
+// ownerWireLoss tell the owner once, the first minute under it after tells
+// it is over.
+func (w *Watch) hearWire(ctx context.Context, p entry.TrunkPair, run Run) {
+	wire, ok := strings.CutPrefix(run.Target, "trunk-")
+	sent := num(run.Data, "sent")
+	if !ok || run.Layer != LayerCall || sent <= 0 {
+		return
+	}
+	loss := num(run.Data, "lost") / sent
+	key := p.Entry + "|" + run.Target
+	w.mu.Lock()
+	s := w.wires[key]
+	if s == nil {
+		s = &lossStreak{}
+		w.wires[key] = s
+	}
+	if !run.TS.After(s.last) {
+		w.mu.Unlock()
+		return
+	}
+	s.last = run.TS
+	var text string
+	if loss > ownerWireLoss {
+		if s.n == 0 {
+			s.since = run.TS
+		}
+		s.n++
+		s.worst = max(s.worst, loss)
+		if s.n >= ownerWireMinutes && !s.told && w.fresh(run.TS) {
+			s.told = true
+			text = fmt.Sprintf("🔴 Провод %s входа людей %s → %s теряет %s датаграмм звонка, %d мин подряд с %s UTC.",
+				wire, p.Entry, p.Exit, percent(loss), s.n, s.since.Format("15:04"))
+		}
+	} else {
+		if s.told {
+			text = fmt.Sprintf("🟢 Провод %s входа людей %s → %s снова теряет %s с %s UTC; терял больше %s %d мин (с %s UTC), худшая минута %s.",
+				wire, p.Entry, p.Exit, percent(loss), run.TS.Format("15:04"), percent(ownerWireLoss), s.n, s.since.Format("15:04"), percent(s.worst))
+		}
+		*s = lossStreak{last: run.TS}
+	}
+	w.mu.Unlock()
+	if text != "" {
+		w.tellOwner(ctx, p, text)
+	}
+}
+
+// percent is a share as the owner reads it: whole percent, one decimal
+// under 1.
+func percent(f float64) string {
+	if f < 0.01 {
+		return strings.Replace(fmt.Sprintf("%.1f%%", f*100), ".", ",", 1)
+	}
+	return fmt.Sprintf("%.0f%%", f*100)
 }
 
 // hearPath takes a round's verdict: a path from the entry to its exit that
