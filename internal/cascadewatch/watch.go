@@ -134,6 +134,7 @@ type Watch struct {
 	alerted map[string]time.Time   // code|entry → last alert
 	owner   Notifier               // told of the people's trunk going wrong (owner.go); nil: nobody
 	calls   map[string]*callStreak // entry box → its people's call as the owner hears it
+	wires   map[string]*lossStreak // entry box|target → a wire's call as the owner hears it
 	started time.Time
 	rounds  sync.WaitGroup
 }
@@ -148,7 +149,7 @@ func New(pool db.Pool, fleet Fleet, boxes Boxes, links Links, queue Queue, errs 
 		now:    time.Now,
 		sleep:  sleepCtx,
 		cursor: map[string]time.Time{}, busy: map[string]bool{}, last: map[string]time.Time{}, alerted: map[string]time.Time{},
-		calls: map[string]*callStreak{},
+		calls: map[string]*callStreak{}, wires: map[string]*lossStreak{},
 	}
 }
 
@@ -270,6 +271,7 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 		}
 		if run, ok := classifyWire(l); ok {
 			run.Entry, run.Exit, run.Vantage = p.Entry, p.Exit, "entry"
+			w.hearWire(ctx, p, run)
 			runs = append(runs, run)
 			continue
 		}

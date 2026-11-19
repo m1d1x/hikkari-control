@@ -19,7 +19,7 @@ func (o *toldOwner) Notify(_ context.Context, text string) error {
 // ownerWatch is a watch up for an hour at now, telling o.
 func ownerWatch(now time.Time, o *toldOwner) *Watch {
 	w := &Watch{now: func() time.Time { return now }, started: now.Add(-time.Hour),
-		alerted: map[string]time.Time{}, calls: map[string]*callStreak{}}
+		alerted: map[string]time.Time{}, calls: map[string]*callStreak{}, wires: map[string]*lossStreak{}}
 	w.SetOwner(o)
 	return w
 }
@@ -115,5 +115,52 @@ func TestNoOwnerTellsNobody(t *testing.T) {
 	w.SetOwner(nil)
 	for i := 0; i < 3; i++ {
 		w.hearPeoplesCall(context.Background(), entry.TrunkPair{Entry: "aezamsk1"}, callMinute(at.Add(time.Duration(i)*time.Minute), "copies1", 0))
+	}
+}
+
+func wireMinute(at time.Time, target string, got int) Run {
+	return Run{TS: at, Layer: LayerCall, Target: target,
+		Data: map[string]any{"sent": float64(3000), "got": float64(got), "lost": float64(3000 - got)}}
+}
+
+// aezamsk1 18.11 16:11–16:22 UTC: udp lost 6% at 16:11, then 13–23% a
+// minute, the pool 1–6%.
+func TestAWireLosingOverATenthTwoMinutesTellsTheOwnerOnceAndWhenItIsOver(t *testing.T) {
+	ctx := context.Background()
+	p := entry.TrunkPair{Entry: "aezamsk1", Exit: "unl1"}
+	at := time.Date(2026, 11, 18, 16, 11, 0, 0, time.UTC)
+	o := &toldOwner{}
+	w := ownerWatch(at.Add(3*time.Minute), o)
+	w.hearWire(ctx, p, wireMinute(at, "trunk-udp", 2822))
+	w.hearWire(ctx, p, wireMinute(at, "trunk-pool", 2964))
+	w.hearWire(ctx, p, wireMinute(at.Add(time.Minute), "trunk-pool", 2833))
+	if len(o.texts) != 0 {
+		t.Fatalf("one minute of udp or the pool at 4–6%% told the owner: %q", o.texts)
+	}
+	w.hearWire(ctx, p, wireMinute(at.Add(time.Minute), "trunk-udp", 2317))
+	w.hearWire(ctx, p, wireMinute(at.Add(2*time.Minute), "trunk-udp", 2342))
+	w.hearWire(ctx, p, wireMinute(at.Add(2*time.Minute), "pipe-udp", 0))
+	w.hearWire(ctx, p, wireMinute(at.Add(2*time.Minute), "wire-udp", 0))
+	if len(o.texts) != 1 || !strings.Contains(o.texts[0], "Провод udp входа людей aezamsk1 → unl1 теряет 22% датаграмм звонка, 2 мин подряд с 16:12 UTC") {
+		t.Fatalf("told %q", o.texts)
+	}
+	w.hearWire(ctx, p, wireMinute(at.Add(3*time.Minute), "trunk-udp", 2999))
+	if len(o.texts) != 2 || !strings.Contains(o.texts[1], "снова теряет 0,0% с 16:14 UTC; терял больше 10% 2 мин (с 16:12 UTC), худшая минута 23%") {
+		t.Fatalf("told %q", o.texts)
+	}
+}
+
+func TestAWireReadBackOrSilentTellsTheOwnerNothing(t *testing.T) {
+	ctx := context.Background()
+	p := entry.TrunkPair{Entry: "aezamsk1", Exit: "unl1"}
+	at := time.Date(2026, 11, 18, 16, 11, 0, 0, time.UTC)
+	o := &toldOwner{}
+	w := ownerWatch(at.Add(time.Hour), o)
+	for i := 0; i < 4; i++ {
+		w.hearWire(ctx, p, wireMinute(at.Add(time.Duration(i)*time.Minute), "trunk-h3dgram", 0))
+	}
+	w.hearWire(ctx, p, Run{TS: at.Add(5 * time.Minute), Layer: LayerCall, Target: "trunk-h3dgram", Data: map[string]any{"sent": float64(0)}})
+	if len(o.texts) != 0 {
+		t.Fatalf("an hour-old streak or a minute that sent nothing told the owner: %q", o.texts)
 	}
 }
