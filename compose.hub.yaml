@@ -65,6 +65,9 @@ services:
       # takes test payments on the hub's own page. A merchant's keys go to
       # secrets/hub.env.
       BILLING_PROVIDER: ${BILLING_PROVIDER:-}
+      # The owner's alerts (internal/notify): HUB_TELEGRAM_BOT_TOKEN (from
+      # @BotFather) and HUB_TELEGRAM_CHAT_ID (the owner's chat) in
+      # secrets/hub.env. Unset, the hub tells nobody and says so at start.
       # Letters (internal/mailer): MAILER_PROVIDER=smtp with SMTP_HOST,
       # SMTP_PORT (587 STARTTLS | 465 TLS), SMTP_USER, SMTP_PASSWORD and
       # MAIL_FROM in secrets/hub.env (smtp.bz panel). Unset keeps letters

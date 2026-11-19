@@ -33,6 +33,8 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/hikkariobs"
 	"github.com/m1d1x/hikkari-control/internal/knobcheck"
 	"github.com/m1d1x/hikkari-control/internal/mailer"
+	"github.com/m1d1x/hikkari-control/internal/metrics"
+	"github.com/m1d1x/hikkari-control/internal/notify"
 	"github.com/m1d1x/hikkari-control/internal/presets"
 	"github.com/m1d1x/hikkari-control/internal/probesink"
 	"github.com/m1d1x/hikkari-control/internal/relayruns"
@@ -439,6 +441,14 @@ func run() error {
 	cascadeWatch := cascadewatch.New(pool, svc, prov, subs, standRuns, knobErrs)
 	if legs != nil {
 		cascadeWatch.SetTesterLegs(legs)
+	}
+	// The owner hears of the people's trunk going wrong from the hub's
+	// Telegram bot (internal/notify, roadmap decision 18.11).
+	if bot := notify.TelegramFromEnv(); bot != nil {
+		cascadeWatch.SetOwner(bot)
+		metrics.AlertingSinksConfigured.Set(1)
+	} else {
+		log.Printf("owner alerts: off, HUB_TELEGRAM_BOT_TOKEN and HUB_TELEGRAM_CHAT_ID are not both set")
 	}
 	standRuns.SetCascade(cascadeWatch)
 	cascadewatch.RegisterOpsRoutes(adminMux, cascadeWatch, opsGate)

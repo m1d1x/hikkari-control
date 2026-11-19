@@ -128,10 +128,12 @@ type Watch struct {
 	sleep func(ctx context.Context, d time.Duration) bool
 
 	mu      sync.Mutex
-	cursor  map[string]time.Time // entry box → last journal line read
-	busy    map[string]bool      // entry box → a round running
-	last    map[string]time.Time // entry box → last round started
-	alerted map[string]time.Time // code|entry → last alert
+	cursor  map[string]time.Time   // entry box → last journal line read
+	busy    map[string]bool        // entry box → a round running
+	last    map[string]time.Time   // entry box → last round started
+	alerted map[string]time.Time   // code|entry → last alert
+	owner   Notifier               // told of the people's trunk going wrong (owner.go); nil: nobody
+	calls   map[string]*callStreak // entry box → its people's call as the owner hears it
 	started time.Time
 	rounds  sync.WaitGroup
 }
@@ -146,6 +148,7 @@ func New(pool db.Pool, fleet Fleet, boxes Boxes, links Links, queue Queue, errs 
 		now:    time.Now,
 		sleep:  sleepCtx,
 		cursor: map[string]time.Time{}, busy: map[string]bool{}, last: map[string]time.Time{}, alerted: map[string]time.Time{},
+		calls: map[string]*callStreak{},
 	}
 }
 
@@ -310,6 +313,7 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 				w.alert(ctx, p, "cascade.call_gap", fmt.Sprintf("звонок магистрали %s → %s (%s): тишина %d мс в минуту %s, всего %d мс, потеряно %d из %d",
 					p.Entry, p.Exit, run.Target, int(num(data, "gap_max_ms")), run.TS.Format("15:04"), int(num(data, "silent_ms")), int(num(data, "lost")), int(num(data, "sent"))))
 			}
+			w.hearPeoplesCall(ctx, p, run)
 		}
 		runs = append(runs, run)
 	}
@@ -827,6 +831,7 @@ func (w *Watch) judgePending(ctx context.Context, p entry.TrunkPair) error {
 			OK: boolp(v.FirstRed == ""), Data: d}); err != nil {
 			return err
 		}
+		w.hearPath(ctx, p, round, v)
 		if v.FirstRed != "" {
 			w.alert(ctx, p, "cascade.red."+v.FirstRed, fmt.Sprintf("раунд %s %s → %s: первым красный слой %s: %s",
 				round.Format("15:04"), p.Entry, p.Exit, v.FirstRed, strings.Join(v.Red[v.FirstRed], "; ")))
