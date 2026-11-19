@@ -168,6 +168,20 @@ func (s *Store) Rows(ctx context.Context, q Query) ([]Run, error) {
 	return out, rows.Err()
 }
 
+// Count is how many rows q selects, Limit and Newest aside.
+func (s *Store) Count(ctx context.Context, q Query) (int, error) {
+	if q.Until.IsZero() {
+		q.Until = time.Now().Add(24 * time.Hour)
+	}
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM trunk_runs
+		WHERE ts >= $1 AND ts < $2 AND ($3 = '' OR entry_box = $3) AND ($4 = '' OR layer = $4)
+		  AND ($5::timestamptz IS NULL OR round_ts = $5)`,
+		q.Since, q.Until, q.Entry, q.Layer, q.Round).Scan(&n)
+	return n, err
+}
+
 func scanRun(row pgx.Row) (Run, error) {
 	var r Run
 	var raw []byte

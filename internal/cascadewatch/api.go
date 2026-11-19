@@ -104,7 +104,11 @@ func (w *Watch) opsHandler(rw http.ResponseWriter, r *http.Request) {
 	}
 	until := w.now()
 	since := until.Add(-last)
-	rows, err := w.store.Rows(r.Context(), Query{Since: since, Until: until.Add(time.Minute), Entry: q.Get("entry")})
+	// The newest rows, not the oldest: a day of every layer is more than
+	// maxRows (about 38 rows a minute with the stand's calls), and the oldest
+	// first silently lost the end of the window, the part a reader asks about.
+	all := Query{Since: since, Until: until.Add(time.Minute), Entry: q.Get("entry"), Limit: maxRows, Newest: true}
+	rows, err := w.store.Rows(r.Context(), all)
 	if err != nil {
 		writeJSON(rw, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
@@ -119,21 +123,39 @@ func (w *Watch) opsHandler(rw http.ResponseWriter, r *http.Request) {
 			"1 МиБ, залп 50, 3 после, звонок 30 с: gaps60, gap_max; target direct или entry; vantage: слот точки), verdict (первый красный слой " +
 			"раунда снизу: vps, path, trunk, protocol; notes: красное не по вине каскада). Все строки раунда несут один round.",
 	}
+	if len(rows) == maxRows {
+		total, err := w.store.Count(r.Context(), all)
+		if err != nil {
+			writeJSON(rw, http.StatusInternalServerError, map[string]string{"error": "internal"})
+			return
+		}
+		if total > len(rows) {
+			out["summary_window"] = map[string]any{"from": rows[0].TS.UTC().Format(time.RFC3339), "rows": len(rows), "omitted": total - len(rows),
+				"note": "в окне больше строк, чем сводка берёт: она считает только по свежим; сузь last или возьми один слой"}
+		}
+	}
 	layer := q.Get("layer")
 	if layer != "" || q.Get("rows") == "1" {
 		limit := 2000
 		if v, err := strconv.Atoi(q.Get("limit")); err == nil && v > 0 && v <= maxRows {
 			limit = v
 		}
-		var keep []Run
-		for _, row := range rows {
-			if layer == "" || row.Layer == layer {
-				keep = append(keep, row)
-			}
+		lq := all
+		lq.Layer, lq.Limit, lq.Newest = layer, limit, true
+		keep, err := w.store.Rows(r.Context(), lq)
+		if err != nil {
+			writeJSON(rw, http.StatusInternalServerError, map[string]string{"error": "internal"})
+			return
 		}
-		if len(keep) > limit {
-			out["truncated"] = len(keep) - limit
-			keep = keep[len(keep)-limit:]
+		if len(keep) == limit {
+			total, err := w.store.Count(r.Context(), lq)
+			if err != nil {
+				writeJSON(rw, http.StatusInternalServerError, map[string]string{"error": "internal"})
+				return
+			}
+			if total > limit {
+				out["truncated"] = total - limit
+			}
 		}
 		out["rows"] = keep
 	}
