@@ -126,6 +126,14 @@ func TestEntryProviderCompare(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM entry_provider_plans WHERE provider = $1`, good)
 	})
+	// And named it on the screen (19.11).
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO entry_provider_labels (provider, label) VALUES ($1, 'хороший')`, good); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entry_provider_labels WHERE provider = $1`, good)
+	})
 
 	res := fetchCompare(t, h)
 
@@ -134,6 +142,9 @@ func TestEntryProviderCompare(t *testing.T) {
 	}
 
 	g := statsOf(t, res, good)
+	if g.Label != "хороший" {
+		t.Errorf("good label = %q, want the owner's «хороший»", g.Label)
+	}
 	if g.BoughtCount != 4 {
 		t.Errorf("good boughtCount = %d, want 4", g.BoughtCount)
 	}

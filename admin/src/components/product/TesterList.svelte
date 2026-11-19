@@ -100,8 +100,8 @@
 	};
 	const minutes = (v: number) => `${Number.isInteger(v) || v >= 10 ? Math.round(v) : v.toFixed(1)} мин`;
 	const ms = (v: number) => `${Math.round(v)} мс`;
-	/** a stall total: ms under ten seconds, seconds above */
-	const stall = (v: number) => (v < 10_000 ? `${Math.round(v)} мс` : `${(v / 1000).toFixed(v < 100_000 ? 1 : 0)} с`);
+	/** a share of the measured time: one decimal under ten percent */
+	const pct = (v: number) => `${v === 0 || v >= 10 ? Math.round(v) : v.toFixed(v < 1 ? 2 : 1)}%`;
 
 	const linesOf = (id: string): TesterLines | null => {
 		if (!charts) return null;
@@ -244,11 +244,11 @@
 											/>
 										</div>
 										<div class="chart-card">
-											<h3 class="card-title">Подвисания</h3>
+											<h3 class="card-title">Подвисания, доля времени</h3>
 											<TrendChart
 												buckets={charts.buckets}
 												bucketSeconds={charts.bucketSeconds}
-												formatAxis={stall}
+												formatAxis={pct}
 												height={135}
 												series={[
 													{
@@ -256,16 +256,16 @@
 														label: 'от 0,3 с',
 														color: C.violet,
 														primary: true,
-														values: l.stallMs,
-														format: stall,
+														values: l.stallPct ?? charts.buckets.map(() => null),
+														format: pct,
 														missing: 'не мерили',
 													},
 													{
 														key: 'stall-long',
 														label: 'от 1 с',
 														color: C.red,
-														values: l.stallLongMs,
-														format: stall,
+														values: l.stallLongPct ?? charts.buckets.map(() => null),
+														format: pct,
 														missing: 'не мерили',
 													},
 												]}

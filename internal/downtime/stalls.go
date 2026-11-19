@@ -113,6 +113,9 @@ type StallCount struct {
 	BoundMS int
 	N       int64
 	MS      int64
+	// Minutes is how many minutes of the bucket the core timed stalls in:
+	// the tunnel was on and the minute was not "-".
+	Minutes int64
 }
 
 // StallCounts reads the stalls in [since, until) grouped into step buckets.
@@ -120,7 +123,7 @@ func (s *Store) StallCounts(ctx context.Context, since, until time.Time, step ti
 	rows, err := s.pool.Query(ctx, `
 		SELECT install_id,
 		       to_timestamp(floor(extract(epoch FROM minute) / $3) * $3) AS bucket,
-		       bound_ms, sum(n), sum(ms)
+		       bound_ms, sum(n), sum(ms), count(*)
 		FROM product_tester_stall_minutes
 		WHERE minute >= $1 AND minute < $2
 		GROUP BY 1, 2, 3`,
@@ -132,7 +135,7 @@ func (s *Store) StallCounts(ctx context.Context, since, until time.Time, step ti
 	var out []StallCount
 	for rows.Next() {
 		var c StallCount
-		if err := rows.Scan(&c.Install, &c.Bucket, &c.BoundMS, &c.N, &c.MS); err != nil {
+		if err := rows.Scan(&c.Install, &c.Bucket, &c.BoundMS, &c.N, &c.MS, &c.Minutes); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

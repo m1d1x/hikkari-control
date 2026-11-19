@@ -157,6 +157,10 @@ export function mockTesterCharts(win: Win): TesterCharts {
 			stallLongMs: p.lost.map((v, i) => (v === null ? null : 1100 * ((i * 3) % 2) + (v ?? 0) * 5000)),
 			tunnelMb: p.lost.map((v, i) => (v === null ? null : 40 + ((i * 13) % 90))),
 		};
+		const l = testers[p.install];
+		const share = (ms: number | null) => (ms === null ? null : Math.min(100, (ms / (down.bucketSeconds * 1000)) * 100));
+		l.stallPct = l.stallMs.map(share);
+		l.stallLongPct = l.stallLongMs.map(share);
 	}
 	const states: NonNullable<TesterCharts['states']> = {};
 	down.people.forEach((p, k) => {

@@ -4,6 +4,8 @@
 		formatCents,
 		setBoxLabel,
 		setBoxPrice,
+		setHosterLabel,
+		setHosterPlanTb,
 		type EntryFleet,
 		type FleetBox,
 		type FleetRelay,
@@ -453,6 +455,157 @@
 		node.select();
 	}
 
+	// ── The providers table: one line per hoster with machines in service ───
+	// What used to be two blocks (19.11, owner: «легко визуально следить за
+	// флотом»): the economics of the provider comparison and the park's own
+	// counts side by side, the machines one click below. A hoster with no
+	// machine in service is not a line: its history stays in the comparison.
+
+	const PROVIDER_COLORS: Record<string, string> = {
+		aeza: '#ec4899',
+		u1: '#10b981',
+		vantage: '#06b6d4',
+		vdsina: '#ff6600',
+		hetzner: '#3b82f6',
+		openstack: '#ed1944',
+	};
+
+	function providerColor(name: string, index: number): string {
+		const known = PROVIDER_COLORS[name.toLowerCase()];
+		if (known) return known;
+		const palette = ['#f59e0b', '#8b5cf6', '#14b8a6', '#ec4899', '#06b6d4', '#10b981'];
+		return palette[index % palette.length];
+	}
+
+	const totalLive = $derived(providerGroups.reduce((acc, g) => acc + g.boxes.length, 0));
+
+	const sharePct = (n: number) => (totalLive === 0 ? 0 : Math.round((n / totalLive) * 100));
+
+	/** Below this, rent over traffic is a figure about an idle machine, not about a terabyte. */
+	const MIN_MEASURED_GB = 100;
+
+	function formatTraffic(gb: number): string {
+		if (gb >= 1000) return `${(gb / 1000).toFixed(1)} ТБ`;
+		return `${gb < 10 ? gb.toFixed(2) : gb.toFixed(0)} ГБ`;
+	}
+
+	function formatLife(days: number): string {
+		if (days < 1 / 24) return 'меньше часа';
+		if (days < 2) return `${Math.round(days * 24)} ч`;
+		return `${days.toFixed(days < 10 ? 1 : 0)} дн`;
+	}
+
+	// The owner's name for a hoster: a double click, like a machine's.
+	let renamingProvider = $state<string | null>(null);
+	let providerDraft = $state('');
+	/** hoster labels saved here before the next fleet answer carries them */
+	let savedProviderLabels = $state<Record<string, string>>({});
+
+	function providerOwnLabel(g: ProviderGroup): string {
+		return savedProviderLabels[g.provider] ?? g.stats?.label ?? '';
+	}
+
+	function startProviderRename(g: ProviderGroup) {
+		labelError = null;
+		providerDraft = providerOwnLabel(g);
+		renamingProvider = g.provider;
+	}
+
+	async function finishProviderRename(g: ProviderGroup, keep: boolean) {
+		if (renamingProvider !== g.provider) return;
+		renamingProvider = null;
+		const next = providerDraft.trim();
+		if (!keep || next === providerOwnLabel(g)) return;
+		const before = savedProviderLabels[g.provider];
+		savedProviderLabels = { ...savedProviderLabels, [g.provider]: next };
+		try {
+			await setHosterLabel(g.provider, next);
+			onChanged?.();
+		} catch (e) {
+			const rest = { ...savedProviderLabels };
+			if (before === undefined) delete rest[g.provider];
+			else rest[g.provider] = before;
+			savedProviderLabels = rest;
+			labelError = `${providerLabel(g.provider)}: ${describeApiError(e)}`;
+		}
+	}
+
+	function providerRenameKey(e: KeyboardEvent, g: ProviderGroup) {
+		if (e.key === 'Enter') finishProviderRename(g, true);
+		else if (e.key === 'Escape') finishProviderRename(g, false);
+	}
+
+	// Terabytes a month in one machine's plan, typed the same way (18.11).
+	let planning = $state<string | null>(null);
+	let planDraft = $state('');
+	/** plans saved here before the next answer carries them; 0 is forgotten */
+	let savedPlans = $state<Record<string, number>>({});
+
+	function planOf(g: ProviderGroup): number | null {
+		const saved = savedPlans[g.provider];
+		if (saved !== undefined) return saved > 0 ? saved : null;
+		return g.stats?.planTb ?? null;
+	}
+
+	function startPlan(g: ProviderGroup) {
+		labelError = null;
+		planDraft = planOf(g)?.toString() ?? '';
+		planning = g.provider;
+	}
+
+	async function finishPlan(g: ProviderGroup, keep: boolean) {
+		if (planning !== g.provider) return;
+		planning = null;
+		if (!keep) return;
+		const text = planDraft
+			.trim()
+			.replace(',', '.')
+			.replace(/\s*тб$/i, '');
+		const tb = text === '' ? 0 : Number(text);
+		if (!Number.isFinite(tb) || tb < 0) {
+			labelError = `${providerLabel(g.provider)}: «${planDraft}» не число терабайт`;
+			return;
+		}
+		if (tb === (planOf(g) ?? 0)) return;
+		try {
+			await setHosterPlanTb(g.provider, tb);
+			savedPlans = { ...savedPlans, [g.provider]: tb };
+			onChanged?.();
+		} catch (e) {
+			labelError = `${providerLabel(g.provider)}: ${describeApiError(e)}`;
+		}
+	}
+
+	function planKey(e: KeyboardEvent, g: ProviderGroup) {
+		if (e.key === 'Enter') finishPlan(g, true);
+		else if (e.key === 'Escape') finishPlan(g, false);
+	}
+
+	/**
+	 * What a terabyte costs: one machine's rent over its plan's terabytes when
+	 * the owner gave them, else the accrued rent over the measured traffic,
+	 * and nothing while the traffic is too small to divide by: 0.02 GB made
+	 * aeza's terabyte cost $195 500.
+	 */
+	function costPerTb(g: ProviderGroup): { text: string; byPlan: boolean } | null {
+		const h = g.stats;
+		if (!h) return null;
+		const plan = planOf(g);
+		if (plan !== null && h.perBoxMonthlyCents !== null) {
+			return { text: formatCents(Math.round(h.perBoxMonthlyCents / plan)), byPlan: true };
+		}
+		if (h.trafficGb === null || h.trafficGb < MIN_MEASURED_GB || h.spentCents <= 0) return null;
+		return { text: formatCents(Math.round(h.spentCents / (h.trafficGb / 1000))), byPlan: false };
+	}
+
+	function costHint(g: ProviderGroup): string {
+		const gb = g.stats?.trafficGb;
+		if (gb != null && gb > 0 && gb < MIN_MEASURED_GB) {
+			return `за окно прошло ${formatTraffic(gb)}, меньше ${MIN_MEASURED_GB} ГБ: делить аренду не на что; впиши тб в тарифе`;
+		}
+		return 'нет трафика за окно; впиши тб в тарифе, чтобы считать по тарифу';
+	}
+
 	const filteredAllBoxes = $derived.by(() => {
 		if (!searchQuery.trim()) return activeBoxes;
 		const q = searchQuery.toLowerCase().trim();
@@ -521,7 +674,7 @@
 <section class="card fleet-card">
 	<div class="card-head">
 		<div class="head-left">
-			<h2>парк машин</h2>
+			<h2>провайдеры и машины</h2>
 			<span class="sub">{activeBoxes.length} в строю</span>
 			{#if labelError}<span class="label-err" role="alert">{labelError}</span>{/if}
 		</div>
@@ -541,102 +694,224 @@
 		</div>
 	</div>
 
-	<!-- ======== MODE 0: TREE: PROVIDER → MACHINE → RELAY → DOMAIN / DEST ======== -->
+	<!-- ======== MODE 0: PROVIDERS → MACHINE → RELAY → DOMAIN / DEST ======== -->
 	{#if mode === 'tree'}
 		{#if providerGroups.length === 0}
 			<div class="empty-state">нет активных машин в парке</div>
 		{:else}
-			<div class="tree">
-				{#each providerGroups as g (g.provider)}
-					{@const open = expandedProviders.has(g.provider)}
-					<button
-						class="t-provider"
-						class:open
-						onclick={() => (expandedProviders = toggleIn(expandedProviders, g.provider))}
-					>
-						<span class="caret">{open ? '▾' : '▸'}</span>
-						<span class="t-name">{providerLabel(g.provider)}</span>
-						<span class="t-meta">машин <b>{g.boxes.length}</b></span>
-						<span class="t-meta">релеев <b>{g.liveRelays}</b></span>
-						<span class="t-meta">держателей <b>{g.holders.toLocaleString('ru-RU')}</b></span>
-						<span class="t-meta">
-							в месяц <b>{formatCents(g.monthlyCents)}</b>
-							{#if g.unpriced > 0}<small>без цены {g.unpriced}</small>{/if}
-						</span>
-						<span class="t-meta">
-							выживаемость
-							{#if g.stats?.winratePct == null}<i class="nodata">нет данных</i>{:else}<b
-									>{g.stats.winratePct.toFixed(0)}%</b
-								>{/if}
-						</span>
-						<span class="t-meta">
-							медиана жизни
-							{#if g.stats?.medianLifeDays == null}<i class="nodata">нет данных</i>{:else}<b
-									>{g.stats.medianLifeDays.toFixed(1)} дн</b
-								>{/if}
-						</span>
-						{#if g.incidents > 0}
-							<span class="status-bad"><span class="bad-dot"></span>{g.incidents} в инциденте</span>
-						{/if}
-					</button>
-
-					{#if open}
-						{#each getSortedBoxes(g.boxes) as box (box.name)}
-							{@const boxOpen = expandedTreeBoxes.has(box.name)}
-							<div class="t-box" class:has-incident={box.openIncident}>
-								<button
-									class="caret-btn"
-									aria-label="релеи машины {box.name}"
-									onclick={() => (expandedTreeBoxes = toggleIn(expandedTreeBoxes, box.name))}
-								>
-									{boxOpen ? '▾' : '▸'}
-								</button>
-								{@render boxName(box, 't-box-name m')}
-								<span class="ip-sealed" title="ip запечатан, открывается в карточке">ip в конверте</span>
-								<span class="t-cell">{boxRegion(box)}</span>
-								<span class="t-cell m">{boxLifetime(box.createdAt)}</span>
-								<span class="t-cell m">{@render boxPrice(box, true)}</span>
-								<span class="t-cell">
-									{#if box.openIncident}
-										<span class="status-bad"><span class="bad-dot"></span>{box.openIncident}</span>
-									{:else if box.verdict === 'warn'}
-										<span class="status-warn"><span class="warn-dot"></span>{box.verdictLabel || 'внимание'}</span>
+			<div class="alloc-wrap">
+				<div class="alloc-bar" role="img" aria-label="машины в строю по провайдерам">
+					{#each providerGroups as g, i (g.provider)}
+						<div
+							class="alloc-seg"
+							style="width: {sharePct(g.boxes.length)}%; background-color: {providerColor(g.provider, i)}"
+							title="{providerOwnLabel(g) || providerLabel(g.provider)}: {g.boxes.length} шт"
+						></div>
+					{/each}
+				</div>
+			</div>
+			<div class="table-wrap">
+				<table class="prov-table">
+					<thead>
+						<tr>
+							<th>провайдер</th>
+							<th class="num">машины</th>
+							<th class="num">релеи</th>
+							<th class="num">держатели</th>
+							<th class="num" title="аренда машин в строю в месяц">в месяц</th>
+							<th class="num" title="медиана цены одной машины в строю">тариф</th>
+							<th class="num">трафик {fleet.providers?.windowDays ?? 30} дн</th>
+							<th class="num" title="сколько ТБ в месяц входит в тариф одной машины; двойной клик по ячейке: вписать"
+								>тб в тарифе</th
+							>
+							<th class="num">себес / тб</th>
+							<th class="num" title="машины старше окна, дожившие до его конца без бана ip">выживаемость</th>
+							<th class="num" title="медиана жизни машин, сгоревших от бана">жизнь до бана</th>
+							<th>статус</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each providerGroups as g, i (g.provider)}
+							{@const open = expandedProviders.has(g.provider)}
+							{@const h = g.stats}
+							{@const own = providerOwnLabel(g)}
+							{@const plan = planOf(g)}
+							{@const cost = costPerTb(g)}
+							<tr
+								class="prov-row"
+								class:open
+								onclick={() => (expandedProviders = toggleIn(expandedProviders, g.provider))}
+							>
+								<td>
+									<div class="prov-name-cell">
+										<span class="caret">{open ? '▾' : '▸'}</span>
+										<span class="dot" style="background-color: {providerColor(g.provider, i)}"></span>
+										{#if renamingProvider === g.provider}
+											<input
+												class="rename-input m"
+												maxlength="40"
+												placeholder={providerLabel(g.provider)}
+												aria-label="своё имя провайдера {providerLabel(g.provider)}"
+												bind:value={providerDraft}
+												use:focusSelect
+												onclick={(e) => e.stopPropagation()}
+												onkeydown={(e) => providerRenameKey(e, g)}
+												onblur={() => finishProviderRename(g, true)}
+											/>
+										{:else}
+											<button
+												class="prov-name"
+												onclick={(e) => e.stopPropagation()}
+												ondblclick={() => startProviderRename(g)}
+												title="двойной клик: своё имя провайдера"
+											>
+												{#if own}{own}
+													<small class="real-name">{providerLabel(g.provider)}</small>{:else}{providerLabel(
+														g.provider,
+													)}{/if}
+											</button>
+										{/if}
+									</div>
+								</td>
+								<td class="num m">{g.boxes.length} <small class="share">{sharePct(g.boxes.length)}%</small></td>
+								<td class="num m">{g.liveRelays}</td>
+								<td class="num m">{g.holders.toLocaleString('ru-RU')}</td>
+								<td class="num m">
+									{formatCents(g.monthlyCents)}
+									{#if g.unpriced > 0}<small class="muted">+{g.unpriced} без цены</small>{/if}
+								</td>
+								<td class="num m">
+									{#if h?.perBoxMonthlyCents != null}{formatCents(h.perBoxMonthlyCents)}{:else}<span class="muted"
+											>-</span
+										>{/if}
+								</td>
+								<td class="num m">
+									{#if h?.trafficGb != null}
+										{formatTraffic(h.trafficGb)}
+										{#if plan !== null}<small class="muted">из {formatTraffic(plan * 1000 * g.boxes.length)}</small
+											>{/if}
+									{:else}
+										<span class="muted">-</span>
+									{/if}
+								</td>
+								<td class="num m">
+									{#if planning === g.provider}
+										<input
+											class="rename-input plan-input m"
+											placeholder="32"
+											aria-label="тб в тарифе у {providerLabel(g.provider)}"
+											bind:value={planDraft}
+											use:focusSelect
+											onclick={(e) => e.stopPropagation()}
+											onkeydown={(e) => planKey(e, g)}
+											onblur={() => finishPlan(g, true)}
+										/>
+									{:else}
+										<button
+											class="price-btn m"
+											onclick={(e) => e.stopPropagation()}
+											ondblclick={() => startPlan(g)}
+											title="двойной клик: сколько ТБ в месяц входит в тариф одной машины, пусто или 0 стирает"
+										>
+											{#if plan !== null}{plan} ТБ{:else}<span class="muted">-</span>{/if}
+										</button>
+									{/if}
+								</td>
+								<td class="num m">
+									{#if cost !== null}
+										<span
+											class="cost-val"
+											class:measured={!cost.byPlan}
+											title={cost.byPlan
+												? 'тариф одной машины / тб в тарифе'
+												: 'аренда за окно / трафик за окно; впиши тб в тарифе, чтобы считать по тарифу'}
+											>{cost.text}</span
+										>
+									{:else}
+										<span class="muted" title={costHint(g)}>-</span>
+									{/if}
+								</td>
+								<td class="num m">
+									{#if h?.winratePct == null}<span class="muted" title="нет машин старше окна">-</span
+										>{:else}{h.winratePct.toFixed(0)}%{/if}
+								</td>
+								<td class="num m">
+									{#if h?.medianLifeDays == null}<span class="muted" title="ни одна машина не сгорела от бана">-</span
+										>{:else}<span title="по {h.lifeSampleCount} сгоревшим">{formatLife(h.medianLifeDays)}</span>{/if}
+								</td>
+								<td>
+									{#if g.incidents > 0}
+										<span class="status-bad"><span class="bad-dot"></span>{g.incidents} в инциденте</span>
 									{:else}
 										<span class="status-ok">чисто</span>
 									{/if}
-								</span>
-							</div>
-							{#if boxOpen}
-								{#each box.relays as r (r.name)}
-									{@const leaf = relayLeaf(box, r)}
-									<div class="t-relay">
-										<span class="rname m"><i class="dot {r.verdict}"></i>{r.name}</span>
-										<span>
-											{#if r.unreadable}
-												<i class="nodata" title="ключ сервера не открывает запись релея">не читается</i>
-											{:else}
-												<span class="badge {protoBadgeClass(r.proto)}">{shortProto(r.proto)}</span><span class="m"
-													>:{r.port}</span
+								</td>
+							</tr>
+							{#if open}
+								<tr class="prov-boxes">
+									<td colspan="12">
+										{#each getSortedBoxes(g.boxes) as box (box.name)}
+											{@const boxOpen = expandedTreeBoxes.has(box.name)}
+											<div class="t-box" class:has-incident={box.openIncident}>
+												<button
+													class="caret-btn"
+													aria-label="релеи машины {box.name}"
+													onclick={() => (expandedTreeBoxes = toggleIn(expandedTreeBoxes, box.name))}
 												>
+													{boxOpen ? '▾' : '▸'}
+												</button>
+												{@render boxName(box, 't-box-name m')}
+												<span class="ip-sealed" title="ip запечатан, открывается в карточке">ip в конверте</span>
+												<span class="t-cell">{boxRegion(box)}</span>
+												<span class="t-cell m">{boxLifetime(box.createdAt)}</span>
+												<span class="t-cell m">{@render boxPrice(box, true)}</span>
+												<span class="t-cell">
+													{#if box.openIncident}
+														<span class="status-bad"><span class="bad-dot"></span>{box.openIncident}</span>
+													{:else if box.verdict === 'warn'}
+														<span class="status-warn"
+															><span class="warn-dot"></span>{box.verdictLabel || 'внимание'}</span
+														>
+													{:else}
+														<span class="status-ok">чисто</span>
+													{/if}
+												</span>
+											</div>
+											{#if boxOpen}
+												{#each box.relays as r (r.name)}
+													{@const leaf = relayLeaf(box, r)}
+													<div class="t-relay">
+														<span class="rname m"><i class="dot {r.verdict}"></i>{r.name}</span>
+														<span>
+															{#if r.unreadable}
+																<i class="nodata" title="ключ сервера не открывает запись релея">не читается</i>
+															{:else}
+																<span class="badge {protoBadgeClass(r.proto)}">{shortProto(r.proto)}</span><span
+																	class="m">:{r.port}</span
+																>
+															{/if}
+														</span>
+														<span>{RELAY_STATUS[r.status] ?? r.status}</span>
+														<span class="m">держателей {r.grants.toLocaleString('ru-RU')}</span>
+														<span class="t-leaf">
+															{#if leaf}
+																<span class="leaf-kind">{leaf.kind}</span><span class="m">{leaf.value}</span>
+															{:else}
+																<i class="nodata">нет данных</i>
+															{/if}
+														</span>
+													</div>
+												{:else}
+													<div class="t-relay"><i class="nodata">на машине нет релеев</i></div>
+												{/each}
 											{/if}
-										</span>
-										<span>{RELAY_STATUS[r.status] ?? r.status}</span>
-										<span class="m">держателей {r.grants.toLocaleString('ru-RU')}</span>
-										<span class="t-leaf">
-											{#if leaf}
-												<span class="leaf-kind">{leaf.kind}</span><span class="m">{leaf.value}</span>
-											{:else}
-												<i class="nodata">нет данных</i>
-											{/if}
-										</span>
-									</div>
-								{:else}
-									<div class="t-relay"><i class="nodata">на машине нет релеев</i></div>
-								{/each}
+										{/each}
+									</td>
+								</tr>
 							{/if}
 						{/each}
-					{/if}
-				{/each}
+					</tbody>
+				</table>
 			</div>
 		{/if}
 	{/if}
@@ -964,53 +1239,130 @@
 {/snippet}
 
 <style>
-	/* ---------- tree: provider → machine → relay → domain / dest ---------- */
-	.tree {
-		font-size: 12px;
+	/* ---------- providers: one line per hoster, its machines below ---------- */
+	.alloc-wrap {
+		padding: 12px 16px 10px;
 	}
 
-	.t-provider {
+	.alloc-bar {
 		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		gap: 6px 18px;
 		width: 100%;
-		padding: 10px 16px;
-		text-align: left;
+		height: 8px;
+		border-radius: 4px;
+		overflow: hidden;
+		background: var(--border-subtle, oklch(0.2 0 0));
+	}
+
+	.alloc-seg {
+		height: 100%;
+	}
+
+	.prov-table {
+		width: 100%;
+		border-collapse: collapse;
 		font-size: 12px;
-		color: var(--text-2, oklch(0.62 0 0));
-		background: var(--inset, oklch(0.17 0 0));
-		border: none;
-		border-bottom: 1px solid var(--border-subtle, oklch(0.19 0 0));
+		text-align: left;
+	}
+
+	.prov-table th {
+		padding: 8px 8px;
+		color: var(--text-3, oklch(0.5 0 0));
+		font-weight: 500;
+		font-size: 11px;
+		line-height: 1.25;
+		border-bottom: 1px solid var(--border-subtle, oklch(0.2 0 0));
+		vertical-align: bottom;
+	}
+
+	.prov-table th:first-child,
+	.prov-table td:first-child {
+		padding-left: 16px;
+	}
+
+	.prov-table td {
+		padding: 9px 8px;
+		border-bottom: 1px solid var(--border-subtle, oklch(0.18 0 0));
+		vertical-align: middle;
+		white-space: nowrap;
+	}
+
+	.prov-row {
 		cursor: pointer;
 	}
 
-	.t-provider:hover {
-		background: var(--surface, oklch(0.23 0 0));
+	.prov-row:hover,
+	.prov-row.open {
+		background: var(--inset, oklch(0.17 0 0));
 	}
 
-	.t-provider .caret {
+	.prov-table .prov-boxes > td {
+		padding: 0;
+		white-space: normal;
+	}
+
+	.prov-name-cell {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.prov-name-cell .caret {
 		font-family: var(--mono, monospace);
 		color: var(--text-3, oklch(0.42 0 0));
 	}
 
-	.t-provider .t-name {
-		min-width: 90px;
+	.prov-name {
+		padding: 0;
+		font: inherit;
+		font-size: 13px;
 		font-weight: 600;
+		text-align: left;
 		color: var(--text, oklch(0.93 0 0));
+		background: none;
+		border: none;
+		cursor: text;
 	}
 
-	.t-meta b {
-		margin-left: 3px;
-		font-family: var(--mono, monospace);
+	.prov-name:hover {
+		color: var(--primary, oklch(0.75 0.14 350));
+	}
+
+	.dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.prov-table .num {
+		text-align: right;
 		font-variant-numeric: tabular-nums;
-		color: var(--text, oklch(0.93 0 0));
 	}
 
-	.t-meta small {
-		margin-left: 5px;
+	.share,
+	.muted {
 		color: var(--text-3, oklch(0.42 0 0));
 	}
+
+	.prov-table .num small {
+		margin-left: 4px;
+	}
+
+	.plan-input {
+		width: 7ch;
+		text-align: right;
+	}
+
+	.cost-val {
+		color: var(--ok, oklch(0.72 0.15 155));
+		font-weight: 600;
+	}
+
+	.cost-val.measured {
+		color: var(--text-2, oklch(0.62 0 0));
+	}
+
+	/* ---------- tree: provider → machine → relay → domain / dest ---------- */
 
 	.t-box {
 		display: grid;

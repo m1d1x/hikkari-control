@@ -37,6 +37,14 @@ type TesterLines struct {
 	StallMS []*float64 `json:"stallMs"`
 	// StallLongMS: the same for the stalls of at least StallLongBoundMS.
 	StallLongMS []*float64 `json:"stallLongMs"`
+	// StallPct: the share of the bucket's measured time, in percent, the
+	// tunnel stood in stalls of at least StallShortMS. Measured time is the
+	// minutes the core timed stalls in (the tunnel on, the minute not "-"),
+	// not the wall clock: a tester online five minutes of ten with 30 s of
+	// stalls stood 10% of their time, not 5%. Null where nothing was measured.
+	StallPct []*float64 `json:"stallPct"`
+	// StallLongPct: the same for the stalls of at least StallLongBoundMS.
+	StallLongPct []*float64 `json:"stallLongPct"`
 	// TunnelMB: megabytes up and down together through the tunnel (client
 	// newer than 1.0.92); null where the client wrote nothing. What went past
 	// the VPN is not counted (owner, 18.11).
@@ -99,6 +107,7 @@ func assembleTesters(win string, since, until time.Time, step time.Duration, cou
 			l = TesterLines{
 				Lost: make([]*float64, n), RuMS: make([]*float64, n), RuMissed: make([]*float64, n),
 				StallMS: make([]*float64, n), StallLongMS: make([]*float64, n),
+				StallPct: make([]*float64, n), StallLongPct: make([]*float64, n),
 				TunnelMB: make([]*float64, n),
 			}
 			c.Testers[install] = l
@@ -140,9 +149,13 @@ func assembleTesters(win string, since, until time.Time, step time.Duration, cou
 		}
 		switch k.BoundMS {
 		case StallShortMS:
-			add(lines(k.Install).StallMS, i, float64(k.MS))
+			l := lines(k.Install)
+			add(l.StallMS, i, float64(k.MS))
+			l.StallPct[i] = stallShare(k)
 		case StallLongBoundMS:
-			add(lines(k.Install).StallLongMS, i, float64(k.MS))
+			l := lines(k.Install)
+			add(l.StallLongMS, i, float64(k.MS))
+			l.StallLongPct[i] = stallShare(k)
 		}
 	}
 	const mb = 1 << 20
@@ -155,6 +168,20 @@ func assembleTesters(win string, since, until time.Time, step time.Duration, cou
 		add(l.TunnelMB, i, float64(k.Tunnel)/mb)
 	}
 	return c
+}
+
+// stallShare is the percent of a bucket's measured minutes spent in stalls,
+// at most 100: a stall the core books in one minute may have begun in the
+// minute before. Nil where no minute was measured.
+func stallShare(k StallCount) *float64 {
+	if k.Minutes <= 0 {
+		return nil
+	}
+	v := float64(k.MS) / float64(k.Minutes*60_000) * 100
+	if v > 100 {
+		v = 100
+	}
+	return &v
 }
 
 // registerTesterRoutes mounts GET /api/v1/admin/product/testers?window=24h.

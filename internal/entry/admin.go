@@ -76,6 +76,8 @@ func RegisterAdminRoutes(mux *http.ServeMux, h *AdminHandlers, gate, stepUp func
 	// Terabytes a month in one machine's plan at a hoster: a figure in the
 	// provider table, nothing acts on it.
 	mux.HandleFunc("PUT /api/v1/admin/entry/hosters/{provider}/plan-tb", gate(h.SetProviderPlanTB))
+	// The owner's own name for a hoster on the screen, like a machine's.
+	mux.HandleFunc("PUT /api/v1/admin/entry/hosters/{provider}/label", gate(h.SetProviderLabel))
 	mux.HandleFunc("DELETE /api/v1/admin/entry/boxes/{name}/instance", stepUp(h.DeleteBoxInstance))
 	mux.HandleFunc("GET /api/v1/admin/entry/domains", gate(h.Domains))
 	mux.HandleFunc("GET /api/v1/admin/entry/domains/suggest", gate(h.SuggestDomains))
@@ -447,6 +449,33 @@ func (h *AdminHandlers) SetProviderPlanTB(w http.ResponseWriter, r *http.Request
 	audit.Log(r.Context(), h.audit, r, audit.Entry{
 		AdminID: actor.ID, Action: "entry.hoster.plan_tb", TargetType: "hoster", TargetID: provider,
 		Payload: map[string]any{"tb": body.TB},
+	})
+	writeJSON(w, http.StatusOK, map[string]any{})
+}
+
+// SetProviderLabel — PUT /api/v1/admin/entry/hosters/{provider}/label: body
+// {"label"}. The hoster shows under that name on the fleet screen; "" takes
+// it back.
+func (h *AdminHandlers) SetProviderLabel(w http.ResponseWriter, r *http.Request) {
+	actor := auth.GetAdmin(r)
+	if actor == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		Label string `json:"label"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "body is {\"label\"}"})
+		return
+	}
+	provider := r.PathValue("provider")
+	if h.refused(w, h.svc.SetProviderLabel(r.Context(), provider, body.Label)) {
+		return
+	}
+	audit.Log(r.Context(), h.audit, r, audit.Entry{
+		AdminID: actor.ID, Action: "entry.hoster.label", TargetType: "hoster", TargetID: provider,
+		Payload: map[string]any{"label": strings.TrimSpace(body.Label)},
 	})
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
