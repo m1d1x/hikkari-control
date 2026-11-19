@@ -349,6 +349,12 @@ func (b *brain) startExtras() {
 	}
 	go b.followWires(ctx)
 	go b.runReceivers(ctx)
+	// The matrix of silences (matrix.go): whose silence each one is.
+	if targets, err := parseMatrix(os.Getenv("EDGE_TRUNK_MATRIX")); err != nil {
+		log.Printf("nekko-trunk-entry: matrix: %v (no matrix)", err)
+	} else {
+		go runMatrix(ctx, targets)
+	}
 }
 
 // handOver makes this generation an old one (its pipe already drains): no
