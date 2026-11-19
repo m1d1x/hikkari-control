@@ -105,6 +105,9 @@ package main
 //	                                    # one in place, relays untouched (egress_links.go)
 //	cmd/server entry-box egress-check <receiver-box> <egress-box>
 //	cmd/server entry-box egress-off <receiver-box> <egress-box>
+//	cmd/server entry-box border-forward <box> <core-box>|off
+//	                                    # a border point: forwards the entries' trunk
+//	                                    # to the core, keeps nothing (border.go)
 //	cmd/server entry-box egress-spare <receiver-box> <egress-box>|off
 //	                                    # the receiver's spare egress: a second
 //	                                    # peer, warm; the receiver's own watch moves
@@ -990,6 +993,27 @@ func runEntryBox(args []string) {
 			err = prov.StopEgress(ctx, args[1], args[2])
 		}
 		if err != nil {
+			fail(err)
+		}
+		os.Exit(0)
+	}
+	if len(args) == 3 && args[0] == "border-forward" {
+		// entry-box border-forward <box> <core-box>|off — the box forwards
+		// the entries' trunk to the core and keeps nothing of the people
+		// (internal/entry/border.go, hikkari-client
+		// plans/2026-11-19-border-forwarders.md).
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+		if err := prov.StandBorder(ctx, args[1], args[2]); err != nil {
 			fail(err)
 		}
 		os.Exit(0)
