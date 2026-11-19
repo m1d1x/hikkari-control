@@ -70,7 +70,14 @@ func (s *Service) CapacityFleetLinks(ctx context.Context, fleet Fleet, slot stri
 	if err != nil {
 		applog.Error(ctx, "capacity", "cascade links not rendered", applog.F("err", err.Error()))
 	}
-	links = append(links, cascaded...)
+	for _, c := range cascaded {
+		links = append(links, c.link)
+	}
+	// A cascade link names no node: the pair of boxes is what draws its
+	// samples on the cascade's card. Not having it costs the card a line.
+	if err := s.rememberCapacityCascades(ctx, cascaded); err != nil {
+		applog.Error(ctx, "capacity", "cascade keys not saved", applog.F("err", err.Error()))
+	}
 	// The run's samples come back keyed by configuration only; the pair is
 	// what lets the fleet screen draw them on the node's card. Not having it
 	// costs the screen a line, not the run its links.

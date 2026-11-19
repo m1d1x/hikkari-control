@@ -65,6 +65,12 @@ export interface FleetCascade {
 	trunkLossPm: (number | null)[];
 	/** entry → exit: median of the call's minutes' p50 round trip */
 	trunkRttMs: (number | null)[];
+	/** the whole way: a Russian prober's capacity run through the cascade, median Mbit/s of the bucket */
+	speedMbps: (number | null)[];
+	/** the same runs' HTTPS round trip through the cascade */
+	speedRttMs: (number | null)[];
+	/** the cascade's usual speed, median over the week; null when never measured */
+	speedNormMbps: number | null;
 }
 
 export interface FleetProfiles {
