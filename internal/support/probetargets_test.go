@@ -28,17 +28,17 @@ func TestValidateProbeTargets(t *testing.T) {
 
 func TestProvokeCarriesAtMostThreeTargets(t *testing.T) {
 	three := []ProbeTarget{{"ru", "1.2.3.4:443"}, {"ams3", "1.2.3.5:443"}, {"eu", "1.2.3.6:443"}}
-	p, err := commandParams(TesterCommandProvoke, three)
+	p, err := commandParams(TesterCommandProvoke, three, "")
 	if err != nil || len(p) == 0 {
 		t.Fatalf("three boxes: %s, %v", p, err)
 	}
-	if _, err := commandParams(TesterCommandProvoke, append(three, ProbeTarget{"x", "1.2.3.7:443"})); err == nil {
+	if _, err := commandParams(TesterCommandProvoke, append(three, ProbeTarget{"x", "1.2.3.7:443"}), ""); err == nil {
 		t.Fatal("four boxes accepted")
 	}
-	if _, err := commandParams(TesterCommandProvoke, nil); err == nil {
+	if _, err := commandParams(TesterCommandProvoke, nil, ""); err == nil {
 		t.Fatal("no boxes accepted")
 	}
-	if _, err := commandParams(TesterCommandProvoke, []ProbeTarget{{"ru", "10.0.0.1:443"}}); err == nil {
+	if _, err := commandParams(TesterCommandProvoke, []ProbeTarget{{"ru", "10.0.0.1:443"}}, ""); err == nil {
 		t.Fatal("a private box accepted")
 	}
 	if !testerCommandKinds[TesterCommandProvoke] {
@@ -47,11 +47,33 @@ func TestProvokeCarriesAtMostThreeTargets(t *testing.T) {
 }
 
 func TestOnlyProbeCarriesTargets(t *testing.T) {
-	if _, err := commandParams(TesterCommandRunDoctor, []ProbeTarget{{"a", "1.2.3.4:443"}}); err == nil {
+	if _, err := commandParams(TesterCommandRunDoctor, []ProbeTarget{{"a", "1.2.3.4:443"}}, ""); err == nil {
 		t.Fatal("run_doctor took targets")
 	}
-	p, err := commandParams(TesterCommandSnapshot, nil)
+	p, err := commandParams(TesterCommandSnapshot, nil, "")
 	if err != nil || p != nil {
 		t.Fatalf("snapshot params: %s, %v", p, err)
+	}
+}
+
+func TestOnlySpeedNamesAProfile(t *testing.T) {
+	p, err := commandParams(TesterCommandSpeed, nil, "p-002")
+	if err != nil || string(p) != `{"profile":"p-002"}` {
+		t.Fatalf("speed params: %s, %v", p, err)
+	}
+	if p, err := commandParams(TesterCommandSpeed, nil, ""); err != nil || p != nil {
+		t.Fatalf("speed over every profile: %s, %v", p, err)
+	}
+	if _, err := commandParams(TesterCommandSpeed, nil, "../etc"); err == nil {
+		t.Fatal("speed took a word that is not a profile tag")
+	}
+	if _, err := commandParams(TesterCommandSpeed, []ProbeTarget{{"a", "1.2.3.4:443"}}, ""); err == nil {
+		t.Fatal("speed took targets")
+	}
+	if _, err := commandParams(TesterCommandLoad, nil, "p-002"); err == nil {
+		t.Fatal("load_profiles took a profile")
+	}
+	if !testerCommandKinds[TesterCommandSpeed] {
+		t.Fatal("speed_profiles is not on the whitelist")
 	}
 }

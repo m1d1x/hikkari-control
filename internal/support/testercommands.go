@@ -37,6 +37,12 @@ const (
 	// TesterCommandLoad runs every profile of the install under load now. Its
 	// answer only says the round started: the lines follow as [diag:load].
 	TesterCommandLoad = "load_profiles"
+	// TesterCommandSpeed measures how fast each profile, or the one named,
+	// carries traffic from the tester's card: several flows for a fixed window,
+	// down and then up. It moves hundreds of megabytes a profile, so it is only
+	// ever asked for. The answer says the round started; the lines follow as
+	// [diag:speed].
+	TesterCommandSpeed = "speed_profiles"
 	// TesterCommandVoice sends a call's datagrams through the tunnel for half a
 	// minute, and on Windows from the card beside it; the answer is the
 	// [diag:voice] lines (internal/voiceruns keeps them).
@@ -62,6 +68,7 @@ var testerCommandKinds = map[string]bool{
 	TesterCommandSnapshot:  true,
 	TesterCommandProbe:     true,
 	TesterCommandLoad:      true,
+	TesterCommandSpeed:     true,
 	TesterCommandVoice:     true,
 	TesterCommandProvoke:   true,
 }
@@ -134,6 +141,7 @@ func TesterCommandRequestHandler(store TesterStore) http.HandlerFunc {
 		var req struct {
 			Kind    string        `json:"kind"`
 			Targets []ProbeTarget `json:"targets"`
+			Profile string        `json:"profile"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxReportBody)).Decode(&req); err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid request body")
@@ -143,7 +151,7 @@ func TesterCommandRequestHandler(store TesterStore) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "unknown command kind")
 			return
 		}
-		params, err := commandParams(req.Kind, req.Targets)
+		params, err := commandParams(req.Kind, req.Targets, req.Profile)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
