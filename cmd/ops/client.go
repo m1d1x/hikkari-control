@@ -312,6 +312,8 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 		return c.provoke(args)
 	case "load":
 		return c.load(args)
+	case "speed":
+		return c.speed(args)
 	case "probe-voice":
 		return c.probeVoice(args)
 	case "voice":
@@ -742,6 +744,53 @@ func (c *client) load(args map[string]string) (string, error) {
 		}
 		if time.Now().After(deadline) {
 			return out, fmt.Errorf("%s начал раунд, но не закрыл его за %s: строки выше, остальное в logs --src diag:load", asked.Alias, loadWait)
+		}
+		time.Sleep(loadPoll)
+	}
+}
+
+// speedWait bounds probe_speed: a profile takes its core's start and two
+// 10 s windows, well under a minute.
+var speedWait = 10 * time.Minute
+
+// speed asks a tester for a speed round now, over every profile or the one
+// named, and waits for it to close, as load does.
+func (c *client) speed(args map[string]string) (string, error) {
+	who := args["who"]
+	path, err := installPath(who, "/commands")
+	if err != nil {
+		return "", err
+	}
+	body := map[string]any{"kind": "speed_profiles"}
+	if p := args["profile"]; p != "" {
+		body["profile"] = p
+	}
+	data, err := c.request(http.MethodPost, path, nil, body)
+	if err != nil {
+		return "", err
+	}
+	var asked diagAnswer
+	if err := json.Unmarshal(data, &asked); err != nil {
+		return "", fmt.Errorf("hub answer: %w", err)
+	}
+	if err := c.waitDone(path, asked); err != nil {
+		return "", err
+	}
+	exportPath, err := installPath(who, "/export")
+	if err != nil {
+		return "", err
+	}
+	deadline := time.Now().Add(speedWait)
+	for {
+		out, err := c.export(exportPath, asked.CreatedAt.Add(-time.Minute), time.Now().Add(time.Minute), "diag:speed", defaultTail)
+		if err != nil {
+			return "", err
+		}
+		if roundClosed(out, asked.Nonce) || loadRefused.MatchString(answerLines(out, asked.Nonce)) {
+			return out, nil
+		}
+		if time.Now().After(deadline) {
+			return out, fmt.Errorf("%s начал замер скорости, но не закрыл его за %s: строки выше, остальное в logs --src diag:speed", asked.Alias, speedWait)
 		}
 		time.Sleep(loadPoll)
 	}

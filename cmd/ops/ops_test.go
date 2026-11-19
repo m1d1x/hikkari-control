@@ -188,6 +188,52 @@ func TestLoadWaitsForTheRoundToClose(t *testing.T) {
 	}
 }
 
+func TestSpeedAsksTheNamedProfileAndWaitsForTheRound(t *testing.T) {
+	defer func(p time.Duration) { loadPoll = p }(loadPoll)
+	loadPoll = 20 * time.Millisecond
+	c, store := hubFixture(t)
+	ctx := context.Background()
+	base := support.TesterChunkRequest{InstallID: "t-abc", Platform: "windows", Version: "1.0.95"}
+	hb := base
+	hb.Heartbeat = true
+	if err := store.AppendChunk(ctx, hb); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for i := 0; i < 200; i++ {
+			time.Sleep(20 * time.Millisecond)
+			cmds, _ := store.TakeCommands(ctx, "t-abc")
+			if len(cmds) == 0 {
+				continue
+			}
+			if cmds[0].Kind != "speed_profiles" || string(cmds[0].Params) != `{"profile":"p-002"}` {
+				t.Errorf("command %q %s", cmds[0].Kind, cmds[0].Params)
+			}
+			now := time.Now().Format("2006/01/02 15:04:05.000000")
+			res := base
+			res.Lines = []string{now + " [diag:speed nonce=" + cmds[0].Nonce + "] started profiles=1 streams=4 window=10s"}
+			_ = store.AppendChunk(ctx, res)
+			_ = store.AckCommands(ctx, "t-abc", []string{cmds[0].Nonce})
+			time.Sleep(100 * time.Millisecond)
+			now = time.Now().Format("2006/01/02 15:04:05.000000")
+			res.Lines = []string{
+				now + " [diag:speed] p-002 proto=hikkari streams=4 window=10s down=187.3Mbps(peak=221.0,mb=223,fail=0) up=64.0Mbps(peak=70.2,mb=76,fail=0)",
+				now + " [diag:load] p-002 proto=hikkari an unrelated round",
+				now + " [diag:speed] on request: done",
+			}
+			_ = store.AppendChunk(ctx, res)
+			return
+		}
+	}()
+	out, err := c.call("speed", map[string]string{"who": "tester-001", "profile": "p-002"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "down=187.3Mbps") || !strings.Contains(out, "on request: done") || strings.Contains(out, "unrelated") {
+		t.Fatalf("speed output: %s", out)
+	}
+}
+
 func TestLoadRoundIsClosedOnlyByItsOwnLogRecord(t *testing.T) {
 	guide := `{"type":"meta","guide":{"sources":{"diag:load":"Раунд по запросу закрывает строка «on request: done»"}}}`
 	earlier := `{"type":"log","src":"diag:load","msg":"on request: done"}`

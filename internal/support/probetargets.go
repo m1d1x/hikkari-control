@@ -61,7 +61,22 @@ func validateProbeTargets(kind string, targets []ProbeTarget, max int) error {
 }
 
 // commandParams checks and encodes what a kind carries.
-func commandParams(kind string, targets []ProbeTarget) (json.RawMessage, error) {
+func commandParams(kind string, targets []ProbeTarget, profile string) (json.RawMessage, error) {
+	if profile != "" && kind != TesterCommandSpeed {
+		return nil, fmt.Errorf("%s takes no profile", kind)
+	}
+	if kind == TesterCommandSpeed {
+		if len(targets) > 0 {
+			return nil, fmt.Errorf("%s takes no targets", kind)
+		}
+		if profile == "" {
+			return nil, nil
+		}
+		if !speedProfileTag.MatchString(profile) {
+			return nil, fmt.Errorf("profile %q is not a profile tag (p-…)", profile)
+		}
+		return json.Marshal(map[string]string{"profile": profile})
+	}
 	max := map[string]int{TesterCommandProbe: MaxProbeTargets, TesterCommandProvoke: MaxProvokeTargets}[kind]
 	if max == 0 {
 		if len(targets) > 0 {
@@ -74,6 +89,9 @@ func commandParams(kind string, targets []ProbeTarget) (json.RawMessage, error) 
 	}
 	return json.Marshal(map[string]any{"targets": targets})
 }
+
+// speedProfileTag is what speed_profiles may name, as the client checks it too.
+var speedProfileTag = regexp.MustCompile(`^p-[A-Za-z0-9_-]{1,40}$`)
 
 // nullableJSON keeps "no params" a NULL, which IS NOT DISTINCT FROM can match.
 func nullableJSON(params json.RawMessage) any {
