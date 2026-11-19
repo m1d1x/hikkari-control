@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/m1d1x/hikkari-control/internal/applog"
+	"github.com/m1d1x/hikkari-control/internal/capacity"
 	"github.com/m1d1x/hikkari-control/internal/entry"
 )
 
@@ -16,7 +17,7 @@ import (
 // the numbers a cascade profile shows are the cascade's, not the direct path's.
 // dup is left off: the subscription looks a link's numbers up without it
 // (capacity.MeasuredKey).
-func (s *Service) capacityCascadeLinks(ctx context.Context, fleet Fleet) ([]string, error) {
+func (s *Service) capacityCascadeLinks(ctx context.Context, fleet Fleet) ([]cascadeLink, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT DISTINCT c.exit_box, c.entry_box, c.entry_port, coalesce(b.location, '')
 		FROM entry_cascades c LEFT JOIN entry_boxes b ON b.name = c.exit_box
@@ -60,7 +61,7 @@ func (s *Service) capacityCascadeLinks(ctx context.Context, fleet Fleet) ([]stri
 		recs = append(recs, rec)
 	}
 	seen := map[string]bool{}
-	var links []string
+	var links []cascadeLink
 	for _, w := range ways {
 		// One way that cannot be resolved (an entry gone from trunk_entries)
 		// leaves the others measured.
@@ -73,9 +74,32 @@ func (s *Service) capacityCascadeLinks(ctx context.Context, fleet Fleet) ([]stri
 			link, ok := via.link(rec, nodes[rec.Name].Label, false)
 			if ok && !seen[link] {
 				seen[link] = true
-				links = append(links, link)
+				links = append(links, cascadeLink{link: link, entry: w.entry, exit: w.exit})
 			}
 		}
 	}
 	return links, nil
+}
+
+// cascadeLink is one cascade link a capacity run is handed, with the pair of
+// boxes it dials through: the link names no node, so the pair is what lets
+// the fleet screen draw its samples on the cascade's card.
+type cascadeLink struct {
+	link, entry, exit string
+}
+
+// rememberCapacityCascades writes which cascade each capacity key is of.
+func (s *Service) rememberCapacityCascades(ctx context.Context, links []cascadeLink) error {
+	for _, l := range links {
+		key := capacity.Key(l.link)
+		if key == "" {
+			continue
+		}
+		if _, err := s.pool.Exec(ctx, `INSERT INTO relay_capacity_cascades (config_key, entry_box, exit_box, seen_at) VALUES ($1, $2, $3, now())
+ ON CONFLICT (config_key) DO UPDATE SET entry_box = excluded.entry_box, exit_box = excluded.exit_box, seen_at = excluded.seen_at`,
+			key, l.entry, l.exit); err != nil {
+			return err
+		}
+	}
+	return nil
 }

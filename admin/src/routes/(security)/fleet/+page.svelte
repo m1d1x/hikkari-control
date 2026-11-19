@@ -6,7 +6,7 @@
 	import ProtoBadge from '$components/entry/ProtoBadge.svelte';
 	import TrendChart from '$components/entry/TrendChart.svelte';
 	import { describeEntryError, formatCents, PROTO_LABEL, providerLabel } from '$lib/api/entry';
-	import { fetchFleetProfiles, type FleetProfile, type FleetProfiles, type FleetWindow } from '$lib/api/fleet';
+	import { fetchFleetProfiles, type FleetCascade, type FleetProfile, type FleetProfiles, type FleetWindow } from '$lib/api/fleet';
 	import { fetchTrunkHearing } from '$lib/api/trunkHearing';
 	import type { TrunkWireChart } from '$lib/api/trunkWires';
 
@@ -154,6 +154,32 @@
 		return series;
 	}
 
+	/** A cascade's speed through the whole way, with its usual speed beside it, flat. */
+	function cascadeSpeedSeries(c: FleetCascade) {
+		const series = [
+			{
+				key: 'speed',
+				label: 'скорость с пробников РФ через каскад',
+				color: SPEED_COLOR,
+				values: c.speedMbps,
+				format: formatRate,
+				primary: true,
+			},
+		];
+		if (c.speedNormMbps != null) {
+			const norm = c.speedNormMbps;
+			series.push({
+				key: 'norm',
+				label: 'обычная скорость каскада (неделя)',
+				color: NORM_COLOR,
+				values: c.speedMbps.map(() => norm),
+				format: formatRate,
+				primary: false,
+			});
+		}
+		return series;
+	}
+
 	/** Gigabytes said in the unit that reads best: 1,2 ТБ, 340 ГБ. */
 	function size(gb: number): string {
 		// A hoster that sells a terabyte as 1024 GB (VDSina: 32768) means a
@@ -281,6 +307,32 @@
 								formatAxis={ms}
 								height={120}
 								empty="пинга нет за окно"
+							/>
+							<div class="legend">
+								{#each cascadeSpeedSeries(c) as s (s.key)}
+									<span><i style="background: {s.color}"></i>{s.label}</span>
+								{/each}
+							</div>
+							<TrendChart
+								buckets={data.buckets}
+								bucketSeconds={data.bucketSeconds}
+								series={cascadeSpeedSeries(c)}
+								formatAxis={formatRate}
+								height={120}
+								empty="пробники не мерили скорость каскада за окно"
+							/>
+							<div class="legend">
+								<span><i style="background: {SPEED_COLOR}"></i>ответ сайта с пробника РФ через каскад</span>
+							</div>
+							<TrendChart
+								buckets={data.buckets}
+								bucketSeconds={data.bucketSeconds}
+								series={[
+									{ key: 'speed-rtt', label: 'ответ сайта с пробника РФ через каскад', color: SPEED_COLOR, values: c.speedRttMs, format: ms, primary: true },
+								]}
+								formatAxis={ms}
+								height={100}
+								empty="пробники не мерили каскад за окно"
 							/>
 							{#if voice[c.entry]}
 								<h3 class="sub">качество голоса РФ → ЕУ</h3>

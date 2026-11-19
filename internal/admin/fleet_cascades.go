@@ -16,6 +16,13 @@ package admin
 //
 // The UDP channel of the clients is their cipher end to end: the entry sees
 // no loss in it, so the client leg is TCP's.
+//
+//   - speedMbps, speedRttMs: the whole way, a Russian prober's capacity run
+//     dialling the cascade link (prober → entry → trunk → exit relay → a
+//     download), the median of the bucket's successful samples; speedNormMbps
+//     the median over the week, as a profile card has it. The link names no
+//     node, so its samples reach the card through relay_capacity_cascades
+//     (the owner's 19.11: «на каскадных серверах почему замеров скорости нет»).
 
 import (
 	"context"
@@ -39,6 +46,18 @@ type fleetCascade struct {
 	ClientRTTMs  []*float64 `json:"clientRttMs"`
 	TrunkLossPm  []*float64 `json:"trunkLossPm"`
 	TrunkRTTMs   []*float64 `json:"trunkRttMs"`
+
+	SpeedMbps     []*float64 `json:"speedMbps"`
+	SpeedRTTMs    []*float64 `json:"speedRttMs"`
+	SpeedNormMbps *float64   `json:"speedNormMbps"`
+}
+
+// speedBucket is one bucket of a cascade's capacity samples.
+type speedBucket struct {
+	entry, exit string
+	at          int64
+	mbps        float64
+	rtt         *float64
 }
 
 // legBucket is one bucket of one leg of one entry, as the dataset sums it.
@@ -110,8 +129,105 @@ func (h *Handlers) cascades(ctx context.Context, starts []time.Time, now time.Ti
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	rows.Close()
 	foldCascades(out, starts, legs)
+
+	speeds, err := h.cascadeSpeeds(ctx, starts[0], now, sec)
+	if err != nil {
+		return nil, err
+	}
+	norms, err := h.cascadeSpeedNorms(ctx, now.Add(-speedNormWindow))
+	if err != nil {
+		return nil, err
+	}
+	foldCascadeSpeeds(out, starts, speeds, norms)
 	return out, nil
+}
+
+// cascadeSpeedWhere picks a cascade's successful capacity samples from the
+// Russian probers: the same samples a profile card's speed is read from.
+const cascadeSpeedWhere = `
+	FROM relay_capacity_history c
+	JOIN relay_capacity_cascades k ON k.config_key = c.config_key
+	JOIN entry_vantages v ON v.slot = c.slot
+	WHERE v.in_russia AND c.measured_at >= $1
+	  AND coalesce(c.sample->>'error', '') = '' AND (c.sample->>'mbps')::float8 > 0`
+
+// cascadeSpeeds is each cascade's speed and round trip per bucket.
+func (h *Handlers) cascadeSpeeds(ctx context.Context, since, now time.Time, sec int64) ([]speedBucket, error) {
+	rows, err := h.pool.Query(ctx, `
+		SELECT k.entry_box, k.exit_box, (floor(extract(epoch FROM c.measured_at) / $3) * $3)::bigint,
+		       percentile_cont(0.5) WITHIN GROUP (ORDER BY (c.sample->>'mbps')::float8),
+		       percentile_cont(0.5) WITHIN GROUP (ORDER BY CASE WHEN (c.sample->>'rttMs')::float8 > 0 THEN (c.sample->>'rttMs')::float8 END)`+
+		cascadeSpeedWhere+` AND c.measured_at <= $2
+		GROUP BY 1, 2, 3`, since, now, sec)
+	if err != nil {
+		return nil, fmt.Errorf("cascade speeds: %w", err)
+	}
+	defer rows.Close()
+	var out []speedBucket
+	for rows.Next() {
+		var b speedBucket
+		if err := rows.Scan(&b.entry, &b.exit, &b.at, &b.mbps, &b.rtt); err != nil {
+			return nil, fmt.Errorf("scan cascade speeds: %w", err)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// cascadeSpeedNorms is each cascade's usual speed, by "entry exit".
+func (h *Handlers) cascadeSpeedNorms(ctx context.Context, since time.Time) (map[string]float64, error) {
+	rows, err := h.pool.Query(ctx, `
+		SELECT k.entry_box, k.exit_box, percentile_cont(0.5) WITHIN GROUP (ORDER BY (c.sample->>'mbps')::float8)`+
+		cascadeSpeedWhere+`
+		GROUP BY 1, 2`, since)
+	if err != nil {
+		return nil, fmt.Errorf("cascade speed norms: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var entryBox, exitBox string
+		var mbps float64
+		if err := rows.Scan(&entryBox, &exitBox, &mbps); err != nil {
+			return nil, fmt.Errorf("scan cascade speed norms: %w", err)
+		}
+		out[entryBox+" "+exitBox] = mbps
+	}
+	return out, rows.Err()
+}
+
+// foldCascadeSpeeds lays the speed samples on the window's buckets of the
+// card of the same entry and exit; null where none was measured.
+func foldCascadeSpeeds(cs []fleetCascade, starts []time.Time, speeds []speedBucket, norms map[string]float64) {
+	index := make(map[int64]int, len(starts))
+	for i, at := range starts {
+		index[at.Unix()] = i
+	}
+	byPair := map[string]*fleetCascade{}
+	for i := range cs {
+		c := &cs[i]
+		c.SpeedMbps = make([]*float64, len(starts))
+		c.SpeedRTTMs = make([]*float64, len(starts))
+		if norm, ok := norms[c.Entry+" "+c.Exit]; ok {
+			c.SpeedNormMbps = &norm
+		}
+		byPair[c.Entry+" "+c.Exit] = c
+	}
+	for _, b := range speeds {
+		c, ok := byPair[b.entry+" "+b.exit]
+		i, in := index[b.at]
+		if !ok || !in {
+			continue
+		}
+		mbps := b.mbps
+		c.SpeedMbps[i] = &mbps
+		if b.rtt != nil {
+			rtt := *b.rtt
+			c.SpeedRTTMs[i] = &rtt
+		}
+	}
 }
 
 // foldCascades lays the legs on the window's buckets: loss per 1000 where

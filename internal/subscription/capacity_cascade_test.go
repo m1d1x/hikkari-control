@@ -89,6 +89,13 @@ func TestACascadeProfileIsMeasuredThroughTheEntryAndHandedItsNumbers(t *testing.
 	if len(probe) != 3 {
 		t.Fatalf("capacity links %q, want both relays straight and the cascade", probe)
 	}
+	// The cascade link names no node; its key is filed under the pair it
+	// dials through, so the cascade's card can read its samples.
+	var entryBox, exitBox string
+	if err := pool.QueryRow(ctx, `SELECT entry_box, exit_box FROM relay_capacity_cascades WHERE config_key = $1`,
+		capacity.Key(through[0])).Scan(&entryBox, &exitBox); err != nil || entryBox != "ruin1" || exitBox != "unl1" {
+		t.Fatalf("cascade key filed under %q → %q (%v), want ruin1 → unl1", entryBox, exitBox, err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/sub/"+token, nil)
 	req.SetPathValue("token", token)

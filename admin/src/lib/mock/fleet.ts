@@ -103,6 +103,9 @@ export function mockFleetProfiles(window: FleetWindow): FleetProfiles {
 			clientRttMs: wave(n, 22, 8),
 			trunkLossPm: wave(n, 0.2, 0.2),
 			trunkRttMs: wave(n, 44, 2),
+			speedMbps: wave(n, 240, 40),
+			speedRttMs: wave(n, 180, 20),
+			speedNormMbps: 240,
 		},
 	];
 	return { window, bucketSeconds, buckets, profiles, cascades, missing: [] };
