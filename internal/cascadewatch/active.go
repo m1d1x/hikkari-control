@@ -32,7 +32,10 @@ const (
 	judgeSlack     = time.Second
 )
 
-var reUnheardFor = regexp.MustCompile(`unheard for ([0-9.]+)(ms|s)\b`)
+var (
+	reUnheardFor = regexp.MustCompile(`unheard for ([0-9.]+)(ms|s)\b`)
+	reWorse      = regexp.MustCompile(`worse for (\d+) min \((\d+) pauses over 150 ms, (\S+) lost\)`)
+)
 
 // receiverStay is the receiver the people of an entry are on: since when,
 // the newest event heard, and whether the owner was told of a long stay on
@@ -131,6 +134,9 @@ func (w *Watch) hearReceiver(ctx context.Context, p entry.TrunkPair, run Run) {
 func moveWhy(why string) string {
 	if why == "by hand" {
 		return "руками"
+	}
+	if m := reWorse.FindStringSubmatch(why); m != nil {
+		return fmt.Sprintf("на прежнем звонок хуже %s мин подряд (пауз больше 150 мс %s, потеряно %s), на новом те же минуты чистые", m[1], m[2], m[3])
 	}
 	what := "активный приёмник не слышен"
 	if strings.Contains(why, "pool") {

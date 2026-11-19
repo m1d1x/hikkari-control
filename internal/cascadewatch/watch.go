@@ -299,6 +299,16 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 			}
 			continue
 		}
+		if run, ok := classifyMatrix(l); ok {
+			run.Entry, run.Exit, run.Vantage = p.Entry, p.Exit, "entry"
+			runs = append(runs, run)
+			continue
+		}
+		if run, ok := classifyReceiverCall(l, p.Receivers); ok {
+			run.Entry, run.Exit, run.Vantage = p.Entry, p.Exit, "entry"
+			runs = append(runs, run)
+			continue
+		}
 		if run, ok := classifyReceiver(l, p.Receivers); ok {
 			run.Entry, run.Exit, run.Vantage = p.Entry, p.Exit, "entry"
 			w.hearReceiver(ctx, p, run)

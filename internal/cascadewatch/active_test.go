@@ -100,3 +100,41 @@ func TestAReceiversLineReadBackTellsNothing(t *testing.T) {
 		t.Fatalf("old lines still say the active one: %q", got)
 	}
 }
+
+// The judge's move to a better receiver (hikkari-protocol pipectl
+// better.go) and the call held to each receiver, as the hub reads them.
+func TestAMoveToABetterReceiverAndTheCallToEachReceiverReadAsSuch(t *testing.T) {
+	names := map[string]string{"10.0.0.1": "unl1", "10.0.0.2": "ams3"}
+	at := time.Date(2026, 11, 19, 12, 14, 2, 0, time.UTC)
+	moved, ok := classifyReceiver(journalLine{TS: at, Msg: "nekko-trunk-entry: trunk: receiver moved from 10.0.0.2 to 10.0.0.1: the active receiver worse for 3 min (12 pauses over 150 ms, 0.0% lost), receiver 0 clean the same minutes"}, names)
+	if !ok || moved.Data["why"] != "better: the active receiver worse for 3 min (12 pauses over 150 ms, 0.0% lost), receiver 0 clean the same minutes" {
+		t.Fatalf("moved %+v", moved.Data)
+	}
+	if got := moveWhy(moved.Data["why"].(string)); !strings.Contains(got, "хуже 3 мин подряд (пауз больше 150 мс 12, потеряно 0.0%)") {
+		t.Fatalf("why %q", got)
+	}
+	call, ok := classifyReceiverCall(journalLine{TS: at, Msg: "nekko-trunk-entry: call receiver=10.0.0.2 copies=1 from=1795133340 sent=3000 got=3000 rtt_p50=42.6 rtt_p99=170.1 rtt_max=312.0 gaps60=9 gaps150=5 gap_max=312 silent_ms=1500 sessions=1 worst=-"}, names)
+	if !ok || call.Target != "rx-ams3" || call.Layer != LayerCall || call.Data["receiver"] != "ams3" || num(call.Data, "gaps150") != 5 || *call.OK {
+		t.Fatalf("call %+v ok=%v", call, ok)
+	}
+	if _, ok := classifyReceiverCall(journalLine{TS: at, Msg: "nekko-trunk-entry: call copies=1 from=1795133340 sent=3000 got=3000"}, names); ok {
+		t.Fatal("the people's call read as a receiver's")
+	}
+}
+
+func TestTheMatrixLinesReadAsCallsAndSilences(t *testing.T) {
+	at := time.Date(2026, 11, 19, 12, 11, 2, 0, time.UTC)
+	run, ok := classifyMatrix(journalLine{TS: at, Msg: "nekko-trunk-entry: matrix target=ru-eurodir kind=ru every_ms=20 from=1795133400 sent=3000 got=2730 rtt_p50=8.1 rtt_p99=9.0 rtt_max=12.0 gaps60=1 gaps150=1 gap_max=5400 silent_ms=5380 worst=1795133461421:5400"})
+	if !ok || run.Target != "mx-ru-eurodir" || run.Layer != LayerCall || run.Data["kind"] != "ru" || num(run.Data, "gap_max_ms") != 5400 || *run.OK {
+		t.Fatalf("target %+v", run)
+	}
+	box, ok := classifyMatrix(journalLine{TS: at, Msg: "nekko-trunk-entry: matrix box from=1795133400 late_max_ms=40 late_over100=0 late_over500=0 steal_max_pct=0.0 steal_avg_pct=0.00 rx_drop=0 tx_drop=0"})
+	if !ok || box.Target != "mx-box" || !*box.OK || num(box.Data, "gap_max_ms") != 40 {
+		t.Fatalf("box %+v", box)
+	}
+	sil, ok := classifyMatrix(journalLine{TS: at, Msg: "nekko-trunk-entry: matrix silence at=1795133401421 len_ms=5322 silent=unl1,ams3,eu-fra-ripe heard=ru-eurodir unknown=- box_late_ms=0 verdict=border"})
+	if !ok || sil.Layer != LayerEvent || sil.Data["verdict"] != "border" || sil.Data["kind"] != "silence" || len(sil.Data["silent"].([]string)) != 3 || sil.Data["unknown"] != nil ||
+		!sil.TS.Equal(time.UnixMilli(1795133401421).UTC()) {
+		t.Fatalf("silence %+v", sil)
+	}
+}

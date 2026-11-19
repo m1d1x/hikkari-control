@@ -283,6 +283,26 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 		}
 		applog.Info(ctx, "entry", "operator trunk entry receivers", applog.F("box", box), applog.F("receivers", strings.Join(o.Receivers, ",")))
 	}
+	if o.Pipe {
+		names, ips := []string{o.Exit}, []string{}
+		if h, _, err := net.SplitHostPort(addr); err == nil {
+			ips = append(ips, h)
+		}
+		if len(ips) == 1 && len(o.Receivers) > 0 {
+			rips, err := p.svc.receiverAddresses(ctx, o.Exit, o.Receivers, addr, sni, key)
+			if err != nil {
+				return err
+			}
+			names, ips = append(names, o.Receivers...), append(ips, rips...)
+		}
+		if len(ips) == len(names) {
+			m, err := p.svc.trunkMatrixEnv(ctx, names, ips)
+			if err != nil {
+				return err
+			}
+			env += m
+		}
+	}
 	var extra map[string]string
 	if o.Pipe {
 		files = []trunkFile{{"nekko-trunk-entry", p.trunkBuilds}, {"libcronet.so", pipe.cronet}, {"hk-pipe", p.pipeBuilds}}
