@@ -128,13 +128,14 @@ type Watch struct {
 	sleep func(ctx context.Context, d time.Duration) bool
 
 	mu      sync.Mutex
-	cursor  map[string]time.Time   // entry box → last journal line read
-	busy    map[string]bool        // entry box → a round running
-	last    map[string]time.Time   // entry box → last round started
-	alerted map[string]time.Time   // code|entry → last alert
-	owner   Notifier               // told of the people's trunk going wrong (owner.go); nil: nobody
-	calls   map[string]*callStreak // entry box → its people's call as the owner hears it
-	wires   map[string]*lossStreak // entry box|target → a wire's call as the owner hears it
+	cursor  map[string]time.Time     // entry box → last journal line read
+	busy    map[string]bool          // entry box → a round running
+	last    map[string]time.Time     // entry box → last round started
+	alerted map[string]time.Time     // code|entry → last alert
+	owner   Notifier                 // told of the people's trunk going wrong (owner.go); nil: nobody
+	calls   map[string]*callStreak   // entry box → its people's call as the owner hears it
+	wires   map[string]*lossStreak   // entry box|target → a wire's call as the owner hears it
+	active  map[string]*receiverStay // entry box → the receiver its people are on (active.go)
 	started time.Time
 	rounds  sync.WaitGroup
 }
@@ -149,7 +150,7 @@ func New(pool db.Pool, fleet Fleet, boxes Boxes, links Links, queue Queue, errs 
 		now:    time.Now,
 		sleep:  sleepCtx,
 		cursor: map[string]time.Time{}, busy: map[string]bool{}, last: map[string]time.Time{}, alerted: map[string]time.Time{},
-		calls: map[string]*callStreak{}, wires: map[string]*lossStreak{},
+		calls: map[string]*callStreak{}, wires: map[string]*lossStreak{}, active: map[string]*receiverStay{},
 	}
 }
 
@@ -271,12 +272,18 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 		}
 		if run, ok := classifyWire(l); ok {
 			run.Entry, run.Exit, run.Vantage = p.Entry, p.Exit, "entry"
+			if run.Layer == LayerCall && run.Data != nil {
+				run.Data["receiver"] = w.activeOf(p)
+			}
 			w.hearWire(ctx, p, run)
 			runs = append(runs, run)
 			continue
 		}
 		if run, ok := classifySet(l, "trunk"); ok {
 			run.Entry, run.Exit, run.Vantage = p.Entry, p.Exit, "entry"
+			if run.Data != nil {
+				run.Data["receiver"] = w.activeOf(p)
+			}
 			runs = append(runs, run)
 			continue
 		}
@@ -294,6 +301,7 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 		}
 		if run, ok := classifyReceiver(l, p.Receivers); ok {
 			run.Entry, run.Exit, run.Vantage = p.Entry, p.Exit, "entry"
+			w.hearReceiver(ctx, p, run)
 			runs = append(runs, run)
 			continue
 		}
@@ -311,9 +319,10 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 			run.TS = time.Unix(int64(num(data, "from")), 0).UTC()
 			run.Target = fmt.Sprintf("copies%d", int(num(data, "copies")))
 			run.OK = boolp(callOK(data))
+			data["receiver"] = w.activeOf(p)
 			if num(data, "gap_max_ms") >= callAlertMs {
 				w.alert(ctx, p, "cascade.call_gap", fmt.Sprintf("звонок магистрали %s → %s (%s): тишина %d мс в минуту %s, всего %d мс, потеряно %d из %d",
-					p.Entry, p.Exit, run.Target, int(num(data, "gap_max_ms")), run.TS.Format("15:04"), int(num(data, "silent_ms")), int(num(data, "lost")), int(num(data, "sent"))))
+					p.Entry, receiverOf(p, run), run.Target, int(num(data, "gap_max_ms")), run.TS.Format("15:04"), int(num(data, "silent_ms")), int(num(data, "lost")), int(num(data, "sent"))))
 			}
 			w.hearPeoplesCall(ctx, p, run)
 		}
