@@ -327,6 +327,11 @@ func TestApplyMovesTheLinkInPlace(t *testing.T) {
 	if strings.Contains(live, "link del") || strings.Contains(live, "_up") {
 		t.Fatalf("apply rebuilds a live link:\n%s", live)
 	}
+	// A live egress gets its table again in place: the Russian cut of a
+	// newer hub (box_out, G2) without a new link.
+	if _, egressLive, _ := strings.Cut(live, "else"); !strings.Contains(egressLive, "egress_table") {
+		t.Fatalf("an apply to a live egress leaves its table as it was:\n%s", live)
+	}
 	_, peer, _ := strings.Cut(egressUpScript, "receiver_peer() {")
 	peer, _, _ = strings.Cut(peer, "\n}\n")
 	if strings.Index(peer, `allowed-ips 0.0.0.0/0,::/0`) > strings.Index(peer, "remove") {

@@ -523,12 +523,15 @@ egress_ext() {
 	[ -n "$ext" ] || { echo "нет внешнего интерфейса" >&2; exit 1; }
 }
 
-egress_up() {
+# egress_table loads the egress's table whole, the Russian cut with it, in
+# one nft transaction: at the egress's start before the box forwards a single
+# packet, and on every apply to a live link, so an egress stood up by an older
+# hub gets the newer table in place (as a receiver its guard). The flows the
+# table passed go on: it keeps no state of them. box_out cuts the box's own
+# new connections too: the core's relay on the egress (entry-box core, G2)
+# reaches the internet itself, not through the tunnel.
+egress_table() {
 	egress_ext
-	# The Russian cut and the table come in one transaction, before the
-	# box forwards a single packet. box_out cuts the box's own new
-	# connections too: the core's relay on the egress (entry-box core, G2)
-	# reaches the internet itself, not through the tunnel.
 	{
 		cat <<EOF
 table inet hikkari_egress
@@ -562,6 +565,10 @@ table inet hikkari_egress {
 EOF
 		cat "$dir/ru.nft"
 	} | nft -f -
+}
+
+egress_up() {
+	egress_table
 	cat > /etc/sysctl.d/60-hikkari-egress.conf <<EOF
 # Written by the nekko hub: the egress forwards the tunnel to the internet.
 net.ipv6.conf.$ext.accept_ra = 2
@@ -592,7 +599,7 @@ apply)
 		receiver_peer "${2:-}"
 		receiver_addrs
 	else
-		egress_ext
+		egress_table
 		egress_peers
 		egress_ufw
 	fi
