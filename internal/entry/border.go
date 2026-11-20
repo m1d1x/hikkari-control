@@ -41,6 +41,12 @@ import (
 // hikkari-border-in-<point>): a core on an egress box (entry-box core)
 // opens them to nobody else, so from Russia it answers nobody.
 //
+// A border point is abroad, so it cuts its own new connections to Russian
+// networks at the kernel, as the egress does (the owner's word of 20.11:
+// «запрет на РФ из заграницы должен быть строго везде и всегда»): a table
+// hikkari_noru with RIPE's Russian blocks and a unit that loads it on boot.
+// It stays when the forwarding goes off: the box is abroad all the same.
+//
 // The entries are the boxes whose trunk goes to the core: the people's
 // (trunk_entries.exit_box) and the stand's over hk-pipe
 // (trunk_entries.pipe_core, entry-box trunk-pipe ... core=<box>).
@@ -206,6 +212,53 @@ for n in $(ufw status numbered | grep -E '# hikkari-border(-[a-z0-9-]+)?$' | gre
 echo border off
 `
 
+// noRUTable is a foreign box's own cut of new connections to Russia.
+const noRUTable = "hikkari_noru"
+
+// noRUScript loads the cut on the box with RIPE's Russian blocks (ruNets,
+// fetchRUNets's elements of the egress's sets), in one transaction, and says
+// its counter.
+func noRUScript(ruNets string) string {
+	elems := strings.ReplaceAll(ruNets, "inet hikkari_egress ", "inet "+noRUTable+" ")
+	return `set -eu
+cat > /etc/hikkari-noru.nft <<'HKNORU'
+table inet ` + noRUTable + `
+delete table inet ` + noRUTable + `
+table inet ` + noRUTable + ` {
+	set ru4 { type ipv4_addr; flags interval; auto-merge; }
+	set ru6 { type ipv6_addr; flags interval; auto-merge; }
+	counter ru_cut {}
+	chain box_out {
+		type filter hook output priority filter - 5; policy accept;
+		# Into the egress's tunnel: the egress cuts Russia there and counts
+		# it (H6 checks that count), the guard drops it when the tunnel is down.
+		oifname "hk-egress" return
+		ct state new ip daddr @ru4 counter name "ru_cut" reject with icmpx type admin-prohibited
+		ct state new ip6 daddr @ru6 counter name "ru_cut" reject with icmpx type admin-prohibited
+	}
+}
+` + elems + `HKNORU
+cat > /etc/systemd/system/hikkari-noru.service <<'HKNORU'
+[Unit]
+Description=Hikkari: a box abroad opens nothing to Russia
+After=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/hikkari-noru.nft
+
+[Install]
+WantedBy=multi-user.target
+HKNORU
+systemctl daemon-reload
+systemctl enable hikkari-noru.service >/dev/null 2>&1
+nft -f /etc/hikkari-noru.nft
+nft list counter inet ` + noRUTable + ` ru_cut | grep -o 'packets [0-9]*'
+`
+}
+
 // coreOpenScript opens the core's trunk ports to the point's address on the
 // core, and coreCloseScript takes them back.
 func (b borderPlan) coreOpenScript(point netip.Addr, pointBox string) string {
@@ -336,9 +389,18 @@ func (p *Provisioner) StandBorder(ctx context.Context, box, core string, off boo
 	if err != nil {
 		return err
 	}
+	ruNets, err := fetchRUNets(ctx, ripeDelegatedURL)
+	if err != nil {
+		return fmt.Errorf("сети РФ для запрета на точке: %w", err)
+	}
+	out, err := r.Run(ctx, "bash -s", strings.NewReader(noRUScript(ruNets)))
+	if err != nil {
+		return fmt.Errorf("%s: запрет РФ: %w: %s", box, err, out)
+	}
+	fmt.Printf("%s: no Russia from the box (%s)\n", box, strings.TrimSpace(out))
 	// The core first: a DNAT to a core that drops the point's flows is a
 	// trunk cut, a core open to a point that forwards nothing yet is not.
-	out, err := p.onCore(ctx, core, plan.coreOpenScript(point, box))
+	out, err = p.onCore(ctx, core, plan.coreOpenScript(point, box))
 	if err != nil {
 		return err
 	}

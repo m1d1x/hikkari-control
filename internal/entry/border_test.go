@@ -146,3 +146,28 @@ func TestTheStandsPointsGoIntoItsWiresFile(t *testing.T) {
 		t.Fatalf("wires file %s %v", w, err)
 	}
 }
+
+// A border point cuts its own new connections to Russia at the kernel, as
+// the egress does, and keeps the cut across boots.
+func TestABorderPointOpensNothingToRussia(t *testing.T) {
+	s := noRUScript("add element inet hikkari_egress ru4 { 5.3.0.0/16 }\nadd element inet hikkari_egress ru6 { 2a02:6b8::/32 }\n")
+	for _, want := range []string{
+		"add element inet hikkari_noru ru4 { 5.3.0.0/16 }",
+		"add element inet hikkari_noru ru6 { 2a02:6b8::/32 }",
+		`ct state new ip daddr @ru4 counter name "ru_cut" reject`,
+		`ct state new ip6 daddr @ru6 counter name "ru_cut" reject`,
+		"systemctl enable hikkari-noru.service",
+		// the tunnel to the egress is cut and counted there (H6)
+		`oifname "hk-egress" return`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("no %q in\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "hikkari_egress") {
+		t.Error("the point's cut writes into the egress's table")
+	}
+	if strings.Contains(stopAllBorders, "hikkari_noru") || strings.Contains((borderPlan{CoreBox: "unl1"}).stopScript(), "hikkari_noru") {
+		t.Error("the cut goes off with the forwarding")
+	}
+}
