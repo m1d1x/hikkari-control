@@ -1,7 +1,7 @@
 // The support inbox — every conversation users have with the official
 // account «Hikkari», whether or not a ticket stands behind it. Tickets remain in
 // tickets.ts; their milestones land in these same conversations.
-import { get, getText, patch, post, put } from './client';
+import { del, get, getText, patch, post, put } from './client';
 import { USE_MOCK } from '$lib/config/mock';
 import { mockTesterInstalls, mockTesterRelays } from './billingMock';
 import type { AdminConvMessage, TicketStatus } from './tickets';
@@ -176,6 +176,19 @@ export async function renameTester(install: string, alias: string, note: string)
 		return;
 	}
 	await put(`/api/v1/admin/support/tester-logs/${encodeURIComponent(install)}/alias`, { alias, note });
+}
+
+/** Take an install out of the tester list for good: its log lines and queued
+ *  commands go, it stops resolving by name, and the product counters (versions,
+ *  people) stop counting it — a dead test account is not a user. The alias is
+ *  never handed to another install. */
+export async function deleteTester(install: string): Promise<void> {
+	if (USE_MOCK) {
+		const at = mockTesterInstalls.installs.findIndex((r) => r.install_id === install);
+		if (at >= 0) mockTesterInstalls.installs.splice(at, 1);
+		return;
+	}
+	await del(`/api/v1/admin/support/tester-logs/${encodeURIComponent(install)}`);
 }
 
 /** One relay as a tester's latest round saw it (internal/support/testerrelays.go). */
