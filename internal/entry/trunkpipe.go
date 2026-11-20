@@ -96,6 +96,11 @@ type TrunkPipeOptions struct {
 	// Core is the stand's own core (G2): "" keeps the one it had, "-" is
 	// the people's exit.
 	Core string
+	// Points are the stand's border points to its core (box names), given
+	// before the swap so the new generation's members go through them at
+	// once; nil keeps the ones the stand had (none for a new core), empty
+	// is none.
+	Points []string
 }
 
 // trunkPipeEnvOf is the stand's env: the entry's (trunkEntryEnv) and the
@@ -368,6 +373,11 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 		// Points are a core's: another core starts with none.
 		points = nil
 	}
+	if o.Points != nil {
+		if points, err = p.svc.checkPipePoints(ctx, box, exitBox, o.Points); err != nil {
+			return err
+		}
+	}
 	pts, err := p.svc.pointAddresses(ctx, points)
 	if err != nil {
 		return err
@@ -392,6 +402,14 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	}
 	sort.Strings(listen)
 	wiresFile, cronet := pipe.wires, pipe.cronet
+	// The core and its points go on record before the swap: a border point
+	// forwards the core's trunk from the entries the hub knows go there
+	// (borderPlanOf), and a stand whose core answers only its points cannot
+	// bring a member up until a point forwards (G2, 20.11: the reload failed
+	// on "no member came up" while border-forward knew no entry to aeznl1).
+	if err := p.svc.recordTrunkPipeCore(ctx, box, core, points); err != nil {
+		return err
+	}
 	r, _, err := p.provokeRemote(ctx, box)
 	if err != nil {
 		return err
@@ -407,10 +425,7 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 		map[string]string{"wires.json": wiresFile}, listen, logf); err != nil {
 		return err
 	}
-	if err := p.svc.recordTrunkPipe(ctx, box, o.Forward); err != nil {
-		return err
-	}
-	return p.svc.recordTrunkPipeCore(ctx, box, core, points)
+	return p.svc.recordTrunkPipe(ctx, box, o.Forward)
 }
 
 // StopTrunkPipe takes the stand off box; the Go entry stays.
@@ -446,15 +461,8 @@ func (p *Provisioner) SetTrunkPipePoints(ctx context.Context, box string, points
 	if pair.Pipe == nil {
 		return fmt.Errorf("%w: на %s нет стенда, сначала entry-box trunk-pipe", ErrRejected, box)
 	}
-	if len(points) > trunkPipePointsMax {
-		return fmt.Errorf("%w: точек %d, не больше %d", ErrRejected, len(points), trunkPipePointsMax)
-	}
-	seen := map[string]bool{}
-	for _, pt := range points {
-		if pt == box || pt == pair.PipeExit() || seen[pt] {
-			return fmt.Errorf("%w: точка %q: сам вход, само ядро или дважды", ErrRejected, pt)
-		}
-		seen[pt] = true
+	if points, err = p.svc.checkPipePoints(ctx, box, pair.PipeExit(), points); err != nil {
+		return err
 	}
 	addrs, err := p.svc.pointAddresses(ctx, points)
 	if err != nil {
@@ -484,6 +492,26 @@ func (p *Provisioner) SetTrunkPipePoints(ctx context.Context, box string, points
 // trunkPipePointsMax is the most border points a stand is given (trunkentry
 // wires.go maxPoints).
 const trunkPipePointsMax = 8
+
+// checkPipePoints checks the stand's border points to core: boxes the hub
+// knows, never the entry or the core itself, each once, at most
+// trunkPipePointsMax. An empty list is none, not nil.
+func (s *Service) checkPipePoints(ctx context.Context, box, core string, points []string) ([]string, error) {
+	if len(points) > trunkPipePointsMax {
+		return nil, fmt.Errorf("%w: точек %d, не больше %d", ErrRejected, len(points), trunkPipePointsMax)
+	}
+	seen := map[string]bool{}
+	for _, pt := range points {
+		if pt == box || pt == core || seen[pt] {
+			return nil, fmt.Errorf("%w: точка %q: сам вход, само ядро или дважды", ErrRejected, pt)
+		}
+		seen[pt] = true
+	}
+	if _, err := s.pointAddresses(ctx, points); err != nil {
+		return nil, err
+	}
+	return append([]string{}, points...), nil
+}
 
 // withPoints is the wires file raw with its points in place of the ones it
 // had; every other key stays as the hub wrote it.

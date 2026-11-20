@@ -689,8 +689,8 @@ func runEntryBox(args []string) {
 		fmt.Printf("%s: stand points %s (the brain follows them within 10 s, no new process)\n", args[1], args[2])
 		os.Exit(0)
 	}
-	if (len(args) >= 3 && len(args) <= 8 && args[0] == "trunk-pipe") || (len(args) == 2 && args[0] == "trunk-pipe-off") {
-		// entry-box trunk-pipe <box> <listen=port,...> [members] [hikkari-udp-copies=1|2] [h3dgram=<port>[:proxy]] [voice=<wire>] [core=<box>|-]
+	if (len(args) >= 3 && len(args) <= 9 && args[0] == "trunk-pipe") || (len(args) == 2 && args[0] == "trunk-pipe-off") {
+		// entry-box trunk-pipe <box> <listen=port,...> [members] [hikkari-udp-copies=1|2] [h3dgram=<port>[:proxy]] [voice=<wire>] [core=<box>|-] [points=<box>,...|off]
 		// — the stand over hk-pipe beside the box's trunk entry, to its exit
 		// (internal/entry/trunkpipe.go, roadmap 4.6, R5).
 		if err := cryptobox.Configure(os.Getenv); err != nil {
@@ -733,6 +733,13 @@ func runEntryBox(args []string) {
 			}
 			if v, ok := strings.CutPrefix(a, "core="); ok {
 				o.Core = v
+				continue
+			}
+			if v, ok := strings.CutPrefix(a, "points="); ok {
+				o.Points = []string{}
+				if v != "" && v != "off" {
+					o.Points = strings.Split(v, ",")
+				}
 				continue
 			}
 			if v, ok := strings.CutPrefix(a, "h3dgram="); ok {
