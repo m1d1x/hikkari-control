@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -175,6 +176,33 @@ func AliasRenameHandler(store TesterStore) http.HandlerFunc {
 	}
 }
 
+// TesterDeleteHandler takes the install the path names out of the tester list —
+// by alias, by its number, by install_id or by a unique prefix of either. Its
+// chunks and commands are dropped, and the product counters stop counting it:
+// a dead test account is neither a tester nor a user.
+func TesterDeleteHandler(store TesterStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		installID, alias, err := store.ResolveInstall(r.Context(), r.PathValue("install"))
+		if err != nil {
+			writeResolveErr(w, err)
+			return
+		}
+		if err := store.DeleteInstall(r.Context(), installID); err != nil {
+			if errors.Is(err, ErrAliasNotFound) {
+				writeErr(w, http.StatusNotFound, "install not found")
+				return
+			}
+			writeErr(w, http.StatusInternalServerError, "failed to delete install")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":         true,
+			"install_id": installID,
+			"alias":      alias,
+		})
+	}
+}
+
 // writeResolveErr maps the resolver's refusals to HTTP answers.
 func writeResolveErr(w http.ResponseWriter, err error) {
 	switch {
@@ -192,8 +220,10 @@ func writeResolveErr(w http.ResponseWriter, err error) {
 // ============================================================================
 
 // touchInstall names an install on first sight and records its last signal.
+// A deleted install is not touched at all: hidden reports that an operator
+// took it out of the list, so the caller keeps nothing for it either.
 // The caller holds s.mu.
-func (s *MemTesterStore) touchInstall(req TesterChunkRequest) {
+func (s *MemTesterStore) touchInstall(req TesterChunkRequest) (hidden bool) {
 	in := s.installs[req.InstallID]
 	if in == nil {
 		var alias string
@@ -207,7 +237,11 @@ func (s *MemTesterStore) touchInstall(req TesterChunkRequest) {
 		in = &memInstall{alias: alias, firstSeen: s.now()}
 		s.installs[req.InstallID] = in
 	}
+	if in.deleted {
+		return true
+	}
 	in.platform, in.version, in.lastSeen = req.Platform, req.Version, s.now()
+	return false
 }
 
 // aliasTaken reports whether any install holds alias. The caller holds s.mu.
@@ -225,6 +259,9 @@ func (s *MemTesterStore) ResolveInstall(_ context.Context, ref string) (string, 
 	defer s.mu.RUnlock()
 	rows := make([]aliasRow, 0, len(s.installs))
 	for id, in := range s.installs {
+		if in.deleted {
+			continue
+		}
 		rows = append(rows, aliasRow{installID: id, alias: in.alias})
 	}
 	return resolveAliasRef(rows, ref)
@@ -251,6 +288,30 @@ func (s *MemTesterStore) RenameAlias(_ context.Context, installID, alias, note s
 	return a, nil
 }
 
+// DeleteInstall marks the install deleted and drops what it left behind: its
+// chunks and queued commands. The row itself stays, so the number is never
+// handed to another install.
+func (s *MemTesterStore) DeleteInstall(_ context.Context, installID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	in := s.installs[installID]
+	if in == nil || in.deleted {
+		return ErrAliasNotFound
+	}
+	in.deleted = true
+	kept := s.chunks[:0]
+	for _, c := range s.chunks {
+		if c.install != installID {
+			kept = append(kept, c)
+		}
+	}
+	s.chunks = kept
+	s.commands = slices.DeleteFunc(s.commands, func(c *TesterCommandState) bool {
+		return c.InstallID == installID
+	})
+	return nil
+}
+
 // ============================================================================
 // PostgreSQL-backed Store
 // ============================================================================
@@ -258,35 +319,48 @@ func (s *MemTesterStore) RenameAlias(_ context.Context, installID, alias, note s
 // touchInstallDB names an install on first sight and records its last signal.
 // One statement per try: a chunk racing another first chunk of the same install
 // falls through to the update, and an auto-assigned number an operator already
-// took by hand burns that number and tries the next.
-func touchInstallDB(ctx context.Context, e db.DBTX, req TesterChunkRequest) error {
+// took by hand burns that number and tries the next. An install an operator
+// deleted is left alone — hidden says so, and the caller keeps nothing for it.
+func touchInstallDB(ctx context.Context, e db.DBTX, req TesterChunkRequest) (hidden bool, err error) {
 	for range assignAliasAttempts {
-		tag, err := e.Exec(ctx, `
+		var seen string
+		err := e.QueryRow(ctx, `
 			UPDATE support_install_aliases
 			SET platform = $2, version = $3, last_seen_at = now()
-			WHERE install_id = $1
-		`, req.InstallID, req.Platform, req.Version)
-		if err != nil {
-			return fmt.Errorf("touch install: %w", err)
+			WHERE install_id = $1 AND deleted_at IS NULL
+			RETURNING install_id
+		`, req.InstallID, req.Platform, req.Version).Scan(&seen)
+		if err == nil {
+			return false, nil
 		}
-		if tag.RowsAffected() > 0 {
-			return nil
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return false, fmt.Errorf("touch install: %w", err)
+		}
+		var gone bool
+		looked := e.QueryRow(ctx, `
+			SELECT deleted_at IS NOT NULL FROM support_install_aliases WHERE install_id = $1
+		`, req.InstallID).Scan(&gone)
+		if looked == nil && gone {
+			return true, nil
+		}
+		if looked != nil && !errors.Is(looked, pgx.ErrNoRows) {
+			return false, fmt.Errorf("touch install: %w", looked)
 		}
 		if _, err := e.Exec(ctx, `
 			INSERT INTO support_install_aliases (install_id, alias, platform, version)
 			VALUES ($1, 'tester-' || lpad(nextval('support_install_alias_seq')::text, $4::int, '0'), $2, $3)
 			ON CONFLICT DO NOTHING
 		`, req.InstallID, req.Platform, req.Version, aliasNumberWidth); err != nil {
-			return fmt.Errorf("assign alias: %w", err)
+			return false, fmt.Errorf("assign alias: %w", err)
 		}
 	}
-	return fmt.Errorf("assign alias: no free number after %d tries", assignAliasAttempts)
+	return false, fmt.Errorf("assign alias: no free number after %d tries", assignAliasAttempts)
 }
 
 func (s *DBTesterStore) ResolveInstall(ctx context.Context, ref string) (string, string, error) {
 	// Testers are counted in tens: reading them all keeps one resolver for both
 	// stores instead of a second one in SQL.
-	rows, err := s.pool.Query(ctx, `SELECT install_id, alias FROM support_install_aliases`)
+	rows, err := s.pool.Query(ctx, `SELECT install_id, alias FROM support_install_aliases WHERE deleted_at IS NULL`)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve install: %w", err)
 	}
@@ -327,6 +401,33 @@ func (s *DBTesterStore) RenameAlias(ctx context.Context, installID, alias, note 
 		return "", ErrAliasNotFound
 	}
 	return a, nil
+}
+
+// DeleteInstall marks the install deleted and drops what it left behind: the
+// log chunks Postgres keeps and its queued commands. The row stays, so the
+// number is never handed to another install and the product counters keep
+// knowing this install is not a person.
+func (s *DBTesterStore) DeleteInstall(ctx context.Context, installID string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE support_install_aliases SET deleted_at = now()
+		WHERE install_id = $1 AND deleted_at IS NULL
+	`, installID)
+	if err != nil {
+		return fmt.Errorf("delete install: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrAliasNotFound
+	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM support_tester_log_chunks WHERE install_id = $1`, installID); err != nil {
+		return fmt.Errorf("drop tester chunks: %w", err)
+	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM support_tester_commands WHERE install_id = $1`, installID); err != nil {
+		return fmt.Errorf("drop tester commands: %w", err)
+	}
+	// The copy in the archive (internal/analytics) is left alone: the archive
+	// is the owner's "замеры не удалять", and with the alias unresolvable those
+	// lines are unreachable from every screen anyway.
+	return nil
 }
 
 // scanCommand reads one command row; pgx.ErrNoRows means no such command.

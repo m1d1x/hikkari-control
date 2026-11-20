@@ -5,6 +5,7 @@
 	import { describeApiError } from '$lib/api/client';
 	import type { TesterCharts, TesterLines, TesterState } from '$lib/api/product';
 	import {
+		deleteTester,
 		fetchTesterInstalls,
 		fetchTesterRelays,
 		renameTester,
@@ -62,6 +63,19 @@
 	function toggle(id: string) {
 		if (open.has(id)) open.delete(id);
 		else open.add(id);
+	}
+
+	// A dead test account is not a person: deleting it takes its row out of
+	// every tester screen and out of the product counters (versions, people).
+	async function remove(i: TesterInstall) {
+		if (!confirm(`удалить ${i.alias}? его логи удалятся, а счётчики версий и людей перестанут его учитывать`)) return;
+		try {
+			await deleteTester(i.install_id);
+			open.delete(i.install_id);
+			await load();
+		} catch (e) {
+			error = describeApiError(e);
+		}
 	}
 
 	const stateOf = (id: string): TesterState | null => charts?.states?.[id] ?? null;
@@ -184,6 +198,14 @@
 										e.stopPropagation();
 										startRename(i);
 									}}>{i.alias}</button
+								>
+								<button
+									class="drop"
+									title="удалить тестера: строки логов и счётчики версий и людей"
+									onclick={(e) => {
+										e.stopPropagation();
+										remove(i);
+									}}>×</button
 								>
 							{/if}
 						</td>
@@ -427,6 +449,27 @@
 
 	.rename {
 		width: 160px;
+	}
+
+	.drop {
+		margin-left: 6px;
+		padding: 0 4px;
+		border: 0;
+		background: none;
+		color: var(--text-3);
+		font-size: 13px;
+		line-height: 1;
+		cursor: pointer;
+		opacity: 0.35;
+	}
+
+	.row:hover .drop,
+	.drop:focus-visible {
+		opacity: 1;
+	}
+
+	.drop:hover {
+		color: oklch(0.68 0.2 25);
 	}
 
 	.charts-row td {

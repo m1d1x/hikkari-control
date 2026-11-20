@@ -53,7 +53,8 @@ func (h *Handlers) sampleOnline(ctx context.Context, t time.Time) error {
 	ts := t.UTC().Truncate(onlineSampleEvery)
 	_, err := h.pool.Exec(ctx, `
 		INSERT INTO product_online_samples (ts, online)
-		SELECT $1, count(*) FROM support_install_aliases WHERE last_seen_at > $2
+		SELECT $1, count(*) FROM support_install_aliases
+		WHERE last_seen_at > $2 AND deleted_at IS NULL
 		ON CONFLICT (ts) DO NOTHING`, ts, ts.Add(-support.TesterOnlineWindow))
 	if err != nil {
 		return fmt.Errorf("insert: %w", err)

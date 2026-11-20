@@ -156,6 +156,15 @@ func (h *Handlers) ProductMetrics(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now time.Time) (*productMetrics, error) {
 	since, end := win.span(now)
+	// Installs an operator deleted from the tester list (support/aliases.go):
+	// dead test accounts. Their telemetry stays for the 90 days ClickHouse
+	// keeps, so every count below names them and leaves them out — one dead
+	// install used to be the only "user" of an old version on this screen.
+	gone := h.deletedInstalls(ctx)
+	notGone, goneArgs := "", []any(nil)
+	if len(gone) > 0 {
+		notGone, goneArgs = " AND install NOT IN ?", []any{gone}
+	}
 	out := &productMetrics{
 		Window:        win.Name,
 		BucketSeconds: int(win.Step.Seconds()),
@@ -189,8 +198,8 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 		SELECT toStartOfInterval(ts, toIntervalSecond(?)) AS b,
 			uniq(install), uniqIf(install, name = 'install')
 		FROM telemetry_events
-		WHERE ts >= ? AND ts < ?
-		GROUP BY b`, uint32(win.Step.Seconds()), since, end)
+		WHERE ts >= ? AND ts < ?`+notGone+`
+		GROUP BY b`, append([]any{uint32(win.Step.Seconds()), since, end}, goneArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +230,7 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 			countIf(name = 'daily_active'),
 			quantileIf(0.5)(JSONExtractUInt(fields, 'connected_minutes'), name = 'daily_active')
 		FROM telemetry_events
-		WHERE ts >= ? AND ts < ?`, since, end,
+		WHERE ts >= ? AND ts < ?`+notGone, append([]any{since, end}, goneArgs...)...,
 	).Scan(&out.People.Active, &out.People.Fresh, &attempts, &oks, &secsP50, &tunnelDays, &tunnelP50); err != nil {
 		return nil, err
 	}
@@ -241,6 +250,8 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 	// first working tunnel since. first_connect_ok is sent once per install,
 	// so a row at any time after since is that install's.
 	var firstP50 float64
+	actArgs := append([]any{since}, goneArgs...)
+	actArgs = append(actArgs, end)
 	if err := h.analytics.Row(ctx, `
 		SELECT count(), countIf(connected), quantileIf(0.5)(after, connected)
 		FROM (
@@ -248,10 +259,10 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 				countIf(name = 'first_connect_ok') > 0 AS connected,
 				maxIf(JSONExtractUInt(fields, 'secs_since_install'), name = 'first_connect_ok') AS after
 			FROM telemetry_events
-			WHERE name IN ('install', 'first_connect_ok') AND ts >= ?
+			WHERE name IN ('install', 'first_connect_ok') AND ts >= ?`+notGone+`
 			GROUP BY install
 			HAVING countIf(name = 'install' AND ts < ?) > 0
-		)`, since, end,
+		)`, actArgs...,
 	).Scan(&out.Activation.Installs, &out.Activation.Connected, &firstP50); err != nil {
 		return nil, err
 	}
@@ -262,6 +273,9 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 		out.Activation.SecsP50 = finite(firstP50)
 	}
 
+	// Every install event ever, from the daily rollup: it outlives the 90-day
+	// raw rows and carries no install id at all (a mergeable sketch), so a
+	// deleted tester stays in this one figure until its rows age out.
 	if err := h.analytics.Row(ctx,
 		`SELECT sum(events) FROM telemetry_daily_events WHERE name = 'install'`,
 	).Scan(&out.People.Total); err != nil {
@@ -277,11 +291,13 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 			uniqIf(install, ts >= ?),
 			uniq(install)
 		FROM telemetry_events
-		WHERE ts >= ? AND ts < ? AND install != ''`,
-		now.Add(-24*time.Hour),
-		now.Add(-7*24*time.Hour),
-		now.Add(-30*24*time.Hour),
-		now,
+		WHERE ts >= ? AND ts < ? AND install != ''`+notGone,
+		append([]any{
+			now.Add(-24 * time.Hour),
+			now.Add(-7 * 24 * time.Hour),
+			now.Add(-30 * 24 * time.Hour),
+			now,
+		}, goneArgs...)...,
 	).Scan(&dau, &wau, &mau); err != nil {
 		return nil, err
 	}
@@ -301,14 +317,14 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 		daily AS (
 			SELECT toDate(ts) AS d, uniq(install) AS cnt
 			FROM telemetry_events
-			WHERE ts >= ? AND ts < ? AND install != ''
+			WHERE ts >= ? AND ts < ? AND install != ''`+notGone+`
 			GROUP BY d
 		)
 		SELECT days.d, COALESCE(daily.cnt, 0)
 		FROM days
 		LEFT JOIN daily ON daily.d = days.d
 		ORDER BY days.d`,
-		now, now.Add(-30*24*time.Hour), now); err == nil {
+		append([]any{now, now.Add(-30 * 24 * time.Hour), now}, goneArgs...)...); err == nil {
 		for dauRows.Next() {
 			var d time.Time
 			var cnt uint64
@@ -331,14 +347,14 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 		weekly AS (
 			SELECT toMonday(ts) AS w, uniq(install) AS cnt
 			FROM telemetry_events
-			WHERE ts >= ? AND ts < ? AND install != ''
+			WHERE ts >= ? AND ts < ? AND install != ''`+notGone+`
 			GROUP BY w
 		)
 		SELECT DISTINCT weeks.w, COALESCE(weekly.cnt, 0)
 		FROM weeks
 		LEFT JOIN weekly ON weekly.w = weeks.w
 		ORDER BY weeks.w`,
-		now, now.Add(-12*7*24*time.Hour), now); err == nil {
+		append([]any{now, now.Add(-12 * 7 * 24 * time.Hour), now}, goneArgs...)...); err == nil {
 		for wauRows.Next() {
 			var w time.Time
 			var cnt uint64
@@ -361,14 +377,14 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 		monthly AS (
 			SELECT toStartOfMonth(ts) AS m, uniq(install) AS cnt
 			FROM telemetry_events
-			WHERE ts >= ? AND ts < ? AND install != ''
+			WHERE ts >= ? AND ts < ? AND install != ''`+notGone+`
 			GROUP BY m
 		)
 		SELECT DISTINCT months.m, COALESCE(monthly.cnt, 0)
 		FROM months
 		LEFT JOIN monthly ON monthly.m = months.m
 		ORDER BY months.m`,
-		now, now.Add(-180*24*time.Hour), now); err == nil {
+		append([]any{now, now.Add(-180 * 24 * time.Hour), now}, goneArgs...)...); err == nil {
 		for mauRows.Next() {
 			var m time.Time
 			var cnt uint64
@@ -383,6 +399,10 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 	}
 
 	// Stickiness series: 30 days
+	stickArgs := []any{now, now.Add(-30 * 24 * time.Hour), now}
+	stickArgs = append(stickArgs, goneArgs...)
+	stickArgs = append(stickArgs, now.Add(-30*24*time.Hour), now)
+	stickArgs = append(stickArgs, goneArgs...)
 	if stickRows, err := h.analytics.Query(ctx, `
 		WITH days AS (
 			SELECT toDate(?) - INTERVAL number DAY AS d
@@ -391,12 +411,12 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 		mau AS (
 			SELECT uniq(install) AS cnt
 			FROM telemetry_events
-			WHERE ts >= ? AND ts < ? AND install != ''
+			WHERE ts >= ? AND ts < ? AND install != ''`+notGone+`
 		),
 		daily AS (
 			SELECT toDate(ts) AS d, uniq(install) AS dau_cnt
 			FROM telemetry_events
-			WHERE ts >= ? AND ts < ? AND install != ''
+			WHERE ts >= ? AND ts < ? AND install != ''`+notGone+`
 			GROUP BY d
 		)
 		SELECT days.d,
@@ -405,7 +425,7 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 		CROSS JOIN mau
 		LEFT JOIN daily ON daily.d = days.d
 		ORDER BY days.d`,
-		now, now.Add(-30*24*time.Hour), now, now.Add(-30*24*time.Hour), now); err == nil {
+		stickArgs...); err == nil {
 		for stickRows.Next() {
 			var d time.Time
 			var stick float64
@@ -419,14 +439,14 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 		stickRows.Close()
 	}
 
-	if out.Platforms, err = h.metricsShares(ctx, "os", false, since, end, out.People.Active, 0); err != nil {
+	if out.Platforms, err = h.metricsShares(ctx, "os", false, since, end, out.People.Active, 0, gone); err != nil {
 		return nil, err
 	}
-	if out.Versions, err = h.metricsShares(ctx, "version", false, since, end, out.People.Active, 8); err != nil {
+	if out.Versions, err = h.metricsShares(ctx, "version", false, since, end, out.People.Active, 8, gone); err != nil {
 		return nil, err
 	}
 	out.Downloads.Installs = out.People.Fresh
-	if out.Downloads.Platforms, err = h.metricsShares(ctx, "os", true, since, end, out.People.Fresh, 0); err != nil {
+	if out.Downloads.Platforms, err = h.metricsShares(ctx, "os", true, since, end, out.People.Fresh, 0, gone); err != nil {
 		return nil, err
 	}
 
@@ -476,23 +496,29 @@ func (h *Handlers) productMetrics(ctx context.Context, win productWindow, now ti
 
 // metricsShares splits the window's installs by one column: the active ones,
 // or with fresh only those whose first launch fell in the window. column is
-// one of the literals above, never request input.
-func (h *Handlers) metricsShares(ctx context.Context, column string, fresh bool, since, end time.Time, active uint64, limit int) ([]metricsShare, error) {
+// one of the literals above, never request input. gone names the deleted
+// tester installs, which are counted nowhere.
+func (h *Handlers) metricsShares(ctx context.Context, column string, fresh bool, since, end time.Time, active uint64, limit int, gone []string) ([]metricsShare, error) {
 	// One row per install, under the value it ended the window on: an install
 	// that updated inside the window is on its newest version, not on every
 	// version it ever ran. The shares then add up to the installs counted.
 	inner := `SELECT install, argMax(` + column + `, ts) AS k
 		FROM telemetry_events
 		WHERE ts >= ? AND ts < ? AND ` + column + ` != ''`
+	args := []any{since, end}
 	if fresh {
 		inner += ` AND name = 'install'`
+	}
+	if len(gone) > 0 {
+		inner += ` AND install NOT IN ?`
+		args = append(args, gone)
 	}
 	inner += ` GROUP BY install`
 	q := `SELECT k, count() AS n FROM (` + inner + `) GROUP BY k ORDER BY n DESC, k`
 	if limit > 0 {
 		q += ` LIMIT ` + strconv.Itoa(limit)
 	}
-	rows, err := h.analytics.Query(ctx, q, since, end)
+	rows, err := h.analytics.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -512,6 +538,34 @@ func (h *Handlers) metricsShares(ctx context.Context, column string, fresh bool,
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// deletedInstalls names the tester installs an operator deleted from the
+// tester list (support/aliases.go): dead test accounts. Their rows stay in
+// ClickHouse for its 90 days, so the counts here name them and leave them out —
+// a dead install must not sit on a version as its only "user", nor pad DAU.
+// A read failure costs the exclusion, not the screen: the figures stay whole,
+// just with the dead installs still in them, and the hub says so in the log.
+func (h *Handlers) deletedInstalls(ctx context.Context) []string {
+	if h.pool == nil {
+		return nil
+	}
+	rows, err := h.pool.Query(ctx, `SELECT install_id FROM support_install_aliases WHERE deleted_at IS NOT NULL`)
+	if err != nil {
+		log.Printf("admin: deleted tester installs: %v", err)
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			log.Printf("admin: deleted tester installs: %v", err)
+			return out
+		}
+		out = append(out, id)
+	}
+	return out
+}
 
 // finite drops the NaN ClickHouse returns for a quantile over no rows.
 func finite(v float64) *float64 {

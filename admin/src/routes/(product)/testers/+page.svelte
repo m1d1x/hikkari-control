@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { ago, num } from '$lib/product/format';
 	import {
+		deleteTester,
 		exportTesterLog,
 		fetchTesterChunks,
 		fetchTesterInstalls,
@@ -86,6 +87,23 @@
 		try {
 			await renameTester(selected.install_id, alias, selected.note);
 			installs = (await fetchTesterInstalls()).installs;
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		}
+	}
+
+	// Удалить: мёртвый тестовый вход не должен висеть в счётчиках версий и
+	// людей. Строки логов и команды удаляются, алиас больше не выдаётся.
+	async function remove() {
+		if (!selected) return;
+		if (!confirm(`удалить ${selected.alias}? его логи удалятся, а счётчики версий и людей перестанут его учитывать`))
+			return;
+		try {
+			await deleteTester(selected.install_id);
+			current = null;
+			chunks = [];
+			await loadInstalls();
+			if (installs.length === 0) current = null;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		}
@@ -189,6 +207,7 @@
 				<button class="chip" onclick={copy}>{copied ? 'скопировано' : 'копировать'}</button>
 				<button class="chip" onclick={download}>скачать</button>
 				<button class="chip" onclick={rename}>переименовать</button>
+				<button class="chip drop" onclick={remove}>удалить</button>
 			</div>
 			<div class="llm">
 				<span class="dim">для LLM за</span>
@@ -254,6 +273,9 @@
 	}
 	.top .field {
 		flex: 1;
+	}
+	.drop {
+		color: oklch(0.68 0.2 25);
 	}
 	.llm {
 		display: flex;

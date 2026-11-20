@@ -82,6 +82,10 @@ type TesterStore interface {
 	// ResolveInstall finds the install a reference names (aliases.go).
 	ResolveInstall(ctx context.Context, ref string) (installID, alias string, err error)
 	RenameAlias(ctx context.Context, installID, alias, note string) (string, error)
+	// DeleteInstall takes the install out of the tester list for good: it stops
+	// resolving, its chunks and commands are dropped, and the product counters
+	// stop counting it (aliases.go).
+	DeleteInstall(ctx context.Context, installID string) error
 	// EnqueueCommand queues a command, or returns the same kind still open.
 	EnqueueCommand(ctx context.Context, installID, kind string, params json.RawMessage) (TesterCommandState, error)
 	// TakeCommands hands over what waits for the install and marks it delivered.
@@ -118,6 +122,7 @@ func RegisterTesterAdminRoutes(mux *http.ServeMux, store TesterStore, gate func(
 	mux.HandleFunc("GET /api/v1/admin/support/tester-logs/{install}", gate(TesterReadHandler(store)))
 	mux.HandleFunc("GET /api/v1/admin/support/tester-logs/{install}/export", gate(TesterExportHandler(store)))
 	mux.HandleFunc("PUT /api/v1/admin/support/tester-logs/{install}/alias", gate(AliasRenameHandler(store)))
+	mux.HandleFunc("DELETE /api/v1/admin/support/tester-logs/{install}", gate(TesterDeleteHandler(store)))
 	mux.HandleFunc("POST /api/v1/admin/support/tester-logs/{install}/commands", gate(TesterCommandRequestHandler(store)))
 	mux.HandleFunc("GET /api/v1/admin/support/tester-logs/{install}/commands/{nonce}", gate(TesterCommandStatusHandler(store)))
 }
@@ -256,6 +261,9 @@ type memTesterChunk struct {
 type memInstall struct {
 	alias, note, platform, version string
 	firstSeen, lastSeen            time.Time
+	// deleted marks an install an operator took out of the list: it is never
+	// listed nor resolved again, and nothing more is recorded for it.
+	deleted bool
 }
 
 type MemTesterStore struct {
@@ -276,7 +284,9 @@ func NewMemTesterStore() *MemTesterStore {
 func (s *MemTesterStore) AppendChunk(_ context.Context, req TesterChunkRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.touchInstall(req)
+	if s.touchInstall(req) {
+		return nil
+	}
 	if len(req.Lines) == 0 && req.Dropped == 0 {
 		return nil
 	}
@@ -299,6 +309,9 @@ func (s *MemTesterStore) ListInstalls(_ context.Context) ([]TesterInstall, error
 	now := s.now()
 	out := make([]TesterInstall, 0, len(s.installs))
 	for id, m := range s.installs {
+		if m.deleted {
+			continue
+		}
 		if now.Sub(m.lastSeen) > TesterLogRetention {
 			continue
 		}
@@ -404,13 +417,16 @@ func SetChunkArchive(store TesterStore, a ChunkArchive) {
 }
 
 func (s *DBTesterStore) AppendChunk(ctx context.Context, req TesterChunkRequest) error {
-	if err := touchInstallDB(ctx, s.pool, req); err != nil {
+	hidden, err := touchInstallDB(ctx, s.pool, req)
+	if err != nil {
 		return err
 	}
-	if len(req.Lines) == 0 && req.Dropped == 0 {
+	// A deleted install is no tester any more: the operator took it out of the
+	// list, so its lines are not kept either.
+	if hidden || len(req.Lines) == 0 && req.Dropped == 0 {
 		return nil
 	}
-	_, err := s.pool.Exec(ctx, `
+	_, err = s.pool.Exec(ctx, `
 		INSERT INTO support_tester_log_chunks (install_id, platform, version, lines, dropped, body)
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`, req.InstallID, req.Platform, req.Version, len(req.Lines), req.Dropped, strings.Join(req.Lines, "\n"))
@@ -432,7 +448,7 @@ func (s *DBTesterStore) ListInstalls(ctx context.Context) ([]TesterInstall, erro
 			FROM support_tester_log_chunks
 			GROUP BY install_id
 		) c USING (install_id)
-		WHERE a.last_seen_at > $1
+		WHERE a.last_seen_at > $1 AND a.deleted_at IS NULL
 		ORDER BY a.last_seen_at DESC
 	`, time.Now().Add(-TesterLogRetention))
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -389,6 +390,61 @@ func TestTesterLogIntakeAndRead(t *testing.T) {
 
 	if n, _ := store.PurgeChunks(context.Background(), -time.Second); n != 2 {
 		t.Fatalf("purge removed %d, want 2", n)
+	}
+}
+
+func TestTesterDeleteTakesTheInstallEverywhere(t *testing.T) {
+	store := NewMemTesterStore()
+	ctx := context.Background()
+	mux := http.NewServeMux()
+	RegisterTesterRoutes(mux, store, nil)
+	RegisterTesterAdminRoutes(mux, store, func(h http.HandlerFunc) http.HandlerFunc { return h })
+
+	send := func(req TesterChunkRequest) {
+		body, _ := json.Marshal(req)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/support/tester-logs", bytes.NewReader(body)))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("chunk: got %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	send(TesterChunkRequest{InstallID: "t-dead", Platform: "windows", Version: "1.0.9", Lines: []string{"a"}})
+	send(TesterChunkRequest{InstallID: "t-live", Platform: "macos", Version: "1.0.12", Lines: []string{"b"}})
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/v1/admin/support/tester-logs/tester-001", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete: got %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Gone from the list and from every reference, chunks and all.
+	list, err := store.ListInstalls(ctx)
+	if err != nil || len(list) != 1 || list[0].InstallID != "t-live" {
+		t.Fatalf("list after delete: %+v %v", list, err)
+	}
+	for _, ref := range []string{"t-dead", "tester-001", "001"} {
+		if _, _, err := store.ResolveInstall(ctx, ref); !errors.Is(err, ErrAliasNotFound) {
+			t.Fatalf("resolve %q after delete: %v", ref, err)
+		}
+	}
+	if chunks, _ := store.ReadChunks(ctx, "t-dead", time.Time{}, time.Time{}, 10); len(chunks) != 0 {
+		t.Fatalf("chunks left behind: %+v", chunks)
+	}
+
+	// A late chunk from the deleted install is not recorded and does not bring
+	// it back: the number is never handed out twice.
+	send(TesterChunkRequest{InstallID: "t-dead", Platform: "windows", Version: "1.0.10", Lines: []string{"late"}})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/support/tester-logs", nil))
+	var after struct{ Installs []TesterInstall }
+	if err := json.Unmarshal(rec.Body.Bytes(), &after); err != nil || len(after.Installs) != 1 {
+		t.Fatalf("list after a late chunk: %v %s", err, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/v1/admin/support/tester-logs/tester-001", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("second delete: got %d, want 404", rec.Code)
 	}
 }
 

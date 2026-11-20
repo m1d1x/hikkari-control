@@ -156,6 +156,68 @@ func TestDBAliasesAndCommands(t *testing.T) {
 	}
 }
 
+func TestDBDeleteInstallLeavesATombstone(t *testing.T) {
+	s, pool := dbTesterStore(t)
+	ctx := context.Background()
+	for _, req := range []TesterChunkRequest{
+		{InstallID: "t-dead", Platform: "windows", Version: "1.0.9", Lines: []string{"a"}},
+		{InstallID: "t-live", Platform: "macos", Version: "1.0.12", Lines: []string{"b"}},
+	} {
+		if err := s.AppendChunk(ctx, req); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	if _, err := s.EnqueueCommand(ctx, "t-dead", TesterCommandRunDoctor, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.DeleteInstall(ctx, "t-dead"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	installs, err := s.ListInstalls(ctx)
+	if err != nil || len(installs) != 1 || installs[0].InstallID != "t-live" {
+		t.Fatalf("list after delete: %+v %v", installs, err)
+	}
+	for _, ref := range []string{"t-dead", "tester-001", "001"} {
+		if _, _, err := s.ResolveInstall(ctx, ref); !errors.Is(err, ErrAliasNotFound) {
+			t.Fatalf("resolve %q after delete: %v", ref, err)
+		}
+	}
+	var chunks, commands int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM support_tester_log_chunks WHERE install_id = 't-dead'`).Scan(&chunks); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM support_tester_commands WHERE install_id = 't-dead'`).Scan(&commands); err != nil {
+		t.Fatal(err)
+	}
+	if chunks != 0 || commands != 0 {
+		t.Fatalf("left behind: %d chunks, %d commands", chunks, commands)
+	}
+
+	// The row stays as a tombstone: the product counters know this install is
+	// not a person, and the alias is never handed out again.
+	var deleted bool
+	if err := pool.QueryRow(ctx, `SELECT deleted_at IS NOT NULL FROM support_install_aliases WHERE install_id = 't-dead'`).Scan(&deleted); err != nil || !deleted {
+		t.Fatalf("tombstone: %v %v", deleted, err)
+	}
+
+	// A late chunk neither comes back to the list nor is stored.
+	if err := s.AppendChunk(ctx, TesterChunkRequest{InstallID: "t-dead", Platform: "windows", Version: "1.0.10", Lines: []string{"late"}}); err != nil {
+		t.Fatalf("late chunk: %v", err)
+	}
+	if installs, _ := s.ListInstalls(ctx); len(installs) != 1 {
+		t.Fatalf("a deleted install came back: %+v", installs)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM support_tester_log_chunks WHERE install_id = 't-dead'`).Scan(&chunks); err != nil || chunks != 0 {
+		t.Fatalf("late chunk stored: %d %v", chunks, err)
+	}
+
+	if err := s.DeleteInstall(ctx, "t-dead"); !errors.Is(err, ErrAliasNotFound) {
+		t.Fatalf("second delete: %v", err)
+	}
+}
+
 func TestDBProbeCommandKeepsItsTargets(t *testing.T) {
 	s, _ := dbTesterStore(t)
 	ctx := context.Background()
