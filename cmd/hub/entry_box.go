@@ -1040,7 +1040,7 @@ func runEntryBox(args []string) {
 		if err := cryptobox.Configure(os.Getenv); err != nil {
 			fail(fmt.Errorf("content key: %w", err))
 		}
-		ctx, cancel, pool := adminCLIPool()
+		_, cancel, pool := adminCLIPool()
 		defer cancel()
 		defer pool.Close()
 		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
@@ -1048,7 +1048,11 @@ func runEntryBox(args []string) {
 			fail(err)
 		}
 		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
-		if err := prov.StandBorder(ctx, args[1], args[2], len(args) == 4); err != nil {
+		// RIPE's list for the point's cut of Russia and two boxes' scripts
+		// outlive the CLI's 30 s connect budget.
+		jctx, jcancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer jcancel()
+		if err := prov.StandBorder(jctx, args[1], args[2], len(args) == 4); err != nil {
 			fail(err)
 		}
 		os.Exit(0)
