@@ -747,7 +747,12 @@ func runEntryBox(args []string) {
 				fail(fmt.Errorf("members %q", a))
 			}
 		}
-		if err := prov.StandTrunkPipe(ctx, args[1], o); err != nil {
+		// The swap (staging the binaries, config check, reload, the new
+		// generation's start) outlives the CLI's 30 s connect budget: 20.11
+		// the stand went up on its new core and the hub never wrote it down.
+		jctx, jcancel := context.WithTimeout(context.Background(), 40*time.Minute)
+		defer jcancel()
+		if err := prov.StandTrunkPipe(jctx, args[1], o); err != nil {
 			fail(err)
 		}
 		os.Exit(0)
