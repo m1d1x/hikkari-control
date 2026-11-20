@@ -747,7 +747,12 @@ func runEntryBox(args []string) {
 				fail(fmt.Errorf("members %q", a))
 			}
 		}
-		if err := prov.StandTrunkPipe(ctx, args[1], o); err != nil {
+		// The swap (staging the binaries, config check, reload, the new
+		// generation's start) outlives the CLI's 30 s connect budget: 20.11
+		// the stand went up on its new core and the hub never wrote it down.
+		jctx, jcancel := context.WithTimeout(context.Background(), 40*time.Minute)
+		defer jcancel()
+		if err := prov.StandTrunkPipe(jctx, args[1], o); err != nil {
 			fail(err)
 		}
 		os.Exit(0)
@@ -1035,7 +1040,7 @@ func runEntryBox(args []string) {
 		if err := cryptobox.Configure(os.Getenv); err != nil {
 			fail(fmt.Errorf("content key: %w", err))
 		}
-		ctx, cancel, pool := adminCLIPool()
+		_, cancel, pool := adminCLIPool()
 		defer cancel()
 		defer pool.Close()
 		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
@@ -1043,7 +1048,11 @@ func runEntryBox(args []string) {
 			fail(err)
 		}
 		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
-		if err := prov.StandBorder(ctx, args[1], args[2], len(args) == 4); err != nil {
+		// RIPE's list for the point's cut of Russia and two boxes' scripts
+		// outlive the CLI's 30 s connect budget.
+		jctx, jcancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer jcancel()
+		if err := prov.StandBorder(jctx, args[1], args[2], len(args) == 4); err != nil {
 			fail(err)
 		}
 		os.Exit(0)
