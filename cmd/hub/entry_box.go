@@ -664,8 +664,33 @@ func runEntryBox(args []string) {
 		fmt.Printf("%s reconfigured\n", args[1])
 		os.Exit(0)
 	}
-	if (len(args) >= 3 && len(args) <= 7 && args[0] == "trunk-pipe") || (len(args) == 2 && args[0] == "trunk-pipe-off") {
-		// entry-box trunk-pipe <box> <listen=port,...> [members] [hikkari-udp-copies=1|2] [h3dgram=<port>[:proxy]]
+	if len(args) == 3 && args[0] == "trunk-pipe-points" {
+		// entry-box trunk-pipe-points <box> <point-box>,...|off — the stand's
+		// border points to its core (internal/entry/trunkpipe.go, hikkari-client
+		// plans/2026-11-19-border-forwarders.md, G2): the brain follows the
+		// wires file within 10 s, no new process.
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		var points []string
+		if args[2] != "off" {
+			points = strings.Split(args[2], ",")
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		if err := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir).SetTrunkPipePoints(ctx, args[1], points); err != nil {
+			fail(err)
+		}
+		fmt.Printf("%s: stand points %s (the brain follows them within 10 s, no new process)\n", args[1], args[2])
+		os.Exit(0)
+	}
+	if (len(args) >= 3 && len(args) <= 8 && args[0] == "trunk-pipe") || (len(args) == 2 && args[0] == "trunk-pipe-off") {
+		// entry-box trunk-pipe <box> <listen=port,...> [members] [hikkari-udp-copies=1|2] [h3dgram=<port>[:proxy]] [voice=<wire>] [core=<box>|-]
 		// — the stand over hk-pipe beside the box's trunk entry, to its exit
 		// (internal/entry/trunkpipe.go, roadmap 4.6, R5).
 		if err := cryptobox.Configure(os.Getenv); err != nil {
@@ -704,6 +729,10 @@ func runEntryBox(args []string) {
 			}
 			if v, ok := strings.CutPrefix(a, "voice="); ok {
 				o.Voice = v
+				continue
+			}
+			if v, ok := strings.CutPrefix(a, "core="); ok {
+				o.Core = v
 				continue
 			}
 			if v, ok := strings.CutPrefix(a, "h3dgram="); ok {
@@ -997,9 +1026,10 @@ func runEntryBox(args []string) {
 		}
 		os.Exit(0)
 	}
-	if len(args) == 3 && args[0] == "border-forward" {
-		// entry-box border-forward <box> <core-box>|off — the box forwards
-		// the entries' trunk to the core and keeps nothing of the people
+	if (len(args) == 3 || (len(args) == 4 && args[3] == "off")) && args[0] == "border-forward" {
+		// entry-box border-forward <box> <core-box> [off] | <box> off — the
+		// box forwards the entries' trunk to the core and keeps nothing of
+		// the people; off takes that core's forwarding off, or every core's
 		// (internal/entry/border.go, hikkari-client
 		// plans/2026-11-19-border-forwarders.md).
 		if err := cryptobox.Configure(os.Getenv); err != nil {
@@ -1013,7 +1043,7 @@ func runEntryBox(args []string) {
 			fail(err)
 		}
 		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
-		if err := prov.StandBorder(ctx, args[1], args[2]); err != nil {
+		if err := prov.StandBorder(ctx, args[1], args[2], len(args) == 4); err != nil {
 			fail(err)
 		}
 		os.Exit(0)
@@ -1098,9 +1128,20 @@ func runEntryBox(args []string) {
 	// entry-box receiver-spare <box> <primary-box> [replace]: box becomes a
 	// spare receiver of primary's group (P2, internal/entry/rxspare.go).
 	spare := (len(args) == 3 || (len(args) == 4 && args[3] == "replace")) && args[0] == "receiver-spare"
+	// entry-box core <egress-box> <primary-box> <relay-port>: the egress
+	// becomes the core of primary's group on ports of its own (G2,
+	// internal/entry/rxspare.go).
+	core := len(args) == 4 && args[0] == "core"
+	corePort := 0
+	if core {
+		var perr error
+		if corePort, perr = strconv.Atoi(args[3]); perr != nil {
+			fail(fmt.Errorf("relay port %q", args[3]))
+		}
+	}
 	provider := len(args) >= 3 && len(args) <= 5 && args[0] == "provider"
-	if !naiveAdopt && !spare && !order && !retire && !provider && len(args) != 1 && len(args) != 4 && len(args) != 5 {
-		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain> | naive | hikkari | role=egress|receiver]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|naive|hikkari|awg|voice=<region>] [hoster=<kind>] | entry-box adopt-naive|adopt-hikkari <box> <domain> | entry-box receiver-spare <box> <primary-box> [replace] | entry-box catalog <hoster>"))
+	if !naiveAdopt && !spare && !core && !order && !retire && !provider && len(args) != 1 && len(args) != 4 && len(args) != 5 {
+		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain> | naive | hikkari | role=egress|receiver]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|naive|hikkari|awg|voice=<region>] [hoster=<kind>] | entry-box adopt-naive|adopt-hikkari <box> <domain> | entry-box receiver-spare <box> <primary-box> [replace] | entry-box core <egress-box> <primary-box> <relay-port> | entry-box catalog <hoster>"))
 	}
 	if err := cryptobox.Configure(os.Getenv); err != nil {
 		fail(fmt.Errorf("content key: %w", err))
@@ -1168,6 +1209,8 @@ func runEntryBox(args []string) {
 		id, err = prov.Adopt(ctx, args[1], adoptProto, args[2], "")
 	case spare:
 		id, err = prov.AddReceiverSpare(ctx, args[1], args[2], len(args) == 4, "")
+	case core:
+		id, err = prov.AddCore(ctx, args[1], args[2], corePort, "")
 	case order:
 		// "-" keeps the hoster's default, so a protocol can be named alone:
 		// `entry-box order - - xhttp` — what the operator runs when the

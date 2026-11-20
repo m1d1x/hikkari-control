@@ -241,7 +241,7 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 		pipe           pipeBrain
 	)
 	if o.Pipe {
-		pipe, err = p.pipeBrainFor(ctx, o.Exit, o.H3Port, o.H3Usage, o.Voice)
+		pipe, err = p.pipeBrainFor(ctx, o.Exit, o.H3Port, o.H3Usage, o.Voice, nil)
 		addr, sni, key, open = pipe.addr, pipe.sni, pipe.key, pipe.open
 	} else {
 		addr, sni, key, open, err = p.svc.trunkExitOf(ctx, o.Exit)

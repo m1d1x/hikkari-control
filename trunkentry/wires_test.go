@@ -230,3 +230,34 @@ func TestAWireTakesTheFateTheFileGives(t *testing.T) {
 		}
 	}
 }
+
+// TestTheFileGivesTheBorderPoints: the brain over hk-pipe reads the border
+// points to the core from the file (G2), IPv4 addresses each once, at most
+// maxPoints; a file without them is the core's own address.
+func TestTheFileGivesTheBorderPoints(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wires.json")
+	write := func(s string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`{"wires": [{"name": "udp", "kind": "udp", "port": 20447, "members": 2}], "points": ["179.253.75.148", "146.103.121.11"]}`)
+	f, _, err := readWires(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.pointAddrs(); len(got) != 2 || got[0].String() != "179.253.75.148" || got[1].String() != "146.103.121.11" {
+		t.Fatalf("points %v", got)
+	}
+	write(`{"wires": []}`)
+	if f, _, err = readWires(path); err != nil || len(f.pointAddrs()) != 0 {
+		t.Fatalf("no points: %v %v", f.pointAddrs(), err)
+	}
+	for _, bad := range []string{`["1.2.3.4", "1.2.3.4"]`, `["::1"]`, `["unl1"]`, `["1","2","3","4","5","6","7","8","9"]`} {
+		write(`{"wires": [], "points": ` + bad + `}`)
+		if _, _, err := readWires(path); err == nil {
+			t.Fatalf("points %s taken", bad)
+		}
+	}
+}
