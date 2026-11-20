@@ -229,6 +229,9 @@ func TestTheReceiversGuardIsTheKernels(t *testing.T) {
 		"ip $fam rule add fwmark 0x4377 lookup 4377 priority 4377",
 		`iifname "$ifc" ip daddr @ru4 counter name "ru_cut" reject`,
 		`iifname "$ifc" ip6 daddr @ru6 counter name "ru_cut" reject`,
+		// The egress's own new connections too: the core's relay (G2).
+		`ct state new ip daddr @ru4 counter name "ru_cut" reject`,
+		`ct state new ip6 daddr @ru6 counter name "ru_cut" reject`,
 		"port=" + strconv.Itoa(EgressPort),
 	} {
 		if !strings.Contains(s, want) {

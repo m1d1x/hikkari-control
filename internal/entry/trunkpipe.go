@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/netip"
 	"regexp"
 	"sort"
 	"strconv"
@@ -24,6 +26,16 @@ import (
 //	cmd/server entry-box trunk-pipe <box> <listen=port,...> [members] [h3dgram=<port>[:proxy]] [voice=<wire>]   # stand up or update
 //	cmd/server entry-box trunk-pipe-off <box>
 //	cmd/server entry-box trunk-pipe-wires <box> <[pool:members,]kind:members[:fate],...|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
+//	cmd/server entry-box trunk-pipe-points <box> <point-box>,...|off
+//
+// core=<box> (hikkari-client plans/2026-11-19-border-forwarders.md, G2)
+// gives the stand a core of its own in place of the people's exit: hk-exit
+// and the Hikkari relay on that box (entry-box core), "core=-" back to the
+// exit; left out, the stand keeps the core it had. trunk-pipe-points gives
+// the stand's brain the border points to its core (trunkentry wires.go
+// "points"): every member goes through point i mod n, the core's own address
+// is dialled by none. The points are the hub's (trunk_entries.pipe_points)
+// and ride every wires file the hub writes for the stand.
 //
 // h3dgram= gives the stand Chromium's QUIC wire (R6.3) to the exit's end of
 // it at that port (hk-exit under the exit's relay, entry-box trunk-pipe-exit,
@@ -81,6 +93,9 @@ type TrunkPipeOptions struct {
 	H3Usage string
 	// Voice, when set, is the wire voice is held on.
 	Voice string
+	// Core is the stand's own core (G2): "" keeps the one it had, "-" is
+	// the people's exit.
+	Core string
 }
 
 // trunkPipeEnvOf is the stand's env: the entry's (trunkEntryEnv) and the
@@ -113,7 +128,7 @@ type pipeBrain struct {
 
 // pipeBrainFor checks the pipe's parts for an entry to exit: the udp wire
 // when hk-exit serves it, Chromium's QUIC wire at h3Port when set.
-func (p *Provisioner) pipeBrainFor(ctx context.Context, exit string, h3Port int, h3Usage, voice string) (pipeBrain, error) {
+func (p *Provisioner) pipeBrainFor(ctx context.Context, exit string, h3Port int, h3Usage, voice string, points []string) (pipeBrain, error) {
 	var b pipeBrain
 	if len(p.pipeBuilds) == 0 {
 		return b, fmt.Errorf("%w: в образе хаба нет hk-pipe", ErrRejected)
@@ -146,7 +161,7 @@ func (p *Provisioner) pipeBrainFor(ctx context.Context, exit string, h3Port int,
 	if h3Port > 0 {
 		members["h3dgram"] = trunkPipeH3Members
 	}
-	b.wires, err = trunkPipeWiresOf(wires, TrunkPipeWires{Members: members, H3Port: h3Port, H3Usage: h3Usage, Voice: voice})
+	b.wires, err = trunkPipeWiresOf(wires, TrunkPipeWires{Members: members, H3Port: h3Port, H3Usage: h3Usage, Voice: voice, Points: points})
 	return b, err
 }
 
@@ -164,6 +179,9 @@ type TrunkPipeWires struct {
 	H3Port  int
 	H3Usage string
 	Voice   string
+	// Points are the border points' addresses to the core (G2), none: the
+	// core's own address.
+	Points []string
 }
 
 // trunkPipeWireKinds are the wires the pipe carries (trunkentry
@@ -227,11 +245,12 @@ func trunkPipeWiresOf(exit map[string]int, w TrunkPipeWires) (string, error) {
 		Fate    string `json:"fate,omitempty"`
 	}
 	f := struct {
-		Steer bool   `json:"steer"`
-		Wires []wire `json:"wires"`
-		Voice string `json:"voice,omitempty"`
-		Pool  int    `json:"pool,omitempty"`
-	}{Steer: true, Wires: []wire{}, Voice: w.Voice, Pool: w.Pool}
+		Steer  bool     `json:"steer"`
+		Wires  []wire   `json:"wires"`
+		Voice  string   `json:"voice,omitempty"`
+		Pool   int      `json:"pool,omitempty"`
+		Points []string `json:"points,omitempty"`
+	}{Steer: true, Wires: []wire{}, Voice: w.Voice, Pool: w.Pool, Points: w.Points}
 	if w.Pool < 0 || w.Pool > trunkPoolMembersMax {
 		return "", fmt.Errorf("%w: членов пула %d, 1-%d", ErrRejected, w.Pool, trunkPoolMembersMax)
 	}
@@ -281,8 +300,11 @@ func (p *Provisioner) SetTrunkPipeWires(ctx context.Context, box string, w Trunk
 	if err != nil {
 		return err
 	}
-	exit, err := p.svc.TrunkPipeWiresOf(ctx, pair.Exit)
+	exit, err := p.svc.TrunkPipeWiresOf(ctx, pair.PipeExit())
 	if err != nil {
+		return err
+	}
+	if w.Points, err = p.svc.pointAddresses(ctx, pair.PipePoints); err != nil {
 		return err
 	}
 	raw, err := trunkPipeWiresOf(exit, w)
@@ -326,7 +348,31 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	if err != nil {
 		return err
 	}
-	pipe, err := p.pipeBrainFor(ctx, pair.Exit, o.H3Port, o.H3Usage, o.Voice)
+	core := pair.PipeCore
+	switch o.Core {
+	case "":
+	case "-":
+		core = ""
+	default:
+		if o.Core == box {
+			return fmt.Errorf("%w: ядро стенда не сам вход", ErrRejected)
+		}
+		core = o.Core
+	}
+	exitBox := pair.Exit
+	if core != "" {
+		exitBox = core
+	}
+	points := pair.PipePoints
+	if core != pair.PipeCore {
+		// Points are a core's: another core starts with none.
+		points = nil
+	}
+	pts, err := p.svc.pointAddresses(ctx, points)
+	if err != nil {
+		return err
+	}
+	pipe, err := p.pipeBrainFor(ctx, exitBox, o.H3Port, o.H3Usage, o.Voice, pts)
 	if err != nil {
 		return err
 	}
@@ -340,7 +386,7 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 			return fmt.Errorf("%w: порт %d слушает сам вход %s", ErrRejected, l, box)
 		}
 		if !open[to] {
-			return fmt.Errorf("%w: порт %d не открыт магистрали на %s", ErrRejected, to, pair.Exit)
+			return fmt.Errorf("%w: порт %d не открыт магистрали на %s", ErrRejected, to, exitBox)
 		}
 		listen = append(listen, strconv.Itoa(l))
 	}
@@ -354,14 +400,17 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	logf := func(format string, args ...any) {
 		applog.Info(ctx, "entry", fmt.Sprintf(format, args...), applog.F("box", box))
 	}
-	applog.Info(ctx, "entry", "operator trunk pipe on box", applog.F("box", box), applog.F("exit", pair.Exit),
+	applog.Info(ctx, "entry", "operator trunk pipe on box", applog.F("box", box), applog.F("exit", exitBox),
 		applog.F("members", o.Members), applog.F("listen", strings.Join(listen, ",")))
 	files := []trunkFile{{"nekko-trunk-entry", p.trunkBuilds}, {"libcronet.so", cronet}, {"hk-pipe", p.pipeBuilds}}
 	if err := standTrunkUnit(ctx, r, trunkPipeUnitSpec, files, trunkPipeEnvOf(addr, sni, key, o),
 		map[string]string{"wires.json": wiresFile}, listen, logf); err != nil {
 		return err
 	}
-	return p.svc.recordTrunkPipe(ctx, box, o.Forward)
+	if err := p.svc.recordTrunkPipe(ctx, box, o.Forward); err != nil {
+		return err
+	}
+	return p.svc.recordTrunkPipeCore(ctx, box, core, points)
 }
 
 // StopTrunkPipe takes the stand off box; the Go entry stays.
@@ -377,7 +426,127 @@ func (p *Provisioner) StopTrunkPipe(ctx context.Context, box string) error {
 		return fmt.Errorf("снятие стенда: %w", err)
 	}
 	applog.Info(ctx, "entry", strings.TrimSpace(out), applog.F("box", box))
-	return p.svc.recordTrunkPipe(ctx, box, nil)
+	if err := p.svc.recordTrunkPipe(ctx, box, nil); err != nil {
+		return err
+	}
+	return p.svc.recordTrunkPipeCore(ctx, box, "", nil)
+}
+
+// SetTrunkPipePoints gives the stand on box the border points to its core
+// (G2; none: the core's own address): the hub keeps them and puts them into
+// the stand's wires file as it stands, the rest of the file untouched; the
+// brain follows within 10 s, no new process. A point is a box that forwards
+// the core's trunk (entry-box border-forward <point> <core>), never the
+// entry itself.
+func (p *Provisioner) SetTrunkPipePoints(ctx context.Context, box string, points []string) error {
+	pair, err := p.svc.trunkPairOf(ctx, box)
+	if err != nil {
+		return err
+	}
+	if pair.Pipe == nil {
+		return fmt.Errorf("%w: на %s нет стенда, сначала entry-box trunk-pipe", ErrRejected, box)
+	}
+	if len(points) > trunkPipePointsMax {
+		return fmt.Errorf("%w: точек %d, не больше %d", ErrRejected, len(points), trunkPipePointsMax)
+	}
+	seen := map[string]bool{}
+	for _, pt := range points {
+		if pt == box || pt == pair.PipeExit() || seen[pt] {
+			return fmt.Errorf("%w: точка %q: сам вход, само ядро или дважды", ErrRejected, pt)
+		}
+		seen[pt] = true
+	}
+	addrs, err := p.svc.pointAddresses(ctx, points)
+	if err != nil {
+		return err
+	}
+	r, _, err := p.provokeRemote(ctx, box)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	raw, err := r.Run(ctx, "cat "+trunkPipeWires, nil)
+	if err != nil {
+		return fmt.Errorf("файл проводов стенда на %s: %w: %s", box, err, raw)
+	}
+	file, err := withPoints([]byte(raw), addrs)
+	if err != nil {
+		return fmt.Errorf("файл проводов стенда на %s: %w", box, err)
+	}
+	if out, err := r.Run(ctx, trunkPipeWiresScript, strings.NewReader(file)); err != nil {
+		return fmt.Errorf("файл проводов стенда на %s: %w: %s", box, err, out)
+	}
+	applog.Info(ctx, "entry", "operator trunk pipe points", applog.F("box", box), applog.F("core", pair.PipeExit()),
+		applog.F("points", strings.Join(points, ",")))
+	return p.svc.recordTrunkPipeCore(ctx, box, pair.PipeCore, points)
+}
+
+// trunkPipePointsMax is the most border points a stand is given (trunkentry
+// wires.go maxPoints).
+const trunkPipePointsMax = 8
+
+// withPoints is the wires file raw with its points in place of the ones it
+// had; every other key stays as the hub wrote it.
+func withPoints(raw []byte, points []string) (string, error) {
+	f := map[string]json.RawMessage{}
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return "", err
+	}
+	if len(points) == 0 {
+		delete(f, "points")
+	} else {
+		b, err := json.Marshal(points)
+		if err != nil {
+			return "", err
+		}
+		f["points"] = b
+	}
+	out, err := json.Marshal(f)
+	return string(out) + "\n", err
+}
+
+// pointAddresses are the boxes' IPv4 addresses, in their order.
+func (s *Service) pointAddresses(ctx context.Context, boxes []string) ([]string, error) {
+	out := make([]string, 0, len(boxes))
+	for _, b := range boxes {
+		ip, err := s.boxIPv4(ctx, b)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ip.String())
+	}
+	return out, nil
+}
+
+// boxIPv4 is the box's public IPv4 address.
+func (s *Service) boxIPv4(ctx context.Context, box string) (netip.Addr, error) {
+	acc, err := s.boxAccess(ctx, box)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	host := acc.address
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil || !ip.Is4() {
+		return netip.Addr{}, fmt.Errorf("%w: у %s нет IPv4-адреса", ErrRejected, box)
+	}
+	return ip, nil
+}
+
+// recordTrunkPipeCore keeps the stand's core ("" the people's exit) and its
+// border points on the entry's row.
+func (s *Service) recordTrunkPipeCore(ctx context.Context, box, core string, points []string) error {
+	var c any
+	if core != "" {
+		c = core
+	}
+	if points == nil {
+		points = []string{}
+	}
+	_, err := s.pool.Exec(ctx, `UPDATE trunk_entries SET pipe_core = $2, pipe_points = $3 WHERE entry_box = $1`, box, c, points)
+	return err
 }
 
 // trunkPairOf is the trunk entry the hub stood on box.

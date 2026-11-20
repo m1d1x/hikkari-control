@@ -36,9 +36,61 @@ import (
 // (entry_relays.keys_from, migration 071). A spare on a fleet box, as ams3-3
 // is, keeps its grants and its links: its address was out before.
 
+// A core on an egress box (hikkari-client plans/2026-11-19-border-forwarders.md,
+// G2; the owner's decision of 20.11 «Приёмники тупые, сессии держит выход»):
+// the egress gets hk-exit and the Hikkari relay with the primary's keys and
+// the group's certificate, as a spare does, but on ports of its own
+// (corePort for the relay, the pipe's wires moved by as much), so that a
+// border point that forwards the people's trunk to the primary and the
+// stand's to the core tells the two by port alone; no Go exit. The relay
+// goes to the internet itself. Its ports open to the border points alone
+// (entry-box border-forward <point> <core>) and to the hub, which checks the
+// relay's certificate in place of the vantage's probe: from Russia the core
+// answers nobody.
+//
+//	cmd/server entry-box core <egress-box> <primary-box> <relay-port>
+
 // PrepareReceiverSpare turns box into a spare receiver of primary's group and
 // queues its provisioning job.
 func (s *Service) PrepareReceiverSpare(ctx context.Context, box, primary string, replace bool, adminID string) (uuid.UUID, error) {
+	return s.prepareSpare(ctx, box, primary, replace, adminID, 0)
+}
+
+// PrepareCore turns the egress box into the core of primary's group (keys,
+// certificate) on relay port corePort and queues its provisioning job.
+func (s *Service) PrepareCore(ctx context.Context, box, primary string, corePort int, adminID string) (uuid.UUID, error) {
+	if corePort < 1024 || corePort > 65535 {
+		return uuid.Nil, fmt.Errorf("%w: порт релея ядра %d, 1024-65535", ErrRejected, corePort)
+	}
+	return s.prepareSpare(ctx, box, primary, false, adminID, corePort)
+}
+
+// coreIdentity is the primary's identity on the core's ports: the relay on
+// port, hk-exit's wires moved by as much as the relay, the relay's own port
+// the trunk's one loopback port, no Go exit.
+func coreIdentity(id Identity, port int) (Identity, error) {
+	h := id.Hikkari
+	if h == nil || h.TrunkPipeKey == "" {
+		return Identity{}, fmt.Errorf("%w: у основного нет hk-exit под релеем", ErrRejected)
+	}
+	shift := port - id.Port
+	hc := *h
+	hc.TrunkKey, hc.TrunkWires = "", nil
+	hc.TrunkPorts = []int{port}
+	hc.TrunkPipeWires = map[string]int{}
+	for kind, p := range h.TrunkPipeWires {
+		q := p + shift
+		if q < 1024 || q > 65535 || q == port {
+			return Identity{}, fmt.Errorf("%w: провод %s на порту %d уходит на %d", ErrRejected, kind, p, q)
+		}
+		hc.TrunkPipeWires[kind] = q
+	}
+	id.Port = port
+	id.Hikkari = &hc
+	return id, nil
+}
+
+func (s *Service) prepareSpare(ctx context.Context, box, primary string, replace bool, adminID string, corePort int) (uuid.UUID, error) {
 	if box == primary {
 		return uuid.Nil, fmt.Errorf("%w: a box is not its own spare", ErrRejected)
 	}
@@ -71,8 +123,11 @@ func (s *Service) PrepareReceiverSpare(ctx context.Context, box, primary string,
 	if err := refuseVantageBox(ctx, tx, box); err != nil {
 		return uuid.Nil, err
 	}
-	if lb.role == RoleEgress {
-		return uuid.Nil, fmt.Errorf("%w: %s is an egress: no relay, no keys, ever", ErrRejected, box)
+	if corePort == 0 && lb.role == RoleEgress {
+		return uuid.Nil, fmt.Errorf("%w: %s is an egress: a relay on it only as a core (entry-box core)", ErrRejected, box)
+	}
+	if corePort != 0 && lb.role != RoleEgress {
+		return uuid.Nil, fmt.Errorf("%w: ядро только на машине роли egress, а у %s роль %q", ErrRejected, box, lb.role)
 	}
 	var running int
 	if err = tx.QueryRow(ctx, `SELECT count(*) FROM entry_jobs WHERE box=$1 AND status='running'`, box).Scan(&running); err != nil {
@@ -116,7 +171,13 @@ func (s *Service) PrepareReceiverSpare(ctx context.Context, box, primary string,
 	if _, err = tx.Exec(ctx, `UPDATE entry_boxes SET proto=$2, domain_ct=$3, region=NULL WHERE name=$1`, box, ProtoHikkari, domainCT); err != nil {
 		return uuid.Nil, err
 	}
-	ct, err := sealIdentity(src.id)
+	id := src.id
+	if corePort != 0 {
+		if id, err = coreIdentity(id, corePort); err != nil {
+			return uuid.Nil, err
+		}
+	}
+	ct, err := sealIdentity(id)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -124,7 +185,7 @@ func (s *Service) PrepareReceiverSpare(ctx context.Context, box, primary string,
 	if err := s.repo.insertPendingRelay(ctx, tx, name, KindPersonal, box, ct); err != nil {
 		return uuid.Nil, err
 	}
-	if lb.role == RoleReceiver {
+	if lb.role == RoleReceiver || lb.role == RoleEgress {
 		// A hidden receiver (H5): its relay holds no grants, so its address
 		// rides in no account's batch, and lets through the keys the
 		// primary's relay lets through (migration 071, KeysOf).
@@ -190,6 +251,22 @@ func (s *Service) groupDomainHolder(ctx context.Context, box, domain string) (st
 		return "", nil
 	}
 	return *holder, nil
+}
+
+// AddCore is PrepareCore and the provisioning job that follows it.
+func (p *Provisioner) AddCore(ctx context.Context, box, primary string, corePort int, adminID string) (uuid.UUID, error) {
+	id, err := p.svc.PrepareCore(ctx, box, primary, corePort, adminID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	p.svc.spawn(func(ctx context.Context) {
+		ctx, cancel := context.WithTimeout(ctx, p.jobTimeout)
+		defer cancel()
+		j := &jobRun{p: p, ctx: ctx, id: id, box: box}
+		err := j.provision("")
+		j.finish(err, "готово: ядро группы "+primary)
+	})
+	return id, nil
 }
 
 // AddReceiverSpare is PrepareReceiverSpare and the provisioning job that

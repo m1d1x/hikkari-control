@@ -37,10 +37,24 @@ type TrunkPair struct {
 	// Pipe is the stand over hk-pipe beside the entry (trunkpipe.go): its
 	// listen ports to the exit's loopback ports; empty when there is none.
 	Pipe map[int]int
+	// PipeCore is the stand's own core when it is not Exit (G2), PipePoints
+	// the border points the stand reaches it through (box names), both
+	// empty for a stand to Exit directly.
+	PipeCore   string
+	PipePoints []string
 	// Receivers names each receiver of the entry's group by its relay's
 	// address, the exit's included (P5): the entry's lines say addresses,
 	// the watch files box names.
 	Receivers map[string]string
+}
+
+// PipeExit is the box the stand's trunk ends at: its own core, or the
+// people's exit.
+func (p TrunkPair) PipeExit() string {
+	if p.PipeCore != "" {
+		return p.PipeCore
+	}
+	return p.Exit
 }
 
 // PipeListen is the stand's listen port that reaches port at the exit, 0
@@ -95,7 +109,7 @@ func (s *Service) forgetTrunkEntry(ctx context.Context, box string) error {
 
 // TrunkPairs lists the trunk entries the hub stood, each with its exit.
 func (s *Service) TrunkPairs(ctx context.Context) ([]TrunkPair, error) {
-	rows, err := s.pool.Query(ctx, `SELECT entry_box, exit_box, forward, members, pipe_forward, receivers FROM trunk_entries ORDER BY entry_box`)
+	rows, err := s.pool.Query(ctx, `SELECT entry_box, exit_box, forward, members, pipe_forward, receivers, coalesce(pipe_core, ''), pipe_points FROM trunk_entries ORDER BY entry_box`)
 	if err != nil {
 		return nil, err
 	}
@@ -104,11 +118,13 @@ func (s *Service) TrunkPairs(ctx context.Context) ([]TrunkPair, error) {
 		fwd, pipe   []byte
 		members     int
 		receivers   []string
+		core        string
+		points      []string
 	}
 	var list []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.entry, &r.exit, &r.fwd, &r.members, &r.pipe, &r.receivers); err != nil {
+		if err := rows.Scan(&r.entry, &r.exit, &r.fwd, &r.members, &r.pipe, &r.receivers, &r.core, &r.points); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -120,7 +136,7 @@ func (s *Service) TrunkPairs(ctx context.Context) ([]TrunkPair, error) {
 	}
 	out := make([]TrunkPair, 0, len(list))
 	for _, r := range list {
-		p := TrunkPair{Entry: r.entry, Exit: r.exit, Members: r.members}
+		p := TrunkPair{Entry: r.entry, Exit: r.exit, Members: r.members, PipeCore: r.core, PipePoints: r.points}
 		var err error
 		if p.Forward, err = forwardOf(r.fwd); err != nil {
 			return nil, fmt.Errorf("trunk entry %s: forward: %w", r.entry, err)

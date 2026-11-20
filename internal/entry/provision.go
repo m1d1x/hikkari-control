@@ -789,18 +789,16 @@ func (j *jobRun) provision(password string) error {
 	j.ipv6(r, freshlyOrdered)
 
 	// A box with a role (migration 070) is outside the relay pool. Until a
-	// relay comes to it by receiver-spare (a receiver), and always for an
-	// egress, the job stops here: the hub's key is in, the box is closed, and
-	// nothing else is put on it. No domain either: a receiver's is its group's.
+	// relay comes to it by receiver-spare (a receiver) or entry-box core (an
+	// egress that holds the sessions, G2), the job stops here: the hub's key
+	// is in, the box is closed, and nothing else is put on it. No domain
+	// either: a receiver's and a core's is its group's.
 	if acc.role != "" {
 		relays, err := j.liveRelays()
 		if err != nil {
 			return err
 		}
-		if acc.role == RoleEgress || len(relays) == 0 {
-			if len(relays) != 0 {
-				return fmt.Errorf("на выходе %s релеи %s: выход без релеев", j.box, strings.Join(relayNames(relays), ", "))
-			}
+		if len(relays) == 0 {
 			j.step("harden")
 			if err := j.harden(r, nil); err != nil {
 				return err
@@ -1504,6 +1502,28 @@ echo "настроен на $iface, интернет по IPv6 не отвеча
 `
 
 func (j *jobRun) harden(r Remote, relays []provRelay) error {
+	ports := j.hardenPorts(relays)
+	// A core on an egress box (entry-box core, G2) opens its relay's ports
+	// to the hub alone, for the certificate check that stands in for the
+	// vantage's probe; the border points open them for themselves
+	// (entry-box border-forward). From Russia it answers nobody.
+	if j.acc.role == RoleEgress {
+		for i, p := range ports {
+			ports[i] = "hub:" + p
+		}
+	}
+	sort.Strings(ports)
+	out, err := r.Run(j.ctx, "bash -s -- "+strings.Join(ports, " "), strings.NewReader(hardenScript))
+	if err != nil {
+		return fmt.Errorf("закрытие машины: %w", err)
+	}
+	j.log("вход по паролю выключен, ufw: 22 только с хаба, %s", strings.Join(ports, " "))
+	_ = out
+	return nil
+}
+
+// hardenPorts are the ports the relays need open, port/proto.
+func (j *jobRun) hardenPorts(relays []provRelay) []string {
 	ports := make([]string, 0, len(relays)+1)
 	for _, rel := range relays {
 		ports = append(ports, strconv.Itoa(rel.id.Port)+"/"+j.transport())
@@ -1530,14 +1550,7 @@ func (j *jobRun) harden(r Remote, relays []provRelay) error {
 			}
 		}
 	}
-	sort.Strings(ports)
-	out, err := r.Run(j.ctx, "bash -s -- "+strings.Join(ports, " "), strings.NewReader(hardenScript))
-	if err != nil {
-		return fmt.Errorf("закрытие машины: %w", err)
-	}
-	j.log("вход по паролю выключен, ufw: 22 только с хаба, %s", strings.Join(ports, " "))
-	_ = out
-	return nil
+	return ports
 }
 
 const hardenScript = `set -eu
@@ -1562,7 +1575,12 @@ esac
 hub="${SSH_CONNECTION%% *}"
 [ -n "$hub" ] || { echo "no SSH_CONNECTION: who is the hub?" >&2; exit 1; }
 ufw allow from "$hub" to any port 22 proto tcp >/dev/null
-for p in "$@"; do ufw allow "$p" >/dev/null; done
+for p in "$@"; do
+	case "$p" in
+	hub:*) p="${p#hub:}"; ufw allow proto "${p#*/}" from "$hub" to any port "${p%/*}" >/dev/null ;;
+	*) ufw allow "$p" >/dev/null ;;
+	esac
+done
 ufw --force enable >/dev/null
 ufw delete allow 22/tcp >/dev/null 2>&1 || true
 `
@@ -2159,6 +2177,9 @@ TimeoutStopSec=30
 // deadline's error says the vantage could not judge rather than condemning an
 // address.
 func (j *jobRun) probe(relays []provRelay) error {
+	if j.acc.role == RoleEgress {
+		return j.probeCore(relays)
+	}
 	names := relayNames(relays)
 	deadline := time.Now().Add(j.p.probeTimeout)
 	for {
@@ -2201,6 +2222,27 @@ func (j *jobRun) probe(relays []provRelay) error {
 		case <-time.After(j.p.probePoll):
 		}
 	}
+}
+
+// probeCore stands in for the vantage's probe on a core (entry-box core,
+// G2): the vantages are in Russia, from where the core answers nobody by
+// design, so the hub itself makes the handshake and checks the group's
+// certificate on each relay's port.
+func (j *jobRun) probeCore(relays []provRelay) error {
+	for _, rel := range relays {
+		host := ""
+		if rel.id.Hikkari != nil {
+			host = rel.id.Hikkari.Host
+		}
+		if host == "" {
+			return fmt.Errorf("%w: релей %s на ядре не Hikkari", ErrRejected, rel.name)
+		}
+		if err := j.p.certCheck(j.ctx, j.acc.address, rel.id.Port, host); err != nil {
+			return fmt.Errorf("%s: сертификат %s на порту %d с хаба: %w", rel.name, host, rel.id.Port, err)
+		}
+		j.log("%s: ядро отвечает хабу на %d, сертификат %s проверяется (точка обзора из РФ его не видит нарочно)", rel.name, rel.id.Port, host)
+	}
+	return nil
 }
 
 // errNoVerdict is an admission nobody could judge: the vantage answered only

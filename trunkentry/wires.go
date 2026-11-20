@@ -15,6 +15,13 @@ package main
 // bulk on the pool, with no selector: a wire measured under the stand's load
 // (R6.3), not chosen by its numbers.
 //
+// "points" (the brain over hk-pipe alone; hikkari-client
+// plans/2026-11-19-border-forwarders.md, G2) are the border points the trunk
+// reaches its core through, IPv4 addresses: every member of every wire and of
+// the pool goes to point i mod n, the core's own address is dialled by none
+// when it is not among them (pipectl.SetPoints). Given before the pool and
+// the wires at the brain's start, and before the wires when the file changes.
+//
 // and the running entry reads it every 10 s: a wire added comes up, a wire
 // gone has its members closed, a wire changed is dialled anew (trunk
 // Entry.SetWires), all without a new process. No file, or no wire in it, is
@@ -78,6 +85,23 @@ type wiresSpec struct {
 	// EDGE_TRUNK_MEMBERS (0: the env's); the Go entry's pool is its env's
 	// alone (brain_wires_linux.go poolMembers).
 	Pool int `json:"pool,omitempty"`
+	// Points are the border points to the core (pipectl.SetPoints), none:
+	// the core's own address.
+	Points []string `json:"points,omitempty"`
+}
+
+// maxPoints is the most border points a file gives.
+const maxPoints = 8
+
+// pointAddrs are the file's points as addresses (readWires checked them).
+func (f wiresSpec) pointAddrs() []netip.Addr {
+	out := make([]netip.Addr, 0, len(f.Points))
+	for _, p := range f.Points {
+		if ip, err := netip.ParseAddr(p); err == nil {
+			out = append(out, ip)
+		}
+	}
+	return out
 }
 
 // wireIDs are the wires' ids on the trunk: fixed per kind, so the exit's
@@ -141,6 +165,17 @@ func readWires(path string) (wiresSpec, []byte, error) {
 	}
 	if f.Pool < 0 || f.Pool > maxMembers {
 		return f, raw, fmt.Errorf("%s: pool of %d members, 1-%d", path, f.Pool, maxMembers)
+	}
+	if len(f.Points) > maxPoints {
+		return f, raw, fmt.Errorf("%s: %d points, at most %d", path, len(f.Points), maxPoints)
+	}
+	points := map[netip.Addr]bool{}
+	for _, p := range f.Points {
+		ip, err := netip.ParseAddr(p)
+		if err != nil || !ip.Is4() || points[ip] {
+			return f, raw, fmt.Errorf("%s: point %q: not an IPv4 address, or twice", path, p)
+		}
+		points[ip] = true
 	}
 	if f.Voice != "" && !seen[f.Voice] {
 		return f, raw, fmt.Errorf("%s: voice on wire %q, which the file has not", path, f.Voice)

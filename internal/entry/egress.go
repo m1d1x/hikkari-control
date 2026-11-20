@@ -526,7 +526,9 @@ egress_ext() {
 egress_up() {
 	egress_ext
 	# The Russian cut and the table come in one transaction, before the
-	# box forwards a single packet.
+	# box forwards a single packet. box_out cuts the box's own new
+	# connections too: the core's relay on the egress (entry-box core, G2)
+	# reaches the internet itself, not through the tunnel.
 	{
 		cat <<EOF
 table inet hikkari_egress
@@ -550,6 +552,11 @@ table inet hikkari_egress {
 	chain tunnel_nat {
 		type nat hook postrouting priority srcnat; policy accept;
 		iifname "$ifc" oifname "$ext" masquerade
+	}
+	chain box_out {
+		type filter hook output priority filter - 5; policy accept;
+		ct state new ip daddr @ru4 counter name "ru_cut" reject with icmpx type admin-prohibited
+		ct state new ip6 daddr @ru6 counter name "ru_cut" reject with icmpx type admin-prohibited
 	}
 }
 EOF
