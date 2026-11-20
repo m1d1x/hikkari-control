@@ -2,6 +2,7 @@
 	import { onMount, tick } from 'svelte';
 	import { page } from '$app/state';
 	import RuleList from './RuleList.svelte';
+	import ServiceLogo from '$components/product/ServiceLogo.svelte';
 	import { db, load } from '$lib/product/store.svelte';
 	import { deleteGroup, fetchGroups, normalizeRule, refusal, saveGroup } from '$lib/api/presets';
 	import {
@@ -179,7 +180,7 @@
 					<button class="item" class:on={!fresh && x.id === edit?.id} onclick={() => pick(x.id)}>
 						<div class="line">
 							<span class="name-cell">
-								{#if x.icon}<span class="icon-tag mono">{x.icon}</span>{/if}
+								{#if x.icon}<ServiceLogo id={x.icon} />{/if}
 								<span>{x.name}</span>
 							</span>
 							<span class="dim n">{count(x)}</span>
@@ -401,18 +402,6 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-	}
-
-	.icon-tag {
-		display: inline-block;
-		font-size: 10px;
-		line-height: 1;
-		padding: 2px 4px;
-		border-radius: 4px;
-		background: rgba(255, 255, 255, 0.08);
-		color: var(--dim, #888);
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		flex-shrink: 0;
 	}
 
 

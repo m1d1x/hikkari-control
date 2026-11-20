@@ -2,6 +2,7 @@
 	import { onMount, tick } from 'svelte';
 	import { page } from '$app/state';
 	import { db, load, putPreset } from '$lib/product/store.svelte';
+	import ServiceLogo from '$components/product/ServiceLogo.svelte';
 	import {
 		createPreset,
 		deletePreset,
@@ -365,7 +366,7 @@
 								{#each edit[s.key] as id (id)}
 									{@const g = groupOf(id)}
 									<span class="g" class:off={s.key === 'disabled'}>
-										{#if g?.icon}<span class="icon-tag mono">{g.icon}</span>{/if}
+										{#if g?.icon}<ServiceLogo id={g.icon} />{/if}
 										<a href="/groups?g={id}">{g?.name ?? id}</a>
 										{#if g}<small>{ruleCount(g.rules)}</small>{/if}
 										<button onclick={() => dropGroup(s.key, id)} title="убрать">×</button>
@@ -598,15 +599,6 @@
 		font-size: 12px;
 	}
 
-	.icon-tag {
-		font-size: 10px;
-		line-height: 1;
-		padding: 1px 4px;
-		border-radius: 3px;
-		background: rgba(255, 255, 255, 0.08);
-		color: var(--dim, #888);
-		border: 1px solid rgba(255, 255, 255, 0.1);
-	}
 
 	.preset-sync-row {
 		margin-top: 12px;
