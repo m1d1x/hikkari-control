@@ -3,10 +3,12 @@
 	import { onFreshAnswers } from '$lib/api/fresh';
 	import PageShell from '$components/layout/PageShell.svelte';
 	import TrendChart, { type TrendMark, type TrendSeries } from '$components/entry/TrendChart.svelte';
+	import TrunkRoutes from '$components/entry/TrunkRoutes.svelte';
 	import { fetchTrunkWires, type TrunkWindow, type TrunkWireChart } from '$lib/api/trunkWires';
 	import { fetchTrunkHearing } from '$lib/api/trunkHearing';
 	import { fetchTrunkEgress } from '$lib/api/trunkEgress';
-	import { fetchTrunkPoints } from '$lib/api/trunkPoints';
+	import { fetchTrunkPoints, type TrunkPointChart } from '$lib/api/trunkPoints';
+	import { USE_MOCK } from '$lib/config/mock';
 
 	// The trunk's wires through the border (stage 4): the entry's call over
 	// each wire every 20 ms and its 1 MiB every 10 minutes, as history. The
@@ -18,6 +20,13 @@
 
 	const WINDOWS: TrunkWindow[] = ['6h', '24h', '7d'];
 	const REFRESH_MS = 60_000;
+	const eventTime = new Intl.DateTimeFormat('ru', {
+		month: 'short',
+		day: 'numeric',
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+	});
 
 	const ms = (v: number) => `${Math.round(v)} мс`;
 	const count = (v: number) => Math.round(v).toLocaleString('ru');
@@ -212,15 +221,21 @@
 	// wire and pool goes through point i mod n. Keys are "entry → point".
 	const POINT_CHARTS: ChartSpec[] = [
 		{
+			group: 'point_call_gap',
+			title: 'Самая длинная пауза звонка',
+			hint: 'Пробный звонок всей боевой магистрали. Отметки показывают, когда приёмники выпадали и возвращались.',
+			format: ms,
+		},
+		{
 			group: 'point_silent',
-			title: 'Точка: молчала',
-			hint: 'секунды, когда через точку не жил ни один член магистрали: точка умерла, замерла или её режут. Минута целиком, и владелец слышит в Telegram.',
-			format: count,
+			title: 'Тишина по приёмникам',
+			hint: 'Сколько времени через приёмник не работало ни одно соединение магистрали.',
+			format: sec,
 		},
 		{
 			group: 'point_up',
-			title: 'Точка: живых членов',
-			hint: 'сколько членов проводов и пула живы через точку, худшая минута отрезка.',
+			title: 'Живые соединения по приёмникам',
+			hint: 'Минимум за отрезок.',
 			format: count,
 		},
 	];
@@ -228,22 +243,34 @@
 	let data = $state<TrunkWireChart | null>(null);
 	let hearing = $state<TrunkWireChart | null>(null);
 	let egress = $state<TrunkWireChart | null>(null);
-	let points = $state<TrunkWireChart | null>(null);
+	let points = $state<TrunkPointChart | null>(null);
 	let loadError = $state<string | null>(null);
+	let pointsError = $state<string | null>(null);
 	let window = $state<TrunkWindow>('24h');
+	let pointScope = $state<'live' | 'stand'>('live');
+	let now = $state(Date.now());
+	let request = 0;
 	let timer: ReturnType<typeof setInterval> | undefined;
 
 	async function load() {
-		try {
-			[data, hearing, egress, points] = await Promise.all([
-				fetchTrunkWires(window),
-				fetchTrunkHearing(window, 'trunk'),
-				fetchTrunkEgress(window),
-				fetchTrunkPoints(window),
-			]);
+		const current = ++request;
+		now = Date.now();
+		const [detail, overview] = await Promise.allSettled([
+			Promise.all([fetchTrunkWires(window), fetchTrunkHearing(window, 'trunk'), fetchTrunkEgress(window)]),
+			fetchTrunkPoints(window),
+		]);
+		if (current !== request) return;
+		if (detail.status === 'fulfilled') {
+			[data, hearing, egress] = detail.value;
 			loadError = null;
-		} catch (e) {
-			loadError = e instanceof Error ? e.message : 'не удалось загрузить';
+		} else {
+			loadError = 'Не удалось загрузить графики проводов и выходов.';
+		}
+		if (overview.status === 'fulfilled') {
+			points = overview.value;
+			pointsError = null;
+		} else {
+			pointsError = 'Не удалось обновить обзор каскада.';
 		}
 	}
 
@@ -283,7 +310,9 @@
 	}
 
 	const charts = $derived(CHARTS.map((c) => ({ ...c, lines: linesOf(data, c, (k) => k.startsWith('trunk-')) })));
-	const hearingCharts = $derived(HEARING_CHARTS.map((c) => ({ ...c, lines: linesOf(hearing, c, (k) => k.endsWith('-voice')) })));
+	const hearingCharts = $derived(
+		HEARING_CHARTS.map((c) => ({ ...c, lines: linesOf(hearing, c, (k) => k.endsWith('-voice')) })),
+	);
 
 	const egressKeys = $derived([...new Set((egress?.lines ?? []).map((l) => l.key))].sort());
 	const egressMarks = $derived<TrendMark[]>(
@@ -310,45 +339,126 @@
 		})),
 	);
 
-	const pointKeys = $derived([...new Set((points?.lines ?? []).map((l) => l.key))].sort());
+	const pointLines = $derived(
+		(points?.lines ?? []).filter((l) => l.key.endsWith(' (стенд)') === (pointScope === 'stand')),
+	);
+	const hasStand = $derived((points?.lines ?? []).some((l) => l.key.endsWith(' (стенд)')));
+	const pointKeys = $derived([...new Set(pointLines.map((l) => l.key))].sort());
+	const pointEvents = $derived(
+		(points?.marks ?? []).filter((m) => m.class === (pointScope === 'stand' ? 'point-stand' : 'point')),
+	);
 	const pointMarks = $derived<TrendMark[]>(
-		(points?.marks ?? []).map((m) => ({ at: m.at, label: m.label, color: m.why === 'red' ? '#e66767' : '#199e70' })),
+		pointEvents.map((m) => ({ at: m.at, label: m.label, color: m.why === 'red' ? '#e66767' : '#199e70' })),
 	);
 	const pointCharts = $derived(
 		POINT_CHARTS.map((c) => ({
 			...c,
-			lines: (points?.lines ?? [])
+			lines: pointLines
 				.filter((l) => l.group === c.group)
 				.sort((a, b) => a.key.localeCompare(b.key))
 				.map<TrendSeries>((l) => ({
-					key: l.key,
+					key: `${c.group}-${pointKeys.indexOf(l.key)}`,
 					label: l.key,
 					color: EGRESS_COLORS[pointKeys.indexOf(l.key) % EGRESS_COLORS.length],
 					values: l.values,
 					format: c.format,
 					primary: true,
 				})),
-		})),
+		})).filter((c) => c.lines.length > 0),
 	);
 </script>
 
 <PageShell>
 	<div class="page">
 		<div class="head">
-			<h1>провода магистрали</h1>
+			<h1>Магистраль</h1>
 			<div class="chips">
 				<a class="chip" href="/protocols/hikkari">hikkari изнутри</a>
 				{#each WINDOWS as w (w)}
-					<button class="chip" class:on={window === w} onclick={() => pick(w)}>{w}</button>
+					<button class="chip" class:on={window === w} aria-pressed={window === w} onclick={() => pick(w)}>{w}</button>
 				{/each}
 			</div>
 		</div>
-		<p class="hint">
-			Участок РФ ДЦ → ЕУ ДЦ: вход меряет каждый провод своим звонком (датаграмма раз в 20 мс) и загрузкой 1 МиБ раз в
-			10 минут. Пул: звонок магистрали по пулу, стенд: отдельный процесс провода на входе, вход: провода в самом процессе
-			входа, труба: стенд входа на Rust-трубе рядом с входом (его провода и звонки маршрута). Отметки на оси: селектор перевёл голос или объём на другой провод (красная: провод покраснел).
-		</p>
+		<h2 class="section">Боевой каскад</h2>
+		{#if USE_MOCK}
+			<p class="hint">Демонстрационные данные</p>
+		{/if}
+		{#if pointsError}
+			<p class="err" role="status">{pointsError}</p>
+		{/if}
+		{#if points}
+			{#if points.routes?.length}
+				<TrunkRoutes routes={points.routes} {now} />
+			{:else}
+				<p class="hint">Нет маршрутов с точками перехода.</p>
+			{/if}
+			{#if hasStand || pointScope === 'stand'}
+				<div class="chips scope" role="group" aria-label="История точек">
+					<button
+						class="chip"
+						class:on={pointScope === 'live'}
+						aria-pressed={pointScope === 'live'}
+						onclick={() => (pointScope = 'live')}>Боевой путь</button
+					>
+					<button
+						class="chip"
+						class:on={pointScope === 'stand'}
+						aria-pressed={pointScope === 'stand'}
+						onclick={() => (pointScope = 'stand')}>Стенд</button
+					>
+				</div>
+			{/if}
+			{#if points.window !== window && !pointsError}
+				<p class="hint">Загрузка истории…</p>
+			{:else if points.window === window}
+				{#if !pointCharts.length}
+					<p class="hint">Нет замеров за период.</p>
+				{/if}
+				<div class="grid">
+					{#each pointCharts as c (c.group)}
+						<section class="card">
+							<h2>{c.title}</h2>
+							<p class="hint small">{c.hint}</p>
+							<div class="legend">
+								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
+							</div>
+							<TrendChart
+								buckets={points.buckets}
+								bucketSeconds={points.bucketSeconds}
+								series={c.lines}
+								formatAxis={c.format}
+								marks={pointMarks}
+								height={190}
+								empty="Нет замеров за период"
+							/>
+						</section>
+					{/each}
+					<section class="card">
+						<h2>Последние отказы и возвраты</h2>
+						{#if pointEvents.length}
+							<ul class="events">
+								{#each pointEvents.slice(-8).reverse() as event}
+									<li class:down={event.why === 'red'}>
+										<time datetime={event.at}>{eventTime.format(new Date(event.at))}</time>
+										<span>{event.label}</span>
+									</li>
+								{/each}
+							</ul>
+						{:else}
+							<p class="hint small">За этот период событий нет.</p>
+						{/if}
+					</section>
+				</div>
+			{/if}
+		{:else if !pointsError}
+			<p class="hint">Загрузка каскада…</p>
+		{/if}
 
+		<h2 class="section">Провода магистрали</h2>
+		<p class="hint">
+			Вход меряет каждый провод пробным звонком и загрузкой 1 МиБ. Отметки показывают, когда селектор перевёл голос или
+			объём на другой провод.
+		</p>
 		{#if loadError}
 			<p class="err">{loadError}</p>
 		{/if}
@@ -379,7 +489,8 @@
 				<h2 class="section">что слышит слушатель</h2>
 				<p class="hint">
 					Те же звонки глазами приложения с буфером 60 мс, по направлениям отдельно. Набор голоса: кадр услышан, если
-					вовремя пришёл хоть по одному проводу набора (провод датаграмм и пул). Шаг минута до суток, неделя по 10 минут.
+					вовремя пришёл хоть по одному проводу набора (провод датаграмм и пул). Шаг минута до суток, неделя по 10
+					минут.
 				</p>
 				<div class="grid">
 					{#each hearingCharts as c (c.group)}
@@ -402,40 +513,13 @@
 					{/each}
 				</div>
 			{/if}
-			{#if points && points.lines.length > 0}
-				<h2 class="section">точки перехода</h2>
-				<p class="hint">
-					Вход держит одну сессию до ядра через точки, которые только пересылают порты магистрали; член i каждого провода и
-					пула идёт через точку i mod n. Точка молчит, когда через неё не жив ни один член. Отметки: красная точка замолчала,
-					зелёная снова везёт.
-				</p>
-				<div class="grid">
-					{#each pointCharts as c (c.group)}
-						<section class="card">
-							<h2>{c.title}</h2>
-							<p class="hint small">{c.hint}</p>
-							<div class="legend">
-								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
-							</div>
-							<TrendChart
-								buckets={points.buckets}
-								bucketSeconds={points.bucketSeconds}
-								series={c.lines}
-								formatAxis={c.format}
-								marks={pointMarks}
-								height={190}
-								empty="точки молчали за окно"
-							/>
-						</section>
-					{/each}
-				</div>
-			{/if}
 			{#if egress}
 				<h2 class="section">выходы приёмников</h2>
 				<p class="hint">
 					Приёмник ходит в интернет через выход и держит запасной тёплым. Сторож на приёмнике раз в секунду пингует оба
-					выхода через туннель раз в 200 мс и интернет через везущий; туннель везущего молчит 1,5 с (интернет за ним 5 с), и сторож отдаёт маршруты запасному одним
-					вызовом wg. Отметки: красная уход сторожа, жёлтая уйти некуда, серая смена с hub.
+					выхода через туннель раз в 200 мс и интернет через везущий; туннель везущего молчит 1,5 с (интернет за ним 5
+					с), и сторож отдаёт маршруты запасному одним вызовом wg. Отметки: красная уход сторожа, жёлтая уйти некуда,
+					серая смена с hub.
 				</p>
 				<div class="grid">
 					{#each egressCharts as c (c.group)}
@@ -489,7 +573,7 @@
 	}
 
 	h2.section {
-		margin: 24px 0 4px;
+		margin: 24px 0 10px;
 		font-size: 16px;
 	}
 
@@ -564,5 +648,38 @@
 		height: 8px;
 		margin-right: 6px;
 		border-radius: 2px;
+	}
+
+	.scope {
+		margin-bottom: 12px;
+	}
+
+	.events {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.events li {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px 14px;
+		padding: 8px 0;
+		border-bottom: 1px solid var(--border);
+		font-size: 13px;
+	}
+
+	.events li:last-child {
+		border: 0;
+		padding-bottom: 0;
+	}
+
+	.events time {
+		color: #5bd6a5;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.events .down time {
+		color: #f08282;
 	}
 </style>

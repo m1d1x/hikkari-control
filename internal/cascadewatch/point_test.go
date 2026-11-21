@@ -9,6 +9,76 @@ import (
 	"github.com/m1d1x/hikkari-control/internal/entry"
 )
 
+func TestDBPointChartShowsCurrentPeopleAndCallSeparatelyFromStand(t *testing.T) {
+	ctx := t.Context()
+	pool := dbPool(t)
+	store := NewStore(pool)
+	for _, name := range []string{"entry1", "core1"} {
+		if _, err := pool.Exec(ctx, `INSERT INTO entry_boxes (name, address_ct, provider, location, proto)
+			VALUES ($1, '\x00', 'test', 'test', 'hikkari')`, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO trunk_entries (entry_box, exit_box, forward, members, points)
+		VALUES ('entry1', 'core1', '{"8443": 8443}', 32, ARRAY['point-a', 'point-b'])`); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 11, 21, 18, 18, 50, 0, time.UTC)
+	last := now.Truncate(time.Minute).Add(-time.Minute)
+	atPoint := func(target, path string, at time.Time, up, silent int) Run {
+		return Run{TS: at, Entry: "entry1", Exit: "core1", Layer: LayerPoint, Target: target, Vantage: "entry",
+			Data: map[string]any{"path": path, "up": up, "members": 19, "silent_s": silent}}
+	}
+	call := func(target string, gap int) Run {
+		return Run{TS: last, Entry: "entry1", Exit: "core1", Layer: LayerCall, Target: target, Vantage: "entry",
+			Data: map[string]any{"gap_max_ms": gap}}
+	}
+	mark := func(path string) Run {
+		return Run{TS: last.Add(15 * time.Second), Entry: "entry1", Exit: "core1", Layer: LayerEvent, Vantage: "entry",
+			Data: map[string]any{"kind": "point_silent", "point": "point-a", "members": 19, "path": path}}
+	}
+	if err := store.Insert(ctx,
+		atPoint("point-a", "", last, 0, 60),
+		atPoint("point-a", PathPipe, last.Add(time.Minute), 19, 0),
+		atPoint("removed", "", last, 19, 0),
+		call("copies1", 42), call("pipe-copies1", 300),
+		mark(""), mark(PathPipe),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	chart, err := store.BuildPointChart(ctx, "6h", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chart.Routes) != 1 || chart.Routes[0].Exit != "core1" || len(chart.Routes[0].Points) != 2 {
+		t.Fatalf("routes %+v", chart.Routes)
+	}
+	a, b := chart.Routes[0].Points[0], chart.Routes[0].Points[1]
+	if a.Name != "point-a" || a.Sample == nil || a.Sample.Up != 0 || a.Sample.Silent != 60 || !a.Sample.At.Equal(last) {
+		t.Fatalf("live point %+v, sample %+v", a, a.Sample)
+	}
+	if b.Name != "point-b" || b.Sample != nil {
+		t.Fatalf("point without measurements %+v", b)
+	}
+	if len(chart.Marks) != 2 || chart.Marks[0].Class != "point" || chart.Marks[1].Class != "point-stand" {
+		t.Fatalf("marks %+v", chart.Marks)
+	}
+	if chart.BucketSeconds != 60 || len(chart.Buckets) != 360 || chart.Buckets[358] != last.Format(time.RFC3339) {
+		t.Fatal("the 6h window must include the fault at minute resolution")
+	}
+	for _, line := range chart.Lines {
+		if line.Group == ChartPointGap {
+			if line.Key != "entry1 → core1" || line.Values[358] == nil || *line.Values[358] != 42 || line.Values[359] != nil {
+				t.Fatalf("expected a live call in the same minute as the failure: %+v", line)
+			}
+			return
+		}
+	}
+	t.Fatal("missing live call")
+}
+
 // TestTheBrainsPointLinesAreRowsByBoxName: a minute of the points is a row per
 // point by its box, ok when it was silent no second; a change is an event; an
 // address the hub does not know stays "?" (G5).
