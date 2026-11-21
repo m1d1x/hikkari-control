@@ -42,6 +42,10 @@ type TrunkPair struct {
 	// empty for a stand to Exit directly.
 	PipeCore   string
 	PipePoints []string
+	// Points are the border points the people's trunk reaches Exit through
+	// (G3, box names): Exit is then a core no member dials by its own
+	// address. Empty: the entry dials Exit itself.
+	Points []string
 	// Receivers names each receiver of the entry's group by its relay's
 	// address, the exit's included (P5): the entry's lines say addresses,
 	// the watch files box names.
@@ -95,10 +99,27 @@ func (s *Service) recordTrunkEntry(ctx context.Context, box string, o TrunkEntry
 	if receivers == nil {
 		receivers = []string{}
 	}
+	points := o.Points
+	if points == nil {
+		points = []string{}
+	}
 	_, err = s.pool.Exec(ctx, `
-		INSERT INTO trunk_entries (entry_box, exit_box, forward, members, receivers) VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (entry_box) DO UPDATE SET exit_box = $2, forward = $3, members = $4, receivers = $5, stood_at = now()`,
-		box, o.Exit, raw, o.Members, receivers)
+		INSERT INTO trunk_entries (entry_box, exit_box, forward, members, receivers, points) VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (entry_box) DO UPDATE SET exit_box = $2, forward = $3, members = $4, receivers = $5, points = $6, stood_at = now()`,
+		box, o.Exit, raw, o.Members, receivers, points)
+	return err
+}
+
+// recordTrunkEntryCore keeps the people's exit (their core) and its border
+// points on the entry's row ahead of the swap, when the row is there: a
+// point forwards the core's trunk only from the entries the hub knows go
+// there (borderPlanOf), and a core that answers only its points brings no
+// member up before a point forwards (G2, 20.11: "no member came up").
+func (s *Service) recordTrunkEntryCore(ctx context.Context, box, exit string, points []string) error {
+	if points == nil {
+		points = []string{}
+	}
+	_, err := s.pool.Exec(ctx, `UPDATE trunk_entries SET exit_box = $2, points = $3 WHERE entry_box = $1`, box, exit, points)
 	return err
 }
 
@@ -109,7 +130,7 @@ func (s *Service) forgetTrunkEntry(ctx context.Context, box string) error {
 
 // TrunkPairs lists the trunk entries the hub stood, each with its exit.
 func (s *Service) TrunkPairs(ctx context.Context) ([]TrunkPair, error) {
-	rows, err := s.pool.Query(ctx, `SELECT entry_box, exit_box, forward, members, pipe_forward, receivers, coalesce(pipe_core, ''), pipe_points FROM trunk_entries ORDER BY entry_box`)
+	rows, err := s.pool.Query(ctx, `SELECT entry_box, exit_box, forward, members, pipe_forward, receivers, coalesce(pipe_core, ''), pipe_points, points FROM trunk_entries ORDER BY entry_box`)
 	if err != nil {
 		return nil, err
 	}
@@ -120,11 +141,12 @@ func (s *Service) TrunkPairs(ctx context.Context) ([]TrunkPair, error) {
 		receivers   []string
 		core        string
 		points      []string
+		people      []string
 	}
 	var list []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.entry, &r.exit, &r.fwd, &r.members, &r.pipe, &r.receivers, &r.core, &r.points); err != nil {
+		if err := rows.Scan(&r.entry, &r.exit, &r.fwd, &r.members, &r.pipe, &r.receivers, &r.core, &r.points, &r.people); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -136,7 +158,7 @@ func (s *Service) TrunkPairs(ctx context.Context) ([]TrunkPair, error) {
 	}
 	out := make([]TrunkPair, 0, len(list))
 	for _, r := range list {
-		p := TrunkPair{Entry: r.entry, Exit: r.exit, Members: r.members, PipeCore: r.core, PipePoints: r.points}
+		p := TrunkPair{Entry: r.entry, Exit: r.exit, Members: r.members, PipeCore: r.core, PipePoints: r.points, Points: r.people}
 		var err error
 		if p.Forward, err = forwardOf(r.fwd); err != nil {
 			return nil, fmt.Errorf("trunk entry %s: forward: %w", r.entry, err)
@@ -152,6 +174,11 @@ func (s *Service) TrunkPairs(ctx context.Context) ([]TrunkPair, error) {
 		}
 		p.EntryAddress = entry.address
 		addr, _, _, _, err := s.trunkExitOf(ctx, r.exit)
+		if err != nil {
+			// A core (entry-box core) has hk-exit under its relay and no Go
+			// exit: the people reach it by the pipe key (G3).
+			addr, _, _, _, err = s.trunkPipeExitOf(ctx, r.exit)
+		}
 		if err != nil {
 			// The exit lost its trunk: the pair is still watched, by the
 			// exit box's own address.

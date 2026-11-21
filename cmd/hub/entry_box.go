@@ -57,6 +57,9 @@ package main
 //	                                    # members by Chromium (internal/entry/trunk.go);
 //	                                    # the Hikkari relay's datagrams cross once
 //	                                    # (v1.02 copies them itself) unless =2
+//	                                    # points=<box>,...|off: border points to a core (G3)
+//	cmd/server entry-box trunk-entry-points <box> <point-box>,...|off
+//	                                    # the people's border points, wires file only
 //	cmd/server entry-box trunk-entry-off <box>
 //	cmd/server entry-box trunk-pipe <box> <listen=port,...> [members] [hikkari-udp-copies=1|2] [h3dgram=<port>[:proxy]] [voice=<wire>]
 //	                                    # the stand over hk-pipe (the Rust pipe)
@@ -664,6 +667,31 @@ func runEntryBox(args []string) {
 		fmt.Printf("%s reconfigured\n", args[1])
 		os.Exit(0)
 	}
+	if len(args) == 3 && args[0] == "trunk-entry-points" {
+		// entry-box trunk-entry-points <box> <point-box>,...|off — the people's
+		// border points to their core (internal/entry/trunk.go, hikkari-client
+		// plans/2026-11-19-border-forwarders.md, G3): the brain follows the
+		// wires file within 10 s, no new process.
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		points := []string{}
+		if args[2] != "off" {
+			points = strings.Split(args[2], ",")
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		if err := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir).SetTrunkEntryPoints(ctx, args[1], points); err != nil {
+			fail(err)
+		}
+		fmt.Printf("%s: people's points %s (the brain follows them within 10 s, no new process)\n", args[1], args[2])
+		os.Exit(0)
+	}
 	if len(args) == 3 && args[0] == "trunk-pipe-points" {
 		// entry-box trunk-pipe-points <box> <point-box>,...|off — the stand's
 		// border points to its core (internal/entry/trunkpipe.go, hikkari-client
@@ -851,7 +879,7 @@ func runEntryBox(args []string) {
 		}
 		os.Exit(0)
 	}
-	if (len(args) >= 4 && len(args) <= 11 && args[0] == "trunk-entry") || (len(args) == 2 && args[0] == "trunk-entry-off") {
+	if (len(args) >= 4 && len(args) <= 12 && args[0] == "trunk-entry") || (len(args) == 2 && args[0] == "trunk-entry-off") {
 		// entry-box trunk-entry <box> <exit-box> <listen=port,...> [members] [hikkari-udp-copies=1|2]
 		//     [pipe [h3dgram=<port>[:proxy]] [voice=<wire>] [receivers=<box>[,<box>]] [receiver-pool=N]]
 		// — the cascade's trunk entry on a box in Russia (internal/entry/trunk.go);
@@ -898,6 +926,13 @@ func runEntryBox(args []string) {
 				o.Receivers = strings.Split(v, ",")
 				continue
 			}
+			if v, ok := strings.CutPrefix(a, "points="); ok {
+				o.Points = []string{}
+				if v != "off" {
+					o.Points = strings.Split(v, ",")
+				}
+				continue
+			}
 			if v, ok := strings.CutPrefix(a, "receiver-pool="); ok {
 				if o.ReceiverPool, err = strconv.Atoi(v); err != nil || o.ReceiverPool < 1 {
 					fail(fmt.Errorf("receiver-pool %q", v))
@@ -920,7 +955,11 @@ func runEntryBox(args []string) {
 				fail(fmt.Errorf("members %q", a))
 			}
 		}
-		if err := prov.StandTrunkEntry(ctx, args[1], o); err != nil {
+		// The swap stages binaries and waits for the new generation: minutes,
+		// not the CLI pool's 30 s.
+		jctx, jcancel := context.WithTimeout(context.Background(), 40*time.Minute)
+		defer jcancel()
+		if err := prov.StandTrunkEntry(jctx, args[1], o); err != nil {
 			fail(err)
 		}
 		os.Exit(0)
