@@ -135,6 +135,7 @@ type Watch struct {
 	owner   Notifier               // told of the people's trunk going wrong (owner.go); nil: nobody
 	calls   map[string]*callStreak // entry box → its people's call as the owner hears it
 	wires   map[string]*lossStreak // entry box|target → a wire's call as the owner hears it
+	points  map[string]*pointStreak // entry box|point|<box> and entry box|points → the border points as the owner hears them
 	started time.Time
 	rounds  sync.WaitGroup
 }
@@ -149,7 +150,7 @@ func New(pool db.Pool, fleet Fleet, boxes Boxes, links Links, queue Queue, errs 
 		now:    time.Now,
 		sleep:  sleepCtx,
 		cursor: map[string]time.Time{}, busy: map[string]bool{}, last: map[string]time.Time{}, alerted: map[string]time.Time{},
-		calls: map[string]*callStreak{}, wires: map[string]*lossStreak{},
+		calls: map[string]*callStreak{}, wires: map[string]*lossStreak{}, points: map[string]*pointStreak{},
 	}
 }
 
@@ -254,6 +255,15 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 				run.Entry, run.Exit, run.Vantage = p.Entry, p.Exit, "entry"
 				runs = append(runs, run)
 			}
+			continue
+		}
+		// The stand's border points: rows and marks, no word to the owner.
+		if rows, ok := classifyPoint(l, p.PointNames); ok {
+			for _, run := range rows {
+				run.Entry, run.Exit, run.Vantage = p.Entry, p.PipeExit(), "entry"
+				run.Data["path"] = PathPipe
+				runs = append(runs, run)
+			}
 		}
 	}
 	for _, l := range parseJournal(out) {
@@ -290,6 +300,14 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 				run.Entry, run.Exit, run.Vantage = p.Entry, p.Exit, "entry"
 				runs = append(runs, run)
 			}
+			continue
+		}
+		if rows, ok := classifyPoint(l, p.PointNames); ok {
+			for i := range rows {
+				rows[i].Entry, rows[i].Exit, rows[i].Vantage = p.Entry, p.Exit, "entry"
+			}
+			w.hearPoints(ctx, p, rows)
+			runs = append(runs, rows...)
 			continue
 		}
 		if run, ok := classifyReceiver(l, p.Receivers); ok {

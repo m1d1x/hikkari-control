@@ -59,6 +59,7 @@ var chartPaths = []string{
 	"/api/v1/admin/product/metrics",
 	"/api/v1/admin/product/testers",
 	"/api/v1/admin/trunk/egress",
+	"/api/v1/admin/trunk/points",
 	"/api/v1/admin/trunk/hearing",
 	"/api/v1/admin/trunk/wires",
 }

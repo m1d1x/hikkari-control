@@ -6,6 +6,7 @@
 	import { fetchTrunkWires, type TrunkWindow, type TrunkWireChart } from '$lib/api/trunkWires';
 	import { fetchTrunkHearing } from '$lib/api/trunkHearing';
 	import { fetchTrunkEgress } from '$lib/api/trunkEgress';
+	import { fetchTrunkPoints } from '$lib/api/trunkPoints';
 
 	// The trunk's wires through the border (stage 4): the entry's call over
 	// each wire every 20 ms and its 1 MiB every 10 minutes, as history. The
@@ -206,19 +207,39 @@
 	];
 	const EGRESS_COLORS = ['#3987e5', '#c98500', '#9085e9', '#199e70', '#e66767'];
 
+	// The border points (G5): the entry holds one session to its core
+	// through boxes that only forward the trunk's ports; member i of every
+	// wire and pool goes through point i mod n. Keys are "entry → point".
+	const POINT_CHARTS: ChartSpec[] = [
+		{
+			group: 'point_silent',
+			title: 'Точка: молчала',
+			hint: 'секунды, когда через точку не жил ни один член магистрали: точка умерла, замерла или её режут. Минута целиком, и владелец слышит в Telegram.',
+			format: count,
+		},
+		{
+			group: 'point_up',
+			title: 'Точка: живых членов',
+			hint: 'сколько членов проводов и пула живы через точку, худшая минута отрезка.',
+			format: count,
+		},
+	];
+
 	let data = $state<TrunkWireChart | null>(null);
 	let hearing = $state<TrunkWireChart | null>(null);
 	let egress = $state<TrunkWireChart | null>(null);
+	let points = $state<TrunkWireChart | null>(null);
 	let loadError = $state<string | null>(null);
 	let window = $state<TrunkWindow>('24h');
 	let timer: ReturnType<typeof setInterval> | undefined;
 
 	async function load() {
 		try {
-			[data, hearing, egress] = await Promise.all([
+			[data, hearing, egress, points] = await Promise.all([
 				fetchTrunkWires(window),
 				fetchTrunkHearing(window, 'trunk'),
 				fetchTrunkEgress(window),
+				fetchTrunkPoints(window),
 			]);
 			loadError = null;
 		} catch (e) {
@@ -282,6 +303,27 @@
 					key: l.key,
 					label: l.key,
 					color: EGRESS_COLORS[egressKeys.indexOf(l.key) % EGRESS_COLORS.length],
+					values: l.values,
+					format: c.format,
+					primary: true,
+				})),
+		})),
+	);
+
+	const pointKeys = $derived([...new Set((points?.lines ?? []).map((l) => l.key))].sort());
+	const pointMarks = $derived<TrendMark[]>(
+		(points?.marks ?? []).map((m) => ({ at: m.at, label: m.label, color: m.why === 'red' ? '#e66767' : '#199e70' })),
+	);
+	const pointCharts = $derived(
+		POINT_CHARTS.map((c) => ({
+			...c,
+			lines: (points?.lines ?? [])
+				.filter((l) => l.group === c.group)
+				.sort((a, b) => a.key.localeCompare(b.key))
+				.map<TrendSeries>((l) => ({
+					key: l.key,
+					label: l.key,
+					color: EGRESS_COLORS[pointKeys.indexOf(l.key) % EGRESS_COLORS.length],
 					values: l.values,
 					format: c.format,
 					primary: true,
@@ -355,6 +397,34 @@
 								{marks}
 								height={190}
 								empty="слух не мерили за окно"
+							/>
+						</section>
+					{/each}
+				</div>
+			{/if}
+			{#if points && points.lines.length > 0}
+				<h2 class="section">точки перехода</h2>
+				<p class="hint">
+					Вход держит одну сессию до ядра через точки, которые только пересылают порты магистрали; член i каждого провода и
+					пула идёт через точку i mod n. Точка молчит, когда через неё не жив ни один член. Отметки: красная точка замолчала,
+					зелёная снова везёт.
+				</p>
+				<div class="grid">
+					{#each pointCharts as c (c.group)}
+						<section class="card">
+							<h2>{c.title}</h2>
+							<p class="hint small">{c.hint}</p>
+							<div class="legend">
+								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
+							</div>
+							<TrendChart
+								buckets={points.buckets}
+								bucketSeconds={points.bucketSeconds}
+								series={c.lines}
+								formatAxis={c.format}
+								marks={pointMarks}
+								height={190}
+								empty="точки молчали за окно"
 							/>
 						</section>
 					{/each}
