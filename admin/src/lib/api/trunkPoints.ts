@@ -80,7 +80,7 @@ function mockTrunkPoints(window: TrunkWindow): TrunkPointChart {
 				exit: 'aeznl1',
 				points: ['unl1', 'hznl1'].map((name, i) => ({
 					name,
-					sample: { at: new Date(Date.now() - 60_000).toISOString(), up: 19 - i, members: 19, silentSeconds: 0 },
+					sample: { at: new Date(Date.now() - 60_000).toISOString(), up: 19, members: 19, silentSeconds: 0 },
 				})),
 			},
 		],

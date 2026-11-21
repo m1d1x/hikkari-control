@@ -10,16 +10,26 @@
 	import { fetchTrunkPoints, type TrunkPointChart } from '$lib/api/trunkPoints';
 	import { USE_MOCK } from '$lib/config/mock';
 
-	// The trunk's wires through the border (stage 4): the entry's call over
-	// each wire every 20 ms and its 1 MiB every 10 minutes, as history. The
-	// pool's own call (copies1, copies2), the stand's process per wire
-	// (wire-*), the entry's own wires (trunk-*) and the stand over hk-pipe
-	// (pipe-*: its wires, and its calls of the route pipe-copies*) side by
-	// side; the selector's moves of voice and bulk are marks on every chart.
-	// Only charts: there is no number without its line.
+	// The cascade on one screen. Top to bottom: the route as one line, four
+	// numbers that answer "does it work", two charts of the people's voice,
+	// and then everything else behind a click. A number is shown only when it
+	// was measured; what a metric means lives in the heading's tooltip.
 
 	const WINDOWS: TrunkWindow[] = ['6h', '24h', '7d'];
 	const REFRESH_MS = 60_000;
+	const OK = '#199e70';
+	const WARN = '#c98500';
+	const BAD = '#e66767';
+
+	type Scope = 'live' | 'stand';
+	// People: the pool's own call of the two fates and the entry's own wires.
+	// The stand: its process per wire and its call over hk-pipe.
+	const SCOPE = {
+		live: { calls: ['copies1', 'copies2'], voice: 'trunk-voice' },
+		stand: { calls: ['pipe-copies1', 'pipe-copies2'], voice: 'pipe-voice' },
+	};
+	const primary = (k: string) => k.startsWith('trunk-') || k.startsWith('pipe-copies');
+
 	const eventTime = new Intl.DateTimeFormat('ru', {
 		month: 'short',
 		day: 'numeric',
@@ -34,6 +44,14 @@
 	const sec = (v: number) => `${v.toFixed(1)} с`;
 	const mbps = (v: number) => `${Math.round(v)} Мбит/с`;
 	const cpu = (v: number) => `${v.toFixed(1)} с/мин`;
+	const pct = (v: number) => `${v.toLocaleString('ru', { maximumFractionDigits: 2 })}%`;
+	/** "2 красные минуты", not "2 красных мин": the card is read, not parsed. */
+	const plural = (n: number, one: string, few: string, many: string) => {
+		const k = Math.abs(Math.round(n)) % 100;
+		const d = k % 10;
+		const word = d === 1 && k !== 11 ? one : d >= 2 && d <= 4 && (k < 10 || k >= 20) ? few : many;
+		return `${Math.round(n)} ${word}`;
+	};
 
 	// One colour per wire, whoever measured it: the stand's and the entry's
 	// line of a wire differ by weight, not by hue.
@@ -53,15 +71,15 @@
 	}
 
 	function labelOf(key: string): string {
-		if (key === 'copies1') return 'пул, звонок 1 копией';
-		if (key === 'copies2') return 'пул, звонок 2 копиями';
+		if (key === 'copies1') return 'пул, 1 копия';
+		if (key === 'copies2') return 'пул, 2 копии';
 		if (key.startsWith('wire-')) return `стенд ${key.slice(5)}`;
 		if (key === 'trunk-pool') return 'вход, пул';
-		if (key === 'trunk-voice') return 'вход, набор голоса';
-		if (key === 'pipe-voice') return 'труба, набор голоса';
+		if (key === 'trunk-voice') return 'набор голоса';
+		if (key === 'pipe-voice') return 'стенд, набор голоса';
 		if (key.startsWith('trunk-')) return `вход ${key.slice(6)}`;
-		if (key === 'pipe-copies1') return 'труба, звонок маршрута 1 копией';
-		if (key === 'pipe-copies2') return 'труба, звонок маршрута 2 копиями';
+		if (key === 'pipe-copies1') return 'стенд, 1 копия';
+		if (key === 'pipe-copies2') return 'стенд, 2 копии';
 		if (key.startsWith('pipe-')) return `труба ${key.slice(5)}`;
 		return key;
 	}
@@ -69,15 +87,17 @@
 	function colorOf(key: string): string {
 		const c = WIRE_COLOR[wireOf(key)] ?? '#7e7e7e';
 		// The pool's call with one copy is the lighter of its two lines.
-		return key === 'copies1' || key === 'pipe-copies1' ? '#d55181' : c;
+		return key === 'copies1' || key === 'pipe-copies1' ? '#c67ac1' : c;
 	}
 
 	// Lines in a fixed order: the pool first, then the entry's wires, then
 	// the stand over hk-pipe, then the wire stand's.
 	function rank(key: string): string {
-		const head = key.startsWith('copies') ? '0' : key.startsWith('trunk-') ? '1' : key.startsWith('pipe-') ? '2' : '3';
+		const head = key.startsWith('copies') || key.startsWith('pipe-copies') ? '0' : key.startsWith('trunk-') ? '1' : key.startsWith('pipe-') ? '2' : '3';
 		return head + key;
 	}
+
+	const isStand = (key: string) => key.startsWith('pipe-') || key.startsWith('wire-') || key.endsWith(' (стенд)');
 
 	interface ChartSpec {
 		group: string;
@@ -85,24 +105,19 @@
 		hint: string;
 		format: (v: number) => string;
 	}
-	const CHARTS: ChartSpec[] = [
+
+	const WIRE_CHARTS: ChartSpec[] = [
 		{
 			group: 'call_red',
 			title: 'Звонок: красные минуты',
-			hint: 'минуты звонка магистрали с паузой больше 150 мс или потерей больше 1%, по проводу. Это ранг голоса у селектора.',
+			hint: 'Минуты звонка магистрали с паузой больше 150 мс или потерей больше 1%, по проводу. Это ранг голоса у селектора.',
 			format: count,
 		},
 		{
 			group: 'call_gaps60',
 			title: 'Звонок: паузы больше 60 мс',
-			hint: 'сколько раз звонок молчал дольше 60 мс. Вместе с красными минутами решает, какой провод несёт голос.',
+			hint: 'Сколько раз звонок молчал дольше 60 мс. Вместе с красными минутами решает, какой провод несёт голос.',
 			format: count,
-		},
-		{
-			group: 'call_gap',
-			title: 'Звонок: самая длинная пауза',
-			hint: 'худшая пауза звонка за отрезок. Волна входа на :x0 бьёт по всем проводам сразу, пул от неё стоит секунды.',
-			format: ms,
 		},
 		{
 			group: 'call_rtt',
@@ -113,130 +128,114 @@
 		{
 			group: 'call_loss',
 			title: 'Звонок: потери',
-			hint: 'сколько датаграмм звонка из 1000 не вернулось.',
+			hint: 'Сколько датаграмм звонка из 1000 не вернулось.',
 			format: pm,
 		},
 		{
 			group: 'call_silent',
 			title: 'Звонок: тишина',
-			hint: 'сколько секунд за отрезок звонок не слышал ни одного ответа.',
+			hint: 'Сколько секунд за отрезок звонок не слышал ни одного ответа.',
 			format: sec,
 		},
 		{
 			group: 'bulk_mbps',
 			title: '1 МиБ: скорость',
-			hint: 'загрузка 1 МиБ по проводу раз в 10 минут, медиана дошедших целиком. Это ранг объёма у селектора. У стенда udp темп задан, а не измерен.',
+			hint: 'Загрузка 1 МиБ по проводу раз в 10 минут, медиана дошедших целиком. Это ранг объёма у селектора. У стенда udp темп задан, а не измерен.',
 			format: mbps,
 		},
 		{
 			group: 'bulk_failed',
 			title: '1 МиБ: не дошло целиком',
-			hint: 'загрузки, которые оборвались или не уложились в срок. Провод с меньшим числом таких берёт объём раньше любого быстрого.',
+			hint: 'Загрузки, которые оборвались или не уложились в срок. Провод с меньшим числом таких берёт объём раньше любого быстрого.',
 			format: count,
 		},
 		{
 			group: 'cpu',
 			title: 'CPU входа на провод',
-			hint: 'процессорное время процесса стенда на входе, секунд в минуту, медиана. У проводов в процессе входа по отдельности не считается.',
+			hint: 'Процессорное время процесса стенда на входе, секунд в минуту, медиана. У проводов в процессе входа по отдельности не считается.',
 			format: cpu,
 		},
 	];
 
-	// What a listener heard (hearing.go on the hub): a frame not there at its
-	// moment of play with a 60 ms jitter buffer is a hole. Each set of wires
-	// (набор голоса: the datagrams' wire and the pool) beside its wires.
-	const pct = (v: number) => `${v.toLocaleString('ru', { maximumFractionDigits: 2 })}%`;
 	const HEARING_CHARTS: ChartSpec[] = [
 		{
 			group: 'holes60_up',
 			title: 'Слух вверх: дыры',
-			hint: 'доля кадров звонка, которых слушатель у выхода не услышал бы при буфере 60 мс: не пришли или опоздали. Цель набора голоса меньше 1%.',
+			hint: 'Доля кадров звонка, которых слушатель у выхода не услышал бы при буфере 60 мс: не пришли или опоздали. Цель набора голоса меньше 1%.',
 			format: pct,
 		},
 		{
 			group: 'holes60_down',
 			title: 'Слух вниз: дыры',
-			hint: 'то же для слушателя у входа: ответы выхода, считая только кадры, которые выход получил.',
+			hint: 'То же для слушателя у входа: ответы выхода, считая только кадры, которые выход получил.',
 			format: pct,
 		},
 		{
 			group: 'runs2_60_up',
 			title: 'Слух вверх: серии',
-			hint: 'серии из двух дыр и больше подряд: такое приложение не замажет, это проглоченный слог. Цель набора 0.',
+			hint: 'Серии из двух дыр и больше подряд: такое приложение не замажет, это проглоченный слог. Цель набора 0.',
 			format: count,
 		},
 		{
 			group: 'runs2_60_down',
 			title: 'Слух вниз: серии',
-			hint: 'серии из двух дыр и больше у слушателя у входа.',
+			hint: 'Серии из двух дыр и больше у слушателя у входа.',
 			format: count,
 		},
 		{
 			group: 'bad_s60_up',
 			title: 'Слух вверх: плохие секунды',
-			hint: 'секунды, где дыр 6% и больше (от 3 кадров из 50): это слышно как робоголос.',
+			hint: 'Секунды, где дыр 6% и больше (от 3 кадров из 50): это слышно как робоголос.',
 			format: count,
 		},
 		{
 			group: 'bad_s60_down',
 			title: 'Слух вниз: плохие секунды',
-			hint: 'плохие секунды у слушателя у входа.',
+			hint: 'Плохие секунды у слушателя у входа.',
 			format: count,
 		},
 	];
 
-	// The receivers' egresses (H4): each receiver's own watch pings both of
-	// its egresses through the tunnel once a second and moves to the spare
-	// when the one that carries dies. Keys are "receiver → egress".
 	const EGRESS_CHARTS: ChartSpec[] = [
 		{
 			group: 'egress_carry',
 			title: 'Выход: кто везёт',
-			hint: 'минуты отрезка, когда этот выход вёз приёмник. Смена цвета это уход сторожа или смена с hub.',
+			hint: 'Минуты отрезка, когда этот выход вёз приёмник. Смена цвета это уход сторожа или смена с hub.',
 			format: count,
 		},
 		{
 			group: 'egress_tun',
 			title: 'Выход: туннель молчал',
-			hint: 'секунды без ответа выхода через туннель (пинг раз в 200 мс). 1,5 с тишины у везущего, и сторож уходит на запасной.',
+			hint: 'Секунды без ответа выхода через туннель (пинг раз в 200 мс). 1,5 с тишины у везущего, и сторож уходит на запасной.',
 			format: count,
 		},
 		{
 			group: 'egress_net',
 			title: 'Выход: интернет молчал',
-			hint: 'секунды, когда через везущий выход не ответили ни 1.1.1.1, ни 8.8.8.8. 5 с тишины при живом туннеле, и сторож уходит. У запасного интернет не меряется.',
+			hint: 'Секунды, когда через везущий выход не ответили ни 1.1.1.1, ни 8.8.8.8. 5 с тишины при живом туннеле, и сторож уходит. У запасного интернет не меряется.',
 			format: count,
 		},
 		{
 			group: 'egress_rtt',
 			title: 'Выход: задержка туннеля',
-			hint: 'круг приёмник → выход через туннель, медиана минут.',
+			hint: 'Круг приёмник → выход через туннель, медиана минут.',
 			format: ms,
 		},
 	];
 	const EGRESS_COLORS = ['#3987e5', '#c98500', '#9085e9', '#199e70', '#e66767'];
 
-	// The border points (G5): the entry holds one session to its core
-	// through boxes that only forward the trunk's ports; member i of every
-	// wire and pool goes through point i mod n. Keys are "entry → point".
 	const POINT_CHARTS: ChartSpec[] = [
 		{
 			group: 'point_call_gap',
-			title: 'Пауза звонка магистрали',
-			hint: 'Максимум за отрезок, пробный звонок.',
+			title: 'Пауза звонка через точку',
+			hint: 'Максимум паузы звонка магистрали за отрезок, по каждой точке перехода. Точка только пересылает порты на ядро выхода.',
 			format: ms,
 		},
 		{
 			group: 'point_silent',
-			title: 'Точки перехода',
-			hint: 'Время без живых соединений через точку.',
+			title: 'Точка: тишина',
+			hint: 'Секунды отрезка, когда через точку не шло ни одно соединение магистрали.',
 			format: sec,
-		},
-		{
-			group: 'point_up',
-			title: 'Точки перехода',
-			hint: 'Минимум живых соединений за отрезок.',
-			format: count,
 		},
 	];
 
@@ -247,8 +246,7 @@
 	let loadError = $state<string | null>(null);
 	let pointsError = $state<string | null>(null);
 	let window = $state<TrunkWindow>('24h');
-	let pointScope = $state<'live' | 'stand'>('live');
-	let pointMetric = $state<'point_silent' | 'point_up'>('point_silent');
+	let scope = $state<Scope>('live');
 	let now = $state(Date.now());
 	let request = 0;
 	let timer: ReturnType<typeof setInterval> | undefined;
@@ -265,13 +263,13 @@
 			[data, hearing, egress] = detail.value;
 			loadError = null;
 		} else {
-			loadError = 'Не удалось загрузить графики проводов и выходов.';
+			loadError = 'не удалось загрузить провода и выходы';
 		}
 		if (overview.status === 'fulfilled') {
 			points = overview.value;
 			pointsError = null;
 		} else {
-			pointsError = 'Не удалось обновить обзор каскада.';
+			pointsError = 'не удалось обновить маршрут';
 		}
 	}
 
@@ -288,17 +286,41 @@
 	});
 	onDestroy(() => clearInterval(timer));
 
+	const routePoints = $derived(
+		(points?.routes ?? [])
+			.map((r) => ({
+				...r,
+				points: r.points.filter((p) => p.name.endsWith(' (стенд)') === (scope === 'stand')),
+			}))
+			.filter((r) => r.points.length > 0),
+	);
+	const hasStand = $derived((points?.lines ?? []).some((l) => isStand(l.key)));
+
 	const marks = $derived<TrendMark[]>(
-		(data?.marks ?? []).map((m) => ({
+		(data?.marks ?? [])
+			.filter((m) => m.label.startsWith('труба') === (scope === 'stand'))
+			.map((m) => ({
+				at: m.at,
+				label: m.label,
+				color: m.why === 'red' ? BAD : m.class === 'voice' || m.class === 'voice2' ? OK : '#3987e5',
+			})),
+	);
+	const egressMarks = $derived<TrendMark[]>(
+		(egress?.marks ?? []).map((m) => ({
 			at: m.at,
 			label: m.label,
-			color: m.why === 'red' ? '#e66767' : m.class === 'voice' || m.class === 'voice2' ? '#199e70' : '#3987e5',
+			color: m.why === 'red' ? BAD : m.why === 'stuck' ? WARN : '#7e7e7e',
 		})),
 	);
+	const pointMarks = $derived<TrendMark[]>(
+		(points?.marks ?? [])
+			.filter((m) => (m.class === 'point-stand') === (scope === 'stand'))
+			.map((m) => ({ at: m.at, label: m.label, color: m.why === 'red' ? BAD : OK })),
+	);
 
-	function linesOf(chart: TrunkWireChart | null, c: ChartSpec, primary: (key: string) => boolean): TrendSeries[] {
+	function linesOf(chart: TrunkWireChart | null, c: ChartSpec, allow: (key: string) => boolean): TrendSeries[] {
 		return (chart?.lines ?? [])
-			.filter((l) => l.group === c.group)
+			.filter((l) => l.group === c.group && allow(l.key))
 			.sort((a, b) => rank(a.key).localeCompare(rank(b.key)))
 			.map<TrendSeries>((l) => ({
 				key: l.key,
@@ -310,19 +332,145 @@
 			}));
 	}
 
-	const charts = $derived(CHARTS.map((c) => ({ ...c, lines: linesOf(data, c, (k) => k.startsWith('trunk-')) })));
-	const hearingCharts = $derived(
-		HEARING_CHARTS.map((c) => ({ ...c, lines: linesOf(hearing, c, (k) => k.endsWith('-voice')) })),
-	);
+	/** Sum of a group's values over the named targets; null when nobody measured. */
+	function sumOf(chart: TrunkWireChart | null, group: string, keys: string[]): number | null {
+		const lines = (chart?.lines ?? []).filter((l) => l.group === group && keys.includes(l.key));
+		let sum = 0;
+		let seen = false;
+		for (const l of lines)
+			for (const v of l.values)
+				if (v !== null) {
+					sum += v;
+					seen = true;
+				}
+		return seen ? sum : null;
+	}
 
-	const egressKeys = $derived([...new Set((egress?.lines ?? []).map((l) => l.key))].sort());
-	const egressMarks = $derived<TrendMark[]>(
-		(egress?.marks ?? []).map((m) => ({
-			at: m.at,
-			label: m.label,
-			color: m.why === 'red' ? '#e66767' : m.why === 'stuck' ? '#c98500' : '#7e7e7e',
-		})),
+	/** The worst single value of a group over the named targets. */
+	function maxOf(chart: TrunkWireChart | null, group: string, keys: string[]): number | null {
+		const lines = (chart?.lines ?? []).filter((l) => l.group === group && keys.includes(l.key));
+		let top: number | null = null;
+		for (const l of lines)
+			for (const v of l.values)
+				if (v !== null) top = top === null ? v : Math.max(top, v);
+		return top;
+	}
+
+	const calls = $derived(SCOPE[scope].calls);
+	const voiceKey = $derived(SCOPE[scope].voice);
+
+	// The people's voice: the pool's own call of the two fates over the
+	// window. This is the number the cascade is judged by.
+	const voice = $derived.by(() => ({
+		red: sumOf(data, 'call_red', calls),
+		worst: maxOf(data, 'call_gap', calls),
+		silent: maxOf(data, 'call_silent', calls),
+		holes: maxOf(hearing, 'holes60_up', [voiceKey]),
+		holesDown: maxOf(hearing, 'holes60_down', [voiceKey]),
+		runs: (sumOf(hearing, 'runs2_60_up', [voiceKey]) ?? 0) + (sumOf(hearing, 'runs2_60_down', [voiceKey]) ?? 0),
+	}));
+
+	const border = $derived.by(() => {
+		const list = routePoints.flatMap((r) => r.points);
+		let up = 0;
+		let sampled = 0;
+		let silent = 0;
+		for (const p of list) {
+			if (!p.sample) continue;
+			sampled++;
+			if (p.sample.up > 0) up++;
+			silent = Math.max(silent, p.sample.silentSeconds);
+		}
+		return { up, sampled, total: list.length, silent };
+	});
+
+	const moves = $derived((egress?.marks ?? []).filter((m) => m.why === 'red').length);
+
+	type Tone = 'ok' | 'warn' | 'bad';
+	const rankOf = (t: Tone) => (t === 'ok' ? 0 : t === 'warn' ? 1 : 2);
+
+	const cells = $derived.by(() => {
+		const out: { label: string; value: string; note: string; tone: Tone; hint: string }[] = [];
+
+		{
+			const red = voice.red;
+			const worst = voice.worst;
+			const base: Tone = (red ?? 0) > 0 || (worst ?? 0) >= 150 ? ((worst ?? 0) >= 500 || (red ?? 0) > 5 ? 'bad' : 'warn') : 'ok';
+			out.push({
+				label: 'звонок',
+				value: red === null ? 'нет замеров' : plural(red, 'красная минута', 'красные минуты', 'красных минут'),
+				note: worst === null ? '' : `худшая ${ms(worst)}`,
+				tone: red === null && worst === null ? 'warn' : base,
+				hint: 'Пул людей: минуты звонка магистрали с паузой больше 150 мс или потерей больше 1% и худшая пауза за окно. Допуск решения 18.11 — не больше одной такой минуты на час звонка.',
+			});
+		}
+		{
+			const holes = Math.max(voice.holes ?? 0, voice.holesDown ?? 0);
+			const tone: Tone = voice.holes === null ? 'warn' : holes >= 5 || voice.runs > 3 ? 'bad' : holes >= 1 || voice.runs > 0 ? 'warn' : 'ok';
+			out.push({
+				label: 'слух',
+				value: voice.holes === null ? 'нет замеров' : `${pct(holes)} дыр`,
+				note: voice.holes === null ? '' : `${count(voice.runs)} серий`,
+				tone,
+				hint: 'Набор голоса глазами приложения с буфером 60 мс: доля кадров, которые не пришли вовремя, и серии из двух дыр подряд. Цель — меньше 1% и ноль серий.',
+			});
+		}
+		{
+			const tone: Tone = border.sampled === 0 ? 'warn' : border.up === 0 ? 'bad' : border.up < border.total || border.silent > 0 ? 'warn' : 'ok';
+			out.push({
+				label: 'точки',
+				value: border.sampled === 0 ? 'нет замеров' : `${border.up} из ${border.total} везут`,
+				note: border.sampled === 0 ? '' : `${Math.round(border.silent)} с тишины`,
+				tone,
+				hint: 'Точки перехода на пути людей: сколько точек держат соединения магистрали и сколько секунд за последнюю минуту через них ничего не шло.',
+			});
+		}
+		{
+			const tone: Tone = moves > 0 ? 'warn' : 'ok';
+			out.push({
+				label: 'выходы',
+				value: plural(moves, 'уход', 'ухода', 'уходов'),
+				note: moves > 0 ? 'сторож переводил' : 'никто не уходил',
+				tone,
+				hint: 'Сколько раз сторож на приёмнике уводил маршруты на запасной выход за окно. Любой уход — уже событие, а не норма.',
+			});
+		}
+		return out;
+	});
+
+	const verdict = $derived.by(() => {
+		const worst = cells.reduce((a, b) => (rankOf(b.tone) > rankOf(a.tone) ? b : a), cells[0]);
+		const bad = cells.filter((c) => c.tone !== 'ok').map((c) => c.label);
+		return {
+			tone: worst.tone,
+			text: worst.tone === 'ok' ? 'каскад живой' : `${worst.tone === 'bad' ? 'каскад сломан' : 'каскад держится'}: ${bad.join(', ')}`,
+		};
+	});
+
+	const topCharts = $derived([
+		{
+			group: 'call_gap',
+			title: 'Голос: худшая пауза',
+			hint: 'Самая длинная пауза звонка магистрали за отрезок, по пулу людей. Волна входа на :x0 бьёт по всем проводам сразу, пул от неё стоит секунды.',
+			format: ms,
+			lines: linesOf(data, { group: 'call_gap', title: '', hint: '', format: ms }, (k) => calls.includes(k)),
+		},
+		{
+			group: 'call_red',
+			title: 'Голос: красные минуты',
+			hint: 'Минуты, где звонок молчал дольше 150 мс или терял больше 1%: по ним селектор решает, какой провод несёт голос.',
+			format: count,
+			lines: linesOf(data, { group: 'call_red', title: '', hint: '', format: count }, (k) => calls.includes(k)),
+		},
+	]);
+
+	const wireCharts = $derived(
+		WIRE_CHARTS.map((c) => ({ ...c, lines: linesOf(data, c, (k) => isStand(k) === (scope === 'stand')) })).filter((c) => c.lines.length > 0),
 	);
+	const hearingCharts = $derived(
+		HEARING_CHARTS.map((c) => ({ ...c, lines: linesOf(hearing, c, (k) => isStand(k) === (scope === 'stand')) })).filter((c) => c.lines.length > 0),
+	);
+	const egressKeyOrder = $derived([...new Set((egress?.lines ?? []).map((l) => l.key))].sort());
 	const egressCharts = $derived(
 		EGRESS_CHARTS.map((c) => ({
 			...c,
@@ -332,48 +480,40 @@
 				.map<TrendSeries>((l) => ({
 					key: l.key,
 					label: l.key,
-					color: EGRESS_COLORS[egressKeys.indexOf(l.key) % EGRESS_COLORS.length],
+					color: EGRESS_COLORS[egressKeyOrder.indexOf(l.key) % EGRESS_COLORS.length],
 					values: l.values,
 					format: c.format,
 					primary: true,
 				})),
-		})),
-	);
-
-	const pointLines = $derived(
-		(points?.lines ?? []).filter((l) => l.key.endsWith(' (стенд)') === (pointScope === 'stand')),
-	);
-	const hasStand = $derived((points?.lines ?? []).some((l) => l.key.endsWith(' (стенд)')));
-	const pointKeys = $derived([...new Set(pointLines.map((l) => l.key))].sort());
-	const pointEvents = $derived(
-		(points?.marks ?? []).filter((m) => m.class === (pointScope === 'stand' ? 'point-stand' : 'point')),
-	);
-	const pointMarks = $derived<TrendMark[]>(
-		pointEvents.map((m) => ({ at: m.at, label: m.label, color: m.why === 'red' ? '#e66767' : '#199e70' })),
+		})).filter((c) => c.lines.length > 0),
 	);
 	const pointCharts = $derived(
-		POINT_CHARTS.filter((c) => c.group === pointMetric || (c.group === 'point_call_gap' && pointScope === 'live'))
-			.map((c) => ({
-				...c,
-				lines: pointLines
-					.filter((l) => l.group === c.group)
-					.sort((a, b) => a.key.localeCompare(b.key))
-					.map<TrendSeries>((l) => ({
-						key: `${c.group}-${pointKeys.indexOf(l.key)}`,
-						label:
-							l.group !== 'point_call_gap' &&
-							points?.routes?.length === 1 &&
-							l.key.startsWith(points.routes[0].entry + ' → ')
-								? l.key.split(' → ')[1].replace(' (стенд)', '')
-								: l.key,
-						color: EGRESS_COLORS[pointKeys.indexOf(l.key) % EGRESS_COLORS.length],
-						values: l.values,
-						format: c.format,
-						primary: true,
-					})),
-			}))
-			.filter((c) => c.lines.length > 0),
+		POINT_CHARTS.map((c) => ({
+			...c,
+			lines: (points?.lines ?? [])
+				.filter((l) => l.group === c.group && l.key.endsWith(' (стенд)') === (scope === 'stand'))
+				.sort((a, b) => a.key.localeCompare(b.key))
+				.map<TrendSeries>((l, i) => ({
+					key: l.key,
+					label: l.key.replace(' (стенд)', ''),
+					color: EGRESS_COLORS[i % EGRESS_COLORS.length],
+					values: l.values,
+					format: c.format,
+					primary: true,
+				})),
+		})).filter((c) => c.lines.length > 0),
 	);
+
+	// Everything that moved the cascade, newest first: the selector's moves and
+	// the border points coming and going.
+	const events = $derived.by(() => {
+		const out: { at: string; label: string; down: boolean }[] = [];
+		for (const m of data?.marks ?? [])
+			if (m.label.startsWith('труба') === (scope === 'stand')) out.push({ at: m.at, label: m.label, down: m.why === 'red' });
+		for (const m of points?.marks ?? [])
+			if ((m.class === 'point-stand') === (scope === 'stand')) out.push({ at: m.at, label: m.label, down: m.why === 'red' });
+		return out.sort((a, b) => b.at.localeCompare(a.at));
+	});
 </script>
 
 <PageShell>
@@ -385,65 +525,76 @@
 				{#each WINDOWS as w (w)}
 					<button class="chip" class:on={window === w} aria-pressed={window === w} onclick={() => pick(w)}>{w}</button>
 				{/each}
+				{#if hasStand}
+					<span class="sep" aria-hidden="true"></span>
+					<button class="chip" class:on={scope === 'live'} aria-pressed={scope === 'live'} onclick={() => (scope = 'live')}
+						>боевой</button
+					>
+					<button class="chip" class:on={scope === 'stand'} aria-pressed={scope === 'stand'} onclick={() => (scope = 'stand')}
+						>стенд</button
+					>
+				{/if}
 			</div>
 		</div>
-		{#if pointsError}
-			<p class="err" role="status">не удалось обновить точки перехода</p>
+
+		{#if pointsError || loadError}
+			<p class="err" role="status">{pointsError ?? loadError}</p>
 		{/if}
-		{#if points}
-			<div class="point-head">
-				{#if points.routes?.length}
-					<TrunkRoutes routes={points.routes} {now} />
-				{:else}
-					<span class="muted">нет маршрутов через точки</span>
-				{/if}
-				<div class="chips" role="group" aria-label="путь">
-					{#if USE_MOCK}<span class="muted">демоданные</span>{/if}
-					{#if hasStand || pointScope === 'stand'}
-						<button
-							class="chip"
-							class:on={pointScope === 'live'}
-							aria-pressed={pointScope === 'live'}
-							onclick={() => (pointScope = 'live')}>боевой</button
-						>
-						<button
-							class="chip"
-							class:on={pointScope === 'stand'}
-							aria-pressed={pointScope === 'stand'}
-							onclick={() => (pointScope = 'stand')}>стенд</button
-						>
-					{/if}
+
+		<div class="route">
+			{#if routePoints.length}
+				<TrunkRoutes routes={routePoints} {now} />
+			{:else}
+				<span class="muted">нет маршрутов через точки</span>
+			{/if}
+			<span class="verdict {verdict.tone}" title="Сводка по четырём числам ниже: голос людей, слух приложения, точки перехода и выходы приёмников."
+				><i aria-hidden="true"></i>{verdict.text}</span
+			>
+			{#if USE_MOCK}<span class="muted">демоданные</span>{/if}
+		</div>
+
+		<div class="stats">
+			{#each cells as c (c.label)}
+				<div class="stat {c.tone}" title={c.hint}>
+					<span class="k">{c.label}</span>
+					<span class="v">{c.value}</span>
+					{#if c.note}<span class="n">{c.note}</span>{/if}
 				</div>
+			{/each}
+		</div>
+
+		{#if !data && !loadError}
+			<p class="muted">загрузка…</p>
+		{:else if data}
+			<div class="grid top">
+				{#each topCharts as c (c.group)}
+					<section class="card">
+						<h2 title={c.hint}>{c.title}</h2>
+						<div class="legend">
+							{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
+						</div>
+						<TrendChart
+							buckets={data.buckets}
+							bucketSeconds={data.bucketSeconds}
+							series={c.lines}
+							formatAxis={c.format}
+							{marks}
+							height={200}
+						/>
+					</section>
+				{/each}
 			</div>
-			{#if points.window !== window && !pointsError}
-				<p class="hint">загрузка истории…</p>
-			{:else if points.window === window}
-				{#if !pointCharts.length}
-					<p class="hint">нет замеров за это окно</p>
-				{/if}
+		{/if}
+
+		{#if pointCharts.length && points}
+			<details class="group">
+				<summary title="Что происходит на точках перехода: пауза звонка, который идёт через точку, и секунды тишины.">
+					точки перехода <span class="muted">{pointCharts.length}</span>
+				</summary>
 				<div class="grid">
 					{#each pointCharts as c (c.group)}
 						<section class="card">
-							<div class="chart-head">
-								<h2>{c.title}</h2>
-								{#if c.group !== 'point_call_gap'}
-									<div class="chips" role="group" aria-label="график точек">
-										<button
-											class="chip"
-											class:on={pointMetric === 'point_silent'}
-											aria-pressed={pointMetric === 'point_silent'}
-											onclick={() => (pointMetric = 'point_silent')}>тишина</button
-										>
-										<button
-											class="chip"
-											class:on={pointMetric === 'point_up'}
-											aria-pressed={pointMetric === 'point_up'}
-											onclick={() => (pointMetric = 'point_up')}>соединения</button
-										>
-									</div>
-								{/if}
-							</div>
-							<p class="hint small">{c.hint}</p>
+							<h2 title={c.hint}>{c.title}</h2>
 							<div class="legend">
 								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
 							</div>
@@ -459,67 +610,45 @@
 						</section>
 					{/each}
 				</div>
-				{#if pointEvents.length}
-					<details class="point-events">
-						<summary>события точек <span class="muted">{pointEvents.length}</span></summary>
-						<ul class="events">
-							{#each pointEvents.slice(-8).reverse() as event}
-								<li class:down={event.why === 'red'}>
-									<time datetime={event.at}>{eventTime.format(new Date(event.at))}</time>
-									<span>{event.label}</span>
-								</li>
-							{/each}
-						</ul>
-					</details>
-				{/if}
-			{/if}
-		{:else if !pointsError}
-			<p class="hint">Загрузка каскада…</p>
+			</details>
 		{/if}
 
-		<h2 class="section">по проводам</h2>
-		<p class="hint">
-			Вход меряет каждый провод пробным звонком и загрузкой 1 МиБ. Отметки показывают, когда селектор перевёл голос или
-			объём на другой провод.
-		</p>
-		{#if loadError}
-			<p class="err">{loadError}</p>
+		{#if wireCharts.length && data}
+			<details class="group">
+				<summary title="Каждый провод по отдельности: звонок магистрали, загрузка 1 МиБ и цена на входе. Отметки — переводы голоса и объёма.">
+					по проводам <span class="muted">{wireCharts.length}</span>
+				</summary>
+				<div class="grid">
+					{#each wireCharts as c (c.group)}
+						<section class="card">
+							<h2 title={c.hint}>{c.title}</h2>
+							<div class="legend">
+								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
+							</div>
+							<TrendChart
+								buckets={data.buckets}
+								bucketSeconds={data.bucketSeconds}
+								series={c.lines}
+								formatAxis={c.format}
+								{marks}
+								height={190}
+								empty="нет замеров за это окно"
+							/>
+						</section>
+					{/each}
+				</div>
+			</details>
 		{/if}
 
-		{#if !data && !loadError}
-			<p class="hint">Загрузка…</p>
-		{:else if data}
-			<div class="grid">
-				{#each charts as c (c.group)}
-					<section class="card">
-						<h2>{c.title}</h2>
-						<p class="hint small">{c.hint}</p>
-						<div class="legend">
-							{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
-						</div>
-						<TrendChart
-							buckets={data.buckets}
-							bucketSeconds={data.bucketSeconds}
-							series={c.lines}
-							formatAxis={c.format}
-							{marks}
-							height={190}
-						/>
-					</section>
-				{/each}
-			</div>
-			{#if hearing}
-				<h2 class="section">что слышит слушатель</h2>
-				<p class="hint">
-					Те же звонки глазами приложения с буфером 60 мс, по направлениям отдельно. Набор голоса: кадр услышан, если
-					вовремя пришёл хоть по одному проводу набора (провод датаграмм и пул). Шаг минута до суток, неделя по 10
-					минут.
-				</p>
+		{#if hearingCharts.length && hearing}
+			<details class="group">
+				<summary title="Те же звонки глазами приложения с буфером 60 мс: кадр, который не пришёл вовремя хоть по одному проводу набора, — дыра.">
+					что слышит слушатель <span class="muted">{hearingCharts.length}</span>
+				</summary>
 				<div class="grid">
 					{#each hearingCharts as c (c.group)}
 						<section class="card">
-							<h2>{c.title}</h2>
-							<p class="hint small">{c.hint}</p>
+							<h2 title={c.hint}>{c.title}</h2>
 							<div class="legend">
 								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
 							</div>
@@ -535,20 +664,18 @@
 						</section>
 					{/each}
 				</div>
-			{/if}
-			{#if egress}
-				<h2 class="section">выходы приёмников</h2>
-				<p class="hint">
-					Приёмник ходит в интернет через выход и держит запасной тёплым. Сторож на приёмнике раз в секунду пингует оба
-					выхода через туннель раз в 200 мс и интернет через везущий; туннель везущего молчит 1,5 с (интернет за ним 5
-					с), и сторож отдаёт маршруты запасному одним вызовом wg. Отметки: красная уход сторожа, жёлтая уйти некуда,
-					серая смена с hub.
-				</p>
+			</details>
+		{/if}
+
+		{#if egressCharts.length && egress}
+			<details class="group">
+				<summary title="Сторож на приёмнике пингует оба выхода через туннель и интернет за везущим; 1,5 с тишины туннеля или 5 с интернета, и он уводит маршруты на запасной.">
+					выходы приёмников <span class="muted">{egressCharts.length}</span>
+				</summary>
 				<div class="grid">
 					{#each egressCharts as c (c.group)}
 						<section class="card">
-							<h2>{c.title}</h2>
-							<p class="hint small">{c.hint}</p>
+							<h2 title={c.hint}>{c.title}</h2>
 							<div class="legend">
 								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
 							</div>
@@ -564,7 +691,23 @@
 						</section>
 					{/each}
 				</div>
-			{/if}
+			</details>
+		{/if}
+
+		{#if events.length}
+			<details class="group">
+				<summary title="Переводы голоса и объёма селектором и жизнь точек перехода, новое сверху.">
+					события <span class="muted">{events.length}</span>
+				</summary>
+				<ul class="events">
+					{#each events as event (event.at + event.label)}
+						<li class:down={event.down}>
+							<time datetime={event.at}>{eventTime.format(new Date(event.at))}</time>
+							<span>{event.label}</span>
+						</li>
+					{/each}
+				</ul>
+			</details>
 		{/if}
 	</div>
 </PageShell>
@@ -593,11 +736,7 @@
 		margin: 0 0 4px;
 		font-size: 14px;
 		font-weight: 600;
-	}
-
-	h2.section {
-		margin: 24px 0 10px;
-		font-size: 16px;
+		cursor: help;
 	}
 
 	.chips {
@@ -627,15 +766,97 @@
 		color: var(--text);
 	}
 
-	.hint {
-		margin: 0 0 12px;
-		color: var(--text-2);
+	.sep {
+		width: 1px;
+		height: 18px;
+		margin: 0 4px;
+		background: var(--border);
+	}
+
+	.route {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 6px 16px;
+		padding: 8px 0 12px;
 		font-size: 13px;
 	}
 
-	.hint.small {
+	.verdict {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
 		font-size: 12px;
-		margin-bottom: 8px;
+		cursor: help;
+	}
+
+	.verdict i {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: currentColor;
+	}
+
+	.verdict.ok {
+		color: #199e70;
+	}
+
+	.verdict.warn {
+		color: #c98500;
+	}
+
+	.verdict.bad {
+		color: #e66767;
+	}
+
+	.stats {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+		gap: 8px;
+		margin-bottom: 12px;
+	}
+
+	.stat {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 2px 8px;
+		padding: 10px 12px;
+		border: 1px solid var(--border);
+		border-left: 2px solid var(--border);
+		border-radius: 6px;
+		cursor: help;
+	}
+
+	.stat.ok {
+		border-left-color: #199e70;
+	}
+
+	.stat.warn {
+		border-left-color: #c98500;
+	}
+
+	.stat.bad {
+		border-left-color: #e66767;
+	}
+
+	.stat .k {
+		flex: 1 0 100%;
+		color: var(--text-2);
+		font-size: 11px;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+	}
+
+	.stat .v {
+		font-size: 15px;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.stat .n {
+		color: var(--text-2);
+		font-size: 12px;
 	}
 
 	.err {
@@ -646,6 +867,10 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
 		gap: 12px;
+	}
+
+	.grid.top {
+		margin-bottom: 4px;
 	}
 
 	.card {
@@ -673,61 +898,47 @@
 		border-radius: 2px;
 	}
 
-	.point-head,
-	.chart-head {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 4px 12px;
+	.group {
+		margin-top: 16px;
 	}
 
-	.point-head {
-		margin-bottom: 12px;
-	}
-
-	.chart-head {
-		min-height: 32px;
-		margin-bottom: 4px;
-	}
-
-	.chart-head h2 {
-		margin: 0;
-	}
-
-	.muted,
-	.point-events summary {
+	.group > summary {
+		padding: 6px 0;
 		color: var(--text-2);
-		font-size: 12px;
-	}
-
-	.point-events {
-		margin: 8px 0 0;
-	}
-
-	.point-events summary {
+		font-size: 13px;
 		cursor: pointer;
 		width: fit-content;
+	}
+
+	.group[open] > summary {
+		margin-bottom: 8px;
+		color: var(--text);
+	}
+
+	.muted {
+		color: var(--text-2);
+		font-size: 12px;
 	}
 
 	.events {
 		margin: 0;
 		padding: 0;
 		list-style: none;
+		max-height: 420px;
+		overflow-y: auto;
 	}
 
 	.events li {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 4px 14px;
-		padding: 8px 0;
+		padding: 6px 0;
 		border-bottom: 1px solid var(--border);
 		font-size: 13px;
 	}
 
 	.events li:last-child {
 		border: 0;
-		padding-bottom: 0;
 	}
 
 	.events time {
