@@ -49,6 +49,8 @@
 		max?: number;
 		/** events drawn as vertical marks at their moment, listed in the tooltip of their bucket */
 		marks?: TrendMark[];
+		/** the threshold the value is judged by: a dashed line every reading is read against */
+		limit?: number;
 	}
 
 	let {
@@ -60,6 +62,7 @@
 		empty = 'нет данных за это окно',
 		max,
 		marks = [],
+		limit,
 	}: Props = $props();
 
 	let containerEl = $state<HTMLDivElement | null>(null);
@@ -86,7 +89,9 @@
 		if (max !== undefined) return max;
 		let top = 0;
 		for (const s of series) for (const v of s.values) if (v !== null && v !== undefined && v > top) top = v;
-		if (top <= 0) return 1;
+		// the tolerance is drawn only when the readings come near it
+		if (limit !== undefined && limit > top && limit <= top * 2.5) top = limit;
+		if (top <= 0) return limit ?? 1;
 		const raw = top * 1.15;
 		const pow = 10 ** Math.floor(Math.log10(raw));
 		for (const m of [1, 2, 2.5, 5, 10]) if (raw <= m * pow) return m * pow;
@@ -94,6 +99,9 @@
 	});
 
 	const y = (v: number) => PAD_T + (1 - Math.max(0, Math.min(yMax, v)) / yMax) * PH;
+
+	/** The tolerance line, when it lands inside the axis: otherwise the readings are nowhere near it. */
+	const limitAt = $derived(limit !== undefined && limit <= yMax ? limit : null);
 
 	/** A line broken wherever a bucket has no value. */
 	function linePath(values: (number | null)[]): string {
@@ -210,6 +218,10 @@
 			<text x={W - 8} y={yPos + 3.5} class="y-label" text-anchor="end">{formatAxis(yMax * t)}</text>
 		{/each}
 
+		{#if limitAt !== null}
+			<line x1={PAD_L} y1={y(limitAt)} x2={PAD_L + PW} y2={y(limitAt)} class="limit" />
+		{/if}
+
 		{#each series.filter((s) => s.primary) as s (s.key)}
 			<path d={areaPath(s.values)} fill="url(#{fillId(s.key)})" />
 		{/each}
@@ -325,6 +337,13 @@
 
 	.line.primary {
 		stroke-width: 2.4;
+	}
+
+	.limit {
+		stroke: oklch(0.62 0.14 25);
+		stroke-width: 1;
+		stroke-dasharray: 4 4;
+		opacity: 0.75;
 	}
 
 	.mark {

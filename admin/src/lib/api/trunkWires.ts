@@ -65,6 +65,10 @@ function mockTrunkWires(window: TrunkWindow): TrunkWireChart {
 	add('call_red', MOCK_TARGETS, (k, i) => (pool(k) ? (i === n - 9 ? 1 : 0) : rnd() > 0.75 ? 1 : 0));
 	add('call_gaps60', MOCK_TARGETS, (k) => Math.round((pool(k) ? 1 : 3) * rnd()));
 	add('call_rtt', MOCK_TARGETS, (k) => (pool(k) ? 52 : 48) + rnd() * 14);
+	add('call_rtt50', MOCK_TARGETS, (k) => (pool(k) ? 47 : 43) + rnd() * 9);
+	// the pool's deaths: the fabric between the entry and the core, per entry
+	add('pool_dead_stalled', ['aezamsk1'], () => 190 + rnd() * 130);
+	add('pool_dead_broken', ['aezamsk1'], () => 50 + rnd() * 40);
 	add('call_gap', MOCK_TARGETS, (k) => (pool(k) ? 29 + rnd() * 62 : 38 + rnd() * 240));
 	add('call_loss', MOCK_TARGETS, (k) => (pool(k) ? rnd() * 2 : rnd() * 9));
 	add('call_silent', MOCK_TARGETS, (k) => (pool(k) ? (rnd() > 0.9 ? rnd() * 0.07 : 0) : rnd() * 1.7));
