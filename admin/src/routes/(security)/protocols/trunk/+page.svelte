@@ -45,13 +45,6 @@
 	const mbps = (v: number) => `${Math.round(v)} Мбит/с`;
 	const cpu = (v: number) => `${v.toFixed(1)} с/мин`;
 	const pct = (v: number) => `${v.toLocaleString('ru', { maximumFractionDigits: 2 })}%`;
-	/** "2 красные минуты", not "2 красных мин": the card is read, not parsed. */
-	const plural = (n: number, one: string, few: string, many: string) => {
-		const k = Math.abs(Math.round(n)) % 100;
-		const d = k % 10;
-		const word = d === 1 && k !== 11 ? one : d >= 2 && d <= 4 && (k < 10 || k >= 20) ? few : many;
-		return `${Math.round(n)} ${word}`;
-	};
 
 	// One colour per wire, whoever measured it: the stand's and the entry's
 	// line of a wire differ by weight, not by hue.
@@ -107,12 +100,6 @@
 	}
 
 	const WIRE_CHARTS: ChartSpec[] = [
-		{
-			group: 'call_red',
-			title: 'Звонок: красные минуты',
-			hint: 'Минуты звонка магистрали с паузой больше 150 мс или потерей больше 1%, по проводу. Это ранг голоса у селектора.',
-			format: count,
-		},
 		{
 			group: 'call_gaps60',
 			title: 'Звонок: паузы больше 60 мс',
@@ -389,61 +376,23 @@
 	type Tone = 'ok' | 'warn' | 'bad';
 	const rankOf = (t: Tone) => (t === 'ok' ? 0 : t === 'warn' ? 1 : 2);
 
-	const cells = $derived.by(() => {
-		const out: { label: string; value: string; note: string; tone: Tone; hint: string }[] = [];
-
-		{
-			const red = voice.red;
-			const worst = voice.worst;
-			const base: Tone = (red ?? 0) > 0 || (worst ?? 0) >= 150 ? ((worst ?? 0) >= 500 || (red ?? 0) > 5 ? 'bad' : 'warn') : 'ok';
-			out.push({
-				label: 'звонок',
-				value: red === null ? 'нет замеров' : plural(red, 'красная минута', 'красные минуты', 'красных минут'),
-				note: worst === null ? '' : `худшая ${ms(worst)}`,
-				tone: red === null && worst === null ? 'warn' : base,
-				hint: 'Пул людей: минуты звонка магистрали с паузой больше 150 мс или потерей больше 1% и худшая пауза за окно. Допуск решения 18.11 — не больше одной такой минуты на час звонка.',
-			});
-		}
-		{
-			const holes = Math.max(voice.holes ?? 0, voice.holesDown ?? 0);
-			const tone: Tone = voice.holes === null ? 'warn' : holes >= 5 || voice.runs > 3 ? 'bad' : holes >= 1 || voice.runs > 0 ? 'warn' : 'ok';
-			out.push({
-				label: 'слух',
-				value: voice.holes === null ? 'нет замеров' : `${pct(holes)} дыр`,
-				note: voice.holes === null ? '' : `${count(voice.runs)} серий`,
-				tone,
-				hint: 'Набор голоса глазами приложения с буфером 60 мс: доля кадров, которые не пришли вовремя, и серии из двух дыр подряд. Цель — меньше 1% и ноль серий.',
-			});
-		}
-		{
-			const tone: Tone = border.sampled === 0 ? 'warn' : border.up === 0 ? 'bad' : border.up < border.total || border.silent > 0 ? 'warn' : 'ok';
-			out.push({
-				label: 'точки',
-				value: border.sampled === 0 ? 'нет замеров' : `${border.up} из ${border.total} везут`,
-				note: border.sampled === 0 ? '' : `${Math.round(border.silent)} с тишины`,
-				tone,
-				hint: 'Точки перехода на пути людей: сколько точек держат соединения магистрали и сколько секунд за последнюю минуту через них ничего не шло.',
-			});
-		}
-		{
-			const tone: Tone = moves > 0 ? 'warn' : 'ok';
-			out.push({
-				label: 'выходы',
-				value: plural(moves, 'уход', 'ухода', 'уходов'),
-				note: moves > 0 ? 'сторож переводил' : 'никто не уходил',
-				tone,
-				hint: 'Сколько раз сторож на приёмнике уводил маршруты на запасной выход за окно. Любой уход — уже событие, а не норма.',
-			});
-		}
-		return out;
-	});
-
+	// One word over the route: whether the cascade is fine, and what is not.
 	const verdict = $derived.by(() => {
-		const worst = cells.reduce((a, b) => (rankOf(b.tone) > rankOf(a.tone) ? b : a), cells[0]);
-		const bad = cells.filter((c) => c.tone !== 'ok').map((c) => c.label);
+		const red = voice.red ?? 0;
+		const worst = voice.worst ?? 0;
+		const holes = Math.max(voice.holes ?? 0, voice.holesDown ?? 0);
+		const tone = (bad: boolean, warn: boolean): Tone => (bad ? 'bad' : warn ? 'warn' : 'ok');
+		const parts = [
+			{ name: 'звонок', tone: voice.worst === null ? 'warn' : tone(worst >= 500 || red > 5, red > 0 || worst >= 150) },
+			{ name: 'слух', tone: voice.holes === null ? 'warn' : tone(holes >= 5 || voice.runs > 3, holes >= 1 || voice.runs > 0) },
+			{ name: 'точки', tone: border.sampled === 0 ? 'warn' : tone(border.up === 0, border.up < border.total || border.silent > 0) },
+			{ name: 'выходы', tone: tone(false, moves > 0) },
+		] as { name: string; tone: Tone }[];
+		const first = parts.reduce((a, b) => (rankOf(b.tone) > rankOf(a.tone) ? b : a), parts[0]);
+		const off = parts.filter((x) => x.tone !== 'ok').map((x) => x.name);
 		return {
-			tone: worst.tone,
-			text: worst.tone === 'ok' ? 'каскад живой' : `${worst.tone === 'bad' ? 'каскад сломан' : 'каскад держится'}: ${bad.join(', ')}`,
+			tone: first.tone,
+			text: first.tone === 'ok' ? 'каскад живой' : `${first.tone === 'bad' ? 'каскад сломан' : 'каскад держится'}: ${off.join(', ')}`,
 		};
 	});
 
@@ -553,16 +502,6 @@
 			{#if USE_MOCK}<span class="muted">демоданные</span>{/if}
 		</div>
 
-		<div class="stats">
-			{#each cells as c (c.label)}
-				<div class="stat {c.tone}" title={c.hint}>
-					<span class="k">{c.label}</span>
-					<span class="v">{c.value}</span>
-					{#if c.note}<span class="n">{c.note}</span>{/if}
-				</div>
-			{/each}
-		</div>
-
 		{#if !data && !loadError}
 			<p class="muted">загрузка…</p>
 		{:else if data}
@@ -587,127 +526,107 @@
 		{/if}
 
 		{#if pointCharts.length && points}
-			<details class="group">
-				<summary title="Что происходит на точках перехода: пауза звонка, который идёт через точку, и секунды тишины.">
-					точки перехода <span class="muted">{pointCharts.length}</span>
-				</summary>
-				<div class="grid">
-					{#each pointCharts as c (c.group)}
-						<section class="card">
-							<h2 title={c.hint}>{c.title}</h2>
-							<div class="legend">
-								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
-							</div>
-							<TrendChart
-								buckets={points.buckets}
-								bucketSeconds={points.bucketSeconds}
-								series={c.lines}
-								formatAxis={c.format}
-								marks={pointMarks}
-								height={190}
-								empty="нет замеров за это окно"
-							/>
-						</section>
-					{/each}
-				</div>
-			</details>
+			<h2 class="section">точки перехода</h2>
+			<div class="grid">
+				{#each pointCharts as c (c.group)}
+					<section class="card">
+						<h2 title={c.hint}>{c.title}</h2>
+						<div class="legend">
+							{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
+						</div>
+						<TrendChart
+							buckets={points.buckets}
+							bucketSeconds={points.bucketSeconds}
+							series={c.lines}
+							formatAxis={c.format}
+							marks={pointMarks}
+							height={190}
+							empty="нет замеров за это окно"
+						/>
+					</section>
+				{/each}
+			</div>
 		{/if}
 
 		{#if wireCharts.length && data}
-			<details class="group">
-				<summary title="Каждый провод по отдельности: звонок магистрали, загрузка 1 МиБ и цена на входе. Отметки — переводы голоса и объёма.">
-					по проводам <span class="muted">{wireCharts.length}</span>
-				</summary>
-				<div class="grid">
-					{#each wireCharts as c (c.group)}
-						<section class="card">
-							<h2 title={c.hint}>{c.title}</h2>
-							<div class="legend">
-								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
-							</div>
-							<TrendChart
-								buckets={data.buckets}
-								bucketSeconds={data.bucketSeconds}
-								series={c.lines}
-								formatAxis={c.format}
-								{marks}
-								height={190}
-								empty="нет замеров за это окно"
-							/>
-						</section>
-					{/each}
-				</div>
-			</details>
+			<h2 class="section">по проводам</h2>
+			<div class="grid">
+				{#each wireCharts as c (c.group)}
+					<section class="card">
+						<h2 title={c.hint}>{c.title}</h2>
+						<div class="legend">
+							{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
+						</div>
+						<TrendChart
+							buckets={data.buckets}
+							bucketSeconds={data.bucketSeconds}
+							series={c.lines}
+							formatAxis={c.format}
+							marks={marks}
+							height={190}
+							empty="нет замеров за это окно"
+						/>
+					</section>
+				{/each}
+			</div>
 		{/if}
 
 		{#if hearingCharts.length && hearing}
-			<details class="group">
-				<summary title="Те же звонки глазами приложения с буфером 60 мс: кадр, который не пришёл вовремя хоть по одному проводу набора, — дыра.">
-					что слышит слушатель <span class="muted">{hearingCharts.length}</span>
-				</summary>
-				<div class="grid">
-					{#each hearingCharts as c (c.group)}
-						<section class="card">
-							<h2 title={c.hint}>{c.title}</h2>
-							<div class="legend">
-								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
-							</div>
-							<TrendChart
-								buckets={hearing.buckets}
-								bucketSeconds={hearing.bucketSeconds}
-								series={c.lines}
-								formatAxis={c.format}
-								{marks}
-								height={190}
-								empty="слух не мерили за окно"
-							/>
-						</section>
-					{/each}
-				</div>
-			</details>
+			<h2 class="section">что слышит слушатель</h2>
+			<div class="grid">
+				{#each hearingCharts as c (c.group)}
+					<section class="card">
+						<h2 title={c.hint}>{c.title}</h2>
+						<div class="legend">
+							{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
+						</div>
+						<TrendChart
+							buckets={hearing.buckets}
+							bucketSeconds={hearing.bucketSeconds}
+							series={c.lines}
+							formatAxis={c.format}
+							marks={marks}
+							height={190}
+							empty="слух не мерили за окно"
+						/>
+					</section>
+				{/each}
+			</div>
 		{/if}
 
 		{#if egressCharts.length && egress}
-			<details class="group">
-				<summary title="Сторож на приёмнике пингует оба выхода через туннель и интернет за везущим; 1,5 с тишины туннеля или 5 с интернета, и он уводит маршруты на запасной.">
-					выходы приёмников <span class="muted">{egressCharts.length}</span>
-				</summary>
-				<div class="grid">
-					{#each egressCharts as c (c.group)}
-						<section class="card">
-							<h2 title={c.hint}>{c.title}</h2>
-							<div class="legend">
-								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
-							</div>
-							<TrendChart
-								buckets={egress.buckets}
-								bucketSeconds={egress.bucketSeconds}
-								series={c.lines}
-								formatAxis={c.format}
-								marks={egressMarks}
-								height={190}
-								empty="сторож выходов молчал за окно"
-							/>
-						</section>
-					{/each}
-				</div>
-			</details>
+			<h2 class="section">выходы приёмников</h2>
+			<div class="grid">
+				{#each egressCharts as c (c.group)}
+					<section class="card">
+						<h2 title={c.hint}>{c.title}</h2>
+						<div class="legend">
+							{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
+						</div>
+						<TrendChart
+							buckets={egress.buckets}
+							bucketSeconds={egress.bucketSeconds}
+							series={c.lines}
+							formatAxis={c.format}
+							marks={egressMarks}
+							height={190}
+							empty="сторож выходов молчал за окно"
+						/>
+					</section>
+				{/each}
+			</div>
 		{/if}
 
 		{#if events.length}
-			<details class="group">
-				<summary title="Переводы голоса и объёма селектором и жизнь точек перехода, новое сверху.">
-					события <span class="muted">{events.length}</span>
-				</summary>
-				<ul class="events">
-					{#each events as event (event.at + event.label)}
-						<li class:down={event.down}>
-							<time datetime={event.at}>{eventTime.format(new Date(event.at))}</time>
-							<span>{event.label}</span>
-						</li>
-					{/each}
-				</ul>
-			</details>
+			<h2 class="section">события</h2>
+			<ul class="events">
+				{#each events as event (event.at + event.label)}
+					<li class:down={event.down}>
+						<time datetime={event.at}>{eventTime.format(new Date(event.at))}</time>
+						<span>{event.label}</span>
+					</li>
+				{/each}
+			</ul>
 		{/if}
 	</div>
 </PageShell>
@@ -809,56 +728,6 @@
 		color: #e66767;
 	}
 
-	.stats {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
-		gap: 8px;
-		margin-bottom: 12px;
-	}
-
-	.stat {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: baseline;
-		gap: 2px 8px;
-		padding: 10px 12px;
-		border: 1px solid var(--border);
-		border-left: 2px solid var(--border);
-		border-radius: 6px;
-		cursor: help;
-	}
-
-	.stat.ok {
-		border-left-color: #199e70;
-	}
-
-	.stat.warn {
-		border-left-color: #c98500;
-	}
-
-	.stat.bad {
-		border-left-color: #e66767;
-	}
-
-	.stat .k {
-		flex: 1 0 100%;
-		color: var(--text-2);
-		font-size: 11px;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-	}
-
-	.stat .v {
-		font-size: 15px;
-		font-weight: 600;
-		font-variant-numeric: tabular-nums;
-	}
-
-	.stat .n {
-		color: var(--text-2);
-		font-size: 12px;
-	}
-
 	.err {
 		color: #e66767;
 	}
@@ -898,21 +767,10 @@
 		border-radius: 2px;
 	}
 
-	.group {
-		margin-top: 16px;
-	}
-
-	.group > summary {
-		padding: 6px 0;
-		color: var(--text-2);
-		font-size: 13px;
-		cursor: pointer;
-		width: fit-content;
-	}
-
-	.group[open] > summary {
-		margin-bottom: 8px;
-		color: var(--text);
+	h2.section {
+		margin: 24px 0 10px;
+		font-size: 16px;
+		cursor: default;
 	}
 
 	.muted {

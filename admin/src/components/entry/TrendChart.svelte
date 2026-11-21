@@ -116,6 +116,9 @@
 		return values.map((_, i) => i).filter((i) => has(i) && !has(i - 1) && !has(i + 1));
 	}
 
+	/** A series key is any text ("aezamsk1 → unl1"); an SVG id is not. */
+	const fillId = (key: string) => 'trend-fill-' + key.replace(/[^A-Za-z0-9_-]+/g, '_');
+
 	/** The soft fill under the primary line, one closed shape per unbroken run. */
 	function areaPath(values: (number | null)[]): string {
 		const runs: number[][] = [];
@@ -194,7 +197,7 @@
 	<svg viewBox="0 0 {W} {height}" style="width: 100%; height: {height}px" role="img">
 		<defs>
 			{#each series.filter((s) => s.primary) as s (s.key)}
-				<linearGradient id="trend-fill-{s.key}" x1="0" y1="0" x2="0" y2="1">
+				<linearGradient id={fillId(s.key)} x1="0" y1="0" x2="0" y2="1">
 					<stop offset="0%" stop-color={s.color} stop-opacity="0.12" />
 					<stop offset="100%" stop-color={s.color} stop-opacity="0" />
 				</linearGradient>
@@ -208,7 +211,7 @@
 		{/each}
 
 		{#each series.filter((s) => s.primary) as s (s.key)}
-			<path d={areaPath(s.values)} fill="url(#trend-fill-{s.key})" />
+			<path d={areaPath(s.values)} fill="url(#{fillId(s.key)})" />
 		{/each}
 
 		{#each series as s (s.key)}
