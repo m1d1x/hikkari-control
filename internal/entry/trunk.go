@@ -245,6 +245,9 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 	if !o.Pipe && len(o.Points) > 0 {
 		return fmt.Errorf("%w: точки перехода только у входа над трубой (pipe)", ErrRejected)
 	}
+	if o.Pipe && len(p.pipeBuilds) == 0 {
+		return fmt.Errorf("%w: в образе хаба нет hk-pipe", ErrRejected)
+	}
 	if o.Points == nil {
 		// Points are a core's: the same exit keeps the ones the hub has.
 		if pair, err := p.svc.trunkPairOf(ctx, box); err == nil && pair.Exit == o.Exit {
