@@ -222,20 +222,20 @@
 	const POINT_CHARTS: ChartSpec[] = [
 		{
 			group: 'point_call_gap',
-			title: 'Самая длинная пауза звонка',
-			hint: 'Пробный звонок всей боевой магистрали. Отметки показывают, когда приёмники выпадали и возвращались.',
+			title: 'Пауза звонка магистрали',
+			hint: 'Максимум за отрезок, пробный звонок.',
 			format: ms,
 		},
 		{
 			group: 'point_silent',
-			title: 'Тишина по приёмникам',
-			hint: 'Сколько времени через приёмник не работало ни одно соединение магистрали.',
+			title: 'Точки перехода',
+			hint: 'Время без живых соединений через точку.',
 			format: sec,
 		},
 		{
 			group: 'point_up',
-			title: 'Живые соединения по приёмникам',
-			hint: 'Минимум за отрезок.',
+			title: 'Точки перехода',
+			hint: 'Минимум живых соединений за отрезок.',
 			format: count,
 		},
 	];
@@ -248,6 +248,7 @@
 	let pointsError = $state<string | null>(null);
 	let window = $state<TrunkWindow>('24h');
 	let pointScope = $state<'live' | 'stand'>('live');
+	let pointMetric = $state<'point_silent' | 'point_up'>('point_silent');
 	let now = $state(Date.now());
 	let request = 0;
 	let timer: ReturnType<typeof setInterval> | undefined;
@@ -351,27 +352,34 @@
 		pointEvents.map((m) => ({ at: m.at, label: m.label, color: m.why === 'red' ? '#e66767' : '#199e70' })),
 	);
 	const pointCharts = $derived(
-		POINT_CHARTS.map((c) => ({
-			...c,
-			lines: pointLines
-				.filter((l) => l.group === c.group)
-				.sort((a, b) => a.key.localeCompare(b.key))
-				.map<TrendSeries>((l) => ({
-					key: `${c.group}-${pointKeys.indexOf(l.key)}`,
-					label: l.key,
-					color: EGRESS_COLORS[pointKeys.indexOf(l.key) % EGRESS_COLORS.length],
-					values: l.values,
-					format: c.format,
-					primary: true,
-				})),
-		})).filter((c) => c.lines.length > 0),
+		POINT_CHARTS.filter((c) => c.group === pointMetric || (c.group === 'point_call_gap' && pointScope === 'live'))
+			.map((c) => ({
+				...c,
+				lines: pointLines
+					.filter((l) => l.group === c.group)
+					.sort((a, b) => a.key.localeCompare(b.key))
+					.map<TrendSeries>((l) => ({
+						key: `${c.group}-${pointKeys.indexOf(l.key)}`,
+						label:
+							l.group !== 'point_call_gap' &&
+							points?.routes?.length === 1 &&
+							l.key.startsWith(points.routes[0].entry + ' → ')
+								? l.key.split(' → ')[1].replace(' (стенд)', '')
+								: l.key,
+						color: EGRESS_COLORS[pointKeys.indexOf(l.key) % EGRESS_COLORS.length],
+						values: l.values,
+						format: c.format,
+						primary: true,
+					})),
+			}))
+			.filter((c) => c.lines.length > 0),
 	);
 </script>
 
 <PageShell>
 	<div class="page">
 		<div class="head">
-			<h1>Магистраль</h1>
+			<h1>провода магистрали</h1>
 			<div class="chips">
 				<a class="chip" href="/protocols/hikkari">hikkari изнутри</a>
 				{#each WINDOWS as w (w)}
@@ -379,45 +387,62 @@
 				{/each}
 			</div>
 		</div>
-		<h2 class="section">Боевой каскад</h2>
-		{#if USE_MOCK}
-			<p class="hint">Демонстрационные данные</p>
-		{/if}
 		{#if pointsError}
-			<p class="err" role="status">{pointsError}</p>
+			<p class="err" role="status">не удалось обновить точки перехода</p>
 		{/if}
 		{#if points}
-			{#if points.routes?.length}
-				<TrunkRoutes routes={points.routes} {now} />
-			{:else}
-				<p class="hint">Нет маршрутов с точками перехода.</p>
-			{/if}
-			{#if hasStand || pointScope === 'stand'}
-				<div class="chips scope" role="group" aria-label="История точек">
-					<button
-						class="chip"
-						class:on={pointScope === 'live'}
-						aria-pressed={pointScope === 'live'}
-						onclick={() => (pointScope = 'live')}>Боевой путь</button
-					>
-					<button
-						class="chip"
-						class:on={pointScope === 'stand'}
-						aria-pressed={pointScope === 'stand'}
-						onclick={() => (pointScope = 'stand')}>Стенд</button
-					>
+			<div class="point-head">
+				{#if points.routes?.length}
+					<TrunkRoutes routes={points.routes} {now} />
+				{:else}
+					<span class="muted">нет маршрутов через точки</span>
+				{/if}
+				<div class="chips" role="group" aria-label="путь">
+					{#if USE_MOCK}<span class="muted">демоданные</span>{/if}
+					{#if hasStand || pointScope === 'stand'}
+						<button
+							class="chip"
+							class:on={pointScope === 'live'}
+							aria-pressed={pointScope === 'live'}
+							onclick={() => (pointScope = 'live')}>боевой</button
+						>
+						<button
+							class="chip"
+							class:on={pointScope === 'stand'}
+							aria-pressed={pointScope === 'stand'}
+							onclick={() => (pointScope = 'stand')}>стенд</button
+						>
+					{/if}
 				</div>
-			{/if}
+			</div>
 			{#if points.window !== window && !pointsError}
-				<p class="hint">Загрузка истории…</p>
+				<p class="hint">загрузка истории…</p>
 			{:else if points.window === window}
 				{#if !pointCharts.length}
-					<p class="hint">Нет замеров за период.</p>
+					<p class="hint">нет замеров за это окно</p>
 				{/if}
 				<div class="grid">
 					{#each pointCharts as c (c.group)}
 						<section class="card">
-							<h2>{c.title}</h2>
+							<div class="chart-head">
+								<h2>{c.title}</h2>
+								{#if c.group !== 'point_call_gap'}
+									<div class="chips" role="group" aria-label="график точек">
+										<button
+											class="chip"
+											class:on={pointMetric === 'point_silent'}
+											aria-pressed={pointMetric === 'point_silent'}
+											onclick={() => (pointMetric = 'point_silent')}>тишина</button
+										>
+										<button
+											class="chip"
+											class:on={pointMetric === 'point_up'}
+											aria-pressed={pointMetric === 'point_up'}
+											onclick={() => (pointMetric = 'point_up')}>соединения</button
+										>
+									</div>
+								{/if}
+							</div>
 							<p class="hint small">{c.hint}</p>
 							<div class="legend">
 								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
@@ -429,32 +454,30 @@
 								formatAxis={c.format}
 								marks={pointMarks}
 								height={190}
-								empty="Нет замеров за период"
+								empty="нет замеров за это окно"
 							/>
 						</section>
 					{/each}
-					<section class="card">
-						<h2>Последние отказы и возвраты</h2>
-						{#if pointEvents.length}
-							<ul class="events">
-								{#each pointEvents.slice(-8).reverse() as event}
-									<li class:down={event.why === 'red'}>
-										<time datetime={event.at}>{eventTime.format(new Date(event.at))}</time>
-										<span>{event.label}</span>
-									</li>
-								{/each}
-							</ul>
-						{:else}
-							<p class="hint small">За этот период событий нет.</p>
-						{/if}
-					</section>
 				</div>
+				{#if pointEvents.length}
+					<details class="point-events">
+						<summary>события точек <span class="muted">{pointEvents.length}</span></summary>
+						<ul class="events">
+							{#each pointEvents.slice(-8).reverse() as event}
+								<li class:down={event.why === 'red'}>
+									<time datetime={event.at}>{eventTime.format(new Date(event.at))}</time>
+									<span>{event.label}</span>
+								</li>
+							{/each}
+						</ul>
+					</details>
+				{/if}
 			{/if}
 		{:else if !pointsError}
 			<p class="hint">Загрузка каскада…</p>
 		{/if}
 
-		<h2 class="section">Провода магистрали</h2>
+		<h2 class="section">по проводам</h2>
 		<p class="hint">
 			Вход меряет каждый провод пробным звонком и загрузкой 1 МиБ. Отметки показывают, когда селектор перевёл голос или
 			объём на другой провод.
@@ -650,8 +673,41 @@
 		border-radius: 2px;
 	}
 
-	.scope {
+	.point-head,
+	.chart-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 4px 12px;
+	}
+
+	.point-head {
 		margin-bottom: 12px;
+	}
+
+	.chart-head {
+		min-height: 32px;
+		margin-bottom: 4px;
+	}
+
+	.chart-head h2 {
+		margin: 0;
+	}
+
+	.muted,
+	.point-events summary {
+		color: var(--text-2);
+		font-size: 12px;
+	}
+
+	.point-events {
+		margin: 8px 0 0;
+	}
+
+	.point-events summary {
+		cursor: pointer;
+		width: fit-content;
 	}
 
 	.events {
@@ -675,11 +731,11 @@
 	}
 
 	.events time {
-		color: #5bd6a5;
+		color: #199e70;
 		font-variant-numeric: tabular-nums;
 	}
 
 	.events .down time {
-		color: #f08282;
+		color: #e66767;
 	}
 </style>
