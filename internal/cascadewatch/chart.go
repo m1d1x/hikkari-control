@@ -295,6 +295,21 @@ func RegisterAdminRoutes(mux *http.ServeMux, w *Watch, auth func(http.HandlerFun
 		}
 		writeJSON(rw, http.StatusOK, c)
 	}))
+	// GET /api/v1/admin/trunk/points?window=24h: the entries' border points
+	// (point.go, G5).
+	mux.HandleFunc("GET /api/v1/admin/trunk/points", auth(func(rw http.ResponseWriter, r *http.Request) {
+		c, err := w.store.BuildPointChart(r.Context(), r.URL.Query().Get("window"), w.now())
+		if err != nil {
+			if errors.Is(err, errChartWindow) {
+				writeJSON(rw, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			applog.Error(r.Context(), "cascadewatch", "point chart failed", applog.F("err", err.Error()))
+			writeJSON(rw, http.StatusInternalServerError, map[string]string{"error": "internal"})
+			return
+		}
+		writeJSON(rw, http.StatusOK, c)
+	}))
 	// GET /api/v1/admin/trunk/hearing?window=24h&entry=&view=trunk|voice:
 	// what a listener heard of the calls and sets (hearing.go), a minute a
 	// bucket.

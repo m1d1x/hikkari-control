@@ -19,7 +19,7 @@ func (o *toldOwner) Notify(_ context.Context, text string) error {
 // ownerWatch is a watch up for an hour at now, telling o.
 func ownerWatch(now time.Time, o *toldOwner) *Watch {
 	w := &Watch{now: func() time.Time { return now }, started: now.Add(-time.Hour),
-		alerted: map[string]time.Time{}, calls: map[string]*callStreak{}, wires: map[string]*lossStreak{}}
+		alerted: map[string]time.Time{}, calls: map[string]*callStreak{}, wires: map[string]*lossStreak{}, points: map[string]*pointStreak{}}
 	w.SetOwner(o)
 	return w
 }

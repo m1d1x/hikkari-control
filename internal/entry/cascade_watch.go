@@ -46,6 +46,10 @@ type TrunkPair struct {
 	// (G3, box names): Exit is then a core no member dials by its own
 	// address. Empty: the entry dials Exit itself.
 	Points []string
+	// PointNames names each border point, the people's and the stand's, by
+	// its address (G5): the brain's lines say addresses, the watch files
+	// box names.
+	PointNames map[string]string
 	// Receivers names each receiver of the entry's group by its relay's
 	// address, the exit's included (P5): the entry's lines say addresses,
 	// the watch files box names.
@@ -191,6 +195,20 @@ func (s *Service) TrunkPairs(ctx context.Context) ([]TrunkPair, error) {
 			host, port, _ := net.SplitHostPort(addr)
 			p.ExitAddress = host
 			p.RelayPort, _ = strconv.Atoi(port)
+		}
+		for _, b := range append(append([]string{}, r.people...), r.points...) {
+			acc, err := s.boxAccess(ctx, b)
+			if err != nil {
+				return nil, err
+			}
+			if p.PointNames == nil {
+				p.PointNames = map[string]string{}
+			}
+			host := acc.address
+			if h, _, err := net.SplitHostPort(host); err == nil {
+				host = h
+			}
+			p.PointNames[host] = b
 		}
 		if len(r.receivers) > 0 {
 			p.Receivers = map[string]string{p.ExitAddress: r.exit}

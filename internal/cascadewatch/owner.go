@@ -84,13 +84,13 @@ func (w *Watch) hearPeoplesCall(ctx context.Context, p entry.TrunkPair, run Run)
 		if s.n >= ownerRedMinutes && !s.told && w.fresh(run.TS) {
 			s.told = true
 			sent, got := int(num(run.Data, "sent")), int(num(run.Data, "got"))
-			text = fmt.Sprintf("🔴 Звонок магистрали людей %s → %s красный %d мин подряд, с %s UTC. Последняя минута: дошло %d из %d, худшая пауза %d мс.",
-				p.Entry, p.Exit, s.n, s.since.Format("15:04"), got, sent, int(num(run.Data, "gap_max_ms")))
+			text = fmt.Sprintf("🔴 Звонок магистрали людей %s красный %d мин подряд, с %s UTC. Последняя минута: дошло %d из %d, худшая пауза %d мс.",
+				pathName(p), s.n, s.since.Format("15:04"), got, sent, int(num(run.Data, "gap_max_ms")))
 		}
 	} else {
 		if s.told {
-			text = fmt.Sprintf("🟢 Звонок магистрали людей %s → %s снова чистый с %s UTC, был красным %d мин (с %s UTC).",
-				p.Entry, p.Exit, run.TS.Format("15:04"), s.n, s.since.Format("15:04"))
+			text = fmt.Sprintf("🟢 Звонок магистрали людей %s снова чистый с %s UTC, был красным %d мин (с %s UTC).",
+				pathName(p), run.TS.Format("15:04"), s.n, s.since.Format("15:04"))
 		}
 		*s = callStreak{last: run.TS}
 	}
@@ -133,13 +133,13 @@ func (w *Watch) hearWire(ctx context.Context, p entry.TrunkPair, run Run) {
 		s.worst = max(s.worst, loss)
 		if s.n >= ownerWireMinutes && !s.told && w.fresh(run.TS) {
 			s.told = true
-			text = fmt.Sprintf("🔴 Провод %s входа людей %s → %s теряет %s датаграмм звонка, %d мин подряд с %s UTC.",
-				wire, p.Entry, p.Exit, percent(loss), s.n, s.since.Format("15:04"))
+			text = fmt.Sprintf("🔴 Провод %s входа людей %s теряет %s датаграмм звонка, %d мин подряд с %s UTC.",
+				wire, pathName(p), percent(loss), s.n, s.since.Format("15:04"))
 		}
 	} else {
 		if s.told {
-			text = fmt.Sprintf("🟢 Провод %s входа людей %s → %s снова теряет %s с %s UTC; терял больше %s %d мин (с %s UTC), худшая минута %s.",
-				wire, p.Entry, p.Exit, percent(loss), run.TS.Format("15:04"), percent(ownerWireLoss), s.n, s.since.Format("15:04"), percent(s.worst))
+			text = fmt.Sprintf("🟢 Провод %s входа людей %s снова теряет %s с %s UTC; терял больше %s %d мин (с %s UTC), худшая минута %s.",
+				wire, pathName(p), percent(loss), run.TS.Format("15:04"), percent(ownerWireLoss), s.n, s.since.Format("15:04"), percent(s.worst))
 		}
 		*s = lossStreak{last: run.TS}
 	}

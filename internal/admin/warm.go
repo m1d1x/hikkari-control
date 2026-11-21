@@ -63,6 +63,7 @@ func warmCharts() []string {
 	}
 	add("/api/v1/admin/trunk/wires", "window", "6h", "24h", "7d")
 	add("/api/v1/admin/trunk/egress", "window", "6h", "24h", "7d")
+	add("/api/v1/admin/trunk/points", "window", "6h", "24h", "7d")
 	for _, w := range []string{"6h", "24h", "7d", "30d"} {
 		out = append(out, "/api/v1/admin/trunk/hearing?window="+w+"&view=trunk")
 	}
