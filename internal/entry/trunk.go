@@ -128,6 +128,14 @@ type TrunkEntryOptions struct {
 	// standby (0: the brain's own, 8).
 	Receivers    []string
 	ReceiverPool int
+	// Points are the border points to Exit (hikkari-client
+	// plans/2026-11-19-border-forwarders.md, G3; box names): Exit is a core
+	// (entry-box core) that answers only them, every member goes through
+	// point i mod n (trunkentry wires.go "points"). nil keeps the ones the
+	// hub has for the same exit (none for another), empty is none. Only an
+	// entry over hk-pipe has them, and none beside a group of receivers:
+	// one session to the core through every point has nothing to move.
+	Points []string
 }
 
 // trunkExitOf finds the Hikkari relay with a trunk on box, for an entry.
@@ -234,6 +242,27 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 	if !o.Pipe && (o.H3Port != 0 || o.H3Usage != "" || o.Voice != "") {
 		return fmt.Errorf("%w: h3dgram и voice только у входа над трубой (pipe)", ErrRejected)
 	}
+	if !o.Pipe && len(o.Points) > 0 {
+		return fmt.Errorf("%w: точки перехода только у входа над трубой (pipe)", ErrRejected)
+	}
+	if o.Pipe && len(p.pipeBuilds) == 0 {
+		return fmt.Errorf("%w: в образе хаба нет hk-pipe", ErrRejected)
+	}
+	if o.Points == nil {
+		// Points are a core's: the same exit keeps the ones the hub has.
+		if pair, err := p.svc.trunkPairOf(ctx, box); err == nil && pair.Exit == o.Exit {
+			o.Points = pair.Points
+		}
+	}
+	if len(o.Points) > 0 && len(o.Receivers) > 0 {
+		return fmt.Errorf("%w: точки перехода и группа приёмников вместе не бывают: сессия одна до ядра", ErrRejected)
+	}
+	if o.Points != nil {
+		var err error
+		if o.Points, err = p.svc.checkPipePoints(ctx, box, o.Exit, o.Points); err != nil {
+			return err
+		}
+	}
 	var (
 		addr, sni, key string
 		open           map[int]bool
@@ -241,7 +270,11 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 		pipe           pipeBrain
 	)
 	if o.Pipe {
-		pipe, err = p.pipeBrainFor(ctx, o.Exit, o.H3Port, o.H3Usage, o.Voice, nil)
+		var pts []string
+		if pts, err = p.svc.pointAddresses(ctx, o.Points); err != nil {
+			return err
+		}
+		pipe, err = p.pipeBrainFor(ctx, o.Exit, o.H3Port, o.H3Usage, o.Voice, pts)
 		addr, sni, key, open = pipe.addr, pipe.sni, pipe.key, pipe.open
 	} else {
 		addr, sni, key, open, err = p.svc.trunkExitOf(ctx, o.Exit)
@@ -260,6 +293,14 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 		listen = append(listen, strconv.Itoa(l))
 	}
 	sort.Strings(listen)
+	if len(o.Points) > 0 {
+		// The core and its points go on record before the swap (G3), as the
+		// stand's (trunkpipe.go): the points forward from the entries the
+		// hub knows go to the core.
+		if err := p.svc.recordTrunkEntryCore(ctx, box, o.Exit, o.Points); err != nil {
+			return err
+		}
+	}
 	r, _, err := p.provokeRemote(ctx, box)
 	if err != nil {
 		return err
@@ -269,7 +310,7 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 		applog.Info(ctx, "entry", fmt.Sprintf(format, args...), applog.F("box", box))
 	}
 	applog.Info(ctx, "entry", "operator trunk entry on box", applog.F("box", box), applog.F("exit", o.Exit),
-		applog.F("members", o.Members), applog.F("listen", strings.Join(listen, ",")))
+		applog.F("members", o.Members), applog.F("listen", strings.Join(listen, ",")), applog.F("points", strings.Join(o.Points, ",")))
 	files := []trunkFile{{"nekko-trunk-entry", p.trunkBuilds}, {"libcronet.so", p.cronetBuilds}}
 	env := trunkEntryEnv(addr, sni, key, o)
 	if len(o.Receivers) > 0 {
@@ -296,6 +337,56 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 	// The cascade watch takes its pairs from here (cascade_watch.go).
 	return p.svc.recordTrunkEntry(ctx, box, o)
 }
+
+// SetTrunkEntryPoints gives the people's entry on box the border points to
+// its exit (G3; none: the exit's own address): the hub keeps them and puts
+// them into the entry's wires file as it stands, the rest of the file
+// untouched; the brain follows within 10 s, no new process, no stream cut.
+func (p *Provisioner) SetTrunkEntryPoints(ctx context.Context, box string, points []string) error {
+	pair, err := p.svc.trunkPairOf(ctx, box)
+	if err != nil {
+		return err
+	}
+	if len(pair.Receivers) > 0 && len(points) > 0 {
+		return fmt.Errorf("%w: у входа %s группа приёмников, точки с ней не бывают: сначала entry-box trunk-entry без receivers=", ErrRejected, box)
+	}
+	if points, err = p.svc.checkPipePoints(ctx, box, pair.Exit, points); err != nil {
+		return err
+	}
+	addrs, err := p.svc.pointAddresses(ctx, points)
+	if err != nil {
+		return err
+	}
+	r, _, err := p.provokeRemote(ctx, box)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	raw, err := r.Run(ctx, "cat "+trunkEntryPipeWires, nil)
+	if err != nil {
+		return fmt.Errorf("файл проводов входа на %s: %w: %s", box, err, raw)
+	}
+	file, err := withPoints([]byte(raw), addrs)
+	if err != nil {
+		return fmt.Errorf("файл проводов входа на %s: %w", box, err)
+	}
+	if out, err := r.Run(ctx, trunkEntryWiresScript, strings.NewReader(file)); err != nil {
+		return fmt.Errorf("файл проводов входа на %s: %w: %s", box, err, out)
+	}
+	applog.Info(ctx, "entry", "operator trunk entry points", applog.F("box", box), applog.F("core", pair.Exit),
+		applog.F("points", strings.Join(points, ",")))
+	return p.svc.recordTrunkEntryCore(ctx, box, pair.Exit, points)
+}
+
+// trunkEntryWiresScript swaps the entry's wires file in, only on a box whose
+// entry runs over hk-pipe (its env names the file).
+const trunkEntryWiresScript = "grep -q '^EDGE_TRUNK_WIRES_FILE=" + trunkEntryPipeWires + "$' " + trunkEntryEnvFile +
+	" || { echo 'вход не над трубой: сначала entry-box trunk-entry ... pipe' >&2; exit 1; }; " +
+	"umask 022; cat > " + trunkEntryPipeWires + ".new && mv " + trunkEntryPipeWires + ".new " + trunkEntryPipeWires
+
+// trunkEntryPipeWires is the wires file of the people's entry over hk-pipe
+// (pipeBrainEnv: beside its env), not the Go entry's TrunkEntryWiresFile.
+const trunkEntryPipeWires = trunkEntryEnvFile + ".wires.json"
 
 // StopTrunkEntry takes the trunk entry off box.
 func (p *Provisioner) StopTrunkEntry(ctx context.Context, box string) error {
