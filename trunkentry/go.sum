@@ -12,12 +12,16 @@ github.com/m1d1x/hikkari-protocol v0.0.0-20261120174105-d6e243c2c237 h1:LZtC9dfJ
 github.com/m1d1x/hikkari-protocol v0.0.0-20261120174105-d6e243c2c237/go.mod h1:n6g14ffrmydnUSkndaeZX7+B7y9NjK/EKIkmg7DuYh4=
 github.com/m1d1x/hikkari-protocol v0.0.0-20261121130341-984967a3c531 h1:QeFmzujKQ1mlEHyc1yMDt/C5NHWih/LxHlgF9ww5cWQ=
 github.com/m1d1x/hikkari-protocol v0.0.0-20261121130341-984967a3c531/go.mod h1:n6g14ffrmydnUSkndaeZX7+B7y9NjK/EKIkmg7DuYh4=
+github.com/m1d1x/hikkari-protocol v0.0.0-20261121134825-55bd1c478de1 h1:X9Tv8b5Ot1RTJuTEruUYBrcGb98e9wwi3Ainpjq4dvM=
+github.com/m1d1x/hikkari-protocol v0.0.0-20261121134825-55bd1c478de1/go.mod h1:n6g14ffrmydnUSkndaeZX7+B7y9NjK/EKIkmg7DuYh4=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261118182141-f0095e52b637 h1:MsFaKhXIdNiCu84iaGECKu0VcWlhCV6YvkddJUpTuFg=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261118182141-f0095e52b637/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261120174105-d6e243c2c237 h1:mh2Xr9cVFNoe4YGhK6eMo951RGmKT+ayfimr94hmncw=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261120174105-d6e243c2c237/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261121130341-984967a3c531 h1:kro0C7w+yevTT9bK6Xd1vCpBBtwfVxFCyJvOTrO6gNE=
 github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261121130341-984967a3c531/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
+github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261121134825-55bd1c478de1 h1:lILlrhHiRGORmudEgFEdOnqEQju5G8Rr9m+AIKdJQyQ=
+github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261121134825-55bd1c478de1/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
 github.com/m1d1x/hikkari-protocol/trunk/chromium v0.0.0-20261109035446-c773c6a37f81 h1:7A0+HzMBbJ7oT4gBhqyKODRh7w/A4/9lORYQbFPD1IE=
 github.com/m1d1x/hikkari-protocol/trunk/chromium v0.0.0-20261109035446-c773c6a37f81/go.mod h1:fbmJR/Vv5CCOk0KFUmW03yJnU/tnHTcWPbAn8Eps6I8=
 github.com/m1d1x/hikkari-protocol/trunk/quicwire v0.0.0-20261111070922-a2b0763eb54c h1:wbEDDbfwyAkjm/muALIcU60tUQGaiKxP16K8cS05zNA=
