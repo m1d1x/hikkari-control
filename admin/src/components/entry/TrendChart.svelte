@@ -165,6 +165,10 @@
 			.filter((p) => p.bucket >= 0 && p.bucket < n);
 	});
 
+	// A window of days or weeks reads as dates: an hourly bucket over a month
+	// would otherwise print 21:00 thirty times.
+	const labelStep = $derived(n * bucketSeconds >= 2 * 86_400 ? Math.max(bucketSeconds, 86_400) : bucketSeconds);
+
 	/** Up to six evenly spread labels along the bottom. */
 	const axis = $derived.by(() => {
 		if (n === 0) return [] as { label: string; x: number }[];
@@ -175,7 +179,7 @@
 			const i = count === 1 ? 0 : Math.round((k * (n - 1)) / (count - 1));
 			if (seen.has(i)) continue;
 			seen.add(i);
-			out.push({ label: bucketLabel(buckets[i], bucketSeconds), x: x(i) });
+			out.push({ label: bucketLabel(buckets[i], labelStep), x: x(i) });
 		}
 		return out;
 	});
@@ -218,10 +222,6 @@
 			<text x={W - 8} y={yPos + 3.5} class="y-label" text-anchor="end">{formatAxis(yMax * t)}</text>
 		{/each}
 
-		{#each shownLimits as l (l.value)}
-			<line x1={PAD_L} y1={y(l.value)} x2={PAD_L + PW} y2={y(l.value)} class="limit" style="stroke: {l.color}" />
-		{/each}
-
 		{#each series.filter((s) => s.primary) as s (s.key)}
 			<path d={areaPath(s.values)} fill="url(#{fillId(s.key)})" />
 		{/each}
@@ -231,6 +231,10 @@
 			{#each lonePoints(s.values) as i (i)}
 				<circle cx={x(i)} cy={y(s.values[i] as number)} r="3" style="fill: {s.color}" />
 			{/each}
+		{/each}
+
+		{#each shownLimits as l (l.value)}
+			<line x1={PAD_L} y1={y(l.value)} x2={PAD_L + PW} y2={y(l.value)} class="limit" style="stroke: {l.color}" />
 		{/each}
 
 		{#each placedMarks as p (p.key)}
@@ -341,9 +345,9 @@
 
 	.limit {
 		stroke: oklch(0.62 0.14 25);
-		stroke-width: 1;
-		stroke-dasharray: 4 4;
-		opacity: 0.75;
+		stroke-width: 1.5;
+		stroke-dasharray: 5 4;
+		opacity: 0.9;
 	}
 
 	.mark {

@@ -15,7 +15,7 @@
 	// who carries the session. Seven charts, nothing else; the wires and the
 	// pool live in the dataset an agent reads, not on this screen.
 
-	const WINDOWS: TrunkWindow[] = ['6h', '24h', '7d'];
+	const WINDOWS: TrunkWindow[] = ['6h', '24h', '7d', '30d'];
 	const REFRESH_MS = 60_000;
 
 	type Scope = 'live' | 'stand';
@@ -26,6 +26,7 @@
 
 	const ms = (v: number) => `${Math.round(v)} мс`;
 	const count = (v: number) => Math.round(v).toLocaleString('ru');
+	const sec = (v: number) => `${(v / 1000).toLocaleString('ru', { maximumFractionDigits: v < 1000 ? 2 : 1 })} с`;
 	const mbps = (v: number) => `${Math.round(v)} Мбит/с`;
 
 	function labelOf(key: string): string {
@@ -79,7 +80,7 @@
 			groups: ['call_gap'],
 			title: 'сумма пауз сверх 150 мс, на человека',
 			hint: 'Накопленным итогом: сколько миллисекунд один человек простоял в обрыве длиннее 150 мс за окно. Пробный звонок — это и есть один человек, поэтому сумма не по всему проекту, а на человека. Конец линии — цифра простоя в миллисекундах, а не в минутах.',
-			format: ms,
+			format: sec,
 			accumulate: 150,
 		},
 	];
@@ -411,6 +412,10 @@
 
 	.grid.one {
 		grid-template-columns: 1fr;
+		margin-top: 12px;
+	}
+
+	.grid + .grid {
 		margin-top: 12px;
 	}
 

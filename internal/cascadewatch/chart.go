@@ -68,7 +68,7 @@ const (
 // maxMarks is how many moves of the selector the screen gets, the newest.
 const maxMarks = 300
 
-var errChartWindow = errors.New("window: 6h, 24h or 7d")
+var errChartWindow = errors.New("window: 6h, 24h, 7d or 30d")
 
 // chartSpan is a window's span and bucket.
 func chartSpan(window string) (string, time.Duration, time.Duration, error) {
@@ -79,6 +79,8 @@ func chartSpan(window string) (string, time.Duration, time.Duration, error) {
 		return "24h", 24 * time.Hour, 5 * time.Minute, nil
 	case "7d":
 		return window, 7 * 24 * time.Hour, 30 * time.Minute, nil
+	case "30d":
+		return window, 30 * 24 * time.Hour, time.Hour, nil
 	}
 	return "", 0, 0, errChartWindow
 }
