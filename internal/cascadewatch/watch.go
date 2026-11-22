@@ -128,13 +128,13 @@ type Watch struct {
 	sleep func(ctx context.Context, d time.Duration) bool
 
 	mu      sync.Mutex
-	cursor  map[string]time.Time   // entry box → last journal line read
-	busy    map[string]bool        // entry box → a round running
-	last    map[string]time.Time   // entry box → last round started
-	alerted map[string]time.Time   // code|entry → last alert
-	owner   Notifier               // told of the people's trunk going wrong (owner.go); nil: nobody
-	calls   map[string]*callStreak // entry box → its people's call as the owner hears it
-	wires   map[string]*lossStreak // entry box|target → a wire's call as the owner hears it
+	cursor  map[string]time.Time    // entry box → last journal line read
+	busy    map[string]bool         // entry box → a round running
+	last    map[string]time.Time    // entry box → last round started
+	alerted map[string]time.Time    // code|entry → last alert
+	owner   Notifier                // told of the people's trunk going wrong (owner.go); nil: nobody
+	calls   map[string]*callStreak  // entry box → its people's call as the owner hears it
+	wires   map[string]*lossStreak  // entry box|target → a wire's call as the owner hears it
 	points  map[string]*pointStreak // entry box|point|<box> and entry box|points → the border points as the owner hears them
 	started time.Time
 	rounds  sync.WaitGroup
@@ -174,6 +174,9 @@ func (w *Watch) Store() *Store { return w.store }
 // Run ticks every minute until ctx ends.
 func (w *Watch) Run(ctx context.Context) {
 	w.started = w.now()
+	if boxes, ok := w.boxes.(hopBoxes); ok {
+		w.rounds.Go(func() { w.watchHops(ctx, boxes) })
+	}
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {
