@@ -50,20 +50,23 @@
 
 	function labelOf(key: string): string {
 		if (key === 'copies1') return 'кадр один раз';
-		if (key === 'copies2') return 'кадр дважды';
+		if (key === 'copies2') return 'маршрут';
 		if (key.startsWith('wire-')) return `стенд ${key.slice(5)}`;
-		if (key === 'trunk-pool') return 'вход, пул';
+		if (key === 'trunk-pool') return 'tcp';
 		if (key === 'trunk-voice') return 'набор голоса';
 		if (key === 'pipe-voice') return 'стенд, набор голоса';
-		if (key.startsWith('trunk-')) return `вход ${key.slice(6)}`;
+		if (key === 'trunk-udp') return 'udp';
+		if (key === 'trunk-h3dgram') return 'quic';
+		if (key.startsWith('trunk-')) return key.slice(6);
 		if (key === 'pipe-copies1') return 'стенд, один раз';
-		if (key === 'pipe-copies2') return 'стенд, дважды';
+		if (key === 'pipe-copies2') return 'маршрут';
 		if (key.startsWith('pipe-')) return `труба ${key.slice(5)}`;
 		return key;
 	}
 
 	function colorOf(key: string): string {
 		const c = WIRE_COLOR[wireOf(key)] ?? '#7e7e7e';
+		if (key === 'copies2' || key === 'pipe-copies2') return '#e8e8e8';
 		return key === 'copies1' || key === 'pipe-copies1' ? '#c67ac1' : c;
 	}
 
@@ -93,7 +96,7 @@
 		{
 			groups: ['call_red'],
 			title: 'красных минут на час',
-			hint: 'Звонок идёт сам, без клиента: кадр каждые 20 мс до выхода и обратно. «Один раз» — кадр ушёл по одному выбранному проводу, потеряли провод — пропал кадр. «Дважды» — тот же кадр ушёл ещё и вторым путём другой природы, выход берёт первый дошедший, второй выбрасывает. Разница между линиями — сколько дырок закрыл дубль. Тут минуты с паузой больше 150 мс или потерей больше 1%, на час окна; допуск решения 18.11 — одна такая минута на час.',
+			hint: 'Пробный звонок каждые 20 мс, без клиента. «Маршрут» — как голос идёт на самом деле: кадр дублируется по двум проводам разных судеб, выход берёт первый дошедший. udp, quic и tcp — тот же звонок, прибитый к одному проводу: так было бы, если бы голос шёл только по нему. Тут минуты с паузой больше 150 мс или потерей больше 1%, на час окна; допуск решения 18.11 — одна такая минута на час.',
 			format: pm,
 			limit: 1,
 			perHour: true,
@@ -105,24 +108,21 @@
 			format: pm,
 			perHour: true,
 		},
+	];
+
+	const HEARING_CHARTS: ChartSpec[] = [
 		{
 			groups: ['holes60_up', 'holes60_down'],
 			title: 'дыр в звуке, % кадров',
 			hint: 'Тот же звонок глазами приложения с буфером 60 мс: кадр, который не пришёл вовремя, — дыра. Вверх — слушатель у выхода, вниз — у входа. Цель меньше 1%.',
 			format: pct,
 			limit: 1,
+			colors: { holes60_up: '#3987e5', holes60_down: '#c98500' },
+			labels: { holes60_up: 'вверх', holes60_down: 'вниз' },
 		},
 	];
 
 	const WIRE_CHARTS: ChartSpec[] = [
-		{
-			groups: ['call_red'],
-			title: 'красных минут на час',
-			hint: 'Минуты с паузой больше 150 мс или потерей больше 1%, по каждому проводу: по ним селектор выбирает, какой провод несёт голос.',
-			format: pm,
-			limit: 1,
-			perHour: true,
-		},
 		{
 			groups: ['call_rtt50'],
 			title: 'задержка p50, мс',
@@ -235,7 +235,6 @@
 	const hasStand = $derived((points?.lines ?? []).some((l) => isStand(l.key)));
 	const members = $derived(Math.max(1, ...(points?.routes ?? []).flatMap((r) => r.points.map((p) => p.sample?.members ?? 0))));
 
-	const calls = $derived(SCOPE[scope].calls);
 	const voiceKey = $derived(SCOPE[scope].voice);
 
 	/** One line per target of the groups, per hour where the spec counts minutes. */
@@ -251,7 +250,6 @@
 					color: c.colors?.[group] ?? colorOf(l.key),
 					values: l.values.map((v) => (v === null ? null : v * scale)),
 					format: c.format,
-					primary: c.groups.length === 1 && l.key === 'copies2',
 				});
 			}
 		}
@@ -263,7 +261,13 @@
 			.map((c) => ({ ...c, lines: linesOf(chart, c, allow, chart?.bucketSeconds ?? 3600) }))
 			.filter((c) => c.lines.length > 0);
 
-	const voiceCharts = $derived(cards(VOICE_CHARTS, data, (k) => calls.includes(k) || k === voiceKey));
+	// The route the voice takes now, then every wire of its set: a wire that
+	// reads worse than the route is why the route is what it is.
+	const voiceWires = $derived(
+		(scope === 'live' ? ['copies2', 'trunk-udp', 'trunk-h3dgram', 'trunk-pool'] : ['pipe-copies2', 'pipe-udp', 'pipe-h3dgram', 'pipe-pool']),
+	);
+	const voiceCharts = $derived(cards(VOICE_CHARTS, data, (k) => voiceWires.includes(k)));
+	const hearingCharts = $derived(cards(HEARING_CHARTS, hearing, (k) => k === voiceKey));
 	const wireCharts = $derived(cards(WIRE_CHARTS, data, (k) => isStand(k) === (scope === 'stand')));
 	const poolCharts = $derived(cards(POOL_CHARTS, data, (k) => !isStand(k) === (scope !== 'stand')));
 	const pointCharts = $derived(
@@ -332,25 +336,45 @@
 			{#if USE_MOCK}<span class="muted">демоданные</span>{/if}
 		</div>
 
-		{#if voiceCharts.length && data}
+		{#if (voiceCharts.length && data) || (hearingCharts.length && hearing)}
 			<h2 class="section">голос</h2>
 			<div class="grid">
-				{#each voiceCharts as c (c.groups.join())}
-					<section class="card">
-						<h2 title={c.hint}>{c.title}</h2>
-						<div class="legend">
-							{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
-						</div>
-						<TrendChart
-							buckets={data.buckets}
-							bucketSeconds={data.bucketSeconds}
-							series={c.lines}
-							formatAxis={c.format}
-							limit={c.limit}
-							height={200}
-						/>
-					</section>
-				{/each}
+				{#if data}
+					{#each voiceCharts as c (c.groups.join())}
+						<section class="card">
+							<h2 title={c.hint}>{c.title}</h2>
+							<div class="legend">
+								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
+							</div>
+							<TrendChart
+								buckets={data.buckets}
+								bucketSeconds={data.bucketSeconds}
+								series={c.lines}
+								formatAxis={c.format}
+								limit={c.limit}
+								height={200}
+							/>
+						</section>
+					{/each}
+				{/if}
+				{#if hearing}
+					{#each hearingCharts as c (c.groups.join())}
+						<section class="card">
+							<h2 title={c.hint}>{c.title}</h2>
+							<div class="legend">
+								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
+							</div>
+							<TrendChart
+								buckets={hearing.buckets}
+								bucketSeconds={hearing.bucketSeconds}
+								series={c.lines}
+								formatAxis={c.format}
+								limit={c.limit}
+								height={200}
+							/>
+						</section>
+					{/each}
+				{/if}
 			</div>
 		{/if}
 
