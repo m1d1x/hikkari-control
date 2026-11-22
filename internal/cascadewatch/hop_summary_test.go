@@ -51,4 +51,14 @@ func TestHopTraceIdentifiesLossOnTheEntrySideWithoutBlamingAnIncompleteCapture(t
 	if points[0].Up[1].Baseline.Matched != 1 || points[0].Up[2].Baseline.Matched != 1 {
 		t.Fatalf("baseline should match through both NAT boundaries: %+v", points[0].Up)
 	}
+	// One observer thins its sample. Its neighbours must ignore IDs that it
+	// deliberately omitted, even when their own buffers held more packets.
+	windows["out"].Buckets[4].SamplingBits = 2
+	add("in", 0, true, 44, before)
+	add("point-a", 0, false, 44, before)
+	report := summarizeHops(p, incident, windows, configs)
+	up := report["points"].([]hopPoint)[0].Up[0]
+	if up.Baseline.Sent != 1 || up.Baseline.Matched != 1 || up.Gap.Sent != 0 || report["sample_one_in"] != 4 {
+		t.Fatalf("the common sample should include only ID 44: %+v", up)
+	}
 }
