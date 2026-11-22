@@ -49,8 +49,8 @@
 		max?: number;
 		/** events drawn as vertical marks at their moment, listed in the tooltip of their bucket */
 		marks?: TrendMark[];
-		/** the threshold the value is judged by: a dashed line every reading is read against */
-		limit?: number;
+		/** the thresholds the value is judged by: dashed lines every reading is read against */
+		limits?: { value: number; color: string }[];
 	}
 
 	let {
@@ -62,7 +62,7 @@
 		empty = 'нет данных за это окно',
 		max,
 		marks = [],
-		limit,
+		limits = [],
 	}: Props = $props();
 
 	let containerEl = $state<HTMLDivElement | null>(null);
@@ -89,19 +89,19 @@
 		if (max !== undefined) return max;
 		let top = 0;
 		for (const s of series) for (const v of s.values) if (v !== null && v !== undefined && v > top) top = v;
-		// the tolerance is drawn only when the readings come near it
-		if (limit !== undefined && limit > top && limit <= top * 2.5) top = limit;
-		if (top <= 0) return limit ?? 1;
+		// a tolerance is drawn only when the readings come near it
+		for (const l of limits) if (l.value > top && l.value <= top * 2.5) top = l.value;
+		if (top <= 0) return limits[0]?.value ?? 1;
 		const raw = top * 1.15;
 		const pow = 10 ** Math.floor(Math.log10(raw));
-		for (const m of [1, 2, 2.5, 5, 10]) if (raw <= m * pow) return m * pow;
+		for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 10]) if (raw <= m * pow) return m * pow;
 		return 10 * pow;
 	});
 
 	const y = (v: number) => PAD_T + (1 - Math.max(0, Math.min(yMax, v)) / yMax) * PH;
 
-	/** The tolerance line, when it lands inside the axis: otherwise the readings are nowhere near it. */
-	const limitAt = $derived(limit !== undefined && limit <= yMax ? limit : null);
+	/** The tolerances that land inside the axis: the others are nowhere near the readings. */
+	const shownLimits = $derived(limits.filter((l) => l.value <= yMax));
 
 	/** A line broken wherever a bucket has no value. */
 	function linePath(values: (number | null)[]): string {
@@ -218,9 +218,9 @@
 			<text x={W - 8} y={yPos + 3.5} class="y-label" text-anchor="end">{formatAxis(yMax * t)}</text>
 		{/each}
 
-		{#if limitAt !== null}
-			<line x1={PAD_L} y1={y(limitAt)} x2={PAD_L + PW} y2={y(limitAt)} class="limit" />
-		{/if}
+		{#each shownLimits as l (l.value)}
+			<line x1={PAD_L} y1={y(l.value)} x2={PAD_L + PW} y2={y(l.value)} class="limit" style="stroke: {l.color}" />
+		{/each}
 
 		{#each series.filter((s) => s.primary) as s (s.key)}
 			<path d={areaPath(s.values)} fill="url(#{fillId(s.key)})" />

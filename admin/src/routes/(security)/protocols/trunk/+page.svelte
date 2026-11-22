@@ -11,11 +11,10 @@
 	import { fetchTrunkPoints, type TrunkPointChart } from '$lib/api/trunkPoints';
 	import { USE_MOCK } from '$lib/config/mock';
 
-	// The cascade as charts only. The route on one line, then: the voice (the
-	// call and what the app would hear), the border points, the receivers'
-	// egresses, the wires and the pool. Values that are judged by a threshold
-	// carry it as a dashed line; nothing is explained in prose, the meaning of
-	// a chart is in its heading's tooltip.
+	// The cascade as charts only, the product's on top: how long the voice
+	// stalls, how much of that a person pays for in milliseconds, what speed and
+	// what price in latency he gets, and who is on the cascade. The wires
+	// themselves are below: what an agent reads when something is wrong.
 
 	const WINDOWS: TrunkWindow[] = ['6h', '24h', '7d'];
 	const REFRESH_MS = 60_000;
@@ -24,14 +23,15 @@
 	// People: the pool's own call of the two fates and the entry's own wires.
 	// The stand: its process per wire and its call over hk-pipe.
 	const SCOPE = {
-		live: { calls: ['copies1', 'copies2'], voice: 'trunk-voice' },
-		stand: { calls: ['pipe-copies1', 'pipe-copies2'], voice: 'pipe-voice' },
+		live: { route: 'copies2', voice: 'trunk-voice' },
+		stand: { route: 'pipe-copies2', voice: 'pipe-voice' },
 	};
 
 	const ms = (v: number) => `${Math.round(v)} мс`;
 	const count = (v: number) => Math.round(v).toLocaleString('ru');
 	const pm = (v: number) => v.toFixed(1).replace('.', ',');
 	const pct = (v: number) => `${v.toLocaleString('ru', { maximumFractionDigits: 2 })}%`;
+	const mbps = (v: number) => `${Math.round(v)} Мбит/с`;
 
 	const WIRE_COLOR: Record<string, string> = {
 		pool: '#e66767',
@@ -53,14 +53,14 @@
 		if (key === 'copies2') return 'маршрут';
 		if (key.startsWith('wire-')) return `стенд ${key.slice(5)}`;
 		if (key === 'trunk-pool') return 'tcp';
-		if (key === 'trunk-voice') return 'набор голоса';
-		if (key === 'pipe-voice') return 'стенд, набор голоса';
 		if (key === 'trunk-udp') return 'udp';
 		if (key === 'trunk-h3dgram') return 'quic';
-		if (key.startsWith('trunk-')) return key.slice(6);
-		if (key === 'pipe-copies1') return 'стенд, один раз';
+		if (key === 'trunk-voice') return 'набор голоса';
+		if (key === 'pipe-voice') return 'стенд, набор голоса';
 		if (key === 'pipe-copies2') return 'маршрут';
-		if (key.startsWith('pipe-')) return `труба ${key.slice(5)}`;
+		if (key === 'pipe-copies1') return 'стенд, один раз';
+		if (key.startsWith('trunk-')) return key.slice(6);
+		if (key.startsWith('pipe-')) return `стенд ${key.slice(5)}`;
 		return key;
 	}
 
@@ -83,30 +83,68 @@
 		title: string;
 		hint: string;
 		format: (v: number) => string;
-		/** the tolerance the readings are judged by, as a dashed line */
-		limit?: number;
+		/** the thresholds the readings are judged by, as dashed lines */
+		limits?: { value: number; color: string }[];
 		/** a count per bucket, drawn per hour of time */
 		perHour?: boolean;
+		/** a running total of what went over this many milliseconds */
+		accumulate?: number;
 		/** colour and label per group, for charts that split one thing by kind */
 		colors?: Record<string, string>;
 		labels?: Record<string, string>;
+		/** which targets belong to this chart, over the section's own rule */
+		allow?: (key: string) => boolean;
 	}
 
-	const VOICE_CHARTS: ChartSpec[] = [
+	// 60 ms is three voice frames: what Discord hears as a stutter. 150 ms is a
+	// word: what the roadmap counts a red minute by.
+	const PAUSE_LIMITS = [
+		{ value: 60, color: '#c98500' },
+		{ value: 150, color: '#e66767' },
+	];
+
+	const PAUSE_CHARTS: ChartSpec[] = [
 		{
-			groups: ['call_red'],
-			title: 'красных минут на час',
-			hint: 'Пробный звонок каждые 20 мс, без клиента. «Маршрут» — как голос идёт на самом деле: кадр дублируется по двум проводам разных судеб, выход берёт первый дошедший. udp, quic и tcp — тот же звонок, прибитый к одному проводу: так было бы, если бы голос шёл только по нему. Тут минуты с паузой больше 150 мс или потерей больше 1%, на час окна; допуск решения 18.11 — одна такая минута на час.',
-			format: pm,
-			limit: 1,
-			perHour: true,
+			groups: ['call_gap'],
+			title: 'пауза звонка, мс',
+			hint: 'Худшая пауза пробного звонка за отрезок — как голос идёт на самом деле. Пунктир 60 мс: это уже заикание в звонке, 150 мс — проглоченное слово.',
+			format: ms,
+			limits: PAUSE_LIMITS,
 		},
 		{
-			groups: ['call_gaps60'],
-			title: 'пауз больше 60 мс на час',
-			hint: 'Сколько раз звонок молчал дольше 60 мс, на час окна. Второй ранг голоса у селектора после красных минут.',
-			format: pm,
-			perHour: true,
+			groups: ['call_gap'],
+			title: 'сумма пауз сверх 150 мс',
+			hint: 'Накопленным итогом до каждой точки: сколько миллисекунд звонок простоял в обрыве длиннее 150 мс за окно. Конец линии — это и есть простой человека в миллисекундах, а не в минутах.',
+			format: ms,
+			accumulate: 150,
+		},
+	];
+
+	const SPEED_CHARTS: ChartSpec[] = [
+		{
+			groups: ['bulk_speed_p50', 'bulk_speed_p10'],
+			title: 'скорость 1 МиБ, Мбит/с',
+			hint: 'Что человек получает при загрузке через каскад: медиана и худшие 10% загрузок.',
+			format: mbps,
+			colors: { bulk_speed_p50: '#199e70', bulk_speed_p10: '#c98500' },
+			labels: { bulk_speed_p50: 'медиана', bulk_speed_p10: 'худшие 10%' },
+		},
+		{
+			groups: ['cascade_price'],
+			title: 'цена каскада, мс',
+			hint: 'Пинг через каскад минус пинг по России до того же адреса: сколько миллисекунд добавляет заграница. Это то, что человек чувствует в игре.',
+			format: ms,
+		},
+	];
+
+	const PEOPLE_CHARTS: ChartSpec[] = [
+		{
+			groups: ['users_hikkari', 'users_naive', 'users_reality'],
+			title: 'людей на каскаде, по протоколу',
+			hint: 'Сколько человек сидит через каскад и каким протоколом: установок в сети за каждую минуту отрезка.',
+			format: count,
+			colors: { users_hikkari: '#199e70', users_naive: '#3987e5', users_reality: '#9085e9' },
+			labels: { users_hikkari: 'hikkari', users_naive: 'naive', users_reality: 'reality' },
 		},
 	];
 
@@ -116,7 +154,7 @@
 			title: 'дыр в звуке, % кадров',
 			hint: 'Тот же звонок глазами приложения с буфером 60 мс: кадр, который не пришёл вовремя, — дыра. Вверх — слушатель у выхода, вниз — у входа. Цель меньше 1%.',
 			format: pct,
-			limit: 1,
+			limits: [{ value: 1, color: '#e66767' }],
 			colors: { holes60_up: '#3987e5', holes60_down: '#c98500' },
 			labels: { holes60_up: 'вверх', holes60_down: 'вниз' },
 		},
@@ -124,9 +162,16 @@
 
 	const WIRE_CHARTS: ChartSpec[] = [
 		{
+			groups: ['call_gap'],
+			title: 'пауза звонка по проводам, мс',
+			hint: 'Тот же звонок, прибитый к одному проводу: так было бы, если бы голос шёл только по нему. Маршрут выше это то, что выходит с двух проводов разом.',
+			format: ms,
+			limits: PAUSE_LIMITS,
+		},
+		{
 			groups: ['call_rtt50'],
 			title: 'задержка p50, мс',
-			hint: 'Медиана круга звонка по проводу. При равных паузах голос берёт провод с меньшей задержкой.',
+			hint: 'Медиана круга звонка по проводу.',
 			format: ms,
 		},
 		{
@@ -147,7 +192,7 @@
 		{
 			groups: ['pool_dead_stalled', 'pool_dead_broken'],
 			title: 'смертей членов пула в час',
-			hint: 'Магистраль держит пул долгих соединений вход ↔ ядро. Член умер — поток переезжает на живой, кусок переотправляется, это пауза. Рост — на границе режут соединения. Не путать с выходами: там последний участок до интернета.',
+			hint: 'Магистраль держит пул долгих соединений вход ↔ ядро. Член умер — поток переезжает на живой, кусок переотправляется, это пауза. Рост — на границе режут соединения.',
 			format: pm,
 			perHour: true,
 			colors: { pool_dead_stalled: '#c98500', pool_dead_broken: '#e66767' },
@@ -167,7 +212,7 @@
 			title: 'пауза звонка через точку, мс',
 			hint: 'Худшая пауза пробного звонка за отрезок, по каждой точке перехода.',
 			format: ms,
-			limit: 150,
+			limits: [{ value: 150, color: '#e66767' }],
 		},
 	];
 
@@ -234,8 +279,20 @@
 	);
 	const hasStand = $derived((points?.lines ?? []).some((l) => isStand(l.key)));
 	const members = $derived(Math.max(1, ...(points?.routes ?? []).flatMap((r) => r.points.map((p) => p.sample?.members ?? 0))));
-
+	const routeKey = $derived(SCOPE[scope].route);
 	const voiceKey = $derived(SCOPE[scope].voice);
+
+	/** Running total of what went over the threshold: the product's milliseconds. */
+	function running(values: (number | null)[], threshold: number): (number | null)[] {
+		let sum = 0;
+		let seen = false;
+		return values.map((v) => {
+			if (v === null) return seen ? sum : null;
+			seen = true;
+			if (v > threshold) sum += v - threshold;
+			return sum;
+		});
+	}
 
 	/** One line per target of the groups, per hour where the spec counts minutes. */
 	function linesOf(chart: TrunkWireChart | null, c: ChartSpec, allow: (key: string) => boolean, bucketSeconds: number): TrendSeries[] {
@@ -244,11 +301,12 @@
 		for (const group of c.groups) {
 			const lines = (chart?.lines ?? []).filter((l) => l.group === group && allow(l.key)).sort((x, y) => rank(x.key).localeCompare(rank(y.key)));
 			for (const l of lines) {
+				const values = l.values.map((v) => (v === null ? null : v * scale));
 				out.push({
 					key: c.groups.length > 1 ? `${group}|${l.key}` : l.key,
 					label: c.labels?.[group] ?? labelOf(l.key),
 					color: c.colors?.[group] ?? colorOf(l.key),
-					values: l.values.map((v) => (v === null ? null : v * scale)),
+					values: c.accumulate === undefined ? values : running(values, c.accumulate),
 					format: c.format,
 				});
 			}
@@ -258,18 +316,15 @@
 
 	const cards = (specs: ChartSpec[], chart: TrunkWireChart | null, allow: (key: string) => boolean) =>
 		specs
-			.map((c) => ({ ...c, lines: linesOf(chart, c, allow, chart?.bucketSeconds ?? 3600) }))
+			.map((c) => ({ ...c, lines: linesOf(chart, c, c.allow ?? allow, chart?.bucketSeconds ?? 3600) }))
 			.filter((c) => c.lines.length > 0);
 
-	// The route the voice takes now, then every wire of its set: a wire that
-	// reads worse than the route is why the route is what it is.
-	const voiceWires = $derived(
-		(scope === 'live' ? ['copies2', 'trunk-udp', 'trunk-h3dgram', 'trunk-pool'] : ['pipe-copies2', 'pipe-udp', 'pipe-h3dgram', 'pipe-pool']),
-	);
-	const voiceCharts = $derived(cards(VOICE_CHARTS, data, (k) => voiceWires.includes(k)));
+	const pauseCharts = $derived(cards(PAUSE_CHARTS, data, (k) => k === routeKey));
+	const speedCharts = $derived(cards(SPEED_CHARTS, data, (k) => !isStand(k)));
+	const peopleCharts = $derived(cards(PEOPLE_CHARTS, data, (k) => !isStand(k)));
 	const hearingCharts = $derived(cards(HEARING_CHARTS, hearing, (k) => k === voiceKey));
 	const wireCharts = $derived(cards(WIRE_CHARTS, data, (k) => isStand(k) === (scope === 'stand')));
-	const poolCharts = $derived(cards(POOL_CHARTS, data, (k) => !isStand(k) === (scope !== 'stand')));
+	const poolCharts = $derived(cards(POOL_CHARTS, data, (k) => !isStand(k)));
 	const pointCharts = $derived(
 		POINT_CHARTS.map((c) => ({
 			...c,
@@ -336,41 +391,110 @@
 			{#if USE_MOCK}<span class="muted">демоданные</span>{/if}
 		</div>
 
-		{#if (voiceCharts.length && data) || (hearingCharts.length && hearing)}
-			<h2 class="section">голос</h2>
+		{#if pauseCharts.length && data}
+			<div class="grid one">
+				{#each pauseCharts as c, i (c.title)}
+					<section class="card">
+						<h2 title={c.hint}>{c.title}</h2>
+						<TrendChart
+							buckets={data.buckets}
+							bucketSeconds={data.bucketSeconds}
+							series={c.lines}
+							formatAxis={c.format}
+							limits={c.limits}
+							height={i === 0 ? 260 : 190}
+						/>
+					</section>
+				{/each}
+			</div>
+		{/if}
+
+		{#if (speedCharts.length && data) || (peopleCharts.length && data)}
+			<h2 class="section">скорость, цена, люди</h2>
 			<div class="grid">
-				{#if data}
-					{#each voiceCharts as c (c.groups.join())}
-						<section class="card">
-							<h2 title={c.hint}>{c.title}</h2>
-							
-							<TrendChart
-								buckets={data.buckets}
-								bucketSeconds={data.bucketSeconds}
-								series={c.lines}
-								formatAxis={c.format}
-								limit={c.limit}
-								height={200}
-							/>
-						</section>
-					{/each}
-				{/if}
-				{#if hearing}
-					{#each hearingCharts as c (c.groups.join())}
-						<section class="card">
-							<h2 title={c.hint}>{c.title}</h2>
-							
-							<TrendChart
-								buckets={hearing.buckets}
-								bucketSeconds={hearing.bucketSeconds}
-								series={c.lines}
-								formatAxis={c.format}
-								limit={c.limit}
-								height={200}
-							/>
-						</section>
-					{/each}
-				{/if}
+				{#each speedCharts as c (c.groups.join())}
+					<section class="card">
+						<h2 title={c.hint}>{c.title}</h2>
+						<TrendChart
+							buckets={data.buckets}
+							bucketSeconds={data.bucketSeconds}
+							series={c.lines}
+							formatAxis={c.format}
+							limits={c.limits}
+							height={190}
+						/>
+					</section>
+				{/each}
+				{#each peopleCharts as c (c.groups.join())}
+					<section class="card">
+						<h2 title={c.hint}>{c.title}</h2>
+						<TrendChart
+							buckets={data.buckets}
+							bucketSeconds={data.bucketSeconds}
+							series={c.lines}
+							formatAxis={c.format}
+							limits={c.limits}
+							height={190}
+						/>
+					</section>
+				{/each}
+			</div>
+		{/if}
+
+		{#if wireCharts.length && data}
+			<h2 class="section">по проводам</h2>
+			<div class="grid">
+				{#each wireCharts as c (c.groups.join())}
+					<section class="card">
+						<h2 title={c.hint}>{c.title}</h2>
+						<TrendChart
+							buckets={data.buckets}
+							bucketSeconds={data.bucketSeconds}
+							series={c.lines}
+							formatAxis={c.format}
+							limits={c.limits}
+							height={190}
+						/>
+					</section>
+				{/each}
+			</div>
+		{/if}
+
+		{#if hearingCharts.length && hearing}
+			<h2 class="section">что слышит слушатель</h2>
+			<div class="grid">
+				{#each hearingCharts as c (c.groups.join())}
+					<section class="card">
+						<h2 title={c.hint}>{c.title}</h2>
+						<TrendChart
+							buckets={hearing.buckets}
+							bucketSeconds={hearing.bucketSeconds}
+							series={c.lines}
+							formatAxis={c.format}
+							limits={c.limits}
+							height={190}
+						/>
+					</section>
+				{/each}
+			</div>
+		{/if}
+
+		{#if poolCharts.length && data}
+			<h2 class="section">пул</h2>
+			<div class="grid">
+				{#each poolCharts as c (c.groups.join())}
+					<section class="card">
+						<h2 title={c.hint}>{c.title}</h2>
+						<TrendChart
+							buckets={data.buckets}
+							bucketSeconds={data.bucketSeconds}
+							series={c.lines}
+							formatAxis={c.format}
+							limits={c.limits}
+							height={190}
+						/>
+					</section>
+				{/each}
 			</div>
 		{/if}
 
@@ -380,13 +504,12 @@
 				{#each pointCharts as c (c.groups.join())}
 					<section class="card">
 						<h2 title={c.hint}>{c.groups.includes('point_up') ? `${c.title}, из ${members}` : c.title}</h2>
-						
 						<TrendChart
 							buckets={points.buckets}
 							bucketSeconds={points.bucketSeconds}
 							series={c.lines}
 							formatAxis={c.format}
-							limit={c.limit}
+							limits={c.limits}
 							height={190}
 						/>
 					</section>
@@ -404,53 +527,12 @@
 				{#each egressCharts as c (c.groups.join())}
 					<section class="card">
 						<h2 title={c.hint}>{c.title}</h2>
-						
 						<TrendChart
 							buckets={egress.buckets}
 							bucketSeconds={egress.bucketSeconds}
 							series={c.lines}
 							formatAxis={c.format}
-							limit={c.limit}
-							height={190}
-						/>
-					</section>
-				{/each}
-			</div>
-		{/if}
-
-		{#if wireCharts.length && data}
-			<h2 class="section">по проводам</h2>
-			<div class="grid">
-				{#each wireCharts as c (c.groups.join())}
-					<section class="card">
-						<h2 title={c.hint}>{c.title}</h2>
-						
-						<TrendChart
-							buckets={data.buckets}
-							bucketSeconds={data.bucketSeconds}
-							series={c.lines}
-							formatAxis={c.format}
-							limit={c.limit}
-							height={190}
-						/>
-					</section>
-				{/each}
-			</div>
-		{/if}
-
-		{#if poolCharts.length && data}
-			<h2 class="section">пул</h2>
-			<div class="grid">
-				{#each poolCharts as c (c.groups.join())}
-					<section class="card">
-						<h2 title={c.hint}>{c.title}</h2>
-						
-						<TrendChart
-							buckets={data.buckets}
-							bucketSeconds={data.bucketSeconds}
-							series={c.lines}
-							formatAxis={c.format}
-							limit={c.limit}
+							limits={c.limits}
 							height={190}
 						/>
 					</section>
@@ -544,6 +626,11 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
 		gap: 12px;
+	}
+
+	.grid.one {
+		grid-template-columns: 1fr;
+		margin-top: 12px;
 	}
 
 	.card {

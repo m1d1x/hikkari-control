@@ -69,13 +69,20 @@ function mockTrunkWires(window: TrunkWindow): TrunkWireChart {
 	// the pool's deaths: the fabric between the entry and the core, per entry
 	add('pool_dead_stalled', ['aezamsk1'], () => 190 + rnd() * 130);
 	add('pool_dead_broken', ['aezamsk1'], () => 50 + rnd() * 40);
-	add('call_gap', MOCK_TARGETS, (k) => (pool(k) ? 29 + rnd() * 62 : 38 + rnd() * 240));
+	add('call_gap', MOCK_TARGETS, (k, i) => (pool(k) ? (i === n - 7 ? 280 : i === n - 15 ? 190 : 29 + rnd() * 62) : 38 + rnd() * 240));
 	add('call_loss', MOCK_TARGETS, (k) => (pool(k) ? rnd() * 2 : rnd() * 9));
 	add('call_silent', MOCK_TARGETS, (k) => (pool(k) ? (rnd() > 0.9 ? rnd() * 0.07 : 0) : rnd() * 1.7));
 	const wires = MOCK_TARGETS.filter((k) => k.startsWith('wire-'));
 	add('bulk_mbps', wires, (k) => (k.endsWith('pool') ? 90 : 150) + rnd() * 80);
 	add('bulk_failed', wires, () => (rnd() > 0.9 ? 1 : 0));
 	add('cpu', wires, () => 2 + rnd());
+	// the product's numbers: what a person gets, what it costs him, who is on it
+	add('bulk_speed_p50', ['aezamsk1'], () => 150 + rnd() * 80);
+	add('bulk_speed_p10', ['aezamsk1'], () => 40 + rnd() * 50);
+	add('cascade_price', ['aezamsk1'], () => 10 + rnd() * 8);
+	add('users_hikkari', ['aezamsk1'], () => Math.round(2 + rnd() * 2));
+	add('users_naive', ['aezamsk1'], () => Math.round(rnd() * 2));
+	add('users_reality', ['aezamsk1'], () => Math.round(1 + rnd()));
 	const marks: TrunkMark[] = [
 		{ at: buckets[n - 9], label: 'голос: udp красный, на h3dgram', class: 'voice', why: 'red' },
 		{ at: buckets[n - 4], label: 'голос: h3dgram → udp, лучше 5m0s', class: 'voice', why: 'better' },
