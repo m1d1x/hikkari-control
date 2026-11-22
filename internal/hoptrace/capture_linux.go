@@ -15,6 +15,7 @@ import (
 )
 
 const maxSamplesPerSecond = 512
+const initialSamplingBits = 1
 
 func socketFilter(c Config) ([]unix.SockFilter, error) {
 	n := len(c.Peers)
@@ -93,7 +94,7 @@ func Capture(ctx context.Context, config string) error {
 	log.Printf("hop trace started: %d peers, %d ports", len(c.Peers), len(c.Ports))
 	var frame [snapLength]byte
 	var control [64]byte
-	bucket := Bucket{Second: time.Now().Unix(), Packets: make([]Packet, 0, maxSamplesPerSecond)}
+	bucket := Bucket{Second: time.Now().Unix(), SamplingBits: initialSamplingBits, Packets: make([]Packet, 0, maxSamplesPerSecond)}
 	for ctx.Err() == nil {
 		n, oob, _, addr, readErr := unix.Recvmsg(fd, frame[:], control[:], 0)
 		now := time.Now()
@@ -112,7 +113,7 @@ func Capture(ctx context.Context, config string) error {
 				log.Print("hop trace lease expired")
 				return nil
 			}
-			bucket = Bucket{Second: now.Unix(), Complete: true, Packets: bucket.Packets[:0]}
+			bucket = Bucket{Second: now.Unix(), Complete: true, SamplingBits: initialSamplingBits, Packets: bucket.Packets[:0]}
 		}
 		if errors.Is(readErr, unix.EAGAIN) || errors.Is(readErr, unix.EINTR) {
 			continue
@@ -125,11 +126,7 @@ func Capture(ctx context.Context, config string) error {
 			continue
 		}
 		p, ok := packet(frame[:n], from.Pkttype == unix.PACKET_OUTGOING, c)
-		if !ok {
-			continue
-		}
-		if len(bucket.Packets) == cap(bucket.Packets) {
-			bucket.Overflow = true
+		if !ok || !Sampled(p.ID, bucket.SamplingBits) {
 			continue
 		}
 		p.At = timestamp(control[:oob])
@@ -137,7 +134,7 @@ func Capture(ctx context.Context, config string) error {
 			bucket.Complete = false
 			continue
 		}
-		bucket.Packets = append(bucket.Packets, p)
+		bucket.record(p)
 	}
 	return nil
 }

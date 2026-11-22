@@ -49,9 +49,5 @@ func packet(frame []byte, out bool, c Config) (Packet, bool) {
 	copy(fingerprint[:2], udp[4:6])
 	copy(fingerprint[2:], udp[8:8+prefix])
 	digest := sha256.Sum256(fingerprint[:2+prefix])
-	// Deterministic sampling keeps the same packet at each observation point.
-	if digest[8]&1 != 0 {
-		return Packet{}, false
-	}
 	return Packet{ID: binary.BigEndian.Uint64(digest[:8]), Port: port, Peer: uint8(peer), Out: out}, true
 }

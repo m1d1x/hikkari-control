@@ -49,11 +49,13 @@ type hopPoint struct {
 func summarizeHops(p entry.TrunkPair, incident hopIncident, windows map[string]hoptrace.Window, configs map[string]hoptrace.Config) map[string]any {
 	from, until := incident.captureWindow()
 	coverage := make(map[string]hopCoverage)
+	var samplingBits uint8
 	for box, config := range configs {
 		c := hopCoverage{Missing: int(until - from)}
 		window := windows[box]
 		if window.Config == config.Encode() {
 			for _, b := range window.Buckets {
+				samplingBits = max(samplingBits, b.SamplingBits)
 				if b.Complete {
 					c.Seconds++
 					c.Missing--
@@ -77,6 +79,9 @@ func summarizeHops(p entry.TrunkPair, incident hopIncident, windows map[string]h
 		for _, b := range windows[observation.box].Buckets {
 			for _, sample := range b.Packets {
 				peers := configs[observation.box].Peers
+				if !hoptrace.Sampled(sample.ID, samplingBits) {
+					continue
+				}
 				if sample.Out == observation.out && int(sample.Peer) < len(peers) && peers[sample.Peer].Name == observation.peer {
 					id := hopPacketID{id: sample.ID, port: sample.Port}
 					if _, exists := packets[id]; !exists {
@@ -119,7 +124,8 @@ func summarizeHops(p entry.TrunkPair, incident hopIncident, windows map[string]h
 	}
 	return map[string]any{
 		"kind": "hop_trace", "gap_at": incident.at, "gap_ms": incident.gap.Milliseconds(),
-		"analyzed_ms": incident.end().Sub(incident.at).Milliseconds(), "coverage": coverage, "points": points,
+		"sample_one_in": 1 << samplingBits,
+		"analyzed_ms":   incident.end().Sub(incident.at).Milliseconds(), "coverage": coverage, "points": points,
 	}
 }
 

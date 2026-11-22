@@ -16,6 +16,8 @@ import (
 
 const Retention = 360
 
+const configVersion = 2
+
 var validKey = regexp.MustCompile(`^[a-f0-9]{16}$`)
 
 type Peer struct {
@@ -24,12 +26,14 @@ type Peer struct {
 }
 
 type Config struct {
-	Key   string
-	Peers []Peer
-	Ports []uint16
+	Version uint8
+	Key     string
+	Peers   []Peer
+	Ports   []uint16
 }
 
 func (c Config) Encode() string {
+	c.Version = configVersion
 	b, _ := json.Marshal(c)
 	return base64.RawURLEncoding.EncodeToString(b)
 }
@@ -43,7 +47,7 @@ func Decode(value string) (Config, error) {
 	if err := json.Unmarshal(b, &c); err != nil {
 		return c, err
 	}
-	if !validKey.MatchString(c.Key) || len(c.Peers) == 0 || len(c.Peers) > 16 || len(c.Ports) == 0 || len(c.Ports) > 16 {
+	if c.Version != configVersion || !validKey.MatchString(c.Key) || len(c.Peers) == 0 || len(c.Peers) > 16 || len(c.Ports) == 0 || len(c.Ports) > 16 {
 		return c, fmt.Errorf("invalid hop trace configuration")
 	}
 	for _, p := range c.Peers {
@@ -65,11 +69,42 @@ type Packet struct {
 }
 
 type Bucket struct {
-	Second   int64
-	Complete bool
-	Drops    uint32
-	Overflow bool
-	Packets  []Packet
+	Second       int64
+	Complete     bool
+	Drops        uint32
+	Overflow     bool
+	SamplingBits uint8
+	Packets      []Packet
+}
+
+// Sampled is shared by the observers and the correlator. A bucket may keep a
+// thinner sample under load, but any two observers still share the subset
+// defined by the larger sampling value.
+func Sampled(id uint64, bits uint8) bool {
+	return id&((uint64(1)<<bits)-1) == 0
+}
+
+const maxSamplingBits = 16
+
+func (b *Bucket) record(p Packet) {
+	for Sampled(p.ID, b.SamplingBits) {
+		if len(b.Packets) < cap(b.Packets) {
+			b.Packets = append(b.Packets, p)
+			return
+		}
+		if b.SamplingBits == maxSamplingBits {
+			b.Overflow = true
+			return
+		}
+		b.SamplingBits++
+		kept := b.Packets[:0]
+		for _, sample := range b.Packets {
+			if Sampled(sample.ID, b.SamplingBits) {
+				kept = append(kept, sample)
+			}
+		}
+		b.Packets = kept
+	}
 }
 
 type Window struct {
