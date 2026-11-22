@@ -49,15 +49,15 @@
 	}
 
 	function labelOf(key: string): string {
-		if (key === 'copies1') return '1 копия';
-		if (key === 'copies2') return '2 копии';
+		if (key === 'copies1') return 'кадр один раз';
+		if (key === 'copies2') return 'кадр дважды';
 		if (key.startsWith('wire-')) return `стенд ${key.slice(5)}`;
 		if (key === 'trunk-pool') return 'вход, пул';
 		if (key === 'trunk-voice') return 'набор голоса';
 		if (key === 'pipe-voice') return 'стенд, набор голоса';
 		if (key.startsWith('trunk-')) return `вход ${key.slice(6)}`;
-		if (key === 'pipe-copies1') return 'стенд, 1 копия';
-		if (key === 'pipe-copies2') return 'стенд, 2 копии';
+		if (key === 'pipe-copies1') return 'стенд, один раз';
+		if (key === 'pipe-copies2') return 'стенд, дважды';
 		if (key.startsWith('pipe-')) return `труба ${key.slice(5)}`;
 		return key;
 	}
@@ -93,7 +93,7 @@
 		{
 			groups: ['call_red'],
 			title: 'красных минут на час',
-			hint: 'Звонок идёт сам, без клиента: кадр каждые 20 мс до выхода и обратно. 1 копия — кадр ушёл один раз по выбранному проводу, так слышит канал самого Hikkari; 2 копии — тот же кадр по двум проводам разных судеб разом, так слышит обычный UDP клиента. Тут минуты с паузой больше 150 мс или потерей больше 1%, на час окна. Допуск решения 18.11 — одна такая минута на час.',
+			hint: 'Звонок идёт сам, без клиента: кадр каждые 20 мс до выхода и обратно. «Один раз» — кадр ушёл по одному выбранному проводу, потеряли провод — пропал кадр. «Дважды» — тот же кадр ушёл ещё и вторым путём другой природы, выход берёт первый дошедший, второй выбрасывает. Разница между линиями — сколько дырок закрыл дубль. Тут минуты с паузой больше 150 мс или потерей больше 1%, на час окна; допуск решения 18.11 — одна такая минута на час.',
 			format: pm,
 			limit: 1,
 			perHour: true,
@@ -243,8 +243,8 @@
 		const scale = c.perHour ? 3600 / bucketSeconds : 1;
 		const out: TrendSeries[] = [];
 		for (const group of c.groups) {
-			for (const l of chart?.lines ?? []) {
-				if (l.group !== group || !allow(l.key)) continue;
+			const lines = (chart?.lines ?? []).filter((l) => l.group === group && allow(l.key)).sort((x, y) => rank(x.key).localeCompare(rank(y.key)));
+			for (const l of lines) {
 				out.push({
 					key: c.groups.length > 1 ? `${group}|${l.key}` : l.key,
 					label: c.labels?.[group] ?? labelOf(l.key),
@@ -255,7 +255,7 @@
 				});
 			}
 		}
-		return out.sort((a, b) => a.label.localeCompare(b.label, 'ru'));
+		return out;
 	}
 
 	const cards = (specs: ChartSpec[], chart: TrunkWireChart | null, allow: (key: string) => boolean) =>
