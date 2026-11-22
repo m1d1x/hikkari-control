@@ -343,9 +343,7 @@
 					{#each voiceCharts as c (c.groups.join())}
 						<section class="card">
 							<h2 title={c.hint}>{c.title}</h2>
-							<div class="legend">
-								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
-							</div>
+							
 							<TrendChart
 								buckets={data.buckets}
 								bucketSeconds={data.bucketSeconds}
@@ -361,9 +359,7 @@
 					{#each hearingCharts as c (c.groups.join())}
 						<section class="card">
 							<h2 title={c.hint}>{c.title}</h2>
-							<div class="legend">
-								{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
-							</div>
+							
 							<TrendChart
 								buckets={hearing.buckets}
 								bucketSeconds={hearing.bucketSeconds}
@@ -384,9 +380,7 @@
 				{#each pointCharts as c (c.groups.join())}
 					<section class="card">
 						<h2 title={c.hint}>{c.groups.includes('point_up') ? `${c.title}, из ${members}` : c.title}</h2>
-						<div class="legend">
-							{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
-						</div>
+						
 						<TrendChart
 							buckets={points.buckets}
 							bucketSeconds={points.bucketSeconds}
@@ -410,9 +404,7 @@
 				{#each egressCharts as c (c.groups.join())}
 					<section class="card">
 						<h2 title={c.hint}>{c.title}</h2>
-						<div class="legend">
-							{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
-						</div>
+						
 						<TrendChart
 							buckets={egress.buckets}
 							bucketSeconds={egress.bucketSeconds}
@@ -432,9 +424,7 @@
 				{#each wireCharts as c (c.groups.join())}
 					<section class="card">
 						<h2 title={c.hint}>{c.title}</h2>
-						<div class="legend">
-							{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
-						</div>
+						
 						<TrendChart
 							buckets={data.buckets}
 							bucketSeconds={data.bucketSeconds}
@@ -454,9 +444,7 @@
 				{#each poolCharts as c (c.groups.join())}
 					<section class="card">
 						<h2 title={c.hint}>{c.title}</h2>
-						<div class="legend">
-							{#each c.lines as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
-						</div>
+						
 						<TrendChart
 							buckets={data.buckets}
 							bucketSeconds={data.bucketSeconds}
@@ -564,23 +552,6 @@
 		background: oklch(0.2 0 0);
 		border: 1px solid var(--border);
 		border-radius: 8px;
-	}
-
-	.legend {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 4px 12px;
-		margin-bottom: 8px;
-		color: var(--text-2);
-		font-size: 12px;
-	}
-
-	.legend i {
-		display: inline-block;
-		width: 8px;
-		height: 8px;
-		margin-right: 6px;
-		border-radius: 2px;
 	}
 
 	.muted {

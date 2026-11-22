@@ -56,9 +56,7 @@
 		<span>{bucketLabel(buckets[0], bucketSeconds)}</span>
 		<span>{bucketLabel(buckets[buckets.length - 1], bucketSeconds)}</span>
 	</div>
-	<div class="legend">
-		{#each series as s (s.key)}<span><i style="background: {s.color}"></i>{s.label}</span>{/each}
-	</div>
+	
 {/if}
 
 <style>
@@ -87,23 +85,6 @@
 		font-family: var(--mono, 'IBM Plex Mono', monospace);
 		font-size: 11px;
 		font-variant-numeric: tabular-nums;
-	}
-
-	.legend {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 4px 12px;
-		margin-top: 8px;
-		color: var(--text-2);
-		font-size: 12px;
-	}
-
-	.legend i {
-		display: inline-block;
-		width: 8px;
-		height: 8px;
-		margin-right: 6px;
-		border-radius: 2px;
 	}
 
 	.empty {
