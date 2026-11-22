@@ -11,10 +11,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
+
+	"github.com/m1d1x/hikkari-control/internal/hoptrace"
 )
 
 func main() {
@@ -36,6 +41,21 @@ func main() {
 			usage()
 		}
 		out, err = measureTrunk(os.Args[2], os.Args[3], intArg(4, defaultChunks), int64(intArg(5, defaultChunkSize)))
+	case "hop-capture":
+		if len(os.Args) != 3 {
+			usage()
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		err = hoptrace.Capture(ctx, os.Args[2])
+		stop()
+		if err == nil {
+			return
+		}
+	case "hop-read":
+		if len(os.Args) != 5 {
+			usage()
+		}
+		out, err = hoptrace.Read(os.Args[2], int64(intArg(3, 0)), int64(intArg(4, 0)))
 	default:
 		usage()
 	}
@@ -59,6 +79,6 @@ func intArg(i, def int) int {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: nekko-cascade-probe vps | path <ip:port> [flows] | trunk <single|pool> <host:port> [chunks] [size]")
+	fmt.Fprintln(os.Stderr, "usage: nekko-cascade-probe vps | path <ip:port> [flows] | trunk <single|pool> <host:port> [chunks] [size] | hop-capture <config> | hop-read <config> <from> <until>")
 	os.Exit(2)
 }

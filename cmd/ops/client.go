@@ -422,7 +422,7 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 		return c.runsRecord(args)
 	case "trunk":
 		q := url.Values{}
-		for _, k := range []string{"last", "layer", "entry", "rows", "limit"} {
+		for _, k := range []string{"last", "layer", "target", "entry", "rows", "limit"} {
 			if v := args[k]; v != "" {
 				q.Set(k, v)
 			}

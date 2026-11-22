@@ -107,7 +107,7 @@ func (w *Watch) opsHandler(rw http.ResponseWriter, r *http.Request) {
 	// The newest rows, not the oldest: a day of every layer is more than
 	// maxRows (about 38 rows a minute with the stand's calls), and the oldest
 	// first silently lost the end of the window, the part a reader asks about.
-	all := Query{Since: since, Until: until.Add(time.Minute), Entry: q.Get("entry"), Limit: maxRows, Newest: true}
+	all := Query{Since: since, Until: until.Add(time.Minute), Entry: q.Get("entry"), Target: q.Get("target"), Limit: maxRows, Newest: true}
 	rows, err := w.store.Rows(r.Context(), all)
 	if err != nil {
 		writeJSON(rw, http.StatusInternalServerError, map[string]string{"error": "internal"})
@@ -117,7 +117,7 @@ func (w *Watch) opsHandler(rw http.ResponseWriter, r *http.Request) {
 		"window":  map[string]string{"from": since.UTC().Format(time.RFC3339), "to": until.UTC().Format(time.RFC3339)},
 		"summary": Summarize(rows),
 		"guide": "Слои: entry (строка stats входа раз в минуту, счётчики с запуска входа), event (член пула умер: why stalled/broken, " +
-			"after_s; смена эпохи выхода; старт входа), vps (бокс: steal, load, память, потери интерфейса d_*), path (голый TCP с 12 source port " +
+			"after_s; смена эпохи выхода; старт входа; hop_trace: совпадения UDP-пакетов по участкам в момент паузы), vps (бокс: steal, load, память, потери интерфейса d_*), path (голый TCP с 12 source port " +
 			"и ICMP к порту релея; vantage entry: вход, иначе контрольная точка), trunk (куски provoke 48 × 256 КиБ, single и pool; target direct: " +
 			"прямо через границу, entry: через магистраль; busy: шёл опыт 1, раунд пропущен), protocol (ядро клиента на Hikkari-релее выхода: " +
 			"1 МиБ, залп 50, 3 после, звонок 30 с: gaps60, gap_max; target direct или entry; vantage: слот точки), verdict (первый красный слой " +
@@ -135,7 +135,7 @@ func (w *Watch) opsHandler(rw http.ResponseWriter, r *http.Request) {
 		}
 	}
 	layer := q.Get("layer")
-	if layer != "" || q.Get("rows") == "1" {
+	if layer != "" || all.Target != "" || q.Get("rows") == "1" {
 		limit := 2000
 		if v, err := strconv.Atoi(q.Get("limit")); err == nil && v > 0 && v <= maxRows {
 			limit = v

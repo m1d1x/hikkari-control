@@ -32,7 +32,8 @@ const usage = `usage: ops <command>
   matrix --sub URL --profile LABEL --knob fp=chrome,firefox [--vantage spb,lv] [--rounds 3]
                                     one knob of a profile, measured from Russia and outside
   stand [--limit 20]                the hub's scheduled stand: what it measures, its latest runs
-  trunk [--last 6h] [--layer L] [--entry BOX] [--rows 1]
+  trunk [--last 6h] [--layer L] [--target TARGET] [--entry BOX] [--rows 1]
+                                    event target hop_trace: packet matches by hop after a call gap
   cascade-load --slot ru-eurodir --entry BOX --users 2 --minutes 10 --game_pps 200 --echo IP:2053 [--path entry|direct|raw]
                                     the cascade's dataset by layer, with a summary per entry
   knobs [--profile X] [--days 7]    the knob controller: policy, nodes' values, its journal

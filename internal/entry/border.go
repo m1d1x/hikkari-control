@@ -291,33 +291,14 @@ func (s *Service) borderPlanOf(ctx context.Context, box, core string) (borderPla
 	if err != nil {
 		return borderPlan{}, err
 	}
-	relays, err := s.relayIdentities(ctx, core)
+	tcp, udp, err := s.trunkBorderPorts(ctx, core)
 	if err != nil {
 		return borderPlan{}, err
-	}
-	plan := borderPlan{CoreBox: core, Core: coreIP}
-	tcp, udp := map[int]bool{}, map[int]bool{}
-	for _, rel := range relays {
-		h := rel.id.Hikkari
-		if h == nil || h.TrunkPipeKey == "" {
-			continue
-		}
-		tcp[rel.id.Port] = true
-		for _, p := range h.TrunkPipeWires {
-			udp[p] = true
-		}
 	}
 	if len(tcp) == 0 {
 		return borderPlan{}, fmt.Errorf("%w: у %s нет hk-exit под релеем, сначала entry-box trunk-pipe-exit или entry-box core", ErrRejected, core)
 	}
-	for p := range tcp {
-		plan.TCP = append(plan.TCP, p)
-	}
-	for p := range udp {
-		plan.UDP = append(plan.UDP, p)
-	}
-	sort.Ints(plan.TCP)
-	sort.Ints(plan.UDP)
+	plan := borderPlan{CoreBox: core, Core: coreIP, TCP: tcp, UDP: udp}
 	rows, err := s.pool.Query(ctx, `SELECT entry_box FROM trunk_entries WHERE exit_box = $1 OR pipe_core = $1 ORDER BY entry_box`, core)
 	if err != nil {
 		return borderPlan{}, err
@@ -344,6 +325,35 @@ func (s *Service) borderPlanOf(ctx context.Context, box, core string) (borderPla
 		return borderPlan{}, fmt.Errorf("%w: магистраль ни одного входа не идёт в %s", ErrRejected, core)
 	}
 	return plan, nil
+}
+
+// trunkBorderPorts are the public wire ports. TrunkPorts in the relay's
+// identity are the loopback destinations behind the trunk.
+func (s *Service) trunkBorderPorts(ctx context.Context, core string) (tcp, udp []int, err error) {
+	relays, err := s.relayIdentities(ctx, core)
+	if err != nil {
+		return nil, nil, err
+	}
+	tcpSet, udpSet := map[int]bool{}, map[int]bool{}
+	for _, rel := range relays {
+		h := rel.id.Hikkari
+		if h == nil || h.TrunkPipeKey == "" {
+			continue
+		}
+		tcpSet[rel.id.Port] = true
+		for _, port := range h.TrunkPipeWires {
+			udpSet[port] = true
+		}
+	}
+	for p := range tcpSet {
+		tcp = append(tcp, p)
+	}
+	for p := range udpSet {
+		udp = append(udp, p)
+	}
+	sort.Ints(tcp)
+	sort.Ints(udp)
+	return tcp, udp, nil
 }
 
 // StandBorder makes box a border point of core; off takes that core's
