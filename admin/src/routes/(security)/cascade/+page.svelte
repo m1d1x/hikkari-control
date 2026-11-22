@@ -223,20 +223,32 @@
 			})),
 	);
 
-	// The egresses: which one carried the receiver in each bucket.
-	const egressKeyOrder = $derived([...new Set((egress?.lines ?? []).map((l) => l.key))].sort());
-	const carrierLines = $derived<TrendSeries[]>(
-		egress?.lines
-			.filter((l) => l.group === 'egress_carry')
-			.sort((a, b) => a.key.localeCompare(b.key))
-			.map((l) => ({
-				key: l.key,
-				label: l.key,
-				color: ['#3987e5', '#c98500', '#9085e9', '#199e70', '#e66767'][egressKeyOrder.indexOf(l.key) % 5],
-				values: l.values,
+	// The egresses: which one carried the receiver in each bucket. The receiver
+	// that holds the tunnel is not the point people go through, so the strip
+	// names the egress alone; two receivers behind one egress are one row.
+	const carrierLines = $derived.by<TrendSeries[]>(() => {
+		const byEgress = new Map<string, (number | null)[]>();
+		for (const l of egress?.lines ?? []) {
+			if (l.group !== 'egress_carry') continue;
+			const name = l.key.split(' → ').pop() ?? l.key;
+			const vals: (number | null)[] = l.values;
+			const values: (number | null)[] = byEgress.get(name) ?? vals.map(() => null);
+			vals.forEach((v, i) => {
+				const held = values[i] ?? null;
+				if (v !== null && (held === null || v > held)) values[i] = v;
+			});
+			byEgress.set(name, values);
+		}
+		return [...byEgress.entries()]
+			.sort((a, b) => a[0].localeCompare(b[0]))
+			.map(([name, values], i) => ({
+				key: name,
+				label: name,
+				color: ['#3987e5', '#c98500', '#9085e9', '#199e70', '#e66767'][i % 5],
+				values,
 				format: count,
-			})) ?? [],
-	);
+			}));
+	});
 </script>
 
 <PageShell>
