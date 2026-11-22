@@ -16,7 +16,7 @@ func TestDBAWireChartDrawsEveryTargetAndTheMoves(t *testing.T) {
 	at := func(m int) time.Time { return time.Date(2026, 11, 11, 5, m, 0, 0, time.UTC) }
 	call := func(ts time.Time, target string, ok bool, gaps60, p99, gapMax, lost, silent float64) Run {
 		return Run{TS: ts, Entry: "spb", Exit: "unl1", Layer: LayerCall, Vantage: "entry", Target: target, OK: boolp(ok),
-			Data: map[string]any{"sent": 3000.0, "lost": lost, "gaps60": gaps60, "rtt_p99_ms": p99, "gap_max_ms": gapMax, "silent_ms": silent}}
+			Data: map[string]any{"sent": 3000.0, "lost": lost, "gaps60": gaps60, "rtt_p99_ms": p99, "rtt_p50_ms": p99 * 0.8, "gap_max_ms": gapMax, "silent_ms": silent}}
 	}
 	wire := func(ts time.Time, target string, ok bool, data map[string]any) Run {
 		return Run{TS: ts, Entry: "spb", Exit: "unl1", Layer: LayerWire, Vantage: "entry", Target: target, OK: boolp(ok), Data: data}
@@ -71,12 +71,14 @@ func TestDBAWireChartDrawsEveryTargetAndTheMoves(t *testing.T) {
 		want           float64
 	}{
 		{ChartRedMinutes, "copies2", "05:41", 1}, {ChartGaps60, "copies2", "05:41", 4},
-		{ChartRTTP99, "copies2", "05:41", 80}, {ChartGapMax, "copies2", "05:41", 3092},
+		{ChartRTTP99, "copies2", "05:41", 80}, {ChartRTTP50, "copies2", "05:41", 64},
+		{ChartGapMax, "copies2", "05:41", 3092},
 		{ChartLoss, "copies2", "05:41", 30 * 1000.0 / 3000}, {ChartSilence, "copies2", "05:41", 4},
 		{ChartRedMinutes, "copies2", "05:42", 0}, {ChartGaps60, "copies2", "05:42", 1},
 		{ChartRedMinutes, "trunk-udp", "05:41", 0},
 		{ChartBulkMbps, "wire-udp", "05:41", 1048576 * 8 / 100.0 / 1000}, {ChartBulkFailed, "wire-udp", "05:41", 0},
 		{ChartBulkMbps, "trunk-quic", "05:42", 1048576 * 8 / 50.0 / 1000}, {ChartBulkFailed, "trunk-quic", "05:43", 1},
+		{ChartSpeedP50, "spb", "05:42", 1048576 * 8 / 50.0 / 1000}, {ChartSpeedP10, "spb", "05:42", 1048576 * 8 / 50.0 / 1000},
 		{ChartCPU, "wire-quic", "05:44", 3.6},
 	} {
 		v := get(w.group, w.key)
