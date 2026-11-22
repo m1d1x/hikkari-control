@@ -9,7 +9,7 @@ import { USE_MOCK } from '$lib/config/mock';
 // stand's process for that wire, trunk-<wire> the entry's own wire
 // (trunk-pool its pool under the selector).
 
-export type TrunkWindow = '6h' | '24h' | '7d';
+export type TrunkWindow = '6h' | '24h' | '7d' | '30d';
 
 export interface TrunkLine {
 	/** the target */
@@ -47,8 +47,8 @@ const MOCK_TARGETS = ['copies1', 'copies2', 'trunk-udp', 'trunk-h3dgram', 'trunk
 
 /** A plausible window for UI work without a backend (VITE_USE_MOCK). */
 function mockTrunkWires(window: TrunkWindow): TrunkWireChart {
-	const bucketSeconds = window === '6h' ? 60 : window === '24h' ? 300 : 1800;
-	const n = window === '6h' ? 360 : window === '24h' ? 288 : 336;
+	const bucketSeconds = window === '6h' ? 60 : window === '24h' ? 300 : window === '7d' ? 1800 : 3600;
+	const n = window === '6h' ? 360 : window === '24h' ? 288 : window === '7d' ? 336 : 720;
 	const end = Math.floor(Date.now() / 1000 / bucketSeconds) * bucketSeconds;
 	const buckets = Array.from({ length: n }, (_, i) =>
 		new Date((end - (n - 1 - i) * bucketSeconds) * 1000).toISOString(),

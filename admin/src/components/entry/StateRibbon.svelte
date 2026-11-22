@@ -65,10 +65,13 @@
 		return out.filter((r) => r.label !== '' && (r.to - r.from) / bands.length >= 0.12);
 	});
 
+	// dates once the strip is longer than a couple of days
+	const labelStep = $derived(buckets.length * span >= 2 * 86_400 ? Math.max(span, 86_400) : span);
+
 	const ticks = $derived(
 		[0, 0.25, 0.5, 0.75, 1].map((f) => {
 			const i = Math.min(buckets.length - 1, Math.round(f * (buckets.length - 1)));
-			return bucketLabel(buckets[i], span);
+			return bucketLabel(buckets[i], labelStep);
 		}),
 	);
 

@@ -14,8 +14,8 @@ export async function fetchTrunkEgress(window: TrunkWindow): Promise<TrunkWireCh
 }
 
 function mockTrunkEgress(window: TrunkWindow): TrunkWireChart {
-	const bucketSeconds = window === '6h' ? 60 : window === '24h' ? 300 : 1800;
-	const n = window === '6h' ? 360 : window === '24h' ? 288 : 336;
+	const bucketSeconds = window === '6h' ? 60 : window === '24h' ? 300 : window === '7d' ? 1800 : 3600;
+	const n = window === '6h' ? 360 : window === '24h' ? 288 : window === '7d' ? 336 : 720;
 	const end = Math.floor(Date.now() / 1000 / bucketSeconds) * bucketSeconds;
 	const buckets = Array.from({ length: n }, (_, i) => new Date((end - (n - 1 - i) * bucketSeconds) * 1000).toISOString());
 	const keys = ['unl1 → aeznl1', 'unl1 → spare1'];
