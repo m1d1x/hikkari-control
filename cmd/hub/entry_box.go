@@ -69,6 +69,8 @@ package main
 //	                                    # end on the exit (trunk-pipe-exit); voice=
 //	                                    # holds voice on that wire, no selector
 //	cmd/server entry-box trunk-pipe-off <box>
+//	cmd/server entry-box trunk-pipe-port <box> <port|off>
+//	                                    # a public TCP port comparison on the stand's points
 //	cmd/server entry-box trunk-pipe-wires <box> <[pool:16,]udp:2,h3dgram:4[:fate]|off> [h3dgram=<port>[:proxy]] [voice=<wire>]
 //	                                    # the stand's wires and their knobs, a file
 //	                                    # its brain follows (no new process);
@@ -715,6 +717,33 @@ func runEntryBox(args []string) {
 			fail(err)
 		}
 		fmt.Printf("%s: stand points %s (the brain follows them within 10 s, no new process)\n", args[1], args[2])
+		os.Exit(0)
+	}
+	if len(args) == 3 && args[0] == "trunk-pipe-port" {
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		var port uint64
+		if args[2] != "off" {
+			var err error
+			port, err = strconv.ParseUint(args[2], 10, 16)
+			if err != nil || port == 0 {
+				fail(fmt.Errorf("порт стенда %q: нужен порт TCP или off", args[2]))
+			}
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		jctx, jcancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		defer jcancel()
+		if err := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir).SetTrunkPipePort(jctx, args[1], uint16(port)); err != nil {
+			fail(err)
+		}
+		fmt.Printf("%s: stand TCP port %s verified\n", args[1], args[2])
 		os.Exit(0)
 	}
 	if (len(args) >= 3 && len(args) <= 9 && args[0] == "trunk-pipe") || (len(args) == 2 && args[0] == "trunk-pipe-off") {

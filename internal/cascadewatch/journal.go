@@ -1,6 +1,7 @@
 package cascadewatch
 
 import (
+	"net/netip"
 	"regexp"
 	"strconv"
 	"strings"
@@ -43,7 +44,7 @@ func parseJournal(out string) []journalLine {
 var (
 	reStats      = regexp.MustCompile(`nekko-trunk-entry: (members=\d+ .*)$`)
 	reCall       = regexp.MustCompile(`nekko-trunk-entry: call (copies=\d+ .*)$`)
-	reMemberDown = regexp.MustCompile(`trunk: member (\d+): down after (\S+): (.*)$`)
+	reMemberDown = regexp.MustCompile(`trunk: member (\d+)(?: point=(\S+))?: down after (\S+): (.*)$`)
 	reMemberFail = regexp.MustCompile(`trunk: member (\d+): (dial|hello): (.*)$`)
 	rePaused     = regexp.MustCompile(`trunk: paused (\S+)$`)
 	reEpochReset = regexp.MustCompile(`trunk: exit epoch ([0-9a-f]+) after ([0-9a-f]+): streams reset`)
@@ -75,12 +76,16 @@ func classify(l journalLine) (layer string, data map[string]any, ok bool) {
 		return LayerCall, callFields(m[1]), true
 	}
 	if m := reMemberDown.FindStringSubmatch(l.Msg); m != nil {
-		d, _ := time.ParseDuration(m[2])
+		d, _ := time.ParseDuration(m[3])
 		kind := "broken"
-		if strings.Contains(m[3], "stalled") {
+		if strings.Contains(m[4], "stalled") {
 			kind = "stalled"
 		}
-		return LayerEvent, map[string]any{"kind": "member_down", "member": atoi(m[1]), "after_s": int(d.Seconds()), "why": kind, "err": clip(m[3])}, true
+		data := map[string]any{"kind": "member_down", "member": atoi(m[1]), "after_s": int(d.Seconds()), "why": kind, "err": clip(m[4])}
+		if point, err := netip.ParseAddr(m[2]); err == nil {
+			data["point_ip"] = point.String()
+		}
+		return LayerEvent, data, true
 	}
 	if m := reMemberFail.FindStringSubmatch(l.Msg); m != nil {
 		return LayerEvent, map[string]any{"kind": "member_" + m[2] + "_failed", "member": atoi(m[1]), "err": clip(m[3])}, true

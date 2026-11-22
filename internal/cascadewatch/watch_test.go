@@ -20,7 +20,7 @@ import (
 )
 
 const journal = `1794213568.844108 spb-3 nekko-trunk-entry[19617]: 2026/11/09 11:39:28 nekko-trunk-entry: members=32 joined=38 stalled=4 broken=2 resent=1 dead_ports=2 port_kills=4 streams=0/624 reset=71 up=919317 down=92481043 flows=1 dgrams=10/9 copies=3 rtt_p50=61.5 rtt_p90=80.0 rtt_max=120.2
-1794213570.100000 spb-3 nekko-trunk-entry[19617]: 2026/11/09 11:39:30 trunk: member 7: down after 41m47s: trunk: member stalled
+1794213570.100000 spb-3 nekko-trunk-entry[19617]: 2026/11/09 11:39:30 trunk: member 7 point=192.0.2.1: down after 41m47s: trunk: member stalled
 1794213571.100000 spb-3 nekko-trunk-entry[19617]: 2026/11/09 11:39:31 trunk: member 3: dial: dial tcp: i/o timeout
 1794213571.500000 spb-3 nekko-trunk-entry[19617]: 2026/11/09 11:39:31 trunk: paused 1.25s
 1794213572.100000 spb-3 nekko-trunk-entry[19617]: 2026/11/09 11:39:32 trunk: exit epoch 0011223344556677 after 8899aabbccddeeff: streams reset
@@ -61,8 +61,12 @@ func TestJournalReadsTheEntrysLines(t *testing.T) {
 		t.Fatalf("paused %v", p)
 	}
 	_, down, _ := classify(lines[1])
-	if down["why"] != "stalled" || num(down, "after_s") != 41*60+47 || num(down, "member") != 7 {
+	if down["why"] != "stalled" || num(down, "after_s") != 41*60+47 || num(down, "member") != 7 || down["point_ip"] != "192.0.2.1" {
 		t.Fatalf("member down %v", down)
+	}
+	_, legacy, ok := classify(journalLine{Msg: "trunk: member 7: down after 1s: broken: its socket failed"})
+	if !ok || legacy["why"] != "broken" || legacy["point_ip"] != nil {
+		t.Fatalf("old member down %v", legacy)
 	}
 	_, empty, _ := classify(lines[6])
 	if has(empty, "rtt_p50_ms") {
@@ -147,11 +151,15 @@ func TestSummaryCountsGrowthAcrossARestart(t *testing.T) {
 		m(0, map[string]any{"members": 32.0, "joined": 33.0, "stalled": 1.0, "resent": 1.0, "rtt_p50_ms": 60.0}),
 		m(1, map[string]any{"members": 31.0, "joined": 35.0, "stalled": 3.0, "resent": 4.0, "rtt_p50_ms": 70.0}),
 		m(2, map[string]any{"members": 32.0, "joined": 32.0, "stalled": 0.0, "resent": 2.0, "rtt_p50_ms": 65.0}), // restarted
-		{TS: t0, Entry: "e", Exit: "x", Layer: LayerEvent, Data: map[string]any{"kind": "member_down", "after_s": 120.0, "why": "stalled"}},
+		{TS: t0, Entry: "e", Exit: "x", Layer: LayerEvent, Data: map[string]any{"kind": "member_down", "after_s": 120.0, "why": "stalled", "point_ip": "192.0.2.1"}},
 		{TS: t0, Entry: "e", Exit: "x", Layer: LayerVerdict, OK: boolp(false), Data: map[string]any{"first_red": "path"}},
 		{TS: t0, Entry: "e", Exit: "x", Layer: LayerTrunk, Vantage: "entry", Target: "entry", OK: boolp(true), Data: map[string]any{"mode": "pool", "goodput_mbps": 150.0}},
 	}
 	s := Summarize(rows)["e → x"].(map[string]any)
+	down := s["events"].(map[string]any)["member_down"].(map[string]any)
+	if byPoint := down["by_point_ip"].(map[string]int); byPoint["192.0.2.1"] != 1 {
+		t.Fatalf("member deaths by point %v", byPoint)
+	}
 	e := s["entry"].(map[string]any)
 	grown := e["grown"].(map[string]int64)
 	if grown["stalled"] != 2 || grown["resent"] != 5 || grown["joined"] != 34 || e["restarts"] != 1 || e["rtt_p50_ms_median"] != 65.0 {

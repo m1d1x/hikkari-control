@@ -85,6 +85,8 @@ type wiresSpec struct {
 	// EDGE_TRUNK_MEMBERS (0: the env's); the Go entry's pool is its env's
 	// alone (brain_wires_linux.go poolMembers).
 	Pool int `json:"pool,omitempty"`
+	// PoolPort overrides the TCP port dialed on the stand's border points.
+	PoolPort uint16 `json:"pool_port,omitempty"`
 	// Points are the border points to the core (pipectl.SetPoints), none:
 	// the core's own address.
 	Points []string `json:"points,omitempty"`
@@ -168,6 +170,9 @@ func readWires(path string) (wiresSpec, []byte, error) {
 	}
 	if len(f.Points) > maxPoints {
 		return f, raw, fmt.Errorf("%s: %d points, at most %d", path, len(f.Points), maxPoints)
+	}
+	if f.PoolPort != 0 && len(f.Points) == 0 {
+		return f, raw, fmt.Errorf("%s: pool_port requires border points", path)
 	}
 	points := map[netip.Addr]bool{}
 	for _, p := range f.Points {
