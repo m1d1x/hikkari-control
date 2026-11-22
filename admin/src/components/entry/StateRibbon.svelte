@@ -78,19 +78,21 @@
 		</div>
 	{:else}
 		{#each series as s (s.key)}
-			<div class="ribbon" role="img" aria-label={s.label}>
-				{#each s.values as v, i (i)}
-					<span
-						class="cell"
-						class:void={!v}
-						style={v ? `background: ${s.color}` : ''}
-						title={`${s.label}, ${bucketTitle(buckets[i], span)}`}
-					></span>
-				{/each}
+			<div class="row">
+				<span class="who">{s.label}</span>
+				<div class="ribbon" role="img" aria-label={s.label}>
+					{#each s.values as v, i (i)}
+						<span
+							class="cell"
+							style={v ? 'background: oklch(0.27 0 0)' : 'background: #e66767'}
+							title={`${s.label}, ${bucketTitle(buckets[i], span)} · ${v ? 'держит' : 'молчит'}`}
+						></span>
+					{/each}
+				</div>
 			</div>
 		{/each}
 	{/if}
-	<div class="axis">
+	<div class="axis" class:offset={mode === 'rows'}>
 		{#each ticks as t, i (i)}<span>{t}</span>{/each}
 	</div>
 {/if}
@@ -104,10 +106,6 @@
 		overflow: hidden;
 	}
 
-	.ribbon + .ribbon {
-		margin-top: 3px;
-	}
-
 	.cell {
 		flex: 1 1 0;
 		min-width: 1px;
@@ -115,6 +113,33 @@
 
 	.cell.void {
 		background: oklch(0.24 0 0);
+	}
+
+	.row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.row + .row {
+		margin-top: 3px;
+	}
+
+	.who {
+		flex: 0 0 64px;
+		font-size: 11px;
+		color: var(--text-2);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.row .ribbon {
+		flex: 1;
+	}
+
+	.axis.offset {
+		padding-left: 72px;
 	}
 
 	.axis {

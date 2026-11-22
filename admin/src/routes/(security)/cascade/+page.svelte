@@ -166,7 +166,6 @@
 	);
 	const hasStand = $derived((points?.lines ?? []).some((l) => isStand(l.key)));
 	const entryName = $derived(routePoints[0]?.entry ?? '');
-	const members = $derived(Math.max(1, ...(routePoints.flatMap((r) => r.points.map((p) => p.sample?.members ?? 0))) ));
 	const routeKey = $derived(SCOPE[scope].route);
 
 	/** Running total of what went over the threshold: the product's milliseconds. */
@@ -216,7 +215,7 @@
 			.sort((a, b) => a.key.localeCompare(b.key))
 			.map((l, i) => ({
 				key: l.key,
-				label: l.key.replace(' (стенд)', ''),
+				label: l.key.split(' → ').pop()?.replace(' (стенд)', '') ?? l.key,
 				color: ['#3987e5', '#c98500', '#9085e9', '#199e70', '#e66767'][i % 5],
 				values: l.values,
 				format: count,
@@ -309,7 +308,7 @@
 		{/if}
 
 		{#if points && pointRows.length}
-			<h2 class="section">точки перехода <span class="muted">{members} соединений</span></h2>
+			<h2 class="section" title="Ровная полоса — точка держит соединения магистрали. Красный кусок — точка молчала, вход уводил сессию на другую.">точки перехода</h2>
 			<div class="card">
 				<StateRibbon buckets={points.buckets} bucketSeconds={points.bucketSeconds} series={pointRows} mode="rows" />
 			</div>
