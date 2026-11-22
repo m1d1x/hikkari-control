@@ -65,7 +65,7 @@
 		'/protocols': 'протоколы',
 		'/protocols/servers': 'протоколы · серверы',
 		'/protocols/hikkari': 'протоколы · hikkari изнутри',
-		'/protocols/trunk': 'протоколы · провода магистрали',
+		'/cascade': 'каскад',
 		'/autopilot': 'автопилот',
 		'/entry': 'машины',
 		'/incidents': 'инциденты',

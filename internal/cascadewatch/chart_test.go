@@ -16,7 +16,7 @@ func TestDBAWireChartDrawsEveryTargetAndTheMoves(t *testing.T) {
 	at := func(m int) time.Time { return time.Date(2026, 11, 11, 5, m, 0, 0, time.UTC) }
 	call := func(ts time.Time, target string, ok bool, gaps60, p99, gapMax, lost, silent float64) Run {
 		return Run{TS: ts, Entry: "spb", Exit: "unl1", Layer: LayerCall, Vantage: "entry", Target: target, OK: boolp(ok),
-			Data: map[string]any{"sent": 3000.0, "lost": lost, "gaps60": gaps60, "rtt_p99_ms": p99, "gap_max_ms": gapMax, "silent_ms": silent}}
+			Data: map[string]any{"sent": 3000.0, "lost": lost, "gaps60": gaps60, "rtt_p99_ms": p99, "rtt_p50_ms": p99 * 0.8, "gap_max_ms": gapMax, "silent_ms": silent}}
 	}
 	wire := func(ts time.Time, target string, ok bool, data map[string]any) Run {
 		return Run{TS: ts, Entry: "spb", Exit: "unl1", Layer: LayerWire, Vantage: "entry", Target: target, OK: boolp(ok), Data: data}
@@ -43,10 +43,20 @@ func TestDBAWireChartDrawsEveryTargetAndTheMoves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.Buckets) != 36 || c.BucketSeconds != 600 || c.Buckets[35] != "2026-11-11T05:50:00Z" {
+	if len(c.Buckets) != 360 || c.BucketSeconds != 60 || c.Buckets[len(c.Buckets)-1] != "2026-11-11T05:55:00Z" {
 		t.Fatalf("buckets %d × %d, last %s", len(c.Buckets), c.BucketSeconds, c.Buckets[len(c.Buckets)-1])
 	}
-	last := len(c.Buckets) - 2 // 05:40
+	// a minute of the call is a bucket of its own: the window steps by the minute
+	idx := func(hhmm string) int {
+		want := "2026-11-11T" + hhmm + ":00Z"
+		for i, b := range c.Buckets {
+			if b == want {
+				return i
+			}
+		}
+		t.Fatalf("no bucket %s", hhmm)
+		return -1
+	}
 	get := func(group, key string) []*float64 {
 		for _, l := range c.Lines {
 			if l.Group == group && l.Key == key {
@@ -57,22 +67,31 @@ func TestDBAWireChartDrawsEveryTargetAndTheMoves(t *testing.T) {
 		return nil
 	}
 	for _, w := range []struct {
-		group, key string
-		want       float64
+		group, key, at string
+		want           float64
 	}{
-		{ChartRedMinutes, "copies2", 1}, {ChartGaps60, "copies2", 5}, {ChartRTTP99, "copies2", 60},
-		{ChartGapMax, "copies2", 3092}, {ChartLoss, "copies2", 30 * 1000.0 / 9000}, {ChartSilence, "copies2", 4.1},
-		{ChartRedMinutes, "trunk-udp", 0},
-		{ChartBulkMbps, "wire-udp", 1048576 * 8 / 100.0 / 1000}, {ChartBulkFailed, "wire-udp", 0},
-		{ChartBulkMbps, "trunk-quic", 1048576 * 8 / 50.0 / 1000}, {ChartBulkFailed, "trunk-quic", 1},
-		{ChartCPU, "wire-quic", 3.6},
+		{ChartRedMinutes, "copies2", "05:41", 1}, {ChartGaps60, "copies2", "05:41", 4},
+		{ChartRTTP99, "copies2", "05:41", 80}, {ChartRTTP50, "copies2", "05:41", 64},
+		{ChartGapMax, "copies2", "05:41", 3092},
+		{ChartLoss, "copies2", "05:41", 30 * 1000.0 / 3000}, {ChartSilence, "copies2", "05:41", 4},
+		{ChartRedMinutes, "copies2", "05:42", 0}, {ChartGaps60, "copies2", "05:42", 1},
+		{ChartRedMinutes, "trunk-udp", "05:41", 0},
+		{ChartBulkMbps, "wire-udp", "05:41", 1048576 * 8 / 100.0 / 1000}, {ChartBulkFailed, "wire-udp", "05:41", 0},
+		{ChartBulkMbps, "trunk-quic", "05:42", 1048576 * 8 / 50.0 / 1000}, {ChartBulkFailed, "trunk-quic", "05:43", 1},
+		{ChartSpeedP50, "spb", "05:42", 1048576 * 8 / 50.0 / 1000}, {ChartSpeedP10, "spb", "05:42", 1048576 * 8 / 50.0 / 1000},
+		{ChartCPU, "wire-quic", "05:44", 3.6},
 	} {
 		v := get(w.group, w.key)
-		if v[last] == nil || *v[last]-w.want > 1e-9 || w.want-*v[last] > 1e-9 {
-			t.Fatalf("%s %s = %v, want %v", w.group, w.key, v[last], w.want)
+		i := idx(w.at)
+		if v[i] == nil || *v[i]-w.want > 1e-9 || w.want-*v[i] > 1e-9 {
+			t.Fatalf("%s %s at %s = %v, want %v", w.group, w.key, w.at, v[i], w.want)
 		}
-		if v[last-1] != nil {
-			t.Fatalf("%s %s: an empty bucket says %v", w.group, w.key, *v[last-1])
+	}
+	for _, k := range []struct{ group, key string }{
+		{ChartGaps60, "copies2"}, {ChartBulkMbps, "wire-udp"}, {ChartCPU, "wire-quic"},
+	} {
+		if v := get(k.group, k.key)[idx("05:50")]; v != nil {
+			t.Fatalf("%s %s: an empty bucket says %v", k.group, k.key, *v)
 		}
 	}
 	if len(c.Marks) != 1 || c.Marks[0].Label != "голос: udp красный, на pool" || c.Marks[0].At != "2026-11-11T05:45:00Z" {

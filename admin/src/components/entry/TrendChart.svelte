@@ -49,6 +49,8 @@
 		max?: number;
 		/** events drawn as vertical marks at their moment, listed in the tooltip of their bucket */
 		marks?: TrendMark[];
+		/** the thresholds the value is judged by: dashed lines every reading is read against */
+		limits?: { value: number; color: string }[];
 	}
 
 	let {
@@ -60,6 +62,7 @@
 		empty = 'нет данных за это окно',
 		max,
 		marks = [],
+		limits = [],
 	}: Props = $props();
 
 	let containerEl = $state<HTMLDivElement | null>(null);
@@ -86,14 +89,19 @@
 		if (max !== undefined) return max;
 		let top = 0;
 		for (const s of series) for (const v of s.values) if (v !== null && v !== undefined && v > top) top = v;
-		if (top <= 0) return 1;
+		// a tolerance is drawn only when the readings come near it
+		for (const l of limits) if (l.value > top && l.value <= top * 2.5) top = l.value;
+		if (top <= 0) return limits[0]?.value ?? 1;
 		const raw = top * 1.15;
 		const pow = 10 ** Math.floor(Math.log10(raw));
-		for (const m of [1, 2, 2.5, 5, 10]) if (raw <= m * pow) return m * pow;
+		for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 10]) if (raw <= m * pow) return m * pow;
 		return 10 * pow;
 	});
 
 	const y = (v: number) => PAD_T + (1 - Math.max(0, Math.min(yMax, v)) / yMax) * PH;
+
+	/** The tolerances that land inside the axis: the others are nowhere near the readings. */
+	const shownLimits = $derived(limits.filter((l) => l.value <= yMax));
 
 	/** A line broken wherever a bucket has no value. */
 	function linePath(values: (number | null)[]): string {
@@ -115,6 +123,9 @@
 		const has = (i: number) => i >= 0 && i < values.length && values[i] !== null && values[i] !== undefined;
 		return values.map((_, i) => i).filter((i) => has(i) && !has(i - 1) && !has(i + 1));
 	}
+
+	/** A series key is any text ("aezamsk1 → unl1"); an SVG id is not. */
+	const fillId = (key: string) => 'trend-fill-' + key.replace(/[^A-Za-z0-9_-]+/g, '_');
 
 	/** The soft fill under the primary line, one closed shape per unbroken run. */
 	function areaPath(values: (number | null)[]): string {
@@ -194,7 +205,7 @@
 	<svg viewBox="0 0 {W} {height}" style="width: 100%; height: {height}px" role="img">
 		<defs>
 			{#each series.filter((s) => s.primary) as s (s.key)}
-				<linearGradient id="trend-fill-{s.key}" x1="0" y1="0" x2="0" y2="1">
+				<linearGradient id={fillId(s.key)} x1="0" y1="0" x2="0" y2="1">
 					<stop offset="0%" stop-color={s.color} stop-opacity="0.12" />
 					<stop offset="100%" stop-color={s.color} stop-opacity="0" />
 				</linearGradient>
@@ -207,8 +218,12 @@
 			<text x={W - 8} y={yPos + 3.5} class="y-label" text-anchor="end">{formatAxis(yMax * t)}</text>
 		{/each}
 
+		{#each shownLimits as l (l.value)}
+			<line x1={PAD_L} y1={y(l.value)} x2={PAD_L + PW} y2={y(l.value)} class="limit" style="stroke: {l.color}" />
+		{/each}
+
 		{#each series.filter((s) => s.primary) as s (s.key)}
-			<path d={areaPath(s.values)} fill="url(#trend-fill-{s.key})" />
+			<path d={areaPath(s.values)} fill="url(#{fillId(s.key)})" />
 		{/each}
 
 		{#each series as s (s.key)}
@@ -322,6 +337,13 @@
 
 	.line.primary {
 		stroke-width: 2.4;
+	}
+
+	.limit {
+		stroke: oklch(0.62 0.14 25);
+		stroke-width: 1;
+		stroke-dasharray: 4 4;
+		opacity: 0.75;
 	}
 
 	.mark {

@@ -54,12 +54,15 @@ const (
 	ChartRedMinutes = "call_red"    // minutes of the call with a pause over 150 ms or loss over 1%
 	ChartGaps60     = "call_gaps60" // pauses over 60 ms
 	ChartRTTP99     = "call_rtt"    // the minutes' round trip at p99, median over the bucket
+	ChartRTTP50     = "call_rtt50"  // the minutes' round trip at p50, median over the bucket
 	ChartGapMax     = "call_gap"    // the longest pause of the bucket
 	ChartLoss       = "call_loss"   // lost per 1000 sent
 	ChartSilence    = "call_silent" // seconds the call heard nothing
 	ChartBulkMbps   = "bulk_mbps"   // 1 MiB downloads, median speed
 	ChartBulkFailed = "bulk_failed" // 1 MiB downloads that did not all come
 	ChartCPU        = "cpu"         // the stand's process on the entry, seconds per minute, median
+	ChartSpeedP50   = "bulk_speed_p50" // 1 MiB over the entry's wires, median speed of the bucket
+	ChartSpeedP10   = "bulk_speed_p10" // the same, the tenth percentile
 )
 
 // maxMarks is how many moves of the selector the screen gets, the newest.
@@ -71,11 +74,11 @@ var errChartWindow = errors.New("window: 6h, 24h or 7d")
 func chartSpan(window string) (string, time.Duration, time.Duration, error) {
 	switch window {
 	case "6h":
-		return window, 6 * time.Hour, 10 * time.Minute, nil
+		return window, 6 * time.Hour, time.Minute, nil
 	case "24h", "":
-		return "24h", 24 * time.Hour, time.Hour, nil
+		return "24h", 24 * time.Hour, 5 * time.Minute, nil
 	case "7d":
-		return window, 7 * 24 * time.Hour, 6 * time.Hour, nil
+		return window, 7 * 24 * time.Hour, 30 * time.Minute, nil
 	}
 	return "", 0, 0, errChartWindow
 }
@@ -127,6 +130,7 @@ func (s *Store) BuildWireChart(ctx context.Context, entry, window string, now ti
 		       count(*) FILTER (WHERE ok = false)::float8,
 		       sum((data->>'gaps60')::float8),
 		       percentile_cont(0.5) WITHIN GROUP (ORDER BY (data->>'rtt_p99_ms')::float8),
+		       percentile_cont(0.5) WITHIN GROUP (ORDER BY (data->>'rtt_p50_ms')::float8),
 		       max((data->>'gap_max_ms')::float8),
 		       sum((data->>'lost')::float8), sum((data->>'sent')::float8),
 		       sum((data->>'silent_ms')::float8)
@@ -140,14 +144,15 @@ func (s *Store) BuildWireChart(ctx context.Context, entry, window string, now ti
 		var target string
 		var b int64
 		var red float64
-		var gaps60, p99, gapMax, lost, sent, silent *float64
-		if err := rows.Scan(&target, &b, &red, &gaps60, &p99, &gapMax, &lost, &sent, &silent); err != nil {
+		var gaps60, p99, p50, gapMax, lost, sent, silent *float64
+		if err := rows.Scan(&target, &b, &red, &gaps60, &p99, &p50, &gapMax, &lost, &sent, &silent); err != nil {
 			rows.Close()
 			return WireChart{}, err
 		}
 		put(ChartRedMinutes, target, b, &red)
 		put(ChartGaps60, target, b, gaps60)
 		put(ChartRTTP99, target, b, p99)
+		put(ChartRTTP50, target, b, p50)
 		put(ChartGapMax, target, b, gapMax)
 		if lost != nil && sent != nil && *sent > 0 {
 			pm := *lost * 1000 / *sent
@@ -197,6 +202,39 @@ func (s *Store) BuildWireChart(ctx context.Context, entry, window string, now ti
 		}
 		put(ChartBulkFailed, key, b, &failed)
 		put(ChartBulkMbps, key, b, med)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return WireChart{}, err
+	}
+
+	// The speed a person gets: every 1 MiB download over the entry's own wires
+	// (target trunk-<wire>), the median and the tenth percentile of the bucket.
+	rows, err = s.pool.Query(ctx, `
+		SELECT entry_box, (floor(extract(epoch FROM ts) / $3) * $3)::bigint AS b,
+		       percentile_cont(0.5) WITHIN GROUP (ORDER BY mbps),
+		       percentile_cont(0.1) WITHIN GROUP (ORDER BY mbps)
+		FROM (
+			SELECT entry_box, ts, (data->>'bytes')::float8 * 8 / (data->>'ms')::float8 / 1000 AS mbps
+			FROM trunk_runs
+			WHERE layer = 'wire' AND ts >= $1 AND ts < $2 AND ($4 = '' OR entry_box = $4)
+			  AND data->>'mode' IN ('bulk', 'bulk_1m') AND target LIKE 'trunk-%'
+			  AND ok = true AND (data->>'ms')::float8 > 0
+		) s
+		GROUP BY 1, 2 ORDER BY 1, 2`, since, until, sec, entry)
+	if err != nil {
+		return WireChart{}, fmt.Errorf("speed: %w", err)
+	}
+	for rows.Next() {
+		var key string
+		var b int64
+		var p50, p10 *float64
+		if err := rows.Scan(&key, &b, &p50, &p10); err != nil {
+			rows.Close()
+			return WireChart{}, err
+		}
+		put(ChartSpeedP50, key, b, p50)
+		put(ChartSpeedP10, key, b, p10)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {

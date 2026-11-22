@@ -197,19 +197,51 @@ func pathName(p entry.TrunkPair) string {
 const (
 	ChartPointSilent = "point_silent" // seconds the point carried nothing
 	ChartPointUp     = "point_up"     // members up at the point, the least minute of the bucket
+	ChartPointGap    = "point_call_gap"
 )
+
+type PointChart struct {
+	WireChart
+	Routes []PointRoute `json:"routes"`
+}
+
+type PointRoute struct {
+	Entry  string        `json:"entry"`
+	Exit   string        `json:"exit"`
+	Points []PointStatus `json:"points"`
+}
+
+type PointStatus struct {
+	Name   string       `json:"name"`
+	Sample *PointSample `json:"sample"`
+}
+
+type PointSample struct {
+	At      time.Time `json:"at"`
+	Up      int       `json:"up"`
+	Members int       `json:"members"`
+	Silent  int       `json:"silentSeconds"`
+}
 
 // BuildPointChart reads the window of the border points: per entry and point
 // ("<entry> → <point>", the stand's with " (стенд)") the seconds it was
-// silent and its members up; the changes as marks.
-func (s *Store) BuildPointChart(ctx context.Context, window string, now time.Time) (WireChart, error) {
+// silent and its members up, the changes as marks and the matching live calls.
+func (s *Store) BuildPointChart(ctx context.Context, window string, now time.Time) (PointChart, error) {
 	window, span, step, err := chartSpan(window)
 	if err != nil {
-		return WireChart{}, err
+		return PointChart{}, err
+	}
+	switch window {
+	case "6h":
+		step = time.Minute
+	case "24h":
+		step = 10 * time.Minute
+	case "7d":
+		step = time.Hour
 	}
 	until := now.Truncate(step).Add(step)
 	since := until.Add(-span)
-	c := WireChart{Window: window, BucketSeconds: int64(step / time.Second), Marks: []ChartMark{}}
+	c := PointChart{WireChart: WireChart{Window: window, BucketSeconds: int64(step / time.Second), Marks: []ChartMark{}}}
 	index := map[int64]int{}
 	for b := since; b.Before(until); b = b.Add(step) {
 		index[b.Unix()] = len(c.Buckets)
@@ -241,7 +273,7 @@ func (s *Store) BuildPointChart(ctx context.Context, window string, now time.Tim
 		WHERE layer = 'point' AND ts >= $1 AND ts < $2
 		GROUP BY 1, 2 ORDER BY 1, 2`, since, until, int64(step/time.Second))
 	if err != nil {
-		return WireChart{}, fmt.Errorf("points: %w", err)
+		return PointChart{}, fmt.Errorf("points: %w", err)
 	}
 	for rows.Next() {
 		var key string
@@ -249,14 +281,38 @@ func (s *Store) BuildPointChart(ctx context.Context, window string, now time.Tim
 		var silent, up *float64
 		if err := rows.Scan(&key, &b, &silent, &up); err != nil {
 			rows.Close()
-			return WireChart{}, err
+			return PointChart{}, err
 		}
 		put(ChartPointSilent, key, b, silent)
 		put(ChartPointUp, key, b, up)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return WireChart{}, err
+		return PointChart{}, err
+	}
+	rows, err = s.pool.Query(ctx, `
+		SELECT entry_box || ' → ' || exit_box,
+		       (floor(extract(epoch FROM ts) / $3) * $3)::bigint AS b,
+		       max((data->>'gap_max_ms')::float8)
+		FROM trunk_runs
+		WHERE layer = 'call' AND target = 'copies1' AND ts >= $1 AND ts < $2
+		GROUP BY 1, 2 ORDER BY 1, 2`, since, until, int64(step/time.Second))
+	if err != nil {
+		return PointChart{}, fmt.Errorf("point calls: %w", err)
+	}
+	for rows.Next() {
+		var key string
+		var bucket int64
+		var gap *float64
+		if err := rows.Scan(&key, &bucket, &gap); err != nil {
+			rows.Close()
+			return PointChart{}, err
+		}
+		put(ChartPointGap, key, bucket, gap)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return PointChart{}, err
 	}
 	rows, err = s.pool.Query(ctx, `
 		SELECT ts, entry_box, data FROM (
@@ -265,7 +321,7 @@ func (s *Store) BuildPointChart(ctx context.Context, window string, now time.Tim
 			ORDER BY ts DESC, id DESC LIMIT $3) m
 		ORDER BY ts, id`, since, until, maxMarks)
 	if err != nil {
-		return WireChart{}, fmt.Errorf("point changes: %w", err)
+		return PointChart{}, fmt.Errorf("point changes: %w", err)
 	}
 	for rows.Next() {
 		var ts time.Time
@@ -273,18 +329,62 @@ func (s *Store) BuildPointChart(ctx context.Context, window string, now time.Tim
 		var data map[string]any
 		if err := rows.Scan(&ts, &e, &data); err != nil {
 			rows.Close()
-			return WireChart{}, err
+			return PointChart{}, err
 		}
 		c.Marks = append(c.Marks, pointMark(ts, e, data))
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return WireChart{}, err
+		return PointChart{}, err
 	}
 	for _, id := range order {
 		c.Lines = append(c.Lines, *lines[id])
 	}
-	return c, nil
+	c.Routes, err = s.currentPointRoutes(ctx, now)
+	return c, err
+}
+
+// Use the hub's current topology. Removed points and the stand still have
+// history, but their samples cannot determine the status of a live route.
+func (s *Store) currentPointRoutes(ctx context.Context, now time.Time) ([]PointRoute, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT e.entry_box, e.exit_box, p.name, m.ts,
+		       coalesce((m.data->>'up')::int, 0), coalesce((m.data->>'members')::int, 0),
+		       coalesce((m.data->>'silent_s')::int, 0)
+		FROM trunk_entries e
+		CROSS JOIN LATERAL unnest(e.points) WITH ORDINALITY AS p(name, position)
+		LEFT JOIN LATERAL (
+			SELECT ts, data FROM trunk_runs
+			WHERE entry_box = e.entry_box AND exit_box = e.exit_box AND target = p.name
+			      AND layer = 'point' AND data->>'path' IS DISTINCT FROM 'pipe'
+			      AND ts BETWEEN $1 AND $2
+			ORDER BY ts DESC, id DESC LIMIT 1
+		) m ON true
+		ORDER BY e.entry_box, p.position`, now.Add(-24*time.Hour), now)
+	if err != nil {
+		return nil, fmt.Errorf("current point routes: %w", err)
+	}
+	defer rows.Close()
+	routes := []PointRoute{}
+	for rows.Next() {
+		var entryName, exitName string
+		var point PointStatus
+		var sample PointSample
+		var at *time.Time
+		if err := rows.Scan(&entryName, &exitName, &point.Name, &at, &sample.Up, &sample.Members, &sample.Silent); err != nil {
+			return nil, err
+		}
+		if at != nil {
+			sample.At = at.UTC()
+			point.Sample = &sample
+		}
+		if len(routes) == 0 || routes[len(routes)-1].Entry != entryName {
+			routes = append(routes, PointRoute{Entry: entryName, Exit: exitName})
+		}
+		route := &routes[len(routes)-1]
+		route.Points = append(route.Points, point)
+	}
+	return routes, rows.Err()
 }
 
 // pointMark says a change of a point as the screen's tooltip does; why is
@@ -292,19 +392,21 @@ func (s *Store) BuildPointChart(ctx context.Context, window string, now time.Tim
 func pointMark(ts time.Time, e string, data map[string]any) ChartMark {
 	str := func(k string) string { v, _ := data[k].(string); return v }
 	who := e
+	class := "point"
 	if str("path") == PathPipe {
 		who += " (стенд)"
+		class = "point-stand"
 	}
 	var label, why string
 	switch str("kind") {
 	case "point_silent":
-		label, why = fmt.Sprintf("%s: точка %s молчит, 0 из %v членов", who, str("point"), data["members"]), "red"
+		label, why = fmt.Sprintf("%s: точка %s молчит, 0 из %v соединений", who, str("point"), data["members"]), "red"
 	case "point_back":
-		label, why = fmt.Sprintf("%s: точка %s снова везёт, %v из %v членов, молчала %v с", who, str("point"), data["up"], data["members"], data["after_s"]), "ok"
+		label, why = fmt.Sprintf("%s: точка %s снова везёт, %v из %v соединений, молчала %v с", who, str("point"), data["up"], data["members"], data["after_s"]), "ok"
 	case "points_silent":
 		label, why = fmt.Sprintf("%s: молчат все точки", who), "red"
 	default:
 		label, why = fmt.Sprintf("%s: точка вернулась, все молчали %v с", who, data["after_s"]), "ok"
 	}
-	return ChartMark{At: ts.UTC().Format(time.RFC3339), Label: label, Class: "point", Why: why}
+	return ChartMark{At: ts.UTC().Format(time.RFC3339), Label: label, Class: class, Why: why}
 }
