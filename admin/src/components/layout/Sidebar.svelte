@@ -42,6 +42,7 @@
 			<SidebarItem href="/antiblock" icon="overview" label="Обзор" {collapsed} />
 			<SidebarItem href="/fleet" icon="server" label="Флот" {collapsed} />
 			<SidebarItem href="/protocols" icon="realtime" label="Протоколы" {collapsed} />
+			<SidebarItem href="/cascade" icon="sessions" label="Каскад" {collapsed} />
 			<SidebarItem href="/autopilot" icon="jobs" label="Автопилот" {collapsed} />
 			<SidebarItem href="/entry" icon="server" label="Машины" {collapsed} />
 			<SidebarItem href="/incidents" icon="events" label="Инциденты" {collapsed} />

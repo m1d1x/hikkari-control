@@ -71,11 +71,11 @@ var errChartWindow = errors.New("window: 6h, 24h or 7d")
 func chartSpan(window string) (string, time.Duration, time.Duration, error) {
 	switch window {
 	case "6h":
-		return window, 6 * time.Hour, 10 * time.Minute, nil
+		return window, 6 * time.Hour, time.Minute, nil
 	case "24h", "":
-		return "24h", 24 * time.Hour, time.Hour, nil
+		return "24h", 24 * time.Hour, 5 * time.Minute, nil
 	case "7d":
-		return window, 7 * 24 * time.Hour, 6 * time.Hour, nil
+		return window, 7 * 24 * time.Hour, 30 * time.Minute, nil
 	}
 	return "", 0, 0, errChartWindow
 }

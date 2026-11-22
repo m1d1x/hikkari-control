@@ -47,8 +47,8 @@ const MOCK_TARGETS = ['copies1', 'copies2', 'trunk-udp', 'trunk-h3dgram', 'trunk
 
 /** A plausible window for UI work without a backend (VITE_USE_MOCK). */
 function mockTrunkWires(window: TrunkWindow): TrunkWireChart {
-	const bucketSeconds = window === '6h' ? 600 : window === '24h' ? 3600 : 21600;
-	const n = window === '6h' ? 36 : window === '24h' ? 24 : 28;
+	const bucketSeconds = window === '6h' ? 60 : window === '24h' ? 300 : 1800;
+	const n = window === '6h' ? 360 : window === '24h' ? 288 : 336;
 	const end = Math.floor(Date.now() / 1000 / bucketSeconds) * bucketSeconds;
 	const buckets = Array.from({ length: n }, (_, i) =>
 		new Date((end - (n - 1 - i) * bucketSeconds) * 1000).toISOString(),

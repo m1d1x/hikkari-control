@@ -2,25 +2,30 @@
 	import { bucketLabel, bucketTitle } from '$lib/api/entry';
 	import type { TrendSeries } from './TrendChart.svelte';
 
-	// A value that holds for a whole bucket and is one of a few: which egress
-	// carried the receiver, which point held the session. Coloured minutes in a
-	// row, so a switch reads as one colour replacing another, and its moment is
-	// the seam between two cells.
+	// A state over time, not a value: which egress carried the receiver, which
+	// border point held the session. Coloured cells in a row, a seam is a
+	// switch, the axis under it says when. Hovering a cell names the holder and
+	// the span of its run: «unl1 → aeznl1, с 10:00 до 12:30».
 
 	let {
 		buckets,
 		bucketSeconds,
 		series,
+		mode = 'carrier',
 		empty = 'нет замеров за это окно',
 	}: {
 		buckets: string[];
 		bucketSeconds: number;
-		/** one line per carrier; a bucket is the carrier with the most minutes in it */
 		series: TrendSeries[];
+		/** carrier: one row, the holder of the bucket; rows: one row per series, a live cell is a bucket it held */
+		mode?: 'carrier' | 'rows';
 		empty?: string;
 	} = $props();
 
-	const bands = $derived(
+	const end = (iso: string) => new Date(Date.parse(iso) + bucketSeconds * 1000).toISOString();
+	const span = $derived(bucketSeconds);
+
+	const picked = $derived(
 		buckets.map((at, i) => {
 			let best: TrendSeries | null = null;
 			let held = 0;
@@ -31,32 +36,63 @@
 					best = s;
 				}
 			}
-			const share = Math.min(1, held / (bucketSeconds / 60));
-			return { at, held, share, had: best !== null, label: best?.label ?? '', color: best?.color ?? null };
+			return { at, held, label: best?.label ?? '', color: best?.color ?? null };
 		}),
 	);
 
-	const hasData = $derived(bands.some((b) => b.had));
+	const bands = $derived(
+		picked.map((b, i) => {
+			let from = i;
+			let to = i;
+			if (b.label) {
+				while (from > 0 && picked[from - 1].label === b.label) from--;
+				while (to < picked.length - 1 && picked[to + 1].label === b.label) to++;
+			}
+			const title = b.label
+				? `${b.label}, с ${bucketLabel(picked[from].at, span)} до ${bucketLabel(end(picked[to].at), span)}`
+				: `${bucketTitle(b.at, span)} · никто не вёз`;
+			return { ...b, title };
+		}),
+	);
+
+	const ticks = $derived(
+		[0, 0.25, 0.5, 0.75, 1].map((f) => {
+			const i = Math.min(buckets.length - 1, Math.round(f * (buckets.length - 1)));
+			return bucketLabel(buckets[i], span);
+		}),
+	);
+
+	const hasData = $derived(
+		mode === 'carrier' ? picked.some((b) => b.label !== '') : series.some((s) => s.values.some((v) => v !== null && v > 0)),
+	);
 </script>
 
 {#if !hasData}
 	<p class="empty">{empty}</p>
 {:else}
-	<div class="ribbon" role="img" aria-label="кто вёз, по отрезкам">
-		{#each bands as band (band.at)}
-			<span
-				class="cell"
-				class:void={!band.had}
-				style={band.color ? `background: ${band.color}` : ''}
-				title={`${bucketTitle(band.at, bucketSeconds)} · ${band.had ? `${band.label}, ${Math.round(band.held)} мин` : 'никто не вёз'}`}
-			></span>
+	{#if mode === 'carrier'}
+		<div class="ribbon" role="img" aria-label="кто вёз, по отрезкам">
+			{#each bands as band (band.at)}
+				<span class="cell" class:void={!band.label} style={band.color ? `background: ${band.color}` : ''} title={band.title}></span>
+			{/each}
+		</div>
+	{:else}
+		{#each series as s (s.key)}
+			<div class="ribbon" role="img" aria-label={s.label}>
+				{#each s.values as v, i (i)}
+					<span
+						class="cell"
+						class:void={!v}
+						style={v ? `background: ${s.color}` : ''}
+						title={`${s.label}, ${bucketTitle(buckets[i], span)}`}
+					></span>
+				{/each}
+			</div>
 		{/each}
-	</div>
+	{/if}
 	<div class="axis">
-		<span>{bucketLabel(buckets[0], bucketSeconds)}</span>
-		<span>{bucketLabel(buckets[buckets.length - 1], bucketSeconds)}</span>
+		{#each ticks as t, i (i)}<span>{t}</span>{/each}
 	</div>
-	
 {/if}
 
 <style>
@@ -66,6 +102,10 @@
 		height: 26px;
 		border-radius: 3px;
 		overflow: hidden;
+	}
+
+	.ribbon + .ribbon {
+		margin-top: 3px;
 	}
 
 	.cell {

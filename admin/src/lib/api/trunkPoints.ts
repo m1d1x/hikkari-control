@@ -30,8 +30,8 @@ export async function fetchTrunkPoints(window: TrunkWindow): Promise<TrunkPointC
 }
 
 function mockTrunkPoints(window: TrunkWindow): TrunkPointChart {
-	const bucketSeconds = window === '6h' ? 60 : window === '24h' ? 600 : 3600;
-	const n = window === '6h' ? 360 : window === '24h' ? 144 : 168;
+	const bucketSeconds = window === '6h' ? 60 : window === '24h' ? 300 : 1800;
+	const n = window === '6h' ? 360 : window === '24h' ? 288 : 336;
 	const end = Math.floor(Date.now() / 1000 / bucketSeconds) * bucketSeconds;
 	const buckets = Array.from({ length: n }, (_, i) =>
 		new Date((end - (n - 1 - i) * bucketSeconds) * 1000).toISOString(),
