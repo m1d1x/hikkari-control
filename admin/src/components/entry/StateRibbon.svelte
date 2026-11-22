@@ -55,6 +55,16 @@
 		}),
 	);
 
+	const runs = $derived.by(() => {
+		const out: { label: string; from: number; to: number }[] = [];
+		for (const b of bands) {
+			const last = out[out.length - 1];
+			if (last && last.label === b.label) last.to += 1;
+			else out.push({ label: b.label, from: out.length ? last.to : 0, to: (out.length ? last.to : 0) + 1 });
+		}
+		return out.filter((r) => r.label !== '' && (r.to - r.from) / bands.length >= 0.12);
+	});
+
 	const ticks = $derived(
 		[0, 0.25, 0.5, 0.75, 1].map((f) => {
 			const i = Math.min(buckets.length - 1, Math.round(f * (buckets.length - 1)));
@@ -75,6 +85,13 @@
 			{#each bands as band (band.at)}
 				<span class="cell" class:void={!band.label} style={band.color ? `background: ${band.color}` : ''} title={band.title}></span>
 			{/each}
+			{#each runs as run (run.from)}
+				<span
+					class="tag"
+					style="left: {(run.from / bands.length) * 100}%; width: {((run.to - run.from) / bands.length) * 100}%;"
+					>{run.label}</span
+				>
+			{/each}
 		</div>
 	{:else}
 		{#each series as s (s.key)}
@@ -84,8 +101,8 @@
 					{#each s.values as v, i (i)}
 						<span
 							class="cell"
-							style={v ? 'background: oklch(0.27 0 0)' : 'background: #e66767'}
-							title={`${s.label}, ${bucketTitle(buckets[i], span)} · ${v ? 'держит' : 'молчит'}`}
+							style={v === null ? 'background: oklch(0.2 0 0)' : v ? 'background: oklch(0.27 0 0)' : 'background: #e66767'}
+							title={`${s.label}, ${bucketTitle(buckets[i], span)} · ${v === null ? 'нет замеров' : v ? 'держит' : 'молчит'}`}
 						></span>
 					{/each}
 				</div>
@@ -99,11 +116,28 @@
 
 <style>
 	.ribbon {
+		position: relative;
 		display: flex;
 		width: 100%;
 		height: 26px;
 		border-radius: 3px;
 		overflow: hidden;
+	}
+
+	.tag {
+		position: absolute;
+		top: 50%;
+		transform: translateY(-50%);
+		padding: 1px 6px;
+		border-radius: 3px;
+		background: rgba(0, 0, 0, 0.45);
+		color: #fff;
+		font-size: 10px;
+		line-height: 14px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		pointer-events: none;
 	}
 
 	.cell {
