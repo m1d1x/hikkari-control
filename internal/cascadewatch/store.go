@@ -123,6 +123,7 @@ type Query struct {
 	Since, Until time.Time
 	Entry        string
 	Layer        string
+	Target       string
 	Round        *time.Time
 	Limit        int
 	// Newest takes the newest Limit rows (still returned oldest first).
@@ -145,9 +146,9 @@ func (s *Store) Rows(ctx context.Context, q Query) ([]Run, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, ts, round_ts, entry_box, exit_box, layer, vantage, target, ok, data FROM trunk_runs
 		WHERE ts >= $1 AND ts < $2 AND ($3 = '' OR entry_box = $3) AND ($4 = '' OR layer = $4)
-		  AND ($5::timestamptz IS NULL OR round_ts = $5)
-		ORDER BY ts `+order+`, id `+order+` LIMIT $6`,
-		q.Since, q.Until, q.Entry, q.Layer, q.Round, q.Limit)
+		  AND ($5::timestamptz IS NULL OR round_ts = $5) AND ($6 = '' OR target = $6)
+		ORDER BY ts `+order+`, id `+order+` LIMIT $7`,
+		q.Since, q.Until, q.Entry, q.Layer, q.Round, q.Target, q.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -177,8 +178,8 @@ func (s *Store) Count(ctx context.Context, q Query) (int, error) {
 	err := s.pool.QueryRow(ctx, `
 		SELECT count(*) FROM trunk_runs
 		WHERE ts >= $1 AND ts < $2 AND ($3 = '' OR entry_box = $3) AND ($4 = '' OR layer = $4)
-		  AND ($5::timestamptz IS NULL OR round_ts = $5)`,
-		q.Since, q.Until, q.Entry, q.Layer, q.Round).Scan(&n)
+		  AND ($5::timestamptz IS NULL OR round_ts = $5) AND ($6 = '' OR target = $6)`,
+		q.Since, q.Until, q.Entry, q.Layer, q.Round, q.Target).Scan(&n)
 	return n, err
 }
 

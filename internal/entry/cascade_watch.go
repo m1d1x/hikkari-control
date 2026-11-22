@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/m1d1x/hikkari-control/internal/applog"
 	"github.com/m1d1x/hikkari-control/internal/cryptobox"
 )
 
@@ -46,6 +47,8 @@ type TrunkPair struct {
 	// (G3, box names): Exit is then a core no member dials by its own
 	// address. Empty: the entry dials Exit itself.
 	Points []string
+	// HopPorts are the core's UDP wire ports forwarded by the points.
+	HopPorts []uint16
 	// PointNames names each border point, the people's and the stand's, by
 	// its address (G5): the brain's lines say addresses, the watch files
 	// box names.
@@ -210,6 +213,17 @@ func (s *Service) TrunkPairs(ctx context.Context) ([]TrunkPair, error) {
 			}
 			p.PointNames[host] = b
 		}
+		if len(r.people) > 0 {
+			_, wirePorts, err := s.trunkBorderPorts(ctx, r.exit)
+			if err != nil {
+				applog.Warn(ctx, "cascade", "hop trace ports", applog.F("exit", r.exit), applog.F("err", err.Error()))
+			}
+			for _, port := range wirePorts {
+				if port > 0 && port <= 65535 {
+					p.HopPorts = append(p.HopPorts, uint16(port))
+				}
+			}
+		}
 		if len(r.receivers) > 0 {
 			p.Receivers = map[string]string{p.ExitAddress: r.exit}
 			for _, b := range r.receivers {
@@ -311,6 +325,16 @@ func (p *Provisioner) WatchRemote(ctx context.Context, box string) (Remote, erro
 // StageCascadeProbe puts the hub's nekko-cascade-probe on the box behind r,
 // unless the box has this build already, and returns its path.
 func (p *Provisioner) StageCascadeProbe(ctx context.Context, r Remote) (string, error) {
+	return p.stageCascadeProbe(ctx, r, CascadeProbeBinary)
+}
+
+// StageHopTrace uses the same CI artifact with a separate installation path
+// so staging a periodic benchmark cannot race staging the observer.
+func (p *Provisioner) StageHopTrace(ctx context.Context, r Remote) (string, error) {
+	return p.stageCascadeProbe(ctx, r, CascadeProbeDir+"/nekko-hop-trace")
+}
+
+func (p *Provisioner) stageCascadeProbe(ctx context.Context, r Remote, path string) (string, error) {
 	if len(p.probeBuilds) == 0 {
 		return "", fmt.Errorf("%w: в образе хаба нет nekko-cascade-probe", ErrRejected)
 	}
@@ -318,12 +342,12 @@ func (p *Provisioner) StageCascadeProbe(ctx context.Context, r Remote) (string, 
 		return "", err
 	}
 	quiet := func(string, ...any) {}
-	if err := stageLabBinary(ctx, r, p.probeBuilds, CascadeProbeBinary, quiet); err != nil {
+	if err := stageLabBinary(ctx, r, p.probeBuilds, path, quiet); err != nil {
 		return "", err
 	}
-	out, err := r.Run(ctx, "f="+CascadeProbeBinary+"; if [ -f $f.new ]; then chmod 755 $f.new && mv $f.new $f; fi; test -x $f && echo ok", nil)
+	out, err := r.Run(ctx, "f="+path+"; if [ -f $f.new ]; then chmod 755 $f.new && mv $f.new $f; fi; test -x $f && echo ok", nil)
 	if err != nil || strings.TrimSpace(out) != "ok" {
 		return "", fmt.Errorf("nekko-cascade-probe не встал: %v %s", err, remoteWord(out))
 	}
-	return CascadeProbeBinary, nil
+	return path, nil
 }
