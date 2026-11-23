@@ -76,6 +76,8 @@ func main() {
 			runEntryFront(os.Args[2:])
 		case "receiver-cert":
 			runReceiverCert(os.Args[2:])
+		case "domain-a":
+			runDomainA(os.Args[2:])
 		case "entry-bench":
 			runEntryBench(os.Args[2:])
 		case "ops-token":
