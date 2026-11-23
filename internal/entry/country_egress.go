@@ -138,7 +138,9 @@ func (p *Provisioner) countryPlan(ctx context.Context, c CountryEgress) (country
 	if err != nil {
 		return plan, err
 	}
-	border := fmt.Sprintf("%s %s %s %v %v %v", entryIP, c.DE, plan.pipe.addr, plan.points, points, deh.TrunkPipeWires)
+	// countryBorderVersion changes the hash when the border job itself
+	// gains a step, so an already applied DE route runs it once more.
+	border := fmt.Sprintf("%s %s %s %v %v %v %s", entryIP, c.DE, plan.pipe.addr, plan.points, points, deh.TrunkPipeWires, countryBorderVersion)
 	plan.borderSHA = fmt.Sprintf("%x", sha256.Sum256([]byte(border)))
 	plan.deEnv = trunkEntryEnv(plan.pipe.addr, plan.pipe.sni, plan.pipe.key, TrunkEntryOptions{
 		Forward: map[int]int{c.DEPort: de.id.Port}, Members: pair.Members,
@@ -254,9 +256,30 @@ func (p *Provisioner) applyCountryEgress(ctx context.Context, plan countryPlan, 
 	})
 }
 
+// countryBorderVersion: noru1, the DE core cuts its own new connections to
+// Russia (hikkari_noru), as every box abroad does.
+const countryBorderVersion = "noru1"
+
 func (p *Provisioner) applyCountryBorder(j *jobRun, plan countryPlan) error {
 	j.step("country-border")
 	if err := p.execJob(j.ctx, JobCountryEgress, plan.DE, uuid.Nil, func(core *jobRun) error {
+		// The DE core has no egress tunnel and so no hikkari_egress table:
+		// its own cut of Russia comes from the same script as a point's.
+		core.step("country-noru")
+		ruNets, err := fetchRUNets(core.ctx, ripeDelegatedURL)
+		if err != nil {
+			return fmt.Errorf("сети РФ для запрета на %s: %w", plan.DE, err)
+		}
+		r, err := core.loginByKey()
+		if err != nil {
+			return err
+		}
+		out, err := r.Run(core.ctx, "bash -s", strings.NewReader(noRUScript(ruNets)))
+		r.Close()
+		if err != nil {
+			return fmt.Errorf("%s: запрет РФ: %w: %s", plan.DE, err, out)
+		}
+		core.log("запрет РФ на %s: %s", plan.DE, strings.TrimSpace(out))
 		for _, point := range plan.points {
 			if err := p.execJob(core.ctx, JobCountryEgress, point, uuid.Nil, func(pt *jobRun) error {
 				pt.step("country-forward")
