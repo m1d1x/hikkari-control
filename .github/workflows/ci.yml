@@ -113,10 +113,12 @@ jobs:
         run: |
           image=fleet-from-source
           if [[ -f deploy/production-fleet-image ]]; then
-            read -r image < deploy/production-fleet-image
-            registry=${REGISTRY,,}
-            [[ "$image" == "$registry/hub@sha256:"* ]]
-            [[ "${image##*:}" =~ ^[a-f0-9]{64}$ ]]
+            read -r revision < deploy/production-fleet-image
+            [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
+            repo="${REGISTRY,,}/hub"
+            digest=$(docker buildx imagetools inspect "$repo:$revision" --format '{{.Manifest.Digest}}')
+            [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+            image="$repo@$digest"
           fi
           printf 'image=%s\n' "$image" >> "$GITHUB_OUTPUT"
       - name: hub image
