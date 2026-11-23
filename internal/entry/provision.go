@@ -1003,6 +1003,14 @@ func (j *jobRun) ensureDomain() error {
 			j.log("домен группы %s, A-запись у %s, не трогаю", domain, holder)
 			return nil
 		}
+		// A core on an egress (G2, H8) is hidden: clients reach it through
+		// the entry and the border points, never by its name, so the group's
+		// A record must not point here. The group's domain may have no box
+		// on record at all once the direct relay that held it is gone.
+		if j.acc.role == RoleEgress {
+			j.log("домен группы %s у скрытого ядра, A-запись не на нём, DNS не жду", domain)
+			return nil
+		}
 	}
 	if domain == "" {
 		d, bought, err := j.p.svc.AcquireDomain(j.ctx, j.box, target)
