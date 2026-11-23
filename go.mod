@@ -69,7 +69,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.8.0
-	github.com/m1d1x/hikkari-protocol v0.0.0-20261123101819-9e7d8afd08b6
+	github.com/m1d1x/hikkari-protocol v0.0.0-20261123160624-ea35da41f84c
 	github.com/mholt/acmez/v3 v3.1.7
 	github.com/oschwald/geoip2-golang v1.13.0
 	github.com/prometheus/client_golang v1.23.2

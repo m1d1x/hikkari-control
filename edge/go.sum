@@ -267,12 +267,12 @@ github.com/libp2p/go-netroute v0.2.1 h1:V8kVrpD8GK0Riv15/7VN6RbUQ3URNZVosw7H2v9t
 github.com/libp2p/go-netroute v0.2.1/go.mod h1:hraioZr0fhBjG0ZRXJJ6Zj2IVEVNx6tDTFQfSmcq7mQ=
 github.com/m1d1x/caddy/v2 v2.11.8-0.20261107181814-6481dda01571 h1:mN3aJVRFl/LrlWzvaLIDn7vnhjxjaLw2ULiYKbhUT6c=
 github.com/m1d1x/caddy/v2 v2.11.8-0.20261107181814-6481dda01571/go.mod h1:azDlZ9NxHX5/76XpIU8XjX6VXKnYV0uz9A8y3kqd5yo=
-github.com/m1d1x/hikkari-protocol v0.0.0-20261123101819-9e7d8afd08b6 h1:FzT2BgeAmsHUe5AABTBsWr2f2tYr/KohSb7f/W9qWgE=
-github.com/m1d1x/hikkari-protocol v0.0.0-20261123101819-9e7d8afd08b6/go.mod h1:n6g14ffrmydnUSkndaeZX7+B7y9NjK/EKIkmg7DuYh4=
+github.com/m1d1x/hikkari-protocol v0.0.0-20261123160624-ea35da41f84c h1:NBYX54XF4cs7WCxKleObdRldp0CiuWf2SSo168wVf2o=
+github.com/m1d1x/hikkari-protocol v0.0.0-20261123160624-ea35da41f84c/go.mod h1:n6g14ffrmydnUSkndaeZX7+B7y9NjK/EKIkmg7DuYh4=
 github.com/m1d1x/hikkari-protocol/server/naive v0.0.0-20261108155522-c8322b5caadd h1:p1286Dmx6quLq0/LxmJgEI+sD69698V0OWytb9zGPgo=
 github.com/m1d1x/hikkari-protocol/server/naive v0.0.0-20261108155522-c8322b5caadd/go.mod h1:C6s9lA2snZKui/f6HXLXTQvgxJs9CDxuOrRbVt5DFUk=
-github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261123101819-9e7d8afd08b6 h1:6wQVUnYuclp1xq82H+ql9XFe7mJtU8lk6YjKfWQNRg8=
-github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261123101819-9e7d8afd08b6/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
+github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261123160624-ea35da41f84c h1:XdZ9WqhiqbkAK+PDPQ16l1t1VPANSuB6cZK3kfjDQ8c=
+github.com/m1d1x/hikkari-protocol/trunk v0.0.0-20261123160624-ea35da41f84c/go.mod h1:bHj7kR/meEQZKAMuLb4WOMqwSd6bTBznZ5Nbj9U+t0U=
 github.com/m1d1x/hikkari-protocol/trunk/chromium v0.0.0-20261111215512-a78c0ebe43df h1:Lu2lv9sGF7afAz20hUXaPWYHy5euaXGWHQ3UvCLHpGY=
 github.com/m1d1x/hikkari-protocol/trunk/chromium v0.0.0-20261111215512-a78c0ebe43df/go.mod h1:fbmJR/Vv5CCOk0KFUmW03yJnU/tnHTcWPbAn8Eps6I8=
 github.com/m1d1x/hikkari-protocol/trunk/quicwire v0.0.0-20261111070922-a2b0763eb54c h1:wbEDDbfwyAkjm/muALIcU60tUQGaiKxP16K8cS05zNA=

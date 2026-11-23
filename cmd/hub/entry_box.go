@@ -80,6 +80,13 @@ package main
 //	                                    # seconds after a loss; a file the brain
 //	                                    # follows (no new process;
 //	                                    # internal/entry/trunkcopies.go)
+//	cmd/server entry-box trunk-pipe-lab <box> 18446=<relay-port> [members] [h3dgram=<port>]
+//	cmd/server entry-box trunk-pipe-lab-off <box>
+//	cmd/server entry-box trunk-stream-window <box> lab|stand|people|de <MiB>|off
+//	                                    # the window every stream through the
+//	                                    # entry gets from now, 2-64 MiB; a file
+//	                                    # the brain follows (no new process;
+//	                                    # internal/entry/trunkwindow.go)
 //	cmd/server entry-box trunk-pipe-exit <exit-box> udp=<port>[,h3dgram=<port>]|off
 //	                                    # hk-exit under the exit's relay, the
 //	                                    # stand's exit by a key of its own, every
@@ -752,7 +759,8 @@ func runEntryBox(args []string) {
 		fmt.Printf("%s: stand points %s (the brain follows them within 10 s, no new process)\n", args[1], args[2])
 		os.Exit(0)
 	}
-	if (len(args) >= 3 && len(args) <= 9 && args[0] == "trunk-pipe") || (len(args) == 2 && args[0] == "trunk-pipe-off") {
+	if (len(args) >= 3 && len(args) <= 9 && (args[0] == "trunk-pipe" || args[0] == "trunk-pipe-lab")) ||
+		(len(args) == 2 && (args[0] == "trunk-pipe-off" || args[0] == "trunk-pipe-lab-off")) {
 		// entry-box trunk-pipe <box> <listen=port,...> [members] [hikkari-udp-copies=1|2] [h3dgram=<port>[:proxy]] [voice=<wire>] [core=<box>|-] [points=<box>,...|off]
 		// — the stand over hk-pipe beside the box's trunk entry, to its exit
 		// (internal/entry/trunkpipe.go, roadmap 4.6, R5).
@@ -773,7 +781,13 @@ func runEntryBox(args []string) {
 			}
 			os.Exit(0)
 		}
-		o := entry.TrunkPipeOptions{Forward: map[int]int{}}
+		if args[0] == "trunk-pipe-lab-off" {
+			if err := prov.StopTrunkPipeLab(ctx, args[1]); err != nil {
+				fail(err)
+			}
+			os.Exit(0)
+		}
+		o := entry.TrunkPipeOptions{Forward: map[int]int{}, Lab: args[0] == "trunk-pipe-lab"}
 		for _, pair := range strings.Split(args[2], ",") {
 			l, r, ok := strings.Cut(pair, "=")
 			a, e1 := strconv.Atoi(l)
@@ -848,6 +862,30 @@ func runEntryBox(args []string) {
 			fail(err)
 		}
 		fmt.Printf("%s: %s copies %s (the brain follows them within 10 s, no new process)\n", args[1], args[2], args[3])
+		os.Exit(0)
+	}
+	if len(args) == 4 && args[0] == "trunk-stream-window" {
+		// entry-box trunk-stream-window <box> lab|stand|people|de <MiB>|off — the
+		// window the entry gives every stream from now (internal/entry/trunkwindow.go).
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(fmt.Errorf("content key: %w", err))
+		}
+		w, err := entry.ParseTrunkStreamWindow(args[3])
+		if err != nil {
+			fail(err)
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		prov := entry.NewProvisioner(svc, entry.SSHDialer, entry.DefaultArtifactDir)
+		if err := prov.SetTrunkStreamWindow(ctx, args[1], args[2], w); err != nil {
+			fail(err)
+		}
+		fmt.Printf("%s: %s stream window %s (the brain follows it within 10 s for the streams from then, no new process)\n", args[1], args[2], args[3])
 		os.Exit(0)
 	}
 	if len(args) >= 3 && len(args) <= 5 && args[0] == "trunk-pipe-wires" {

@@ -2,9 +2,60 @@ package entry
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestStandTrunkArtifactsKeepTheBrainAndPipeSeparateFromTheFleet(t *testing.T) {
+	dir := t.TempDir()
+	write := func(root, name, body string) {
+		t.Helper()
+		archDir := filepath.Join(root, "linux-amd64")
+		if err := os.MkdirAll(archDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(archDir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"nekko-trunk-entry", "hk-pipe"} {
+		write(dir, name, "fleet "+name)
+	}
+	fleet := loadTrunkArtifacts(dir)
+	legacy := loadStandTrunkArtifacts(dir, fleet)
+	if legacy.pipeBuilds["amd64"] != fleet.pipeBuilds["amd64"] {
+		t.Fatal("the stand should use the fleet set on legacy images")
+	}
+	standDir := filepath.Join(dir, "cascade-stand")
+	write(standDir, "nekko-trunk-entry", "stand brain")
+	if partial := loadStandTrunkArtifacts(dir, fleet); len(partial.pipeBuilds) != 0 {
+		t.Fatal("a missing stand pipe must not be taken from the fleet set")
+	}
+	write(standDir, "hk-pipe", "stand pipe")
+	stand := loadStandTrunkArtifacts(dir, fleet)
+	if stand.trunkBuilds["amd64"].path != filepath.Join(standDir, "linux-amd64", "nekko-trunk-entry") ||
+		stand.pipeBuilds["amd64"].path != filepath.Join(standDir, "linux-amd64", "hk-pipe") {
+		t.Fatal("the stand should use its own brain and pipe")
+	}
+}
+
+func TestTheLabHasItsOwnPipeAndPortBook(t *testing.T) {
+	o := TrunkPipeOptions{Lab: true, Members: 32, Forward: map[int]int{CascadeLabPort: 8443}}
+	env := trunkPipeEnvOf("203.0.113.8:8443", "hk.example", "test-key", o)
+	for _, want := range []string{
+		"EDGE_TRUNK_FORWARD=18446=8443\n", "EDGE_TRUNK_REQUIRE_POINTS=1\n", "EDGE_TRUNK_SOURCE_PORTS=8000-9999\n",
+		"EDGE_TRUNK_PIPE=/usr/local/lib/nekko-trunk-pipe-lab/hk-pipe\n",
+		"EDGE_TRUNK_WIRES_FILE=/etc/nekko-trunk-pipe-lab.env.wires.json\n",
+	} {
+		if !strings.Contains(env, want) {
+			t.Fatalf("lab env lacks %q", want)
+		}
+	}
+	if trunkStreamWindowUnitEnv["lab"] != trunkPipeLabUnitSpec.env {
+		t.Fatal("the lab's stream window should use its own env path")
+	}
+}
 
 func TestHikkariEnvCarriesTheTrunk(t *testing.T) {
 	id := Identity{Port: 443, Hikkari: &HikkariParams{Host: "hk.example", User: "hikkari", Pass: "p"}}

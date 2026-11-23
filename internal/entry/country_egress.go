@@ -144,7 +144,7 @@ func (p *Provisioner) countryPlan(ctx context.Context, c CountryEgress) (country
 	if err != nil {
 		return plan, err
 	}
-	plan.nlPipe, err = p.pipeBrainFor(ctx, pair.Exit, nlh.TrunkPipeWires["h3dgram"], "", "", points)
+	plan.nlPipe, err = p.pipeBrainFor(ctx, pair.Exit, nlh.TrunkPipeWires["h3dgram"], "", "", points, p.trunkArtifacts)
 	if err != nil {
 		return plan, err
 	}
@@ -152,7 +152,7 @@ func (p *Provisioner) countryPlan(ctx context.Context, c CountryEgress) (country
 	if err != nil {
 		return plan, err
 	}
-	plan.dePipe, err = p.pipeBrainFor(ctx, c.DE, deh.TrunkPipeWires["h3dgram"], "", "", points)
+	plan.dePipe, err = p.pipeBrainFor(ctx, c.DE, deh.TrunkPipeWires["h3dgram"], "", "", points, p.trunkArtifacts)
 	if err != nil {
 		return plan, err
 	}

@@ -37,7 +37,7 @@ const CascadeTaskKind = "cascade-v1"
 // CascadeSource is the watch as the stand sees it (cascadewatch.Watch).
 type CascadeSource interface {
 	// CascadeLinks are the links a cascade task of entryBox measures.
-	CascadeLinks(ctx context.Context, entryBox string) ([]string, error)
+	CascadeLinks(ctx context.Context, entryBox string, lab bool) ([]string, error)
 	// CascadeFinished takes a cascade task's result: the point it ran on,
 	// the entry and round it was queued for.
 	CascadeFinished(ctx context.Context, slot, entryBox string, round time.Time, res Result) error

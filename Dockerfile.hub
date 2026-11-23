@@ -5,6 +5,8 @@
 # (internal/entry DefaultArtifactDir). The image is the version: a box runs the
 # current build when its binary's digest equals the one in here.
 
+ARG PRODUCTION_FLEET_IMAGE=fleet-from-source
+
 # ── Hub and prober ───────────────────────────────────────────────────────────
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 ARG TARGETARCH
@@ -124,15 +126,26 @@ RUN --mount=type=cache,target=/go/pkg/mod \
         -o /out/relay/linux-$arch/hikkari-wire-stand-h3 . || exit 1; \
     done
 
+# Keep the deployed fleet's artifact set available when a newer entry brain
+# and pipe are being tested on the cascade stand.
+FROM scratch AS fleet-from-source
+COPY --from=edge-builder /out/relay/ /usr/local/share/nekko/relay/
+COPY --from=trunk-builder /out/relay/ /usr/local/share/nekko/relay/
+COPY --from=pipe-builder /out/relay/ /usr/local/share/nekko/relay/
+
+FROM ${PRODUCTION_FLEET_IMAGE} AS fleet-artifacts
+
 # ── Runtime ──────────────────────────────────────────────────────────────────
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 1000 hub
 COPY --from=builder /out/hub /usr/local/bin/hub
+COPY --from=fleet-artifacts /usr/local/share/nekko/relay/linux-amd64/ /usr/local/share/nekko/relay/linux-amd64/
+COPY --from=fleet-artifacts /usr/local/share/nekko/relay/linux-arm64/ /usr/local/share/nekko/relay/linux-arm64/
 COPY --from=builder /out/relay/ /usr/local/share/nekko/relay/
-COPY --from=edge-builder /out/relay/ /usr/local/share/nekko/relay/
-COPY --from=trunk-builder /out/relay/ /usr/local/share/nekko/relay/
 COPY --from=stand-builder /out/relay/ /usr/local/share/nekko/relay/
-COPY --from=pipe-builder /out/relay/ /usr/local/share/nekko/relay/
+COPY --from=trunk-builder /out/relay/ /usr/local/share/nekko/relay/cascade-stand/
+COPY --from=pipe-builder /out/relay/linux-amd64/hk-pipe /out/relay/linux-amd64/libcronet-udp.so /usr/local/share/nekko/relay/cascade-stand/linux-amd64/
+COPY --from=pipe-builder /out/relay/linux-arm64/hk-pipe /usr/local/share/nekko/relay/cascade-stand/linux-arm64/
 RUN mkdir -p /data && chown hub:hub /data
 USER hub
 EXPOSE 8090

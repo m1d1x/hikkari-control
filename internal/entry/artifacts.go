@@ -47,6 +47,29 @@ func loadProberBuilds(dir string) map[string]EdgeBuild {
 	return loadNamedBuilds(dir, "nekko-entry-prober")
 }
 
+// A trunk artifact set keeps the brain, its pipe socket version and its
+// Chromium libraries together. The stand can run a set of its own.
+type trunkArtifacts struct {
+	trunkBuilds, pipeBuilds, cronetBuilds, cronetUDPBuilds map[string]EdgeBuild
+}
+
+func loadTrunkArtifacts(dir string) trunkArtifacts {
+	return trunkArtifacts{
+		trunkBuilds:     loadNamedBuilds(dir, "nekko-trunk-entry"),
+		pipeBuilds:      loadNamedBuilds(dir, "hk-pipe"),
+		cronetBuilds:    loadNamedBuilds(dir, "libcronet.so"),
+		cronetUDPBuilds: loadNamedBuilds(dir, "libcronet-udp.so"),
+	}
+}
+
+func loadStandTrunkArtifacts(dir string, fleet trunkArtifacts) trunkArtifacts {
+	stand := filepath.Join(dir, "cascade-stand")
+	if _, err := os.Stat(stand); errors.Is(err, fs.ErrNotExist) {
+		return fleet // older hub images carry one set
+	}
+	return loadTrunkArtifacts(stand)
+}
+
 func loadNamedBuilds(dir, binName string) map[string]EdgeBuild {
 	out := make(map[string]EdgeBuild, len(Arches))
 	for _, arch := range Arches {

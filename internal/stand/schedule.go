@@ -462,8 +462,9 @@ func (s *Scheduler) FleetLinks(ctx context.Context, token string) ([]string, err
 	if len(token) != 64 {
 		return nil, ErrNoSuchLinks
 	}
-	var slot, knob string
-	err := s.pool.QueryRow(ctx, `SELECT slot,knob FROM stand_tasks WHERE links_token_hash=$1 AND status='claimed' AND claimed_at>now()-$2::interval`, linksTokenHash(token), claimTTL.String()).Scan(&slot, &knob)
+	var slot, knob, entryBox string
+	var values []string
+	err := s.pool.QueryRow(ctx, `SELECT slot,knob,coalesce(cascade_entry,''),vals FROM stand_tasks WHERE links_token_hash=$1 AND status='claimed' AND claimed_at>now()-$2::interval`, linksTokenHash(token), claimTTL.String()).Scan(&slot, &knob, &entryBox, &values)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNoSuchLinks
 	}
@@ -481,11 +482,15 @@ func (s *Scheduler) FleetLinks(ctx context.Context, token string) ([]string, err
 		if s.cascade == nil {
 			return nil, errors.New("stand: cascade task with no cascade watch")
 		}
-		var entryBox string
-		if err := s.pool.QueryRow(ctx, `SELECT coalesce(cascade_entry, '') FROM stand_tasks WHERE links_token_hash = $1`, linksTokenHash(token)).Scan(&entryBox); err != nil {
-			return nil, fmt.Errorf("stand cascade links: %w", err)
+		lab := false
+		if knob == LoadTaskKind {
+			spec, err := ParseLoadSpec(values)
+			if err != nil {
+				return nil, fmt.Errorf("stand load links: %w", err)
+			}
+			lab = spec.Lab
 		}
-		return s.cascade.CascadeLinks(ctx, entryBox)
+		return s.cascade.CascadeLinks(ctx, entryBox, lab)
 	}
 
 	return s.fleet.Links(ctx)

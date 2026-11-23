@@ -20,7 +20,7 @@ type fakeCascade struct {
 	loads    int
 }
 
-func (f *fakeCascade) CascadeLinks(_ context.Context, entryBox string) ([]string, error) {
+func (f *fakeCascade) CascadeLinks(_ context.Context, entryBox string, _ bool) ([]string, error) {
 	if entryBox != "ru-entry" {
 		return nil, errors.New("unknown entry")
 	}

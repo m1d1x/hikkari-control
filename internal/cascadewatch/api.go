@@ -31,6 +31,7 @@ type loadRequest struct {
 	Echo    string `json:"echo"`
 	Path    string `json:"path"`
 	Bulk    int    `json:"bulk"`
+	Lab     bool   `json:"lab"`
 }
 
 // loadHandler queues a synthetic users task (stand/load.go) on a point in
@@ -50,7 +51,7 @@ func (w *Watch) loadHandler(rw http.ResponseWriter, r *http.Request) {
 	if req.Path == "" {
 		req.Path = stand.LoadPathEntry
 	}
-	spec := stand.LoadSpec{Users: req.Users, Minutes: req.Minutes, GamePPS: req.GamePPS, Echo: echo, Path: req.Path, Bulk: req.Bulk}
+	spec := stand.LoadSpec{Users: req.Users, Minutes: req.Minutes, GamePPS: req.GamePPS, Echo: echo, Path: req.Path, Bulk: req.Bulk, Lab: req.Lab}
 	if err := spec.Validate(); err != nil {
 		writeJSON(rw, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
