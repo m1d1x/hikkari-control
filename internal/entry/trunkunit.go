@@ -137,7 +137,7 @@ unit_changed=0
 if [ -f "$unit.new" ]; then
 	if cmp -s "$unit.new" "$unit"; then rm -f "$unit.new"; else mv "$unit.new" "$unit"; unit_changed=1; fi
 fi
-if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+if ! grep -qxF EDGE_TRUNK_LOOPBACK=1 "$env" && command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
 	for port in "$@"; do
 		ufw allow "$port/tcp" comment @UNIT@ >/dev/null
 		ufw allow "$port/udp" comment @UNIT@ >/dev/null
@@ -161,7 +161,12 @@ for _ in $(seq 1 40); do
 	up=1
 	systemctl is-active --quiet @UNIT@ || up=0
 	for port in "$@"; do
-		ss -tln | grep ":$port " >/dev/null || up=0
+		if grep -qxF EDGE_TRUNK_LOOPBACK=1 "$env"; then
+            ss -H -lnt src "127.0.0.1:$port" | grep -q . || up=0
+            ss -H -lnu src "127.0.0.1:$port" | grep -q . || up=0
+        else
+            ss -tln | grep ":$port " >/dev/null || up=0
+        fi
 	done
 	if [ $up = 1 ]; then
 		if [ "$how" = reload ]; then

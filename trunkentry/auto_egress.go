@@ -24,43 +24,64 @@ type egressHealth struct{ tcp, udp bool }
 func (h egressHealth) healthy() bool { return h.tcp && h.udp }
 func (h egressHealth) failed() bool  { return !h.tcp && !h.udp }
 
-// egressChoice latches onto DE for the lifetime of the Auto gateway once NL
-// loses both probes and DE proves both transports. A partial failure or loss
-// of the points shared by both exits cannot move an otherwise working route.
+type egressCountry int
+
+const (
+	countryNL egressCountry = iota
+	countryDE
+	countryNone
+	recoverySuccesses = 3
+)
+
+func (c egressCountry) String() string {
+	return [...]string{"NL", "DE", "none"}[c]
+}
+
+func (c egressCountry) other() egressCountry { return countryDE - c }
+
+// A country is confirmed down only when its peer proves both transports.
 type egressChoice struct {
-	de       bool
-	failures int
+	down      egressCountry
+	failures  [2]int
+	successes [2]int
 }
 
-func (c *egressChoice) observe(nl, de egressHealth) bool {
-	if c.de {
-		return false
+func (c *egressChoice) observe(health [2]egressHealth) egressCountry {
+	for i, h := range health {
+		if h.failed() {
+			c.failures[i] = min(c.failures[i]+1, autoFailures)
+		} else {
+			c.failures[i] = 0
+		}
+		if h.healthy() {
+			c.successes[i] = min(c.successes[i]+1, recoverySuccesses)
+		} else {
+			c.successes[i] = 0
+		}
 	}
-	if !nl.failed() {
-		c.failures = 0
-		return false
+	for i, failures := range c.failures {
+		country := egressCountry(i)
+		if failures == autoFailures && health[country.other()].healthy() {
+			c.down = country
+			return c.down
+		}
 	}
-	if c.failures < autoFailures {
-		c.failures++
+	if c.down != countryNone && c.successes[c.down] == recoverySuccesses {
+		c.down = countryNone
 	}
-	if c.failures < autoFailures || !de.healthy() {
-		return false
-	}
-	c.de = true
-	return true
+	return c.down
 }
 
-// autoGateway accepts the Auto profile on one TCP/UDP port. Each backend is
-// the explicit country's already-warm trunk listener on this same entry.
-// TLS and QUIC stay end to end with the selected Hikkari relay.
+// Each public country port prefers its own backend. The backend paths retain
+// their TCP and UDP flows independently of the preference for new flows.
 type autoGateway struct {
-	mu       sync.Mutex
-	choice   egressChoice
-	path     *autoPath
-	sessions map[netip.AddrPort]*net.UDPConn
-	ctx      context.Context
-	tcp      *net.TCPListener
-	udp      *net.UDPConn
+	mu             sync.Mutex
+	home, selected egressCountry
+	paths          [2]*autoPath
+	sessions       map[netip.AddrPort]autoUDPSession
+	ctx            context.Context
+	tcp            *net.TCPListener
+	udp            *net.UDPConn
 }
 
 type autoPath struct {
@@ -69,7 +90,12 @@ type autoPath struct {
 	cancel context.CancelFunc
 }
 
-func newAutoGateway(ctx context.Context, listen, nl netip.AddrPort) (*autoGateway, error) {
+type autoUDPSession struct {
+	conn    *net.UDPConn
+	country egressCountry
+}
+
+func newAutoGateway(ctx context.Context, listen netip.AddrPort, backends [2]netip.AddrPort, home egressCountry) (*autoGateway, error) {
 	tcp, err := net.ListenTCP("tcp4", net.TCPAddrFromAddrPort(listen))
 	if err != nil {
 		return nil, err
@@ -79,28 +105,39 @@ func newAutoGateway(ctx context.Context, listen, nl netip.AddrPort) (*autoGatewa
 		tcp.Close()
 		return nil, err
 	}
-	pathCtx, cancel := context.WithCancel(ctx)
-	return &autoGateway{
-		path: &autoPath{nl, pathCtx, cancel}, sessions: make(map[netip.AddrPort]*net.UDPConn),
-		ctx: ctx, tcp: tcp, udp: udp,
-	}, nil
+	g := &autoGateway{home: home, selected: home, sessions: make(map[netip.AddrPort]autoUDPSession), ctx: ctx, tcp: tcp, udp: udp}
+	for i, addr := range backends {
+		pathCtx, cancel := context.WithCancel(ctx)
+		g.paths[i] = &autoPath{addr, pathCtx, cancel}
+	}
+	return g, nil
 }
 
-func (g *autoGateway) observe(nl, de egressHealth, fallback netip.AddrPort) {
+func (g *autoGateway) route(down egressCountry) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if !g.choice.observe(nl, de) {
-		return
+	selected := g.home
+	if down == g.home {
+		selected = g.home.other()
 	}
-	log.Printf("nekko-trunk-entry: auto egress failed country=NL consecutive=%d", autoFailures)
-	g.path.cancel()
-	for _, conn := range g.sessions {
-		conn.Close()
+	if down != countryNone {
+		g.paths[down].cancel()
+		for peer, session := range g.sessions {
+			if session.country == down {
+				session.conn.Close()
+				delete(g.sessions, peer)
+			}
+		}
 	}
-	clear(g.sessions)
-	ctx, cancel := context.WithCancel(g.ctx)
-	g.path = &autoPath{fallback, ctx, cancel}
-	log.Print("nekko-trunk-entry: auto egress switched from=NL to=DE")
+	path := g.paths[selected]
+	if path.ctx.Err() != nil {
+		ctx, cancel := context.WithCancel(g.ctx)
+		g.paths[selected] = &autoPath{path.addr, ctx, cancel}
+	}
+	if selected != g.selected {
+		log.Printf("country egress home=%s switched from=%s to=%s", g.home, g.selected, selected)
+		g.selected = selected
+	}
 }
 
 func (g *autoGateway) serve() error {
@@ -117,9 +154,11 @@ func (g *autoGateway) serve() error {
 	closeListeners()
 	<-errCh
 	g.mu.Lock()
-	g.path.cancel()
-	for _, conn := range g.sessions {
-		conn.Close()
+	for _, path := range g.paths {
+		path.cancel()
+	}
+	for _, session := range g.sessions {
+		session.conn.Close()
 	}
 	clear(g.sessions)
 	g.mu.Unlock()
@@ -136,7 +175,7 @@ func (g *autoGateway) serveTCP() error {
 			return err
 		}
 		g.mu.Lock()
-		path := g.path
+		path := g.paths[g.selected]
 		g.mu.Unlock()
 		go path.forwardTCP(conn)
 	}
@@ -182,11 +221,11 @@ func (g *autoGateway) serveUDP() error {
 			return err
 		}
 		g.mu.Lock()
-		conn := g.sessions[peer]
+		conn := g.sessions[peer].conn
 		if conn == nil && len(g.sessions) < autoUDPLimit {
-			conn, err = net.DialUDP("udp4", nil, net.UDPAddrFromAddrPort(g.path.addr))
+			conn, err = net.DialUDP("udp4", nil, net.UDPAddrFromAddrPort(g.paths[g.selected].addr))
 			if err == nil {
-				g.sessions[peer] = conn
+				g.sessions[peer] = autoUDPSession{conn, g.selected}
 				go g.udpResponses(peer, conn)
 			}
 		}
@@ -205,7 +244,7 @@ func (g *autoGateway) udpResponses(peer netip.AddrPort, conn *net.UDPConn) {
 	defer func() {
 		g.mu.Lock()
 		defer g.mu.Unlock()
-		if g.sessions[peer] == conn {
+		if g.sessions[peer].conn == conn {
 			delete(g.sessions, peer)
 		}
 	}()
@@ -216,7 +255,7 @@ func (g *autoGateway) udpResponses(peer netip.AddrPort, conn *net.UDPConn) {
 			return
 		}
 		g.mu.Lock()
-		if g.sessions[peer] != conn {
+		if g.sessions[peer].conn != conn {
 			g.mu.Unlock()
 			return
 		}

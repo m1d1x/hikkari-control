@@ -170,8 +170,12 @@ func bindSockets(c Config) (*sockets, error) {
 	if c.Pipe != "" {
 		tcp, udp = "tcp4", "udp4"
 	}
+	var ip net.IP
+	if c.Loopback {
+		ip = net.IPv4(127, 0, 0, 1)
+	}
 	for port := range c.TCP {
-		ln, err := net.ListenTCP(tcp, &net.TCPAddr{Port: port})
+		ln, err := net.ListenTCP(tcp, &net.TCPAddr{IP: ip, Port: port})
 		if err != nil {
 			s.close()
 			return nil, fmt.Errorf("tcp :%d: %w", port, err)
@@ -179,7 +183,7 @@ func bindSockets(c Config) (*sockets, error) {
 		s.tcp[port] = ln
 	}
 	for port := range c.UDP {
-		pc, err := net.ListenUDP(udp, &net.UDPAddr{Port: port})
+		pc, err := net.ListenUDP(udp, &net.UDPAddr{IP: ip, Port: port})
 		if err != nil {
 			s.close()
 			return nil, fmt.Errorf("udp :%d: %w", port, err)
@@ -204,6 +208,16 @@ func (s *sockets) matches(c Config) error {
 	want, have := listenSpec(c), s.spec()
 	if strings.Join(want, ",") != strings.Join(have, ",") {
 		return fmt.Errorf("listen ports change from %v to %v: restart it", have, want)
+	}
+	for _, listener := range s.tcp {
+		if listener.Addr().(*net.TCPAddr).IP.IsLoopback() != c.Loopback {
+			return errors.New("listen address changes: restart it")
+		}
+	}
+	for _, listener := range s.udp {
+		if listener.LocalAddr().(*net.UDPAddr).IP.IsLoopback() != c.Loopback {
+			return errors.New("listen address changes: restart it")
+		}
 	}
 	return nil
 }

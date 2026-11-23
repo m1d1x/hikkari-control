@@ -3,14 +3,17 @@ package entry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/m1d1x/hikkari-control/internal/applog"
 )
 
@@ -405,6 +408,22 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 		listen = append(listen, strconv.Itoa(l))
 	}
 	sort.Strings(listen)
+	env := trunkPipeEnvOf(addr, sni, key, o)
+	var nlPort int
+	err = p.svc.pool.QueryRow(ctx, `SELECT nl_port FROM entry_country_egress WHERE entry_box=$1`, box).Scan(&nlPort)
+	if err == nil {
+		relay := o.Forward[nlPort]
+		if relay == 0 || relay != pair.Pipe[nlPort] || len(o.Forward) != 1 ||
+			exitBox != pair.Exit || !slices.Equal(points, pair.Points) {
+			return fmt.Errorf("%w: стенд используется шлюзами стран", ErrRejected)
+		}
+		backend := o
+		backend.Forward = map[int]int{countryNLBackendPort: relay}
+		env = trunkPipeEnvOf(addr, sni, key, backend) + countryBackendEnv
+		listen = []string{strconv.Itoa(countryNLBackendPort)}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
 	wiresFile, cronet := pipe.wires, pipe.cronet
 	wiresFile, err = p.svc.pointTLSWires(ctx, wiresFile, box, exitBox, true, points, pts)
 	if err != nil {
@@ -429,7 +448,7 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	applog.Info(ctx, "entry", "operator trunk pipe on box", applog.F("box", box), applog.F("exit", exitBox),
 		applog.F("members", o.Members), applog.F("listen", strings.Join(listen, ",")))
 	files := []trunkFile{{"nekko-trunk-entry", p.trunkBuilds}, {"libcronet.so", cronet}, {"hk-pipe", p.pipeBuilds}}
-	if err := standTrunkUnit(ctx, r, trunkPipeUnitSpec, files, trunkPipeEnvOf(addr, sni, key, o),
+	if err := standTrunkUnit(ctx, r, trunkPipeUnitSpec, files, env,
 		map[string]string{"wires.json": wiresFile}, listen, logf); err != nil {
 		return err
 	}
