@@ -32,3 +32,21 @@ func TestTrunkCopiesAreMembersAndAWindowOrOff(t *testing.T) {
 		t.Fatalf("files %v: beside each one's wires file", trunkCopiesFiles)
 	}
 }
+
+func TestTheStreamWindowIsWholeMiBFromTwoToSixtyFourOrOff(t *testing.T) {
+	for raw, want := range map[string]int{"16": 16, " 2 ": 2, "64": 64, "off": 0} {
+		if w, err := ParseTrunkStreamWindow(raw); err != nil || w.MiB != want {
+			t.Fatalf("%q: %+v %v, want %d MiB", raw, w, err, want)
+		}
+	}
+	for _, raw := range []string{"1", "65", "8.5", "", "16MiB"} {
+		if _, err := ParseTrunkStreamWindow(raw); err == nil {
+			t.Fatalf("%q went", raw)
+		}
+	}
+	for who, env := range trunkStreamWindowUnitEnv {
+		if env == "" {
+			t.Fatalf("%s: no env", who)
+		}
+	}
+}

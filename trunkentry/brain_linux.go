@@ -70,6 +70,8 @@ type brain struct {
 	// points are the border points the pipe was given from the file
 	// (wires.go "points"), none: the core's own address.
 	points []pipectl.BorderPoint
+	// streamWindowRaw seeds the file watcher with the version read at startup.
+	streamWindowRaw []byte
 
 	extras context.CancelFunc
 	handed chan struct{}
@@ -258,6 +260,18 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 		return nil, fmt.Errorf("copies: %w", err)
 	} else if cp != (copiesFile{}) {
 		log.Printf("nekko-trunk-entry: %v", cp)
+	}
+	// The stream window before any client comes: every stream takes it. A
+	// file that cannot be read leaves the pipe's own 2 MiB.
+	w, windowRaw, err := readStreamWindow(streamWindowFilePath())
+	b.streamWindowRaw = windowRaw
+	if err != nil {
+		log.Printf("nekko-trunk-entry: stream window: %v (the pipe's own)", err)
+	} else if err := setStreamWindow(p, w); err != nil {
+		p.Close()
+		return nil, fmt.Errorf("stream window: %w", err)
+	} else if w != 0 {
+		log.Printf("nekko-trunk-entry: stream window %s", streamWindowString(w))
 	}
 	for _, w := range ws {
 		if err := p.SetWire(w); err != nil {
