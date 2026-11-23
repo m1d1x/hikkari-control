@@ -19,8 +19,12 @@ func (w *Watch) LoadFinished(ctx context.Context, slot, entryBox string, spec st
 	}
 	rt := queued.UTC()
 	base := func() map[string]any {
-		return map[string]any{"synthetic": true, "core": res.Core, "users": spec.Users, "minutes": spec.Minutes,
+		d := map[string]any{"synthetic": true, "core": res.Core, "users": spec.Users, "minutes": spec.Minutes,
 			"game_pps": spec.GamePPS, "echo": spec.Echo.String(), "path": spec.Path, "bulk": spec.Bulk}
+		if spec.Lab {
+			d["lab"] = true
+		}
+		return d
 	}
 	var runs []Run
 	for _, v := range res.Voice {

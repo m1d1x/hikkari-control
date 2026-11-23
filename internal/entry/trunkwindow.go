@@ -6,11 +6,11 @@ package entry
 // session through the entry is one stream, and its speed down is at most the
 // window the entry gives over the time a chunk takes to be confirmed.
 //
-//	cmd/server entry-box trunk-stream-window <box> stand|people|de <MiB>|off
+//	cmd/server entry-box trunk-stream-window <box> lab|stand|people|de <MiB>|off
 //
-// writes the window file beside the wires file of the stand
-// (nekko-trunk-pipe), the people's entry (nekko-trunk-entry) or the DE route
-// (nekko-trunk-de), and only it: the running brain follows it within 10 s,
+// writes the window file beside the wires file of the lab (nekko-trunk-pipe-lab),
+// the stand (nekko-trunk-pipe), the people's entry (nekko-trunk-entry) or the
+// DE route (nekko-trunk-de). The running brain follows it within 10 s,
 // with no new process, for the streams from then (trunkentry
 // streamwindow.go). off is the pipe's own 2 MiB.
 
@@ -51,17 +51,18 @@ func ParseTrunkStreamWindow(raw string) (TrunkStreamWindow, error) {
 // trunkStreamWindowUnitEnv is the env each one's unit has; the file is
 // beside it, env + ".window.json" (trunkentry streamWindowFilePath).
 var trunkStreamWindowUnitEnv = map[string]string{
+	"lab":    trunkPipeLabUnitSpec.env,
 	"stand":  trunkPipeEnv,
 	"people": trunkEntryEnvFile,
 	"de":     countryDEUnit.env,
 }
 
-// SetTrunkStreamWindow writes the window file of the stand, the people's
-// entry or the DE route on box; off removes it.
+// SetTrunkStreamWindow writes the window file for the selected unit on box.
+// Off removes it.
 func (p *Provisioner) SetTrunkStreamWindow(ctx context.Context, box, who string, w TrunkStreamWindow) error {
 	env, ok := trunkStreamWindowUnitEnv[who]
 	if !ok {
-		return fmt.Errorf("%w: %q, stand, people или de", ErrRejected, who)
+		return fmt.Errorf("%w: %q, lab, stand, people или de", ErrRejected, who)
 	}
 	path := env + ".window.json"
 	r, _, err := p.provokeRemote(ctx, box)

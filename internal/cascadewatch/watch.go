@@ -711,7 +711,7 @@ func (w *Watch) slots(ctx context.Context, ruOnly bool) (map[string]bool, error)
 
 // CascadeLinks are the protocol layer's links for a task of entryBox: the
 // exit's Hikkari relay straight and through the entry's port that reaches it.
-func (w *Watch) CascadeLinks(ctx context.Context, entryBox string) ([]string, error) {
+func (w *Watch) CascadeLinks(ctx context.Context, entryBox string, lab bool) ([]string, error) {
 	p, err := w.pair(ctx, entryBox)
 	if err != nil {
 		return nil, err
@@ -727,7 +727,11 @@ func (w *Watch) CascadeLinks(ctx context.Context, entryBox string) ([]string, er
 	}
 	// The stand over hk-pipe beside the entry, when it stands, on the same
 	// relay port: the same rounds read the Rust pipe against the Go entry.
-	return w.links.CascadeProbeLinks(ctx, Account, p.Entry, p.Exit, port, p.PipeListen(p.RelayPort))
+	pipePort := p.PipeListen(p.RelayPort)
+	if lab {
+		pipePort = entry.CascadeLabPort
+	}
+	return w.links.CascadeProbeLinks(ctx, Account, p.Entry, p.Exit, port, pipePort)
 }
 
 func (w *Watch) pair(ctx context.Context, entryBox string) (entry.TrunkPair, error) {

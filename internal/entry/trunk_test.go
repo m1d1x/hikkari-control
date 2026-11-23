@@ -40,6 +40,23 @@ func TestStandTrunkArtifactsKeepTheBrainAndPipeSeparateFromTheFleet(t *testing.T
 	}
 }
 
+func TestTheLabHasItsOwnPipeAndPortBook(t *testing.T) {
+	o := TrunkPipeOptions{Lab: true, Members: 32, Forward: map[int]int{CascadeLabPort: 8443}}
+	env := trunkPipeEnvOf("203.0.113.8:8443", "hk.example", "test-key", o)
+	for _, want := range []string{
+		"EDGE_TRUNK_FORWARD=18446=8443\n", "EDGE_TRUNK_REQUIRE_POINTS=1\n", "EDGE_TRUNK_SOURCE_PORTS=8000-9999\n",
+		"EDGE_TRUNK_PIPE=/usr/local/lib/nekko-trunk-pipe-lab/hk-pipe\n",
+		"EDGE_TRUNK_WIRES_FILE=/etc/nekko-trunk-pipe-lab.env.wires.json\n",
+	} {
+		if !strings.Contains(env, want) {
+			t.Fatalf("lab env lacks %q", want)
+		}
+	}
+	if trunkStreamWindowUnitEnv["lab"] != trunkPipeLabUnitSpec.env {
+		t.Fatal("the lab's stream window should use its own env path")
+	}
+}
+
 func TestHikkariEnvCarriesTheTrunk(t *testing.T) {
 	id := Identity{Port: 443, Hikkari: &HikkariParams{Host: "hk.example", User: "hikkari", Pass: "p"}}
 	env, err := id.EdgeEnv()

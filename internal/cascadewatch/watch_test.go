@@ -277,9 +277,10 @@ func (f *fakeBoxes) StageCascadeProbe(context.Context, entry.Remote) (string, er
 	return entry.CascadeProbeBinary, nil
 }
 
-type fakeLinks struct{ port int }
+type fakeLinks struct{ port, pipePort int }
 
-func (f *fakeLinks) CascadeProbeLinks(_ context.Context, account, entryBox, exitBox string, port, _ int) ([]string, error) {
+func (f *fakeLinks) CascadeProbeLinks(_ context.Context, account, entryBox, exitBox string, port, pipePort int) ([]string, error) {
+	f.pipePort = pipePort
 	f.port = port
 	return []string{account + " " + entryBox + " " + exitBox}, nil
 }
@@ -382,8 +383,11 @@ func TestDBARoundMeasuresEveryLayerAndJudgesIt(t *testing.T) {
 	if strings.Join(queue.slots, ",") != "lv-main,ru-eurodir" {
 		t.Fatalf("protocol tasks for %v", queue.slots)
 	}
-	if got, err := w.CascadeLinks(ctx, "ruin1"); err != nil || links.port != 8443 || got[0] != Account+" ruin1 unl1" {
+	if got, err := w.CascadeLinks(ctx, "ruin1", false); err != nil || links.port != 8443 || got[0] != Account+" ruin1 unl1" {
 		t.Fatalf("links %v %v port %d", got, err, links.port)
+	}
+	if _, err := w.CascadeLinks(ctx, "ruin1", true); err != nil || links.pipePort != entry.CascadeLabPort {
+		t.Fatalf("lab link uses port %d: %v", links.pipePort, err)
 	}
 	// The points report: ru-eurodir's call through the entry is fine, its load is not.
 	ts := now.Format(time.RFC3339)

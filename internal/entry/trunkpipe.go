@@ -62,6 +62,8 @@ const (
 	trunkPipeUnit = "nekko-trunk-pipe"
 	trunkPipeDir  = "/usr/local/lib/nekko-trunk-pipe"
 	trunkPipeEnv  = "/etc/nekko-trunk-pipe.env"
+	// CascadeLabPort is the synthetic load entry beside the country routes.
+	CascadeLabPort = 18446
 	// trunkPipeWires is the stand's wires file, staged and swapped in
 	// beside its env (standTrunkUnit's extra files).
 	trunkPipeWires = trunkPipeEnv + ".wires.json"
@@ -82,6 +84,9 @@ const (
 var trunkPipeUnitSpec = trunkUnit{name: trunkPipeUnit, dir: trunkPipeDir, env: trunkPipeEnv,
 	desc: "the cascade's trunk entry over hk-pipe (stand)", title: "trunk entry over hk-pipe", reloadEnv: trunkPipeEnv}
 
+var trunkPipeLabUnitSpec = trunkUnit{name: "nekko-trunk-pipe-lab", dir: "/usr/local/lib/nekko-trunk-pipe-lab", env: "/etc/nekko-trunk-pipe-lab.env",
+	desc: "the cascade's synthetic load entry", title: "trunk entry lab over hk-pipe", reloadEnv: "/etc/nekko-trunk-pipe-lab.env"}
+
 // TrunkPipeOptions are what the stand is stood with; its exit is the Go
 // entry's on the same box.
 type TrunkPipeOptions struct {
@@ -90,6 +95,7 @@ type TrunkPipeOptions struct {
 	Forward          map[int]int
 	Members          int
 	HikkariUDPCopies int
+	Lab              bool // a separate test listener alongside the country routes
 	// H3Port, when set, is the exit's port of Chromium's QUIC wire, H3Usage
 	// its members' session usage ("" is destination).
 	H3Port  int
@@ -110,6 +116,11 @@ type TrunkPipeOptions struct {
 // pipe's own. CONTAINS THE TRUNK KEY.
 func trunkPipeEnvOf(addr, sni, key string, o TrunkPipeOptions) string {
 	env := trunkEntryEnv(addr, sni, key, TrunkEntryOptions{Forward: o.Forward, Members: o.Members, HikkariUDPCopies: o.HikkariUDPCopies})
+	if o.Lab {
+		// DE uses 4000-7999, the country NL backend 10000-19999 and the
+		// production entry 20000-32767. The lab's members have their own book.
+		return env + pipeBrainEnv(trunkPipeLabUnitSpec, "8000-9999") + "EDGE_TRUNK_REQUIRE_POINTS=1\n"
+	}
 	return env + pipeBrainEnv(trunkPipeUnitSpec, TrunkPipeSourcePorts)
 }
 
@@ -389,7 +400,14 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	if err != nil {
 		return err
 	}
-	builds := p.standTrunkArtifacts
+	unit, builds := trunkPipeUnitSpec, p.trunkArtifacts
+	if o.Lab {
+		if len(o.Forward) != 1 || o.Forward[CascadeLabPort] != pair.RelayPort ||
+			pair.Pipe[CascadeLabPort] != 0 || exitBox != pair.Exit || len(points) == 0 || !slices.Equal(points, pair.Points) {
+			return fmt.Errorf("%w: лабораторный вход требует порт %d и действующий выход через общие точки", ErrRejected, CascadeLabPort)
+		}
+		unit, builds = trunkPipeLabUnitSpec, p.standTrunkArtifacts
+	}
 	pipe, err := p.pipeBrainFor(ctx, exitBox, o.H3Port, o.H3Usage, o.Voice, pts, builds)
 	if err != nil {
 		return err
@@ -410,18 +428,24 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	}
 	sort.Strings(listen)
 	env := trunkPipeEnvOf(addr, sni, key, o)
-	var nlPort int
-	err = p.svc.pool.QueryRow(ctx, `SELECT nl_port FROM entry_country_egress WHERE entry_box=$1`, box).Scan(&nlPort)
+	var nlPort, dePort int
+	err = p.svc.pool.QueryRow(ctx, `SELECT nl_port, de_port FROM entry_country_egress WHERE entry_box=$1`, box).Scan(&nlPort, &dePort)
 	if err == nil {
-		relay := o.Forward[nlPort]
-		if relay == 0 || relay != pair.Pipe[nlPort] || len(o.Forward) != 1 ||
-			exitBox != pair.Exit || !slices.Equal(points, pair.Points) {
-			return fmt.Errorf("%w: стенд используется шлюзами стран", ErrRejected)
+		if o.Lab {
+			if nlPort == CascadeLabPort || dePort == CascadeLabPort {
+				return fmt.Errorf("%w: порт лаборатории %d используется шлюзом страны", ErrRejected, CascadeLabPort)
+			}
+		} else {
+			relay := o.Forward[nlPort]
+			if relay == 0 || relay != pair.Pipe[nlPort] || len(o.Forward) != 1 ||
+				exitBox != pair.Exit || !slices.Equal(points, pair.Points) {
+				return fmt.Errorf("%w: стенд используется шлюзами стран", ErrRejected)
+			}
+			backend := o
+			backend.Forward = map[int]int{countryNLBackendPort: relay}
+			env = trunkPipeEnvOf(addr, sni, key, backend) + countryBackendEnv
+			listen = []string{strconv.Itoa(countryNLBackendPort)}
 		}
-		backend := o
-		backend.Forward = map[int]int{countryNLBackendPort: relay}
-		env = trunkPipeEnvOf(addr, sni, key, backend) + countryBackendEnv
-		listen = []string{strconv.Itoa(countryNLBackendPort)}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
@@ -435,8 +459,10 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	// (borderPlanOf), and a stand whose core answers only its points cannot
 	// bring a member up until a point forwards (G2, 20.11: the reload failed
 	// on "no member came up" while border-forward knew no entry to aeznl1).
-	if err := p.svc.recordTrunkPipeCore(ctx, box, core, points); err != nil {
-		return err
+	if !o.Lab {
+		if err := p.svc.recordTrunkPipeCore(ctx, box, core, points); err != nil {
+			return err
+		}
 	}
 	r, _, err := p.provokeRemote(ctx, box)
 	if err != nil {
@@ -447,13 +473,30 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 		applog.Info(ctx, "entry", fmt.Sprintf(format, args...), applog.F("box", box))
 	}
 	applog.Info(ctx, "entry", "operator trunk pipe on box", applog.F("box", box), applog.F("exit", exitBox),
-		applog.F("members", o.Members), applog.F("listen", strings.Join(listen, ",")))
+		applog.F("unit", unit.name), applog.F("members", o.Members), applog.F("listen", strings.Join(listen, ",")))
 	files := []trunkFile{{"nekko-trunk-entry", builds.trunkBuilds}, {"libcronet.so", cronet}, {"hk-pipe", builds.pipeBuilds}}
-	if err := standTrunkUnit(ctx, r, trunkPipeUnitSpec, files, env,
+	if err := standTrunkUnit(ctx, r, unit, files, env,
 		map[string]string{"wires.json": wiresFile}, listen, logf); err != nil {
 		return err
 	}
+	if o.Lab {
+		return nil
+	}
 	return p.svc.recordTrunkPipe(ctx, box, o.Forward)
+}
+
+// StopTrunkPipeLab removes the synthetic load listener and its open port.
+func (p *Provisioner) StopTrunkPipeLab(ctx context.Context, box string) error {
+	r, _, err := p.provokeRemote(ctx, box)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	applog.Info(ctx, "entry", "operator trunk pipe lab off", applog.F("box", box))
+	if out, err := r.Run(ctx, "bash -s", strings.NewReader(trunkPipeLabUnitSpec.offScript())); err != nil {
+		return fmt.Errorf("снятие лабораторного входа: %w: %s", err, out)
+	}
+	return nil
 }
 
 // StopTrunkPipe takes the stand off box; the Go entry stays.

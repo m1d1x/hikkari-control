@@ -64,6 +64,8 @@ type LoadSpec struct {
 	Path string
 	// Bulk is the downloading user's TCP streams at once, 0 for no such user.
 	Bulk int
+	// Lab selects the separate pipe listener for a synthetic run.
+	Lab bool
 }
 
 // The paths a synthetic users task runs on.
@@ -115,6 +117,9 @@ func (s LoadSpec) Values() []string {
 	if s.Bulk > 0 {
 		v = append(v, "bulk="+strconv.Itoa(s.Bulk))
 	}
+	if s.Lab {
+		v = append(v, "lab=1")
+	}
 	return v
 }
 
@@ -129,6 +134,8 @@ func (s LoadSpec) Validate() error {
 		return fmt.Errorf("game_pps: от 0 до %d", loadMaxGamePPS)
 	case s.Bulk < 0 || s.Bulk > loadMaxBulk:
 		return fmt.Errorf("bulk: от 0 до %d", loadMaxBulk)
+	case s.Lab && s.path() != LoadPathPipe:
+		return errors.New("lab: нужен path=pipe")
 	case !s.Echo.IsValid() || s.Echo.Port() == 0:
 		return errors.New("echo: нужен адрес ip:port")
 	case !s.Echo.Addr().Is4() || !s.Echo.Addr().IsGlobalUnicast() || s.Echo.Addr().IsPrivate():
@@ -170,6 +177,8 @@ func ParseLoadSpec(vals []string) (LoadSpec, error) {
 			s.Path = val
 		case "bulk":
 			s.Bulk, err = strconv.Atoi(val)
+		case "lab":
+			s.Lab, err = strconv.ParseBool(val)
 		default:
 			return s, fmt.Errorf("значение задачи %q", v)
 		}

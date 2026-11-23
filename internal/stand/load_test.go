@@ -27,6 +27,11 @@ func TestLoadSpecValues(t *testing.T) {
 			t.Fatalf("round trip %+v %v", got, err)
 		}
 	}
+	lab := spec
+	lab.Path, lab.Lab = LoadPathPipe, true
+	if got, err := ParseLoadSpec(lab.Values()); err != nil || got != lab {
+		t.Fatalf("lab round trip %+v %v", got, err)
+	}
 	// A task queued before paths runs through the entry.
 	old, err := ParseLoadSpec([]string{"users=2", "minutes=10", "game_pps=200", "echo=203.0.113.7:2053"})
 	if err != nil || old.Path != LoadPathEntry {
@@ -43,6 +48,7 @@ func TestLoadSpecValues(t *testing.T) {
 		{Users: 2, Minutes: 10, Echo: netip.MustParseAddrPort("[2001:db8::1]:2053")},
 		{Users: 2, Minutes: 10, Echo: netip.MustParseAddrPort("203.0.113.7:0")},
 		{Users: 2, Minutes: 10, Echo: spec.Echo, Path: "tunnel"},
+		{Users: 2, Minutes: 10, Echo: spec.Echo, Path: LoadPathEntry, Lab: true},
 	}
 	for _, b := range bad {
 		if b.Validate() == nil {
