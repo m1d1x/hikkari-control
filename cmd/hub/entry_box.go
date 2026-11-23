@@ -165,6 +165,35 @@ func runEntryBox(args []string) {
 		fmt.Fprintf(os.Stderr, "entry-box: %v\n", err)
 		os.Exit(1)
 	}
+	if len(args) > 0 && args[0] == "country-egress" {
+		if len(args) != 6 {
+			fail(fmt.Errorf("usage: hub entry-box country-egress <entry> <de-box> <nl-port> <de-port> <auto-port>"))
+		}
+		var ports [3]int
+		for i, raw := range args[3:6] {
+			port, err := strconv.Atoi(raw)
+			if err != nil {
+				fail(fmt.Errorf("port %q: %w", raw, err))
+			}
+			ports[i] = port
+		}
+		if err := cryptobox.Configure(os.Getenv); err != nil {
+			fail(err)
+		}
+		ctx, cancel, pool := adminCLIPool()
+		defer cancel()
+		defer pool.Close()
+		svc, err := entry.NewService(pool, nil, entry.DefaultBatchSize)
+		if err != nil {
+			fail(err)
+		}
+		cfg := entry.CountryEgress{Entry: args[1], DE: args[2], NLPort: ports[0], DEPort: ports[1], AutoPort: ports[2]}
+		if err := newProvisioner(svc).SetCountryEgress(ctx, cfg); err != nil {
+			fail(err)
+		}
+		fmt.Printf("%s: конфигурация NL, DE и Авто сохранена для раскатки hub\n", cfg.Entry)
+		return
+	}
 	if len(args) == 2 && args[0] == "record" {
 		if err := cryptobox.Configure(os.Getenv); err != nil {
 			fail(fmt.Errorf("content key: %w", err))

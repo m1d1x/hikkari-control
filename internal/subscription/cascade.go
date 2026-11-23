@@ -163,7 +163,9 @@ func (s *Service) SetCascade(ctx context.Context, name, exitBox, entryBox string
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO entry_cascades (account_id, exit_box, entry_box, entry_port) VALUES ($1, $2, $3, $4)
-		ON CONFLICT (account_id) DO UPDATE SET exit_box = $2, entry_box = $3, entry_port = $4, created_at = now()`,
+		ON CONFLICT (account_id) DO UPDATE SET exit_box = $2, entry_box = $3, entry_port = $4, created_at = now(),
+		country_relay = CASE WHEN (entry_cascades.exit_box, entry_cascades.entry_box, entry_cascades.entry_port) = ($2, $3, $4)
+		                     THEN entry_cascades.country_relay END`,
 		account, exitBox, entryBox, port); err != nil {
 		return err
 	}

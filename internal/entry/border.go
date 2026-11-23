@@ -299,7 +299,9 @@ func (s *Service) borderPlanOf(ctx context.Context, box, core string) (borderPla
 		return borderPlan{}, fmt.Errorf("%w: у %s нет hk-exit под релеем, сначала entry-box trunk-pipe-exit или entry-box core", ErrRejected, core)
 	}
 	plan := borderPlan{CoreBox: core, Core: coreIP, TCP: tcp, UDP: udp}
-	rows, err := s.pool.Query(ctx, `SELECT entry_box FROM trunk_entries WHERE exit_box = $1 OR pipe_core = $1 ORDER BY entry_box`, core)
+	rows, err := s.pool.Query(ctx, `
+		SELECT entry_box FROM trunk_entries WHERE exit_box = $1 OR pipe_core = $1
+		UNION SELECT entry_box FROM entry_country_egress WHERE de_box = $1 ORDER BY entry_box`, core)
 	if err != nil {
 		return borderPlan{}, err
 	}

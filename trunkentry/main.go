@@ -47,6 +47,12 @@ func main() {
 	if len(os.Args) > 1 {
 		cmd = os.Args[1]
 	}
+	if os.Getenv("EDGE_AUTO_LISTEN") != "" && (cmd == "run" || cmd == "check" || cmd == "auto-probe") {
+		if err := runAutoEgress(cmd); err != nil {
+			log.Fatalf("nekko-trunk-entry: auto egress: %v", err)
+		}
+		return
+	}
 	switch cmd {
 	case "handoff-version":
 		fmt.Println(handoffVersion)
@@ -123,6 +129,8 @@ type Config struct {
 	// system's roots for the relay's certificate: a relay no public root
 	// signs, as the bench's. Empty is the system's.
 	Roots string
+	// RequirePoints refuses a missing or empty points config for a hidden exit.
+	RequirePoints bool
 	// Receivers, over hk-pipe (EDGE_TRUNK_RECEIVERS), are the group's other
 	// receivers: the exit's relay at these addresses on the same ports; the
 	// brain moves off a dead one (receivers_linux.go). ReceiverPool is how
@@ -181,6 +189,7 @@ func ConfigFromEnv(get func(string) string) (Config, error) {
 		return c, fmt.Errorf("EDGE_TRUNK_PIPE: %q is not an absolute path", c.Pipe)
 	}
 	c.Roots = strings.TrimSpace(get("EDGE_TRUNK_ROOTS"))
+	c.RequirePoints = get("EDGE_TRUNK_REQUIRE_POINTS") == "1"
 	exitIP, _ := netip.ParseAddr(host)
 	if err := receivers(&c, get, exitIP); err != nil {
 		return c, err

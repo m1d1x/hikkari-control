@@ -189,7 +189,7 @@ func (s *Service) prepareSpare(ctx context.Context, box, primary string, replace
 		// A hidden receiver (H5): its relay holds no grants, so its address
 		// rides in no account's batch, and lets through the keys the
 		// primary's relay lets through (migration 071, KeysOf).
-		if _, err = tx.Exec(ctx, `UPDATE entry_relays SET keys_from = (SELECT id FROM entry_relays WHERE name = $2) WHERE name = $1`, name, src.name); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE entry_relays SET keys_from = (SELECT coalesce(keys_from, id) FROM entry_relays WHERE name = $2) WHERE name = $1`, name, src.name); err != nil {
 			return uuid.Nil, err
 		}
 	}

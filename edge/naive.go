@@ -411,6 +411,9 @@ func (g *naiveGate) Provision(caddy.Context) error {
 
 func (g *naiveGate) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	if r.Method != http.MethodConnect {
+		if g.runtime.serveEgressHealth(w, r, false) {
+			return nil
+		}
 		return next.ServeHTTP(w, r)
 	}
 	fields := strings.Fields(r.Header.Get("Proxy-Authorization"))
