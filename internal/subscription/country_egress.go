@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"strconv"
 
@@ -13,7 +14,7 @@ import (
 )
 
 type countryPorts struct {
-	de, auto   int
+	de         int
 	relay, sni string
 }
 
@@ -30,10 +31,10 @@ const countryProfileRoute = `
 func (s *Service) countryPortsOf(ctx context.Context, account uuid.UUID) (countryPorts, error) {
 	var ports countryPorts
 	err := s.pool.QueryRow(ctx, `
-		SELECT e.de_port, e.auto_port, src.name, e.sni FROM entry_cascades c
+		SELECT e.de_port, src.name, e.sni FROM entry_cascades c
 		JOIN entry_relays src ON src.id = c.country_relay
 		JOIN entry_country_egress e ON e.entry_box = c.entry_box AND e.nl_port = c.entry_port
-		WHERE c.account_id = $1 AND e.applied_sha <> ''`, account).Scan(&ports.de, &ports.auto, &ports.relay, &ports.sni)
+		WHERE c.account_id = $1 AND e.applied_sha <> ''`, account).Scan(&ports.de, &ports.relay, &ports.sni)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return countryPorts{}, nil
 	}
@@ -73,10 +74,24 @@ func (p countryPorts) links(nl string) []string {
 	u.Fragment = "🇩🇪 Германия"
 	q.Set("egress", "de")
 	u.RawQuery = q.Encode()
-	de := u.String()
-	u.Host = net.JoinHostPort(host, strconv.Itoa(p.auto))
-	u.Fragment = "Авто"
-	q.Set("egress", "auto")
-	u.RawQuery = q.Encode()
-	return []string{nl, de, u.String()}
+	return []string{nl, u.String()}
+}
+
+// Country status is an authenticated, cheap read, independent of grants and
+// subscription refresh pacing. An expired sample leaves the status unknown.
+func (s *Service) serveCountryStatus(w http.ResponseWriter, r *http.Request, account uuid.UUID) {
+	var down string
+	err := s.pool.QueryRow(r.Context(), `
+        SELECT e.down_country FROM entry_cascades c
+        JOIN entry_country_egress e ON e.entry_box = c.entry_box AND e.nl_port = c.entry_port
+        WHERE c.account_id = $1 AND c.country_relay IS NOT NULL
+            AND e.applied_sha <> '' AND e.health_at > now() - interval '15 seconds'
+            AND e.down_country IS NOT NULL`, account).Scan(&down)
+	if err == nil {
+		w.Header().Set("Hikkari-Country-Down", down)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

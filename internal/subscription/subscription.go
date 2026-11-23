@@ -550,6 +550,10 @@ func (s *Service) Handler() http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
+		if err == nil && r.Method == http.MethodHead && r.URL.Query().Get("country-status") == "1" {
+			s.serveCountryStatus(w, r, account)
+			return
+		}
 		var links []string
 		var terms Terms
 		if err == nil {

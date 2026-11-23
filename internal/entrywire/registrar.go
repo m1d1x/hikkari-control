@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 func Registrar(c *porkbun.Client) entry.DomainRegistrar { return registrar{c: c} }
 
 var _ entry.TXTRegistrar = registrar{}
+var _ entry.SubdomainARegistrar = registrar{}
 
 type registrar struct{ c *porkbun.Client }
 
@@ -131,6 +133,33 @@ func (r registrar) CreateRecord(ctx context.Context, zone, name, typ, content st
 
 func (r registrar) DeleteRecord(ctx context.Context, zone, id string) error {
 	return r.c.DeleteRecord(ctx, zone, id)
+}
+
+func (r registrar) EnsureSubdomainA(ctx context.Context, zone, name string, ip netip.Addr) (string, error) {
+	records, err := r.c.Records(ctx, zone)
+	if err != nil {
+		return "", err
+	}
+	fullName := name + "." + zone
+	var existingID string
+	for _, record := range records {
+		if !strings.EqualFold(strings.TrimSuffix(record.Name, "."), fullName) {
+			continue
+		}
+		switch record.Type {
+		case "A":
+			if record.Content != ip.String() {
+				return "", fmt.Errorf("%w: %s already has an A record for %s", entry.ErrRejected, fullName, record.Content)
+			}
+			existingID = record.ID
+		case "CNAME", "ALIAS":
+			return "", fmt.Errorf("%w: %s already has a %s record", entry.ErrRejected, fullName, record.Type)
+		}
+	}
+	if existingID != "" {
+		return existingID, nil
+	}
+	return r.c.CreateRecord(ctx, zone, name, "A", ip.String(), 600)
 }
 
 func (r registrar) CanSetARecord(ctx context.Context, domain string) error {

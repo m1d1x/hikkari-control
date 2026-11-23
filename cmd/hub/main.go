@@ -76,6 +76,8 @@ func main() {
 			runEntryFront(os.Args[2:])
 		case "receiver-cert":
 			runReceiverCert(os.Args[2:])
+		case "domain-a":
+			runDomainA(os.Args[2:])
 		case "entry-bench":
 			runEntryBench(os.Args[2:])
 		case "ops-token":
@@ -185,6 +187,7 @@ func run() error {
 		rollout.Run(ctx)
 		prov.RollCountryEgress(ctx)
 	}()
+	go prov.WatchCountryHealth(ctx)
 	go svc.RunResigner(ctx)
 	// The receiver groups' certificates renewed a month ahead (P1).
 	go svc.RunReceiverCertRenewal(ctx, entry.ReceiverCertInterval, rollout.Reconfigure)
