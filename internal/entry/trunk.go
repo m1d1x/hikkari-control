@@ -179,16 +179,27 @@ func (s *Service) CascadeVia(ctx context.Context, entryBox, exitBox string) (str
 	}
 	out := map[string]bool{}
 	for _, rel := range relays {
-		h := rel.id.Hikkari
-		if h == nil || h.TrunkKey == "" || !slices.Contains(h.TrunkPorts, rel.id.Port) {
-			continue
+		if trunkReaches(rel.id) {
+			out[rel.name] = true
 		}
-		out[rel.name] = true
 	}
 	if len(out) == 0 {
 		return "", nil, fmt.Errorf("%w: на %s нет Hikkari-релея, чей порт открыт магистрали", ErrRejected, exitBox)
 	}
 	return acc.address, out, nil
+}
+
+// trunkReaches says whether a trunk entry reaches relay id's own port: the
+// relay is the exit of a trunk, the Go exit's (TrunkKey) or hk-exit's whose
+// brain it is (TrunkPipeKey, the people's trunk since G3 of 21.11), and its
+// port is one of the loopback ports that trunk opens. Both exits open the
+// same TrunkPorts.
+func trunkReaches(id Identity) bool {
+	h := id.Hikkari
+	if h == nil || h.TrunkKey == "" && h.TrunkPipeKey == "" {
+		return false
+	}
+	return slices.Contains(h.TrunkPorts, id.Port)
 }
 
 // trunkEntryEnv renders the entry's env. CONTAINS THE TRUNK KEY. addr is the
