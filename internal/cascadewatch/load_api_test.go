@@ -11,13 +11,18 @@ import (
 
 // TestDBTheLoadEndpointRefusesThePointOnTheEntry: a synthetic users run from a
 // point on the entry's own box would load the CPU it is there to hear, a point
-// abroad is no user of the cascade, and a second run on a busy point is a 409.
+// that is not active is no point, and a second run on a busy point is a 409. A
+// point abroad may run (Э6, 23.11: no point in Russia is left; the shared trunk
+// it loads is the same), and a run may bring a downloading user.
 func TestDBTheLoadEndpointRefusesThePointOnTheEntry(t *testing.T) {
 	ctx := context.Background()
 	pool := dbPool(t)
 	now := time.Now().UTC()
 	w, queue, _, _ := newTestWatch(t, pool, &fakeBoxes{}, &now)
 	if _, err := pool.Exec(ctx, `INSERT INTO entry_vantages (slot, title, in_russia) VALUES ('ru-onentry', 'on the entry', true)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO entry_vantages (slot, title, in_russia, status, retired_at) VALUES ('lv-gone', 'retired', false, 'retired', now())`); err != nil {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
@@ -32,8 +37,8 @@ func TestDBTheLoadEndpointRefusesThePointOnTheEntry(t *testing.T) {
 	if code, body := post(`{"slot":"ru-onentry",` + tail); code != http.StatusBadRequest || !strings.Contains(body, "самом входе") {
 		t.Fatalf("point on the entry: %d %s", code, body)
 	}
-	if code, body := post(`{"slot":"lv-main",` + tail); code != http.StatusBadRequest {
-		t.Fatalf("point abroad: %d %s", code, body)
+	if code, body := post(`{"slot":"lv-gone",` + tail); code != http.StatusBadRequest || !strings.Contains(body, "не активна") {
+		t.Fatalf("retired point: %d %s", code, body)
 	}
 	if code, body := post(`{"slot":"ru-eurodir","entry":"ruin1","users":2,"minutes":10,"game_pps":200,"echo":"10.0.0.1:2053"}`); code != http.StatusBadRequest {
 		t.Fatalf("private echo: %d %s", code, body)
@@ -57,6 +62,13 @@ func TestDBTheLoadEndpointRefusesThePointOnTheEntry(t *testing.T) {
 	}
 	if code, body := post(`{"slot":"ru-eurodir","path":"raw",` + tail); code != http.StatusAccepted || queue.loads[1].spec.Path != "raw" {
 		t.Fatalf("raw run: %d %s %+v", code, body, queue.loads)
+	}
+
+	if code, body := post(`{"slot":"lv-main","bulk":4,` + tail); code != http.StatusAccepted || queue.loads[2].spec.Bulk != 4 {
+		t.Fatalf("a run abroad with a download: %d %s %+v", code, body, queue.loads)
+	}
+	if code, body := post(`{"slot":"lv-main","bulk":17,` + tail); code != http.StatusBadRequest {
+		t.Fatalf("bulk over its bound: %d %s", code, body)
 	}
 
 	queue.busy = true

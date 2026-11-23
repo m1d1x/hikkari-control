@@ -252,7 +252,9 @@ type Result struct {
 	Rows     []Row             `json:"rows"`
 	// Voice are the calls of a cascade task (cascade.go).
 	Voice []CascadeVoice `json:"voice,omitempty"`
-	Error string         `json:"error,omitempty"`
+	// Bulk is the downloading user of a synthetic users task (load_bulk.go).
+	Bulk  *LoadBulk `json:"bulk,omitempty"`
+	Error string    `json:"error,omitempty"`
 }
 
 // Finish records slot's result for task id: the rows go to the dataset as

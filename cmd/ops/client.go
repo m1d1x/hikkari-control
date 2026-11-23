@@ -434,6 +434,13 @@ func (c *client) call(cmd string, args map[string]string) (string, error) {
 		return prettyJSON(data), nil
 	case "cascade-load":
 		body := map[string]any{"slot": args["slot"], "entry": args["entry"], "echo": args["echo"], "path": args["path"]}
+		if v := args["bulk"]; v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return "", fmt.Errorf("bulk: нужно число")
+			}
+			body["bulk"] = n
+		}
 		for _, k := range []string{"users", "minutes", "game_pps"} {
 			n, err := strconv.Atoi(args[k])
 			if err != nil {

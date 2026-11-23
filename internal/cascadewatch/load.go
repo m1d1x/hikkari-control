@@ -20,7 +20,7 @@ func (w *Watch) LoadFinished(ctx context.Context, slot, entryBox string, spec st
 	rt := queued.UTC()
 	base := func() map[string]any {
 		return map[string]any{"synthetic": true, "core": res.Core, "users": spec.Users, "minutes": spec.Minutes,
-			"game_pps": spec.GamePPS, "echo": spec.Echo.String(), "path": spec.Path}
+			"game_pps": spec.GamePPS, "echo": spec.Echo.String(), "path": spec.Path, "bulk": spec.Bulk}
 	}
 	var runs []Run
 	for _, v := range res.Voice {
@@ -37,6 +37,19 @@ func (w *Watch) LoadFinished(ctx context.Context, slot, entryBox string, spec st
 		}
 		runs = append(runs, Run{TS: w.now().UTC(), Round: &rt, Entry: p.Entry, Exit: p.Exit, Layer: LayerLoad,
 			Vantage: slot, Target: v.Profile, OK: boolp(ok), Data: d})
+	}
+	// The downloading user (Bulk, roadmap Э6): one row, target bulk, its
+	// megabits a second by minute beside the calls of the same minutes; ok
+	// when it carried anything.
+	if b := res.Bulk; b != nil {
+		d := base()
+		d["streams"], d["mb"], d["failed"] = b.Streams, b.MB, b.Failed
+		d["mbps_per_min"] = b.MbpsPerMinute
+		if b.Error != "" {
+			d["error"] = clip(b.Error)
+		}
+		runs = append(runs, Run{TS: w.now().UTC(), Round: &rt, Entry: p.Entry, Exit: p.Exit, Layer: LayerLoad,
+			Vantage: slot, Target: "bulk", OK: boolp(b.MB > 0), Data: d})
 	}
 	if len(runs) == 0 {
 		d := base()
