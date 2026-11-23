@@ -28,10 +28,11 @@ type LoadBulk struct {
 	Error  string `json:"error,omitempty"`
 }
 
-// loadBulkURL is what the downloading user pulls, again and again: 100 MiB
-// from Cloudflare's speed test, the source the client's diag:speed reads
-// through a profile's exit (hikkari-client engine diagnostics/speed.go).
-const loadBulkURL = "https://speed.cloudflare.com/__down?bytes=104857600"
+// loadBulkURL is what the downloading user pulls, again and again: OVH's
+// public 1 GB test file. Cloudflare's speed test answers 403 to a download
+// of 100 MiB from the exit aeznl1 (23.11, 1 MB passes), and a run of 1 MB
+// requests would read the round trip, not the line; OVH gave aeznl1 47 MB/s.
+const loadBulkURL = "https://proof.ovh.net/files/1Gb.dat"
 
 // loadBulkRetry is the wait after a download that failed.
 const loadBulkRetry = time.Second
