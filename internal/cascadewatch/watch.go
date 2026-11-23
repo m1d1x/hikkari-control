@@ -684,7 +684,16 @@ func (w *Watch) protocolSlots(ctx context.Context) ([]string, error) {
 }
 
 func (w *Watch) ruSlots(ctx context.Context) (map[string]bool, error) {
-	rows, err := w.pool.Query(ctx, `SELECT slot FROM entry_vantages WHERE status = 'active' AND in_russia`)
+	return w.slots(ctx, true)
+}
+
+// activeSlots are every active observation point, in Russia or not.
+func (w *Watch) activeSlots(ctx context.Context) (map[string]bool, error) {
+	return w.slots(ctx, false)
+}
+
+func (w *Watch) slots(ctx context.Context, ruOnly bool) (map[string]bool, error) {
+	rows, err := w.pool.Query(ctx, `SELECT slot FROM entry_vantages WHERE status = 'active' AND (in_russia OR NOT $1)`, ruOnly)
 	if err != nil {
 		return nil, err
 	}

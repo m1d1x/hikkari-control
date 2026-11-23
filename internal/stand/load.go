@@ -15,6 +15,12 @@ package stand
 // users, named so in every row it writes; the trunk's own call (layer call)
 // says in the same minutes what the entry did to everyone.
 //
+// One more user may download on the same path (Bulk, roadmap Э6): a core of
+// its own pulling the internet through the exit on Bulk TCP streams at once
+// for the same minutes, as one person with a download over the line does.
+// Its megabits a minute say whether it filled the shared trunk; the others'
+// calls in those minutes say what that did to them.
+//
 // The same streams run on two control paths past the entry, so a run through
 // it reads against what the legs around it give on their own (Path): direct,
 // the core on the Hikkari profile straight to the exit's relay (the client's
@@ -56,6 +62,8 @@ type LoadSpec struct {
 	// Path is the way the streams go: LoadPathEntry, LoadPathDirect or
 	// LoadPathRaw; "" reads as LoadPathEntry (a task queued before paths).
 	Path string
+	// Bulk is the downloading user's TCP streams at once, 0 for no such user.
+	Bulk int
 }
 
 // The paths a synthetic users task runs on.
@@ -83,6 +91,7 @@ const (
 	loadMaxUsers    = 8
 	loadMaxMinutes  = 30
 	loadMaxGamePPS  = 500
+	loadMaxBulk     = 16
 	loadVoicePPS    = 50  // one Opus frame every 20 ms
 	loadVoiceBytes  = 160 // an Opus frame
 	loadGameBytes   = 80  // a game's state update
@@ -94,13 +103,19 @@ const (
 
 // Values are the spec as a task's vals.
 func (s LoadSpec) Values() []string {
-	return []string{
+	v := []string{
 		"users=" + strconv.Itoa(s.Users),
 		"minutes=" + strconv.Itoa(s.Minutes),
 		"game_pps=" + strconv.Itoa(s.GamePPS),
 		"echo=" + s.Echo.String(),
 		"path=" + s.path(),
 	}
+	// Only when there is one: a point built before Bulk refuses a key it does
+	// not know, and every task without it stays readable to it.
+	if s.Bulk > 0 {
+		v = append(v, "bulk="+strconv.Itoa(s.Bulk))
+	}
+	return v
 }
 
 // Validate says what is wrong with s, nil when nothing is.
@@ -112,6 +127,8 @@ func (s LoadSpec) Validate() error {
 		return fmt.Errorf("minutes: от 1 до %d", loadMaxMinutes)
 	case s.GamePPS < 0 || s.GamePPS > loadMaxGamePPS:
 		return fmt.Errorf("game_pps: от 0 до %d", loadMaxGamePPS)
+	case s.Bulk < 0 || s.Bulk > loadMaxBulk:
+		return fmt.Errorf("bulk: от 0 до %d", loadMaxBulk)
 	case !s.Echo.IsValid() || s.Echo.Port() == 0:
 		return errors.New("echo: нужен адрес ip:port")
 	case !s.Echo.Addr().Is4() || !s.Echo.Addr().IsGlobalUnicast() || s.Echo.Addr().IsPrivate():
@@ -123,7 +140,7 @@ func (s LoadSpec) Validate() error {
 		return fmt.Errorf("path: %s, %s, %s или %s", LoadPathEntry, LoadPathPipe, LoadPathDirect, LoadPathRaw)
 	}
 	// The run must end well inside the claim it holds (claimTTL).
-	if time.Duration(s.Minutes)*time.Minute+time.Duration(s.Users)*loadDoorStagger+5*time.Minute > claimTTL {
+	if time.Duration(s.Minutes)*time.Minute+time.Duration(s.Users+1)*loadDoorStagger+5*time.Minute > claimTTL {
 		return errors.New("задача не уложится в срок захвата")
 	}
 	return nil
@@ -151,6 +168,8 @@ func ParseLoadSpec(vals []string) (LoadSpec, error) {
 			s.Echo, err = netip.ParseAddrPort(val)
 		case "path":
 			s.Path = val
+		case "bulk":
+			s.Bulk, err = strconv.Atoi(val)
 		default:
 			return s, fmt.Errorf("значение задачи %q", v)
 		}
@@ -213,8 +232,41 @@ func (r Runner) runLoad(ctx context.Context, t Task, profiles []Profile) Result 
 		wg      sync.WaitGroup
 	)
 	// Every stream ends at the same moment, so the minutes line up.
-	start := time.Now().Add(loadWarmup + time.Duration(spec.Users)*loadDoorStagger)
+	doors := spec.Users
+	if spec.Bulk > 0 {
+		doors++
+	}
+	start := time.Now().Add(loadWarmup + time.Duration(doors)*loadDoorStagger)
 	end := start.Add(time.Duration(spec.Minutes) * time.Minute)
+	var bulk *LoadBulk
+	if spec.Bulk > 0 {
+		// The downloading user's door first: its core is up and its streams
+		// at full speed before the calls begin.
+		proxy := ""
+		if through != nil {
+			_, port, stop, err := startDoors(ctx, r.Kit.Core, through.Config, echo)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("bulk: %v", err))
+			} else {
+				defer stop()
+				proxy = "http://127.0.0.1:" + strconv.Itoa(port)
+			}
+		}
+		if through == nil || proxy != "" {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				b := runBulk(ctx, proxy, loadBulkURL, spec.Bulk, start.Add(-loadWarmup/2), start, end)
+				mu.Lock()
+				bulk = &b
+				mu.Unlock()
+			}()
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(loadDoorStagger):
+		}
+	}
 	for u := 1; u <= spec.Users; u++ {
 		// raw: the streams go to the echo itself, each user from sockets of
 		// its own as a person's apps would.
@@ -249,10 +301,14 @@ func (r Runner) runLoad(ctx context.Context, t Task, profiles []Profile) Result 
 	wg.Wait()
 	sort.Slice(streams, func(i, j int) bool { return streams[i].Profile < streams[j].Profile })
 	res.Voice = streams
+	res.Bulk = bulk
 	for _, v := range streams {
 		r.log("stand: load %s: %d/%d gaps60=%d gaps150=%d gap_max=%.0f", v.Profile, v.Got, v.Sent, v.Gaps60, v.Gaps150, v.GapMax)
 	}
-	if len(streams) == 0 && len(errs) == 0 {
+	if bulk != nil {
+		r.log("stand: load bulk: %d streams, %.0f MB, Mbit/s by minute %v, failed %d", bulk.Streams, bulk.MB, bulk.MbpsPerMinute, bulk.Failed)
+	}
+	if len(streams) == 0 && bulk == nil && len(errs) == 0 {
 		errs = append(errs, "ни один поток не запустился")
 	}
 	res.Error = joinErrs(errs)
@@ -444,6 +500,9 @@ func (s *Scheduler) finishLoad(ctx context.Context, slot string, id uuid.UUID, r
 		if len(v.Gaps60PerMinute) > loadMaxMinutes {
 			return fmt.Errorf("%w: %d minutes in a stream", ErrNotAResult, len(v.Gaps60PerMinute))
 		}
+	}
+	if res.Bulk != nil && (len(res.Bulk.MbpsPerMinute) > loadMaxMinutes || res.Bulk.Streams > loadMaxBulk) {
+		return fmt.Errorf("%w: bulk of %d minutes, %d streams", ErrNotAResult, len(res.Bulk.MbpsPerMinute), res.Bulk.Streams)
 	}
 	var vals []string
 	var entryBox string

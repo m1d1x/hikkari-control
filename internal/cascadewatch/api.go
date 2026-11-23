@@ -30,6 +30,7 @@ type loadRequest struct {
 	GamePPS int    `json:"game_pps"`
 	Echo    string `json:"echo"`
 	Path    string `json:"path"`
+	Bulk    int    `json:"bulk"`
 }
 
 // loadHandler queues a synthetic users task (stand/load.go) on a point in
@@ -49,7 +50,7 @@ func (w *Watch) loadHandler(rw http.ResponseWriter, r *http.Request) {
 	if req.Path == "" {
 		req.Path = stand.LoadPathEntry
 	}
-	spec := stand.LoadSpec{Users: req.Users, Minutes: req.Minutes, GamePPS: req.GamePPS, Echo: echo, Path: req.Path}
+	spec := stand.LoadSpec{Users: req.Users, Minutes: req.Minutes, GamePPS: req.GamePPS, Echo: echo, Path: req.Path, Bulk: req.Bulk}
 	if err := spec.Validate(); err != nil {
 		writeJSON(rw, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -60,13 +61,16 @@ func (w *Watch) loadHandler(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	ru, err := w.ruSlots(ctx)
+	// Any active point: one abroad reaches the entry from outside Russia, and
+	// what it loads is the same shared trunk (Э6, 23.11: no point in Russia is
+	// left); every row names its point.
+	active, err := w.activeSlots(ctx)
 	if err != nil {
 		writeJSON(rw, http.StatusInternalServerError, map[string]string{"error": "internal"})
 		return
 	}
-	if !ru[req.Slot] {
-		writeJSON(rw, http.StatusBadRequest, map[string]string{"error": "точка " + req.Slot + " не активна или не в РФ"})
+	if !active[req.Slot] {
+		writeJSON(rw, http.StatusBadRequest, map[string]string{"error": "точка " + req.Slot + " не активна"})
 		return
 	}
 	box, err := w.fleet.VantageBox(ctx, req.Slot)

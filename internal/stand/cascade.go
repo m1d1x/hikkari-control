@@ -168,9 +168,16 @@ func (r Runner) cascadeVoice(ctx context.Context, p Profile) CascadeVoice {
 // startVoiceDoor is the core with the profile's outbound behind a direct UDP
 // inbound forwarded to target (host:port); a mixed inbound says when it is up.
 func startVoiceDoor(ctx context.Context, core string, outbound map[string]any, target string) (int, func(), error) {
+	door, _, stop, err := startDoors(ctx, core, outbound, target)
+	return door, stop, err
+}
+
+// startDoors is startVoiceDoor that also gives the core's mixed inbound (an
+// HTTP and SOCKS proxy on 127.0.0.1, through the outbound), its port second.
+func startDoors(ctx context.Context, core string, outbound map[string]any, target string) (int, int, func(), error) {
 	ob, err := clone(outbound)
 	if err != nil {
-		return 0, nil, err
+		return 0, 0, nil, err
 	}
 	for _, k := range []string{"domain_resolver", "detour", "bind_interface", "routing_mark", "flow_retry_delay"} {
 		delete(ob, k)
@@ -178,7 +185,7 @@ func startVoiceDoor(ctx context.Context, core string, outbound map[string]any, t
 	ob["tag"] = "probe"
 	host, port, err := net.SplitHostPort(target)
 	if err != nil {
-		return 0, nil, err
+		return 0, 0, nil, err
 	}
 	tp, _ := strconv.Atoi(port)
 	// The door hands the core an address, not a name: the Hikkari outbound
@@ -187,20 +194,20 @@ func startVoiceDoor(ctx context.Context, core string, outbound map[string]any, t
 	// always are.
 	ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
 	if err != nil || len(ips) == 0 {
-		return 0, nil, fmt.Errorf("resolve %s: %v", host, err)
+		return 0, 0, nil, fmt.Errorf("resolve %s: %v", host, err)
 	}
 	host = ips[0].String()
 	ready, err := freePort("tcp")
 	if err != nil {
-		return 0, nil, err
+		return 0, 0, nil, err
 	}
 	door, err := freePort("udp")
 	if err != nil {
-		return 0, nil, err
+		return 0, 0, nil, err
 	}
 	dir, err := os.MkdirTemp("", "hikkari-cascade-voice-")
 	if err != nil {
-		return 0, nil, err
+		return 0, 0, nil, err
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	raw, err := json.Marshal(map[string]any{
@@ -215,12 +222,12 @@ func startVoiceDoor(ctx context.Context, core string, outbound map[string]any, t
 	})
 	if err != nil {
 		cleanup()
-		return 0, nil, err
+		return 0, 0, nil, err
 	}
 	path := filepath.Join(dir, "config.json")
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		cleanup()
-		return 0, nil, err
+		return 0, 0, nil, err
 	}
 	pctx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(pctx, core, "run", "-c", path)
@@ -228,17 +235,17 @@ func startVoiceDoor(ctx context.Context, core string, outbound map[string]any, t
 	if err := cmd.Start(); err != nil {
 		cancel()
 		cleanup()
-		return 0, nil, errors.New("core did not start")
+		return 0, 0, nil, errors.New("core did not start")
 	}
 	stop := func() { cancel(); _ = cmd.Wait(); cleanup() }
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline) && pctx.Err() == nil; time.Sleep(50 * time.Millisecond) {
 		if c, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(ready)), 100*time.Millisecond); err == nil {
 			c.Close()
-			return door, stop, nil
+			return door, ready, stop, nil
 		}
 	}
 	stop()
-	return 0, nil, errors.New("core not ready")
+	return 0, 0, nil, errors.New("core not ready")
 }
 
 func freePort(network string) (int, error) {
