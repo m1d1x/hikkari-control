@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/m1d1x/hikkari-protocol/observe"
 	hkserver "github.com/m1d1x/hikkari-protocol/server"
+	"github.com/sagernet/quic-go"
 	M "github.com/sagernet/sing/common/metadata"
 )
 
@@ -97,6 +99,22 @@ type hikkariUDP struct {
 	conn *hkserver.GenerationConn
 }
 
+// groupResetKey is the datagram channel's stateless reset key from the
+// group's certificate (hkserver.GroupResetKey): every relay of the group
+// resets the others' connections, so a client a cascade's entry moved to
+// another country's relay learns at once that its connection is gone.
+// nil when the hub gave no certificate: a random key, as before.
+func (n naiveConfig) groupResetKey() (*quic.StatelessResetKey, error) {
+	if n.CertPEM == "" {
+		return nil, nil
+	}
+	pair, err := tls.X509KeyPair([]byte(n.CertPEM), []byte(n.KeyPEM))
+	if err != nil {
+		return nil, err
+	}
+	return hkserver.GroupResetKey(pair.PrivateKey)
+}
+
 // startHikkariUDP opens the datagram channel on the relay's UDP socket (this
 // generation's, handoff.go) with the relay's ACME certificate (Caddy's
 // storage) and the roster n admits.
@@ -121,11 +139,17 @@ func startHikkariUDP(ctx context.Context, n *naiveRuntime, socks *sockets) (*hik
 	if certificate == nil {
 		certificate = hkserver.CaddyCertificate(n.cfg.Storage, n.cfg.Host)
 	}
+	resetKey, err := n.cfg.groupResetKey()
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("hikkari udp: stateless reset key: %w", err)
+	}
 	cover := http.FileServer(http.Dir(n.cfg.Root))
 	d, err := hkserver.ListenDatagram(ctx, hkserver.DatagramOptions{
-		Conn:          conn,
-		ConnectionIDs: hkserver.GenerationIDs{Gen: socks.gen},
-		Certificate:   certificate,
+		Conn:              conn,
+		ConnectionIDs:     hkserver.GenerationIDs{Gen: socks.gen},
+		StatelessResetKey: resetKey,
+		Certificate:       certificate,
 		Masquerade: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !n.serveEgressHealth(w, r, true) {
 				cover.ServeHTTP(w, r)

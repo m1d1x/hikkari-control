@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,8 +21,16 @@ import (
 )
 
 const (
-	autoProbeInterval = time.Second
-	autoProbeTimeout  = 3 * time.Second
+	// Each egress is probed on its own every autoProbeInterval, a probe
+	// waiting at most autoProbeTimeout, so autoSilence holds several of
+	// them and one late answer moves no one.
+	autoProbeInterval = 250 * time.Millisecond
+	autoProbeTimeout  = time.Second
+	// countryProbeTimeout bounds the one-shot country-probe the hub runs
+	// after a rollout, whose connections start cold.
+	countryProbeTimeout = 3 * time.Second
+	autoVerdictTick     = 100 * time.Millisecond
+	autoHealthWrite     = time.Second
 )
 
 type countryGatewayConfig struct {
@@ -77,10 +86,11 @@ func runCountryGateways(cmd string) error {
 	defer nl.close()
 	de := newEgressProbe(c.backends[countryDE], c.sni, c.keys[countryDE])
 	defer de.close()
+	probes := [2]*egressProbe{countryNL: nl, countryDE: de}
 	checkBoth := func() [2]egressHealth {
 		standby := make(chan egressHealth, 1)
-		go func() { standby <- de.check(ctx) }()
-		return [2]egressHealth{nl.check(ctx), <-standby}
+		go func() { standby <- de.check(ctx, countryProbeTimeout) }()
+		return [2]egressHealth{nl.check(ctx, countryProbeTimeout), <-standby}
 	}
 	if cmd == "country-probe" {
 		for i, h := range checkBoth() {
@@ -101,36 +111,10 @@ func runCountryGateways(cmd string) error {
 		return err
 	}
 
-	dir := runtimeDirectory()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(autoProbeInterval)
-		defer ticker.Stop()
-		choice := egressChoice{down: countryNone}
-		for ctx.Err() == nil {
-			previous := choice.down
-			health := checkBoth()
-			if ctx.Err() != nil {
-				return
-			}
-			down := choice.observe(health)
-			if down != previous {
-				nlGateway.route(down)
-				deGateway.route(down)
-				log.Printf("country egress down=%s previous=%s", down, previous)
-			}
-			if dir != "" {
-				if err := writeCountryHealth(dir, down); err != nil {
-					log.Printf("country egress health: %v", err)
-				}
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
-		}
+		watchCountries(ctx, probes, [2]*autoGateway{nlGateway, deGateway}, runtimeDirectory())
 	}()
 	errs := make(chan error, 2)
 	go func() { errs <- nlGateway.serve() }()
@@ -141,6 +125,69 @@ func runCountryGateways(cmd string) error {
 	<-errs
 	<-done
 	return err
+}
+
+type egressAnswer struct {
+	country egressCountry
+	at      time.Time
+	health  egressHealth
+}
+
+// watchCountries probes both egresses side by side, each on its own clock,
+// and moves the gateways when the verdict changes.
+func watchCountries(ctx context.Context, probes [2]*egressProbe, gateways [2]*autoGateway, dir string) {
+	answers := make(chan egressAnswer, 2)
+	var probing sync.WaitGroup
+	defer probing.Wait()
+	for i, probe := range probes {
+		probing.Go(func() { probeCountry(ctx, egressCountry(i), probe, answers) })
+	}
+	choice := newEgressChoice(time.Now())
+	tick := time.NewTicker(autoVerdictTick)
+	defer tick.Stop()
+	var written time.Time
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case a := <-answers:
+			choice.observe(a.at, a.country, a.health)
+		case <-tick.C:
+		}
+		now := time.Now()
+		previous := choice.down
+		down := choice.verdict(now)
+		if down != previous {
+			for _, gateway := range gateways {
+				gateway.route(down)
+			}
+			log.Printf("country egress down=%s previous=%s", down, previous)
+		}
+		if dir != "" && (down != previous || now.Sub(written) >= autoHealthWrite) {
+			written = now
+			if err := writeCountryHealth(dir, down); err != nil {
+				log.Printf("country egress health: %v", err)
+			}
+		}
+	}
+}
+
+func probeCountry(ctx context.Context, country egressCountry, probe *egressProbe, answers chan<- egressAnswer) {
+	tick := time.NewTicker(autoProbeInterval)
+	defer tick.Stop()
+	for {
+		health := probe.check(ctx, autoProbeTimeout)
+		select {
+		case answers <- egressAnswer{country, time.Now(), health}:
+		case <-ctx.Done():
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
 }
 
 func writeCountryHealth(dir string, down egressCountry) error {
@@ -177,8 +224,8 @@ func (p *egressProbe) close() {
 	p.udp.Close()
 }
 
-func (p *egressProbe) check(ctx context.Context) egressHealth {
-	ctx, cancel := context.WithTimeout(ctx, autoProbeTimeout)
+func (p *egressProbe) check(ctx context.Context, timeout time.Duration) egressHealth {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	tcp := make(chan bool, 1)
 	go func() { tcp <- p.round(ctx, p.tcp) }()
