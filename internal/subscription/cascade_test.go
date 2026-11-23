@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -71,10 +72,10 @@ func TestACascadeAccountDialsTheExitThroughTheEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	get := func() []string {
+	get := func(extra string) []string {
 		req := httptest.NewRequest(http.MethodGet, "/sub/"+token, nil)
 		req.SetPathValue("token", token)
-		req.Header.Set(featuresHeader, "hikkari, hikkari-dup")
+		req.Header.Set(featuresHeader, "hikkari, hikkari-dup"+extra)
 		rec := httptest.NewRecorder()
 		s.Handler()(rec, req)
 		if rec.Code != http.StatusOK {
@@ -100,7 +101,7 @@ func TestACascadeAccountDialsTheExitThroughTheEntry(t *testing.T) {
 	if err := s.SetCascade(ctx, name, "unl1", "ruin1", 8443); err != nil {
 		t.Fatal(err)
 	}
-	links := get()
+	links := get("")
 	if len(links) != 1 {
 		t.Fatalf("links %q, want the exit's Hikkari relay only", links)
 	}
@@ -118,11 +119,75 @@ func TestACascadeAccountDialsTheExitThroughTheEntry(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT all_relays FROM hub_accounts WHERE name = $1`, name).Scan(&all); err != nil || !all {
 		t.Fatalf("a cascade account must hold the whole fleet, so the exit relay knows its key: %v %v", all, err)
 	}
+	t.Run("country profiles account and feature gates", func(t *testing.T) {
+		if err := s.SetCountryProfiles(ctx, name, true); err == nil {
+			t.Fatal("country profiles enabled before the rollout")
+		}
+		boxID := uuid.New().ID()
+		nl, de := fmt.Sprintf("hknl%d", boxID), fmt.Sprintf("hkde%d", boxID)
+		for _, box := range []string{nl, de} {
+			if _, err := pool.Exec(ctx, `INSERT INTO entry_boxes (name,address_ct,provider,location,proto,role)
+				VALUES ($1,'\x00','test','Europe','hikkari','egress')`, box); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO trunk_entries (entry_box,exit_box,forward,members)
+			VALUES ('ruin1',$1,'{"8443":8443}',4)`, nl); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			pool.Exec(ctx, `DELETE FROM entry_country_egress WHERE entry_box = 'ruin1'`)
+			pool.Exec(ctx, `DELETE FROM trunk_entries WHERE entry_box = 'ruin1'`)
+		})
+		// The served record comes from the grant source. The hidden NL and DE
+		// relays use that same roster and never enter the subscription batch.
+		var source int64
+		if err := pool.QueryRow(ctx, `INSERT INTO entry_relays (name,kind,box,identity_ct)
+			VALUES ('unl1-2','personal','unl1','\x00') ON CONFLICT (name) DO UPDATE SET name=excluded.name RETURNING id`).Scan(&source); err != nil {
+			t.Fatal(err)
+		}
+		for _, box := range []string{nl, de} {
+			if _, err := pool.Exec(ctx, `INSERT INTO entry_relays
+				(name,kind,box,identity_ct,status,envelope_ct,key_id,issued_at,expires_at,signed_at,keys_from)
+				VALUES ($1,'personal',$1,'\x00','alive','\x00','test',now(),now()+interval '1 day',now(),$2)`, box, source); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO entry_country_egress
+			(entry_box,de_box,nl_port,de_port,auto_port,sni,applied_sha)
+			VALUES ('ruin1',$1,8443,8444,8445,'core.example','ready')`, de); err != nil {
+			t.Fatal(err)
+		}
+		const feature = ", hikkari-country-egress"
+		if got := get(feature); len(got) != 1 {
+			t.Fatalf("enabled for an account that was not enrolled: %d", len(got))
+		}
+		if err := s.SetCountryProfiles(ctx, name, true); err != nil {
+			t.Fatal(err)
+		}
+		if got := get(""); len(got) != 1 {
+			t.Fatalf("old client received country profiles: %d", len(got))
+		}
+		got := get(feature)
+		if len(got) != 3 {
+			t.Fatalf("got %d country profiles", len(got))
+		}
+		for i, country := range []struct{ mode, port string }{{"nl", "8443"}, {"de", "8444"}, {"auto", "8445"}} {
+			link, err := url.Parse(got[i])
+			if err != nil || link.Hostname() != u.Hostname() || link.Port() != country.port ||
+				link.User.String() != u.User.String() || link.Query().Get("sni") != "core.example" || link.Query().Get("egress") != country.mode {
+				t.Fatalf("profile %s does not use its own port on the shared entry", country.mode)
+			}
+		}
+		if err := s.SetCountryProfiles(ctx, name, false); err != nil || len(get(feature)) != 1 {
+			t.Fatalf("disable country profiles: %v", err)
+		}
+	})
 
 	if err := s.DropCascade(ctx, name); err != nil {
 		t.Fatal(err)
 	}
-	if links := get(); len(links) != 3 || strings.Contains(strings.Join(links, "\n"), "192.0.2.10") {
+	if links := get(""); len(links) != 3 || strings.Contains(strings.Join(links, "\n"), "192.0.2.10") {
 		t.Fatalf("after the cascade: %q, want the relays as they are", links)
 	}
 	if err := s.DropCascade(ctx, name); err == nil {

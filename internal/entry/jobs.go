@@ -607,7 +607,8 @@ const (
 	JobReconfigure = "reconfigure"
 	// JobUpgrade is the owner's one box moved to the image's build now, by
 	// the rollout's update job outside any rollout (Orchestrator.UpdateNow).
-	JobUpgrade = "upgrade"
+	JobUpgrade       = "upgrade"
+	JobCountryEgress = "country_egress"
 )
 
 func (s *Service) startJobOf(ctx context.Context, kind, box, adminID string, rollout uuid.UUID) (uuid.UUID, error) {

@@ -35,6 +35,7 @@ const gib = 1 << 30
 // entry-box, port (internal/subscription/cascade.go), and only them.
 //
 // subscriber-cascade-off <name>: the subscriber's links are its relays again.
+// subscriber-countries <name> on|off: offer a cascade account NL, DE and Auto.
 func runSubscriber(cmd string, args []string) {
 	fail := func(err error) {
 		fmt.Fprintln(os.Stderr, cmd+":", err)
@@ -43,6 +44,7 @@ func runSubscriber(cmd string, args []string) {
 	want := map[string]int{
 		"subscriber-add": 2, "subscriber-renew": 2, "subscriber-status": 1, "subscriber-link": 1, "subscriber-revoke": 1,
 		"plan-set": 5, "plan-retire": 1, "subscriber-cascade": 4, "subscriber-cascade-off": 1,
+		"subscriber-countries": 2,
 	}[cmd]
 	if len(args) != want {
 		fail(fmt.Errorf("wrong arguments, see cmd/hub/subscribers.go"))
@@ -121,6 +123,14 @@ func runSubscriber(cmd string, args []string) {
 			fail(err)
 		}
 		fmt.Println("cascade off")
+	case "subscriber-countries":
+		if args[1] != "on" && args[1] != "off" {
+			fail(fmt.Errorf("usage: hub subscriber-countries <name> on|off"))
+		}
+		if err := subs.SetCountryProfiles(ctx, args[0], args[1] == "on"); err != nil {
+			fail(err)
+		}
+		fmt.Printf("%s: countries %s\n", args[0], args[1])
 	case "plan-retire":
 		if err := subs.RetirePlan(ctx, args[0]); err != nil {
 			fail(err)

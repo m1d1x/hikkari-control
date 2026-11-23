@@ -121,11 +121,16 @@ func startHikkariUDP(ctx context.Context, n *naiveRuntime, socks *sockets) (*hik
 	if certificate == nil {
 		certificate = hkserver.CaddyCertificate(n.cfg.Storage, n.cfg.Host)
 	}
+	cover := http.FileServer(http.Dir(n.cfg.Root))
 	d, err := hkserver.ListenDatagram(ctx, hkserver.DatagramOptions{
 		Conn:          conn,
 		ConnectionIDs: hkserver.GenerationIDs{Gen: socks.gen},
 		Certificate:   certificate,
-		Masquerade:    http.FileServer(http.Dir(n.cfg.Root)),
+		Masquerade: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !n.serveEgressHealth(w, r, true) {
+				cover.ServeHTTP(w, r)
+			}
+		}),
 		ProbePassword: n.cfg.Pass,
 		Admitter:      n,
 		Exit:          exitPolicy,

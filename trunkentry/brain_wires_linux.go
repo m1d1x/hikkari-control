@@ -39,6 +39,13 @@ func pipeWires(c Config, exit netip.AddrPort, roots string) ([]pipectl.Wire, wir
 	return pipeWiresOf(c, exit, roots, f), f, nil
 }
 
+func (c Config) requireBorderPoints(f wiresSpec) error {
+	if c.RequirePoints && len(f.Points) == 0 {
+		return fmt.Errorf("EDGE_TRUNK_REQUIRE_POINTS: нужны точки перехода")
+	}
+	return nil
+}
+
 // pipeWiresOf is pipeWires of a file already read.
 func pipeWiresOf(c Config, exit netip.AddrPort, roots string, f wiresSpec) []pipectl.Wire {
 	var out []pipectl.Wire
@@ -241,6 +248,9 @@ func (b *brain) followWires(ctx context.Context) {
 		f, raw, err := readWires(path)
 		if bytes.Equal(raw, last) {
 			continue
+		}
+		if err == nil {
+			err = b.c.requireBorderPoints(f)
 		}
 		if err != nil {
 			// A file that cannot be read is not tried again until it changes.

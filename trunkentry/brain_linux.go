@@ -214,6 +214,15 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 	// A file that cannot be read leaves the pool alone, as the Go entry's
 	// addWires: a wire less, not an entry less.
 	ws, f, werr := pipeWires(c, exit, roots)
+	if c.RequirePoints {
+		if werr == nil {
+			werr = c.requireBorderPoints(f)
+		}
+		if werr != nil {
+			p.Close()
+			return nil, werr
+		}
+	}
 	if werr != nil {
 		log.Printf("nekko-trunk-entry: wires: %v (the pool alone)", werr)
 		ws, f = nil, wiresSpec{}
