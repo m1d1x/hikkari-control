@@ -225,3 +225,40 @@ func TestTheCoreOnAnEgressTakesThePrimarysKeysOnItsOwnPorts(t *testing.T) {
 		t.Fatalf("the core %s is in the tester's batch %v", core, got)
 	}
 }
+
+// ude1, 23.11: the group's domain had no box on record once unl1's direct
+// relay was gone, and the DE core's job waited for its A record to point at
+// a hidden box, which it never may.
+func TestAHiddenCoreWaitsForNoDNSOfItsGroupsDomain(t *testing.T) {
+	h := newHarness(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	u := uuid.New()
+	n := uint32(u[0])<<16 | uint32(u[1])<<8 | uint32(u[2])
+	eg, domain := fmt.Sprintf("hidec%d", n), fmt.Sprintf("hidec%d.lol", n)
+	if err := h.svc.CreateBox(ctx, BoxSpec{Name: eg, Provider: "test", Location: "frankfurt", Role: RoleEgress,
+		Address: testAddr([6]byte(u[6:12]), 7)}); err != nil {
+		t.Fatal(err)
+	}
+	// The group's domain, as PrepareCore leaves it on the egress.
+	domainCT, err := cryptobox.Encrypt([]byte(domain))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.pool.Exec(ctx, `UPDATE entry_boxes SET proto = $2, domain_ct = $3 WHERE name = $1`, eg, ProtoHikkari, domainCT); err != nil {
+		t.Fatal(err)
+	}
+	acc, err := h.svc.boxAccess(ctx, eg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A resolver that never answers: a wait would run out the context.
+	p := &Provisioner{svc: h.svc, dnsResolvers: []string{"127.0.0.1:9"}, dnsPoll: 10 * time.Millisecond}
+	j := &jobRun{p: p, ctx: ctx, box: eg, acc: acc}
+	if err := j.ensureDomain(); err != nil {
+		t.Fatalf("the hidden core waited for DNS: %v", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("the hidden core waited for DNS until the deadline")
+	}
+}
