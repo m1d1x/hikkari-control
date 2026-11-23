@@ -667,6 +667,12 @@ func runEntryBox(args []string) {
 		fmt.Printf("%s reconfigured\n", args[1])
 		os.Exit(0)
 	}
+	if len(args) > 0 && (args[0] == "border-point-tls" || args[0] == "trunk-point-tls") {
+		if err := runTrunkPointTLS(args); err != nil {
+			fail(err)
+		}
+		os.Exit(0)
+	}
 	if len(args) == 3 && args[0] == "trunk-entry-points" {
 		// entry-box trunk-entry-points <box> <point-box>,...|off — the people's
 		// border points to their core (internal/entry/trunk.go, hikkari-client

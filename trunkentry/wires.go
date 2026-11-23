@@ -49,6 +49,7 @@ import (
 	"time"
 
 	"github.com/m1d1x/hikkari-protocol/trunk"
+	"github.com/m1d1x/hikkari-protocol/trunk/pipectl"
 	"github.com/m1d1x/hikkari-protocol/trunk/quicwire"
 	"github.com/m1d1x/hikkari-protocol/trunk/udpwire"
 )
@@ -88,6 +89,8 @@ type wiresSpec struct {
 	// Points are the border points to the core (pipectl.SetPoints), none:
 	// the core's own address.
 	Points []string `json:"points,omitempty"`
+	// PointSNI supplies the TLS name by forwarding address for TCP and H3.
+	PointSNI map[string]string `json:"point_sni,omitempty"`
 }
 
 // maxPoints is the most border points a file gives.
@@ -100,6 +103,15 @@ func (f wiresSpec) pointAddrs() []netip.Addr {
 		if ip, err := netip.ParseAddr(p); err == nil {
 			out = append(out, ip)
 		}
+	}
+	return out
+}
+
+func (f wiresSpec) borderPoints() []pipectl.BorderPoint {
+	addrs := f.pointAddrs()
+	out := make([]pipectl.BorderPoint, len(addrs))
+	for i, ip := range addrs {
+		out[i] = pipectl.BorderPoint{IP: ip, SNI: f.PointSNI[ip.String()]}
 	}
 	return out
 }
@@ -176,6 +188,14 @@ func readWires(path string) (wiresSpec, []byte, error) {
 			return f, raw, fmt.Errorf("%s: point %q: not an IPv4 address, or twice", path, p)
 		}
 		points[ip] = true
+	}
+	seenNames := map[string]bool{}
+	for addr, name := range f.PointSNI {
+		ip, err := netip.ParseAddr(addr)
+		if err != nil || !points[ip] || addr != ip.String() || !pipectl.ValidPointSNI(name) || seenNames[name] {
+			return f, raw, fmt.Errorf("%s: invalid or repeated point TLS name %q for %q", path, name, addr)
+		}
+		seenNames[name] = true
 	}
 	if f.Voice != "" && !seen[f.Voice] {
 		return f, raw, fmt.Errorf("%s: voice on wire %q, which the file has not", path, f.Voice)

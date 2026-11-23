@@ -261,3 +261,36 @@ func TestTheFileGivesTheBorderPoints(t *testing.T) {
 		}
 	}
 }
+
+// A point's TLS name goes with its address; a point the file names none
+// keeps the core's name, and a name for no point, a name twice or one the
+// proxy URL cannot carry stops the file.
+func TestTheFileGivesEachPointItsName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wires.json")
+	write := func(s string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`{"wires": [], "points": ["179.253.75.148", "146.103.121.11"], "point_sni": {"146.103.121.11": "edge.cirrus9867.lol"}}`)
+	f, _, err := readWires(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := f.borderPoints()
+	if len(got) != 2 || got[0].SNI != "" || got[1].IP.String() != "146.103.121.11" || got[1].SNI != "edge.cirrus9867.lol" {
+		t.Fatalf("named points %+v", got)
+	}
+	for _, bad := range []string{
+		`{"9.9.9.9": "a.example.com"}`,
+		`{"179.253.75.148": "a.example.com", "146.103.121.11": "a.example.com"}`,
+		`{"179.253.75.148": "A.example.com"}`,
+		`{"179.253.75.148": "1.2.3.4"}`,
+	} {
+		write(`{"wires": [], "points": ["179.253.75.148", "146.103.121.11"], "point_sni": ` + bad + `}`)
+		if _, _, err := readWires(path); err == nil {
+			t.Fatalf("names %s taken", bad)
+		}
+	}
+}

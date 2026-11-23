@@ -316,6 +316,10 @@ func (p *Provisioner) SetTrunkPipeWires(ctx context.Context, box string, w Trunk
 	if err != nil {
 		return err
 	}
+	raw, err = p.svc.pointTLSWires(ctx, raw, box, pair.PipeExit(), true, pair.PipePoints, w.Points)
+	if err != nil {
+		return err
+	}
 	r, _, err := p.provokeRemote(ctx, box)
 	if err != nil {
 		return err
@@ -402,6 +406,10 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	}
 	sort.Strings(listen)
 	wiresFile, cronet := pipe.wires, pipe.cronet
+	wiresFile, err = p.svc.pointTLSWires(ctx, wiresFile, box, exitBox, true, points, pts)
+	if err != nil {
+		return err
+	}
 	// The core and its points go on record before the swap: a border point
 	// forwards the core's trunk from the entries the hub knows go there
 	// (borderPlanOf), and a stand whose core answers only its points cannot
@@ -477,7 +485,7 @@ func (p *Provisioner) SetTrunkPipePoints(ctx context.Context, box string, points
 	if err != nil {
 		return fmt.Errorf("файл проводов стенда на %s: %w: %s", box, err, raw)
 	}
-	file, err := withPoints([]byte(raw), addrs)
+	file, err := p.svc.pointTLSWires(ctx, raw, box, pair.PipeExit(), true, points, addrs)
 	if err != nil {
 		return fmt.Errorf("файл проводов стенда на %s: %w", box, err)
 	}

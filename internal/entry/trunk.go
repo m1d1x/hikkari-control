@@ -275,6 +275,10 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 			return err
 		}
 		pipe, err = p.pipeBrainFor(ctx, o.Exit, o.H3Port, o.H3Usage, o.Voice, pts)
+		if err != nil {
+			return err
+		}
+		pipe.wires, err = p.svc.pointTLSWires(ctx, pipe.wires, box, o.Exit, false, o.Points, pts)
 		addr, sni, key, open = pipe.addr, pipe.sni, pipe.key, pipe.open
 	} else {
 		addr, sni, key, open, err = p.svc.trunkExitOf(ctx, o.Exit)
@@ -366,7 +370,7 @@ func (p *Provisioner) SetTrunkEntryPoints(ctx context.Context, box string, point
 	if err != nil {
 		return fmt.Errorf("файл проводов входа на %s: %w: %s", box, err, raw)
 	}
-	file, err := withPoints([]byte(raw), addrs)
+	file, err := p.svc.pointTLSWires(ctx, raw, box, pair.Exit, false, points, addrs)
 	if err != nil {
 		return fmt.Errorf("файл проводов входа на %s: %w", box, err)
 	}

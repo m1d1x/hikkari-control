@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -227,6 +228,29 @@ func (s *Service) ReceiverCerts(ctx context.Context) ([]ReceiverCert, error) {
 // ReceiverBoxes are the live boxes with a Hikkari relay on domain: where a
 // new certificate of the group goes.
 func (s *Service) ReceiverBoxes(ctx context.Context, domain string) ([]string, error) {
+	boxes, err := s.receiverRelayBoxes(ctx, domain)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT p.core_box FROM entry_trunk_point_tls_names p JOIN entry_boxes b ON b.name=p.core_box
+		WHERE p.domain=$1 AND b.retired_at IS NULL ORDER BY p.core_box`, strings.ToLower(domain))
+	if err != nil {
+		return nil, err
+	}
+	cores, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, err
+	}
+	for _, core := range cores {
+		if !slices.Contains(boxes, core) {
+			boxes = append(boxes, core)
+		}
+	}
+	return boxes, nil
+}
+
+func (s *Service) receiverRelayBoxes(ctx context.Context, domain string) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `SELECT name FROM entry_boxes WHERE proto = $1 AND retired_at IS NULL ORDER BY name`, ProtoHikkari)
 	if err != nil {
 		return nil, err
@@ -294,7 +318,7 @@ func (s *Service) renewReceiverCerts(ctx context.Context, reconfigure func(ctx c
 			continue
 		}
 		log.Printf("entry: receiver certificate of %s renewed, valid to %s", c.Domain, issued.NotAfter.Format(time.DateOnly))
-		boxes, err := s.ReceiverBoxes(ctx, c.Domain)
+		boxes, err := s.receiverRelayBoxes(ctx, c.Domain)
 		if err != nil {
 			log.Printf("entry: receivers of %s: %v", c.Domain, err)
 			continue
@@ -305,6 +329,7 @@ func (s *Service) renewReceiverCerts(ctx context.Context, reconfigure func(ctx c
 			}
 		}
 	}
+	s.reconfigurePointCerts(ctx, reconfigure)
 }
 
 func (s *Service) clock() time.Time {
