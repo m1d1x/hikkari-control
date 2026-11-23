@@ -97,7 +97,7 @@ type memberDeaths struct {
 }
 
 // event is a member's event of the pipe (pipectl Config.OnMember).
-func (d *memberDeaths) event(wire trunk.WireID, index int, up bool, why byte) {
+func (d *memberDeaths) event(wire trunk.WireID, index int, up bool, why byte, point netip.Addr) {
 	d.note(up, why)
 	if wire != trunk.PoolWire {
 		return
@@ -123,7 +123,11 @@ func (d *memberDeaths) event(wire trunk.WireID, index int, up bool, why byte) {
 	case pipectl.WhyQuiet:
 		reason = "stalled: every member silent past Quiet"
 	}
-	log.Printf("nekko-trunk-entry: trunk: member %d: down after %s: %s", index, time.Since(since).Round(time.Second), reason)
+	member := strconv.Itoa(index)
+	if point.IsValid() {
+		member += " point=" + point.String()
+	}
+	log.Printf("nekko-trunk-entry: trunk: member %s: down after %s: %s", member, time.Since(since).Round(time.Second), reason)
 }
 
 func (d *memberDeaths) note(up bool, why byte) {
@@ -204,9 +208,9 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 	b := &brain{c: c, s: s, ctx: ctx, handed: make(chan struct{}), exit: exit, roots: roots,
 		order: receiverOrder(netip.MustParseAddrPort(c.Exit).Addr(), c.Receivers, start)}
 	p, err := pipectl.Start(pipectl.Config{Bin: c.Pipe, Stderr: os.Stderr,
-		Logf:       func(format string, a ...any) { log.Printf("nekko-trunk-entry: "+format, a...) },
-		OnMember:   b.deaths.event,
-		OnObserved: logPipeObserved})
+		Logf:          func(format string, a ...any) { log.Printf("nekko-trunk-entry: "+format, a...) },
+		OnMemberEvent: b.deaths.event,
+		OnObserved:    logPipeObserved})
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +232,7 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 		b.points = pts
 		log.Printf("nekko-trunk-entry: border points %v", pts)
 	}
-	b.pool = pipectl.Pool{ID: trunk.PoolWire, Members: poolMembers(c, f), Stall: c.Stall, Exit: exit,
+	b.pool = pipectl.Pool{ID: trunk.PoolWire, Members: poolMembers(c, f), Stall: c.Stall, Exit: exit, PointPort: f.PoolPort,
 		Ports:    [2]uint16{uint16(c.PortLo), uint16(c.PortHi)},
 		Chromium: &pipectl.ChromiumForm{SNI: c.SNI, Key: c.Key, Cronet: cronetBeside(c.Pipe), Roots: roots}}
 	if err := p.SetPool(b.pool); err != nil {

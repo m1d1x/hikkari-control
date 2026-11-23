@@ -204,6 +204,7 @@ func Summarize(rows []Run) map[string]any {
 		events          map[string]int
 		downAfter       []float64
 		downWhy         map[string]int
+		downPoints      map[string]int
 		verdicts        int
 		verdictsOK      int
 		firstRed        map[string]int
@@ -216,7 +217,8 @@ func Summarize(rows []Run) map[string]any {
 		key := r.Entry + " → " + r.Exit
 		if per[key] == nil {
 			per[key] = &acc{membersMin: -1, grown: map[string]float64{}, events: map[string]int{}, downWhy: map[string]int{},
-				firstRed: map[string]int{}, layers: map[string]*layerAcc{}}
+				downPoints: map[string]int{},
+				firstRed:   map[string]int{}, layers: map[string]*layerAcc{}}
 		}
 		return per[key]
 	}
@@ -266,6 +268,9 @@ func Summarize(rows []Run) map[string]any {
 				a.downAfter = append(a.downAfter, num(r.Data, "after_s"))
 				why, _ := r.Data["why"].(string)
 				a.downWhy[why]++
+				if point, _ := r.Data["point_ip"].(string); point != "" {
+					a.downPoints[point]++
+				}
 			}
 		case LayerVerdict:
 			a.verdicts++
@@ -304,8 +309,12 @@ func Summarize(rows []Run) map[string]any {
 			ev := map[string]any{"by_kind": a.events}
 			if len(a.downAfter) > 0 {
 				sort.Float64s(a.downAfter)
-				ev["member_down"] = map[string]any{"n": len(a.downAfter), "why": a.downWhy,
+				down := map[string]any{"n": len(a.downAfter), "why": a.downWhy,
 					"after_s_min": a.downAfter[0], "after_s_median": median(a.downAfter), "after_s_max": a.downAfter[len(a.downAfter)-1]}
+				if len(a.downPoints) > 0 {
+					down["by_point_ip"] = a.downPoints
+				}
+				ev["member_down"] = down
 			}
 			s["events"] = ev
 		}

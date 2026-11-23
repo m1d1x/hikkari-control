@@ -321,6 +321,25 @@ func (p *Provisioner) SetTrunkPipeWires(ctx context.Context, box string, w Trunk
 		return err
 	}
 	defer r.Close()
+	current, err := r.Run(ctx, "if test -f "+trunkPipeWires+"; then cat "+trunkPipeWires+"; else echo '{}'; fi", nil)
+	if err != nil {
+		return fmt.Errorf("чтение проводов стенда %s: %w", box, err)
+	}
+	var experiment struct {
+		PoolPort uint16 `json:"pool_port"`
+	}
+	if err := json.Unmarshal([]byte(current), &experiment); err != nil {
+		return fmt.Errorf("чтение проводов стенда %s: %w", box, err)
+	}
+	if experiment.PoolPort != 0 {
+		if _, _, err := standWiresAtPort(current, w.Points, experiment.PoolPort); err != nil {
+			return err
+		}
+		raw, _, err = standWiresAtPort(raw, w.Points, experiment.PoolPort)
+		if err != nil {
+			return err
+		}
+	}
 	if out, err := r.Run(ctx, trunkPipeWiresScript, strings.NewReader(raw)); err != nil {
 		return fmt.Errorf("файл проводов стенда на %s: %w: %s", box, err, out)
 	}
@@ -519,6 +538,12 @@ func withPoints(raw []byte, points []string) (string, error) {
 	f := map[string]json.RawMessage{}
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return "", err
+	}
+	if port, ok := f["pool_port"]; ok && string(port) != "0" && string(port) != "null" {
+		// The alias only exists at the experiment's current points.
+		if _, _, err := standWiresAtPort(string(raw), points, 0); err != nil {
+			return "", fmt.Errorf("%w: завершите опыт командой trunk-pipe-port off", err)
+		}
 	}
 	if len(points) == 0 {
 		delete(f, "points")

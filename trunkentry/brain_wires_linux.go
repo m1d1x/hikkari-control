@@ -76,19 +76,29 @@ func poolMembers(c Config, f wiresSpec) int {
 // The pool goes to the active receiver: after a move (receivers_linux.go)
 // the one it started on is a standby, and the pipe's pool is the active
 // session's.
-func (b *brain) applyPool(members int) error {
-	if members == b.pool.Members {
+func (b *brain) applyPool(f wiresSpec) error {
+	members := poolMembers(b.c, f)
+	if members == b.pool.Members && f.PoolPort == b.pool.PointPort {
 		return nil
 	}
 	pool := b.pool
 	pool.Members = members
 	pool.Exit = b.exitNow()
+	pool.PointPort = f.PoolPort
 	if err := b.pipe.SetPool(pool); err != nil {
 		return fmt.Errorf("pool of %d members: %w", members, err)
 	}
-	log.Printf("nekko-trunk-entry: pool of %d members (was %d), no new process", members, b.pool.Members)
+	log.Printf("nekko-trunk-entry: pool of %d members at tcp_port=%d (was %d members at %d), no new process",
+		members, publicPoolPort(pool), b.pool.Members, publicPoolPort(b.pool))
 	b.pool = pool
 	return nil
+}
+
+func publicPoolPort(pool pipectl.Pool) uint16 {
+	if pool.PointPort == 0 {
+		return pool.Exit.Port()
+	}
+	return pool.PointPort
 }
 
 // wireShape is a pipe wire's shape for the selector's warm pair: Chromium's
@@ -251,7 +261,7 @@ func (b *brain) followWires(ctx context.Context) {
 		ws := pipeWiresOf(b.c, b.exitNow(), b.roots, f)
 		err = b.applyPoints(f.pointAddrs())
 		if err == nil {
-			err = b.applyPool(poolMembers(b.c, f))
+			err = b.applyPool(f)
 		}
 		if err == nil {
 			err = b.applyWires(ws)
