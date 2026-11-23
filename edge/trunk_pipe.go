@@ -262,8 +262,13 @@ func (p *trunkPipe) giveH3Dgram(ctx context.Context, cfg naiveConfig) {
 			cert, key = relayCertificate(cfg.Storage, cfg.Host)
 		}
 		if cert != "" {
+			pointTLS, err := cfg.exitPointTLS()
+			if err != nil {
+				log.Printf("nekko-edge: hk-exit wire h3dgram: %v", err)
+				return
+			}
 			w := pipectl.ExitWire{ID: pipeWireIDs[pipeWireH3Dgram], Form: pipectl.FormH3Dgram, Conn: p.wires[pipeWireH3Dgram],
-				Keys: p.cfg.Keys, CertFile: cert, KeyFile: key}
+				Keys: p.cfg.Keys, CertFile: cert, KeyFile: key, PointTLS: pointTLS}
 			if err := p.x.SetWire(w); err != nil {
 				log.Printf("nekko-edge: hk-exit wire h3dgram: %v", err)
 				return

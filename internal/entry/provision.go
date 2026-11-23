@@ -1779,6 +1779,13 @@ func (j *jobRun) install(r Remote, rel provRelay) error {
 	// A relay that is hk-exit's brain starts it beside itself: it is there
 	// before the relay's new generation (deploy, reconfigure, rollback).
 	if h := rel.id.Hikkari; h != nil && h.TrunkPipeKey != "" {
+		pointTLS, err := j.p.svc.corePointTLSEnv(j.ctx, j.box, rel.id.Port)
+		if err != nil {
+			return fmt.Errorf("TLS имена точек: %w", err)
+		}
+		if pointTLS != "" {
+			envMap[trunkPointTLSEnvKey] = pointTLS
+		}
 		arch, err := j.arch(r)
 		if err != nil {
 			return err

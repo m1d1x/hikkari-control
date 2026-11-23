@@ -63,6 +63,7 @@ type naiveConfig struct {
 	// keys, no hk-exit. Its keys are none of Trunk's: an entry's members
 	// reach one exit.
 	Pipe trunkPipeConfig
+	PointTLS *trunkPointTLS
 	// network, when set, is the Caddy network the listener comes from:
 	// relayNetwork for a Hikkari relay, whose listener outlives a process
 	// (handoff.go).
@@ -105,6 +106,12 @@ func naiveFromEnv(get func(string) string) (naiveConfig, error) {
 		}
 		if n.Pipe, err = trunkPipeFromEnv(get); err != nil {
 			return n, err
+		}
+		if n.PointTLS, err = parseTrunkPointTLS(get("EDGE_HIKKARI_TRUNK_POINT_TLS"), n.Host); err != nil {
+			return n, err
+		}
+		if n.PointTLS != nil && (len(n.Pipe.Keys) == 0 || n.CertPEM == "") {
+			return n, errors.New("trunk point TLS needs a Rust trunk exit and a managed core certificate")
 		}
 		for _, k := range n.Pipe.Keys {
 			if n.Trunk.admits(k) {
@@ -220,8 +227,16 @@ func (n naiveConfig) document() ([]byte, error) {
 		listen = n.network + "/" + n.Listen
 	}
 	certificates := map[string]any{"automate": []string{n.Host}}
+	policies := []any{map[string]any{}}
 	if n.CertPEM != "" {
-		certificates = map[string]any{"load_pem": []any{map[string]any{"certificate": n.CertPEM, "key": n.KeyPEM}}}
+		loaded := []any{map[string]any{"certificate": n.CertPEM, "key": n.KeyPEM}}
+		if n.PointTLS != nil {
+			for _, p := range n.PointTLS.Points {
+				loaded = append(loaded, map[string]any{"certificate": p.Cert, "key": p.Key})
+			}
+			policies = n.PointTLS.connectionPolicies(n.Host)
+		}
+		certificates = map[string]any{"load_pem": loaded}
 	}
 	return json.Marshal(map[string]any{
 		"admin":   map[string]any{"disabled": true, "config": map[string]any{"persist": false}},
@@ -229,7 +244,7 @@ func (n naiveConfig) document() ([]byte, error) {
 		"apps": map[string]any{
 			"tls": map[string]any{"certificates": certificates},
 			"http": map[string]any{"servers": map[string]any{"naive": n.withWrappers(map[string]any{
-				"listen": []string{listen}, "protocols": protocols, "tls_connection_policies": []any{map[string]any{}},
+				"listen": []string{listen}, "protocols": protocols, "tls_connection_policies": policies,
 				"routes": []any{map[string]any{"handle": []any{
 					map[string]any{"handler": "hikkari_naive"},
 					map[string]any{"handler": "hikkari_proxy", "hide_ip": true, "hide_via": true, "probe_resistance": map[string]any{}, "auth_credentials": [][]byte{credential}, "acl": []any{map[string]any{"subjects": deny, "allow": false}}},

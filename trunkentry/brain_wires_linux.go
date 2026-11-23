@@ -130,11 +130,11 @@ func wireSet(ws []pipectl.Wire, steer bool, voice trunk.WireID) string {
 // applyPoints gives the pipe the file's border points when they changed,
 // before the pool and the wires: the members whose point changed go to the
 // new one, none (the core's own address) when the file has none.
-func (b *brain) applyPoints(pts []netip.Addr) error {
+func (b *brain) applyPoints(pts []pipectl.BorderPoint) error {
 	if slices.Equal(pts, b.points) {
 		return nil
 	}
-	if err := b.pipe.SetPoints(pts); err != nil {
+	if err := b.pipe.SetBorderPoints(pts); err != nil {
 		return fmt.Errorf("points: %w", err)
 	}
 	log.Printf("nekko-trunk-entry: border points %v (were %v), no new process", pts, b.points)
@@ -259,7 +259,7 @@ func (b *brain) followWires(ctx context.Context) {
 			continue
 		}
 		ws := pipeWiresOf(b.c, b.exitNow(), b.roots, f)
-		err = b.applyPoints(f.pointAddrs())
+		err = b.applyPoints(f.borderPoints())
 		if err == nil {
 			err = b.applyPool(poolMembers(b.c, f))
 		}

@@ -69,7 +69,7 @@ type brain struct {
 	voiceOn trunk.WireID
 	// points are the border points the pipe was given from the file
 	// (wires.go "points"), none: the core's own address.
-	points []netip.Addr
+	points []pipectl.BorderPoint
 
 	extras context.CancelFunc
 	handed chan struct{}
@@ -224,13 +224,17 @@ func startBrain(ctx context.Context, c Config, s *sockets) (*brain, error) {
 		}
 	}
 	if werr != nil {
+		if len(f.PointSNI) != 0 {
+			p.Close()
+			return nil, fmt.Errorf("named border points: %w", werr)
+		}
 		log.Printf("nekko-trunk-entry: wires: %v (the pool alone)", werr)
 		ws, f = nil, wiresSpec{}
 	}
 	// Border points before the pool and the wires: no member dials the core
 	// first, whose own address may be out of reach (G2).
-	if pts := f.pointAddrs(); len(pts) > 0 {
-		if err := p.SetPoints(pts); err != nil {
+	if pts := f.borderPoints(); len(pts) > 0 {
+		if err := p.SetBorderPoints(pts); err != nil {
 			p.Close()
 			return nil, fmt.Errorf("points: %w", err)
 		}
