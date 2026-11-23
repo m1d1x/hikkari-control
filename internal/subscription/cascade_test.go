@@ -154,8 +154,8 @@ func TestACascadeAccountDialsTheExitThroughTheEntry(t *testing.T) {
 			}
 		}
 		if _, err := pool.Exec(ctx, `INSERT INTO entry_country_egress
-			(entry_box,de_box,nl_port,de_port,auto_port,sni,applied_sha)
-			VALUES ('ruin1',$1,8443,8444,8445,'core.example','ready')`, de); err != nil {
+			(entry_box,de_box,nl_port,de_port,sni,applied_sha)
+			VALUES ('ruin1',$1,8443,8444,'core.example','ready')`, de); err != nil {
 			t.Fatal(err)
 		}
 		const feature = ", hikkari-country-egress"
@@ -169,16 +169,34 @@ func TestACascadeAccountDialsTheExitThroughTheEntry(t *testing.T) {
 			t.Fatalf("old client received country profiles: %d", len(got))
 		}
 		got := get(feature)
-		if len(got) != 3 {
+		if len(got) != 2 {
 			t.Fatalf("got %d country profiles", len(got))
 		}
-		for i, country := range []struct{ mode, port string }{{"nl", "8443"}, {"de", "8444"}, {"auto", "8445"}} {
+		for i, country := range []struct{ mode, port string }{{"nl", "8443"}, {"de", "8444"}} {
 			link, err := url.Parse(got[i])
 			if err != nil || link.Hostname() != u.Hostname() || link.Port() != country.port ||
 				link.User.String() != u.User.String() || link.Query().Get("sni") != "core.example" || link.Query().Get("egress") != country.mode {
 				t.Fatalf("profile %s does not use its own port on the shared entry", country.mode)
 			}
 		}
+		countryDown := func(want string) {
+			t.Helper()
+			req := httptest.NewRequest(http.MethodHead, "/sub/"+token+"?country-status=1", nil)
+			req.SetPathValue("token", token)
+			rec := httptest.NewRecorder()
+			s.Handler()(rec, req)
+			if rec.Code != http.StatusNoContent || rec.Header().Get("Hikkari-Country-Down") != want {
+				t.Fatalf("status = %d, country down = %q, want %q", rec.Code, rec.Header().Get("Hikkari-Country-Down"), want)
+			}
+		}
+		if _, err := pool.Exec(ctx, `UPDATE entry_country_egress SET down_country='NL', health_at=now() WHERE entry_box='ruin1'`); err != nil {
+			t.Fatal(err)
+		}
+		countryDown("NL")
+		if _, err := pool.Exec(ctx, `UPDATE entry_country_egress SET health_at=now()-interval '30 seconds' WHERE entry_box='ruin1'`); err != nil {
+			t.Fatal(err)
+		}
+		countryDown("")
 		if err := s.SetCountryProfiles(ctx, name, false); err != nil || len(get(feature)) != 1 {
 			t.Fatalf("disable country profiles: %v", err)
 		}

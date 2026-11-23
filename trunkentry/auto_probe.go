@@ -6,10 +6,12 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/netip"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -22,77 +24,107 @@ const (
 	autoProbeTimeout  = 3 * time.Second
 )
 
-type autoEgressConfig struct {
-	listen, nl, de    netip.AddrPort
-	sni, nlKey, deKey string
+type countryGatewayConfig struct {
+	listen, backends [2]netip.AddrPort
+	sni              string
+	keys             [2]string
 }
 
-func autoConfig(get func(string) string) (autoEgressConfig, error) {
-	var c autoEgressConfig
-	for _, v := range []struct {
-		name     string
-		addr     *netip.AddrPort
-		loopback bool
-	}{
-		{"EDGE_AUTO_LISTEN", &c.listen, false},
-		{"EDGE_AUTO_NL", &c.nl, true},
-		{"EDGE_AUTO_DE", &c.de, true},
-	} {
-		addr, err := autoEgressAddress(get(v.name), v.loopback)
-		if err != nil {
-			return c, fmt.Errorf("%s: %w", v.name, err)
+func countryConfig(get func(string) string) (countryGatewayConfig, error) {
+	var c countryGatewayConfig
+	ports := map[uint16]bool{}
+	for _, country := range []egressCountry{countryNL, countryDE} {
+		prefix := "EDGE_COUNTRY_" + country.String()
+		for _, v := range []struct {
+			suffix   string
+			addr     *netip.AddrPort
+			loopback bool
+		}{
+			{"_LISTEN", &c.listen[country], false},
+			{"_BACKEND", &c.backends[country], true},
+		} {
+			key := prefix + v.suffix
+			addr, err := autoEgressAddress(get(key), v.loopback)
+			if err != nil {
+				return c, fmt.Errorf("%s: %w", key, err)
+			}
+			if ports[addr.Port()] {
+				return c, errors.New("EDGE_COUNTRY: нужны четыре разных порта")
+			}
+			ports[addr.Port()] = true
+			*v.addr = addr
 		}
-		*v.addr = addr
+		c.keys[country] = get(prefix + "_TRUNK_KEY")
+		if trunk.ParseKey(c.keys[country]) != nil {
+			return c, fmt.Errorf("%s: нужен ключ магистрали", prefix)
+		}
 	}
-	if c.nl == c.de || c.listen.Port() == c.nl.Port() || c.listen.Port() == c.de.Port() {
-		return c, errors.New("EDGE_AUTO: нужны три разных порта")
-	}
-	c.sni, c.nlKey, c.deKey = get("EDGE_AUTO_SNI"), get("EDGE_AUTO_NL_TRUNK_KEY"), get("EDGE_AUTO_DE_TRUNK_KEY")
+	c.sni = get("EDGE_COUNTRY_SNI")
 	if c.sni == "" {
-		return c, errors.New("EDGE_AUTO_SNI: нужен домен релея")
-	}
-	if trunk.ParseKey(c.nlKey) != nil || trunk.ParseKey(c.deKey) != nil {
-		return c, errors.New("EDGE_AUTO: нужны ключи магистрали NL и DE")
+		return c, errors.New("EDGE_COUNTRY_SNI: нужен домен релея")
 	}
 	return c, nil
 }
 
-func runAutoEgress(cmd string) error {
-	c, err := autoConfig(os.Getenv)
+func runCountryGateways(cmd string) error {
+	c, err := countryConfig(os.Getenv)
 	if err != nil || cmd == "check" {
 		return err
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	nl := newEgressProbe(c.nl, c.sni, c.nlKey)
+	nl := newEgressProbe(c.backends[countryNL], c.sni, c.keys[countryNL])
 	defer nl.close()
-	de := newEgressProbe(c.de, c.sni, c.deKey)
+	de := newEgressProbe(c.backends[countryDE], c.sni, c.keys[countryDE])
 	defer de.close()
-	if cmd == "auto-probe" {
-		for _, p := range []struct {
-			country string
-			probe   *egressProbe
-		}{{"NL", nl}, {"DE", de}} {
-			if h := p.probe.check(ctx); !h.healthy() {
-				return fmt.Errorf("%s: tcp=%t udp=%t", p.country, h.tcp, h.udp)
+	checkBoth := func() [2]egressHealth {
+		standby := make(chan egressHealth, 1)
+		go func() { standby <- de.check(ctx) }()
+		return [2]egressHealth{nl.check(ctx), <-standby}
+	}
+	if cmd == "country-probe" {
+		for i, h := range checkBoth() {
+			if !h.healthy() {
+				return fmt.Errorf("%s: tcp=%t udp=%t", egressCountry(i), h.tcp, h.udp)
 			}
 		}
 		return nil
 	}
-	gateway, err := newAutoGateway(ctx, c.listen, c.nl)
+	nlGateway, err := newAutoGateway(ctx, c.listen[countryNL], c.backends, countryNL)
 	if err != nil {
 		return err
 	}
+	deGateway, err := newAutoGateway(ctx, c.listen[countryDE], c.backends, countryDE)
+	if err != nil {
+		nlGateway.tcp.Close()
+		nlGateway.udp.Close()
+		return err
+	}
+
+	dir := runtimeDirectory()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(autoProbeInterval)
 		defer ticker.Stop()
+		choice := egressChoice{down: countryNone}
 		for ctx.Err() == nil {
-			standby := make(chan egressHealth, 1)
-			go func() { standby <- de.check(ctx) }()
-			primary := nl.check(ctx)
-			gateway.observe(primary, <-standby, c.de)
+			previous := choice.down
+			health := checkBoth()
+			if ctx.Err() != nil {
+				return
+			}
+			down := choice.observe(health)
+			if down != previous {
+				nlGateway.route(down)
+				deGateway.route(down)
+				log.Printf("country egress down=%s previous=%s", down, previous)
+			}
+			if dir != "" {
+				if err := writeCountryHealth(dir, down); err != nil {
+					log.Printf("country egress health: %v", err)
+				}
+			}
 			select {
 			case <-ctx.Done():
 				return
@@ -100,11 +132,23 @@ func runAutoEgress(cmd string) error {
 			}
 		}
 	}()
+	errs := make(chan error, 2)
+	go func() { errs <- nlGateway.serve() }()
+	go func() { errs <- deGateway.serve() }()
 	sdNotify("READY=1")
-	err = gateway.serve()
+	err = <-errs
 	cancel()
+	<-errs
 	<-done
 	return err
+}
+
+func writeCountryHealth(dir string, down egressCountry) error {
+	tmp := filepath.Join(dir, "health.new")
+	if err := os.WriteFile(tmp, fmt.Appendf(nil, "%d %s\n", time.Now().Unix(), down), 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, filepath.Join(dir, "health"))
 }
 
 // The same health request goes through the relay on each transport. The

@@ -166,11 +166,11 @@ func runEntryBox(args []string) {
 		os.Exit(1)
 	}
 	if len(args) > 0 && args[0] == "country-egress" {
-		if len(args) != 6 {
-			fail(fmt.Errorf("usage: hub entry-box country-egress <entry> <de-box> <nl-port> <de-port> <auto-port>"))
+		if len(args) != 5 {
+			fail(fmt.Errorf("usage: hub entry-box country-egress <entry> <de-box> <nl-port> <de-port>"))
 		}
-		var ports [3]int
-		for i, raw := range args[3:6] {
+		var ports [2]int
+		for i, raw := range args[3:] {
 			port, err := strconv.Atoi(raw)
 			if err != nil {
 				fail(fmt.Errorf("port %q: %w", raw, err))
@@ -187,11 +187,11 @@ func runEntryBox(args []string) {
 		if err != nil {
 			fail(err)
 		}
-		cfg := entry.CountryEgress{Entry: args[1], DE: args[2], NLPort: ports[0], DEPort: ports[1], AutoPort: ports[2]}
+		cfg := entry.CountryEgress{Entry: args[1], DE: args[2], NLPort: ports[0], DEPort: ports[1]}
 		if err := newProvisioner(svc).SetCountryEgress(ctx, cfg); err != nil {
 			fail(err)
 		}
-		fmt.Printf("%s: конфигурация NL, DE и Авто сохранена для раскатки hub\n", cfg.Entry)
+		fmt.Printf("%s: конфигурация NL и DE сохранена для раскатки hub\n", cfg.Entry)
 		return
 	}
 	if len(args) == 2 && args[0] == "record" {

@@ -187,6 +187,7 @@ func run() error {
 		rollout.Run(ctx)
 		prov.RollCountryEgress(ctx)
 	}()
+	go prov.WatchCountryHealth(ctx)
 	go svc.RunResigner(ctx)
 	// The receiver groups' certificates renewed a month ahead (P1).
 	go svc.RunReceiverCertRenewal(ctx, entry.ReceiverCertInterval, rollout.Reconfigure)

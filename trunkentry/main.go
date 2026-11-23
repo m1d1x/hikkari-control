@@ -47,9 +47,9 @@ func main() {
 	if len(os.Args) > 1 {
 		cmd = os.Args[1]
 	}
-	if os.Getenv("EDGE_AUTO_LISTEN") != "" && (cmd == "run" || cmd == "check" || cmd == "auto-probe") {
-		if err := runAutoEgress(cmd); err != nil {
-			log.Fatalf("nekko-trunk-entry: auto egress: %v", err)
+	if os.Getenv("EDGE_COUNTRY_NL_LISTEN") != "" && (cmd == "run" || cmd == "check" || cmd == "country-probe") {
+		if err := runCountryGateways(cmd); err != nil {
+			log.Fatalf("nekko-trunk-entry: country egress: %v", err)
 		}
 		return
 	}
@@ -114,6 +114,7 @@ type Config struct {
 	// TCP and UDP map a port the entry listens on to the exit's loopback
 	// port it reaches.
 	TCP, UDP map[int]uint16
+	Loopback bool
 	// OneCopy are UDP listen ports whose datagrams cross the trunk once:
 	// their sender copies them itself (Hikkari v1.02 sends a call over both
 	// its channels), and a second copy here would make four.
@@ -188,6 +189,7 @@ func ConfigFromEnv(get func(string) string) (Config, error) {
 	if c.Pipe = strings.TrimSpace(get("EDGE_TRUNK_PIPE")); c.Pipe != "" && !filepath.IsAbs(c.Pipe) {
 		return c, fmt.Errorf("EDGE_TRUNK_PIPE: %q is not an absolute path", c.Pipe)
 	}
+	c.Loopback = get("EDGE_TRUNK_LOOPBACK") == "1"
 	c.Roots = strings.TrimSpace(get("EDGE_TRUNK_ROOTS"))
 	c.RequirePoints = get("EDGE_TRUNK_REQUIRE_POINTS") == "1"
 	exitIP, _ := netip.ParseAddr(host)

@@ -8,68 +8,105 @@ import (
 	"time"
 )
 
-func TestAutoEgressRequiresConfirmedFailureAndReadyDE(t *testing.T) {
+func TestCountryEgressRequiresConfirmedFailureAndRecovery(t *testing.T) {
 	up, down, partial := egressHealth{true, true}, egressHealth{}, egressHealth{tcp: true}
-	var c egressChoice
-	for range autoFailures - 1 {
-		if c.observe(down, up) {
-			t.Fatal("moved before confirming failure")
-		}
-	}
-	if c.observe(partial, up) || c.failures != 0 {
-		t.Fatal("partial failure must reset the count")
-	}
-	for range autoFailures {
-		if c.observe(down, down) {
-			t.Fatal("moved while neither exit was reachable")
-		}
-	}
-	if c.observe(down, partial) || !c.observe(down, up) {
-		t.Fatal("failover requires TCP and UDP on DE")
-	}
-	if c.observe(up, up) || !c.de {
-		t.Fatal("recovery of NL interrupted the connections on DE")
+	for _, home := range []egressCountry{countryNL, countryDE} {
+		t.Run(home.String(), func(t *testing.T) {
+			c := egressChoice{down: countryNone}
+			check := func(primary, backup egressHealth, want egressCountry) {
+				t.Helper()
+				var health [2]egressHealth
+				health[home], health[home.other()] = primary, backup
+				if got := c.observe(health); got != want {
+					t.Fatalf("country down = %s, want %s", got, want)
+				}
+			}
+			for range autoFailures - 1 {
+				check(down, up, countryNone)
+			}
+			check(partial, up, countryNone)
+			for range autoFailures {
+				check(down, down, countryNone)
+			}
+			check(down, partial, countryNone)
+			check(down, up, home)
+			check(up, up, home)
+			check(partial, up, home)
+			for range recoverySuccesses - 1 {
+				check(up, up, home)
+			}
+			check(up, up, countryNone)
+		})
 	}
 }
 
-func TestAutoEgressSwitchesTCPAndExistingUDPSourceTogether(t *testing.T) {
-	nl := echoEgress(t, 'N')
-	de := echoEgress(t, 'D')
-	gateway, err := newAutoGateway(t.Context(), netip.MustParseAddrPort("127.0.0.1:0"), nl)
-	if err != nil {
-		t.Fatal(err)
+func TestCountryGatewayKeepsLivingTCPAndUDPOnRecovery(t *testing.T) {
+	backends := [2]netip.AddrPort{echoEgress(t, 'N'), echoEgress(t, 'D')}
+	ports := [2]netip.AddrPort{}
+	gateways := [2]*autoGateway{}
+	for _, home := range []egressCountry{countryNL, countryDE} {
+		gateway, err := newAutoGateway(t.Context(), netip.MustParseAddrPort("127.0.0.1:0"), backends, home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		go gateway.serve()
+		t.Cleanup(func() { gateway.tcp.Close(); gateway.udp.Close() })
+		gateways[home] = gateway
+		ports[home] = gateway.tcp.Addr().(*net.TCPAddr).AddrPort()
 	}
-	go gateway.serve()
-	t.Cleanup(func() { gateway.tcp.Close(); gateway.udp.Close() })
-	auto := gateway.tcp.Addr().(*net.TCPAddr).AddrPort()
-	udp, err := net.DialUDP("udp4", nil, net.UDPAddrFromAddrPort(auto))
-	if err != nil {
-		t.Fatal(err)
+	dialUDP := func(country egressCountry) *net.UDPConn {
+		t.Helper()
+		conn, err := net.DialUDP("udp4", nil, net.UDPAddrFromAddrPort(ports[country]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { conn.Close() })
+		return conn
 	}
-	defer udp.Close()
-	tcp := dialAutoTestTCP(t, auto)
-	defer tcp.Close()
-	assertAutoEcho(t, tcp, 'N')
-	assertAutoEcho(t, udp, 'N')
+	nlUDP, deUDP := dialUDP(countryNL), dialUDP(countryDE)
+	nlTCP, deTCP := dialAutoTestTCP(t, ports[countryNL]), dialAutoTestTCP(t, ports[countryDE])
+	defer nlTCP.Close()
+	defer deTCP.Close()
+	assertAutoEcho(t, nlUDP, 'N')
+	assertAutoEcho(t, nlTCP, 'N')
+	assertAutoEcho(t, deUDP, 'D')
+	assertAutoEcho(t, deTCP, 'D')
 
-	for range autoFailures {
-		gateway.observe(egressHealth{}, egressHealth{true, true}, de)
+	for _, gateway := range gateways {
+		gateway.route(countryNL)
 	}
-	if _, err := tcp.Read(make([]byte, 1)); err != io.EOF {
-		t.Fatalf("former Auto TCP connection still open: %v", err)
+	if _, err := nlTCP.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("former NL TCP connection still open: %v", err)
 	}
-	newTCP := dialAutoTestTCP(t, auto)
-	defer newTCP.Close()
-	assertAutoEcho(t, newTCP, 'D')
-	assertAutoEcho(t, udp, 'D') // same client socket and source port
-	for _, backend := range []struct {
-		addr netip.AddrPort
-		want byte
-	}{{nl, 'N'}, {de, 'D'}} {
-		conn := dialAutoTestTCP(t, backend.addr)
-		assertAutoEcho(t, conn, backend.want)
-		conn.Close()
+	fallbackTCP := dialAutoTestTCP(t, ports[countryNL])
+	defer fallbackTCP.Close()
+	assertAutoEcho(t, fallbackTCP, 'D')
+	assertAutoEcho(t, nlUDP, 'D')
+	assertAutoEcho(t, deTCP, 'D')
+	assertAutoEcho(t, deUDP, 'D')
+
+	for _, gateway := range gateways {
+		gateway.route(countryNone)
 	}
+	homeTCP := dialAutoTestTCP(t, ports[countryNL])
+	defer homeTCP.Close()
+	assertAutoEcho(t, homeTCP, 'N')
+	assertAutoEcho(t, dialUDP(countryNL), 'N')
+	assertAutoEcho(t, fallbackTCP, 'D')
+	assertAutoEcho(t, nlUDP, 'D')
+
+	for _, gateway := range gateways {
+		gateway.route(countryDE)
+	}
+	if _, err := fallbackTCP.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("fallback TCP connection on dead DE still open: %v", err)
+	}
+	if _, err := deTCP.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("DE TCP connection still open: %v", err)
+	}
+	assertAutoEcho(t, homeTCP, 'N')
+	assertAutoEcho(t, nlUDP, 'N')
+	assertAutoEcho(t, deUDP, 'N')
 }
 
 func assertAutoEcho(t *testing.T, conn net.Conn, want byte) {
