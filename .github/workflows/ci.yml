@@ -108,11 +108,23 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Select production fleet artifacts
+        id: fleet
+        run: |
+          image=fleet-from-source
+          if [[ -f deploy/production-fleet-image ]]; then
+            read -r image < deploy/production-fleet-image
+            registry=${REGISTRY,,}
+            [[ "$image" == "$registry/hub@sha256:"* ]]
+            [[ "${image##*:}" =~ ^[a-f0-9]{64}$ ]]
+          fi
+          printf 'image=%s\n' "$image" >> "$GITHUB_OUTPUT"
       - name: hub image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.hub
+          build-args: PRODUCTION_FLEET_IMAGE=${{ steps.fleet.outputs.image }}
           platforms: linux/amd64
           push: true
           tags: ${{ env.REGISTRY }}/hub:${{ github.sha }}

@@ -133,9 +133,9 @@ type pipeBrain struct {
 
 // pipeBrainFor checks the pipe's parts for an entry to exit: the udp wire
 // when hk-exit serves it, Chromium's QUIC wire at h3Port when set.
-func (p *Provisioner) pipeBrainFor(ctx context.Context, exit string, h3Port int, h3Usage, voice string, points []string) (pipeBrain, error) {
+func (p *Provisioner) pipeBrainFor(ctx context.Context, exit string, h3Port int, h3Usage, voice string, points []string, builds trunkArtifacts) (pipeBrain, error) {
 	var b pipeBrain
-	if len(p.pipeBuilds) == 0 {
+	if len(builds.pipeBuilds) == 0 {
 		return b, fmt.Errorf("%w: в образе хаба нет hk-pipe", ErrRejected)
 	}
 	if h3Usage != "" && h3Usage != "destination" && h3Usage != "proxy" {
@@ -144,12 +144,12 @@ func (p *Provisioner) pipeBrainFor(ctx context.Context, exit string, h3Port int,
 	if h3Port < 0 || h3Port > 65535 {
 		return b, fmt.Errorf("%w: порт h3dgram %d", ErrRejected, h3Port)
 	}
-	b.cronet = p.cronetBuilds
+	b.cronet = builds.cronetBuilds
 	if h3Port > 0 {
-		if len(p.cronetUDPBuilds) == 0 {
+		if len(builds.cronetUDPBuilds) == 0 {
 			return b, fmt.Errorf("%w: в образе хаба нет libcronet-udp.so для провода h3dgram", ErrRejected)
 		}
-		b.cronet = p.cronetUDPBuilds
+		b.cronet = builds.cronetUDPBuilds
 	}
 	var err error
 	if b.addr, b.sni, b.key, b.open, err = p.svc.trunkPipeExitOf(ctx, exit); err != nil {
@@ -386,7 +386,8 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	if err != nil {
 		return err
 	}
-	pipe, err := p.pipeBrainFor(ctx, exitBox, o.H3Port, o.H3Usage, o.Voice, pts)
+	builds := p.standTrunkArtifacts
+	pipe, err := p.pipeBrainFor(ctx, exitBox, o.H3Port, o.H3Usage, o.Voice, pts, builds)
 	if err != nil {
 		return err
 	}
@@ -428,7 +429,7 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	}
 	applog.Info(ctx, "entry", "operator trunk pipe on box", applog.F("box", box), applog.F("exit", exitBox),
 		applog.F("members", o.Members), applog.F("listen", strings.Join(listen, ",")))
-	files := []trunkFile{{"nekko-trunk-entry", p.trunkBuilds}, {"libcronet.so", cronet}, {"hk-pipe", p.pipeBuilds}}
+	files := []trunkFile{{"nekko-trunk-entry", builds.trunkBuilds}, {"libcronet.so", cronet}, {"hk-pipe", builds.pipeBuilds}}
 	if err := standTrunkUnit(ctx, r, trunkPipeUnitSpec, files, trunkPipeEnvOf(addr, sni, key, o),
 		map[string]string{"wires.json": wiresFile}, listen, logf); err != nil {
 		return err

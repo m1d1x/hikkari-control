@@ -140,19 +140,10 @@ type Provisioner struct {
 	// into a vantage slot (К3′ / П9.12). Its token is the slot's own, issued
 	// at deploy time.
 	proberBuilds map[string]EdgeBuild
-	// trunkBuilds and cronetBuilds are the cascade's trunk entry
-	// (linux-<arch>/nekko-trunk-entry) and the libcronet.so it loads
-	// (trunk.go).
-	trunkBuilds, cronetBuilds map[string]EdgeBuild
-	// pipeBuilds are the entry's Rust pipe (linux-<arch>/hk-pipe, glibc:
-	// it loads libcronet), for the stand over it (trunkpipe.go).
-	pipeBuilds map[string]EdgeBuild
-	// cronetUDPBuilds are libcronet with the CONNECT-UDP tunnel
-	// (linux-<arch>/libcronet-udp.so, hikkari-protocol rust/cronet/chromium:
-	// the same Chromium as libcronet.so and the patch), for the stand's
-	// Chromium QUIC wire; exitBuilds the exit's Rust pipe (linux-<arch>/hk-exit),
-	// the end of that wire on the exit (trunkh3exit.go).
-	cronetUDPBuilds, exitBuilds map[string]EdgeBuild
+	trunkArtifacts
+	standTrunkArtifacts trunkArtifacts
+	// exitBuilds is the fleet's Rust exit (linux-<arch>/hk-exit).
+	exitBuilds map[string]EdgeBuild
 	// wireStandH3Builds are the edge built with cronet
 	// (linux-<arch>/hikkari-wire-stand-h3): the stand's entry (wirestand.go).
 	wireStandH3Builds map[string]EdgeBuild
@@ -187,18 +178,17 @@ func (p *Provisioner) CanDeployProber() bool {
 // NewProvisioner builds the runner. artifacts is the directory of relay
 // binaries, hashed here once: they are the version this hub deploys (П6.14).
 func NewProvisioner(svc *Service, dial Dialer, artifacts string) *Provisioner {
+	fleetTrunk := loadTrunkArtifacts(artifacts)
 	return &Provisioner{
 		svc: svc, dial: dial,
-		builds:            loadEdgeBuilds(artifacts),
-		proberBuilds:      loadProberBuilds(artifacts),
-		trunkBuilds:       loadNamedBuilds(artifacts, "nekko-trunk-entry"),
-		cronetBuilds:      loadNamedBuilds(artifacts, "libcronet.so"),
-		pipeBuilds:        loadNamedBuilds(artifacts, "hk-pipe"),
-		cronetUDPBuilds:   loadNamedBuilds(artifacts, "libcronet-udp.so"),
-		exitBuilds:        loadNamedBuilds(artifacts, "hk-exit"),
-		wireStandH3Builds: loadNamedBuilds(artifacts, WireStandH3Build),
-		probeBuilds:       loadNamedBuilds(artifacts, "nekko-cascade-probe"),
-		probeTimeout:      5 * time.Minute, probePoll: 2 * time.Second, drainPoll: drainPoll,
+		builds:              loadEdgeBuilds(artifacts),
+		proberBuilds:        loadProberBuilds(artifacts),
+		trunkArtifacts:      fleetTrunk,
+		standTrunkArtifacts: loadStandTrunkArtifacts(artifacts, fleetTrunk),
+		exitBuilds:          loadNamedBuilds(artifacts, "hk-exit"),
+		wireStandH3Builds:   loadNamedBuilds(artifacts, WireStandH3Build),
+		probeBuilds:         loadNamedBuilds(artifacts, "nekko-cascade-probe"),
+		probeTimeout:        5 * time.Minute, probePoll: 2 * time.Second, drainPoll: drainPoll,
 		jobTimeout:   30 * time.Minute,
 		bootWait:     bootWait,
 		dnsResolvers: []string{"1.1.1.1:53", "8.8.8.8:53"},

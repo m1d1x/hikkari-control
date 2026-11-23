@@ -2,9 +2,43 @@ package entry
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestStandTrunkArtifactsKeepTheBrainAndPipeSeparateFromTheFleet(t *testing.T) {
+	dir := t.TempDir()
+	write := func(root, name, body string) {
+		t.Helper()
+		archDir := filepath.Join(root, "linux-amd64")
+		if err := os.MkdirAll(archDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(archDir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"nekko-trunk-entry", "hk-pipe"} {
+		write(dir, name, "fleet "+name)
+	}
+	fleet := loadTrunkArtifacts(dir)
+	legacy := loadStandTrunkArtifacts(dir, fleet)
+	if legacy.pipeBuilds["amd64"] != fleet.pipeBuilds["amd64"] {
+		t.Fatal("the stand should use the fleet set on legacy images")
+	}
+	standDir := filepath.Join(dir, "cascade-stand")
+	write(standDir, "nekko-trunk-entry", "stand brain")
+	if partial := loadStandTrunkArtifacts(dir, fleet); len(partial.pipeBuilds) != 0 {
+		t.Fatal("a missing stand pipe must not be taken from the fleet set")
+	}
+	write(standDir, "hk-pipe", "stand pipe")
+	stand := loadStandTrunkArtifacts(dir, fleet)
+	if stand.trunkBuilds["amd64"].path != filepath.Join(standDir, "linux-amd64", "nekko-trunk-entry") ||
+		stand.pipeBuilds["amd64"].path != filepath.Join(standDir, "linux-amd64", "hk-pipe") {
+		t.Fatal("the stand should use its own brain and pipe")
+	}
+}
 
 func TestHikkariEnvCarriesTheTrunk(t *testing.T) {
 	id := Identity{Port: 443, Hikkari: &HikkariParams{Host: "hk.example", User: "hikkari", Pass: "p"}}

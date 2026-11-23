@@ -285,7 +285,7 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 		if pts, err = p.svc.pointAddresses(ctx, o.Points); err != nil {
 			return err
 		}
-		pipe, err = p.pipeBrainFor(ctx, o.Exit, o.H3Port, o.H3Usage, o.Voice, pts)
+		pipe, err = p.pipeBrainFor(ctx, o.Exit, o.H3Port, o.H3Usage, o.Voice, pts, p.trunkArtifacts)
 		if err != nil {
 			return err
 		}
