@@ -8,35 +8,77 @@ import (
 	"time"
 )
 
-func TestCountryEgressRequiresConfirmedFailureAndRecovery(t *testing.T) {
+// Decision 2026-11-24: an egress silent for autoSilence while the other
+// answers on both transports is down; silence on both moves no one; three
+// whole answers in a row bring it back.
+func TestACountrySilentForASecondAndAHalfIsDownWhileItsPeerAnswers(t *testing.T) {
 	up, down, partial := egressHealth{true, true}, egressHealth{}, egressHealth{tcp: true}
+	const step = autoProbeInterval
 	for _, home := range []egressCountry{countryNL, countryDE} {
 		t.Run(home.String(), func(t *testing.T) {
-			c := egressChoice{down: countryNone}
-			check := func(primary, backup egressHealth, want egressCountry) {
+			now := time.Unix(1_800_000_000, 0)
+			c := newEgressChoice(now)
+			// probe moves the clock one probe on and answers both countries.
+			probe := func(primary, backup egressHealth) {
+				now = now.Add(step)
+				c.observe(now, home, primary)
+				c.observe(now, home.other(), backup)
+			}
+			want := func(country egressCountry) {
 				t.Helper()
-				var health [2]egressHealth
-				health[home], health[home.other()] = primary, backup
-				if got := c.observe(health); got != want {
-					t.Fatalf("country down = %s, want %s", got, want)
+				if got := c.verdict(now); got != country {
+					t.Fatalf("at +%s: country down = %s, want %s", now.Sub(time.Unix(1_800_000_000, 0)), got, country)
 				}
 			}
-			for range autoFailures - 1 {
-				check(down, up, countryNone)
+			probe(up, up)
+			// A silence just short of autoSilence moves no one.
+			for range autoSilence/step - 1 {
+				probe(down, up)
+				want(countryNone)
 			}
-			check(partial, up, countryNone)
-			for range autoFailures {
-				check(down, down, countryNone)
+			// One transport answering is not silence.
+			probe(partial, up)
+			want(countryNone)
+			// Both silent: the path or the entry, no switch however long.
+			for range 3 * autoSilence / step {
+				probe(down, down)
+				want(countryNone)
 			}
-			check(down, partial, countryNone)
-			check(down, up, home)
-			check(up, up, home)
-			check(partial, up, home)
+			// The peer answering on one transport only is not proof.
+			for range autoSilence / step {
+				probe(down, partial)
+				want(countryNone)
+			}
+			probe(down, up)
+			want(home)
+			// Recovery takes three whole answers in a row.
+			probe(up, up)
+			probe(partial, up)
+			want(home)
 			for range recoverySuccesses - 1 {
-				check(up, up, home)
+				probe(up, up)
+				want(home)
 			}
-			check(up, up, countryNone)
+			probe(up, up)
+			want(countryNone)
 		})
+	}
+}
+
+// The switch comes autoSilence after the last answer, not three slow
+// rounds later: on the stand 2026-11-23 it took 9.1 to 9.7 s.
+func TestACountryIsDownASecondAndAHalfAfterItsLastAnswer(t *testing.T) {
+	start := time.Unix(1_800_000_000, 0)
+	c := newEgressChoice(start)
+	c.observe(start, countryNL, egressHealth{true, true})
+	c.observe(start, countryDE, egressHealth{true, true})
+	for at := time.Duration(0); at <= 2*time.Second; at += autoVerdictTick {
+		now := start.Add(at)
+		c.observe(now, countryDE, egressHealth{true, true})
+		down := c.verdict(now)
+		if wantDown := at >= autoSilence; (down == countryNL) != wantDown {
+			t.Fatalf("at +%s: country down = %s", at, down)
+		}
 	}
 }
 

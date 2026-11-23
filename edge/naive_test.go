@@ -197,3 +197,32 @@ func TestTheGroupCertificateIsEveryChannels(t *testing.T) {
 		t.Fatal("files without the hub's certificate")
 	}
 }
+
+// Decision 2026-11-24: every relay of the group, with the hub's group
+// certificate, holds one stateless reset key, so the relay of another
+// country resets a client the cascade's entry moved there; another group's
+// relay holds another key, and a relay without one keeps a random key.
+func TestTheGroupsRelaysShareOneStatelessResetKey(t *testing.T) {
+	certA, keyA := hikkariTestCert(t, "otter9119.lol")
+	certB, keyB := hikkariTestCert(t, "pine6573.lol")
+	nl := naiveConfig{Host: "otter9119.lol", CertPEM: certA, KeyPEM: keyA}
+	de := naiveConfig{Host: "otter9119.lol", CertPEM: certA, KeyPEM: keyA}
+	other := naiveConfig{Host: "pine6573.lol", CertPEM: certB, KeyPEM: keyB}
+	keys := map[string]*[32]byte{}
+	for name, n := range map[string]naiveConfig{"nl": nl, "de": de, "other": other} {
+		k, err := n.groupResetKey()
+		if err != nil || k == nil {
+			t.Fatalf("%s: no reset key: %v", name, err)
+		}
+		keys[name] = (*[32]byte)(k)
+	}
+	if *keys["nl"] != *keys["de"] {
+		t.Fatal("two relays of one group hold different reset keys")
+	}
+	if *keys["nl"] == *keys["other"] {
+		t.Fatal("relays of two groups hold one reset key")
+	}
+	if k, err := (naiveConfig{Host: "otter9119.lol"}).groupResetKey(); k != nil || err != nil {
+		t.Fatalf("a relay without the group's certificate: key %v, err %v", k, err)
+	}
+}

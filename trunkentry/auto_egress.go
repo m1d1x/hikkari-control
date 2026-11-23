@@ -13,7 +13,13 @@ import (
 )
 
 const (
-	autoFailures = 3
+	// autoSilence is how long an egress may go without one probe through it
+	// answering before the entry takes it for dead: decision 2026-11-24, as
+	// the entry leaves a dead receiver (P4). A switch moves the people of
+	// that country to another address, so it waits for the other egress to
+	// have answered on both transports within the same window: silence on
+	// both is the path or the entry, which a switch does not mend.
+	autoSilence  = 1500 * time.Millisecond
 	autoUDPIdle  = 90 * time.Second
 	autoUDPLimit = 4096
 	autoUDPWrite = 20 * time.Millisecond
@@ -39,29 +45,39 @@ func (c egressCountry) String() string {
 
 func (c egressCountry) other() egressCountry { return countryDE - c }
 
-// A country is confirmed down only when its peer proves both transports.
+// egressChoice says which country is down from the probes' answers. A
+// country is down when no probe through it answered on either transport for
+// autoSilence while its peer answered on both; it is back after
+// recoverySuccesses answers in a row on both.
 type egressChoice struct {
-	down      egressCountry
-	failures  [2]int
-	successes [2]int
+	down        egressCountry
+	lastAlive   [2]time.Time
+	lastHealthy [2]time.Time
+	successes   [2]int
 }
 
-func (c *egressChoice) observe(health [2]egressHealth) egressCountry {
-	for i, h := range health {
-		if h.failed() {
-			c.failures[i] = min(c.failures[i]+1, autoFailures)
-		} else {
-			c.failures[i] = 0
-		}
-		if h.healthy() {
-			c.successes[i] = min(c.successes[i]+1, recoverySuccesses)
-		} else {
-			c.successes[i] = 0
-		}
+// newEgressChoice counts both countries alive from now: a gateway starting
+// waits a whole autoSilence before it can move anyone.
+func newEgressChoice(now time.Time) egressChoice {
+	return egressChoice{down: countryNone, lastAlive: [2]time.Time{now, now}}
+}
+
+func (c *egressChoice) observe(now time.Time, country egressCountry, h egressHealth) {
+	if !h.failed() {
+		c.lastAlive[country] = now
 	}
-	for i, failures := range c.failures {
-		country := egressCountry(i)
-		if failures == autoFailures && health[country.other()].healthy() {
+	if h.healthy() {
+		c.lastHealthy[country] = now
+		c.successes[country] = min(c.successes[country]+1, recoverySuccesses)
+	} else {
+		c.successes[country] = 0
+	}
+}
+
+func (c *egressChoice) verdict(now time.Time) egressCountry {
+	for _, country := range []egressCountry{countryNL, countryDE} {
+		peer := country.other()
+		if now.Sub(c.lastAlive[country]) >= autoSilence && now.Sub(c.lastHealthy[peer]) < autoSilence {
 			c.down = country
 			return c.down
 		}
