@@ -22,6 +22,18 @@ const LayerWire = "wire"
 // wireStandUnits is what journalctl reads beside the entry's unit.
 const wireStandUnits = "hikkari-wire-stand@*"
 
+// entryJournalCmd reads the entry's journal and the wire stand's beside it
+// since a unix second. The stand's instances are named by systemctl, not by a
+// glob to journalctl: `journalctl -u 'x@*'` walks every unit name the journal
+// ever held, and on aezamsk1 (1.5 GB of journal, a transient unit per hub
+// command) that took longer than the watch's 45 s from 23.11 19:55 UTC: no
+// call and entry rows reached the hub, the cursor stood still, and the read
+// the hub killed every minute held 74% of a core of the entry.
+func entryJournalCmd(since int64) string {
+	return fmt.Sprintf("journalctl -u nekko-trunk-entry $(systemctl list-units --all --plain --no-legend '%s' | awk '{print \"-u \" $1}') -o short-unix --no-pager --since @%d",
+		wireStandUnits, since)
+}
+
 // The entry's own wires (hikkari-control trunkentry/wires.go, stage 4) say
 // the same lines in its own journal: their rows go under target trunk-<wire>
 // (call layer) and trunk-<wire> (wire layer), apart from the stand's
