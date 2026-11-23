@@ -233,7 +233,7 @@ func (w *Watch) collect(ctx context.Context, p entry.TrunkPair) error {
 		return err
 	}
 	defer r.Close()
-	out, err := r.Run(ctx, fmt.Sprintf("journalctl -u nekko-trunk-entry -u '%s' -o short-unix --no-pager --since @%d", wireStandUnits, since.Unix()), nil)
+	out, err := r.Run(ctx, entryJournalCmd(since.Unix()), nil)
 	if err != nil {
 		return fmt.Errorf("journalctl: %w", err)
 	}

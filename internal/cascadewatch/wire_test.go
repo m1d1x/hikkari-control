@@ -185,3 +185,18 @@ func TestWireLoadLine(t *testing.T) {
 		t.Fatal("the step's word is not a row")
 	}
 }
+
+func TestTheEntrysJournalIsReadWithoutAUnitGlob(t *testing.T) {
+	cmd := entryJournalCmd(1795463708)
+	if !strings.HasPrefix(cmd, "journalctl -u nekko-trunk-entry ") || !strings.HasSuffix(cmd, " --since @1795463708") {
+		t.Fatalf("command %q", cmd)
+	}
+	// The glob goes to systemctl only: journalctl -u with a glob walks every
+	// unit name the journal ever held.
+	if strings.Contains(cmd, "-u '"+wireStandUnits+"'") || strings.Contains(cmd, "-u "+wireStandUnits) {
+		t.Fatalf("journalctl gets the glob: %q", cmd)
+	}
+	if !strings.Contains(cmd, "systemctl list-units --all --plain --no-legend '"+wireStandUnits+"'") {
+		t.Fatalf("stand units are not listed: %q", cmd)
+	}
+}
