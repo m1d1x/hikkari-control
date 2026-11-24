@@ -40,7 +40,7 @@ type cascade struct {
 	flag string
 	// relays are the exit's Hikkari relays the trunk reaches, by name.
 	relays map[string]bool
-	// more are the further entries (v1.07, 088_cascade_entries.sql), in the
+	// more are the further entries (v1.07, 090_cascade_entries.sql), in the
 	// link's order after this one.
 	more []cascadeEntry
 }
