@@ -7,7 +7,7 @@ package main
 // admin-create).
 //
 //	cmd/server entry-box <box> <address> <provider> <location> [rented-until] [voice=<region> | xhttp=<domain>]
-//	cmd/server entry-box <box> <address> <provider> <location> [rented-until] role=egress|receiver
+//	cmd/server entry-box <box> <address> <provider> <location> [rented-until] role=egress|receiver|entry
 //	                                    # a box outside the relay pool: the
 //	                                    # hub's key, harden, no relay (070)
 //	cmd/server entry-box <box>          # run again on a recorded box
@@ -1269,7 +1269,7 @@ func runEntryBox(args []string) {
 	}
 	provider := len(args) >= 3 && len(args) <= 5 && args[0] == "provider"
 	if !naiveAdopt && !spare && !core && !order && !retire && !provider && len(args) != 1 && len(args) != 4 && len(args) != 5 {
-		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain> | naive | hikkari | role=egress|receiver]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|naive|hikkari|awg|voice=<region>] [hoster=<kind>] | entry-box adopt-naive|adopt-hikkari <box> <domain> | entry-box receiver-spare <box> <primary-box> [replace] | entry-box core <egress-box> <primary-box> <relay-port> | entry-box catalog <hoster>"))
+		fail(fmt.Errorf("usage: cmd/server entry-box <box> [<address> <provider> <location> [rented-until] [voice=<region> | xhttp | xhttp=<domain> | naive | hikkari | role=egress|receiver|entry]] < password | entry-box order [region|-] [plan|-] [reality|xhttp|naive|hikkari|awg|voice=<region>] [hoster=<kind>] | entry-box adopt-naive|adopt-hikkari <box> <domain> | entry-box receiver-spare <box> <primary-box> [replace] | entry-box core <egress-box> <primary-box> <relay-port> | entry-box catalog <hoster>"))
 	}
 	if err := cryptobox.Configure(os.Getenv); err != nil {
 		fail(fmt.Errorf("content key: %w", err))
