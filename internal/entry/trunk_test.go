@@ -391,3 +391,59 @@ func TestTheStandsWiresAreTheKindsThePipeCarries(t *testing.T) {
 		t.Fatal("the wires' change touches the unit")
 	}
 }
+
+// TestAFreshEntryGoesOnRecordAheadOfItsPoints: a border point forwards a
+// core's trunk only from the entries on record, so an entry the hub has no
+// row of must get one before its swap, or no member of it comes up (25.11,
+// the second entry cbxmsk1). The entry is new to the core then, and again
+// when it moves to another core; a row already going there keeps its
+// forward and members until the swap records them.
+func TestAFreshEntryGoesOnRecordAheadOfItsPoints(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	s := &Service{pool: pool}
+	ctx := t.Context()
+	for _, box := range []string{"aheadentry1", "aheadcore1", "aheadcore2", "aheadpoint1"} {
+		if _, err := pool.Exec(ctx, `INSERT INTO entry_boxes (name, address_ct, provider, location, proto)
+			VALUES ($1, '\x00', 'test', 'test', 'hikkari') ON CONFLICT (name) DO NOTHING`, box); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM trunk_entries WHERE entry_box = 'aheadentry1'`); err != nil {
+		t.Fatal(err)
+	}
+	o := TrunkEntryOptions{Exit: "aheadcore1", Members: 32, Forward: map[int]int{8443: 8443}, Pipe: true, Points: []string{"aheadpoint1"}}
+	fresh, err := s.recordTrunkEntryAhead(ctx, "aheadentry1", o)
+	if err != nil || !fresh {
+		t.Fatalf("a fresh entry: new to the core %v, %v", fresh, err)
+	}
+	var core string
+	var points []string
+	if err := pool.QueryRow(ctx, `SELECT exit_box, points FROM trunk_entries WHERE entry_box = 'aheadentry1'`).Scan(&core, &points); err != nil {
+		t.Fatalf("no row ahead of the swap: %v", err)
+	}
+	if core != "aheadcore1" || len(points) != 1 || points[0] != "aheadpoint1" {
+		t.Fatalf("row ahead: core %s, points %v", core, points)
+	}
+	if err := s.recordTrunkEntry(ctx, "aheadentry1", o); err != nil {
+		t.Fatal(err)
+	}
+	again := o
+	again.Members, again.Forward = 16, map[int]int{9443: 8443}
+	if fresh, err := s.recordTrunkEntryAhead(ctx, "aheadentry1", again); err != nil || fresh {
+		t.Fatalf("an entry already going to the core: new %v, %v", fresh, err)
+	}
+	var members int
+	var raw []byte
+	if err := pool.QueryRow(ctx, `SELECT members, forward FROM trunk_entries WHERE entry_box = 'aheadentry1'`).Scan(&members, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if fwd, err := forwardOf(raw); err != nil || members != 32 || fwd[8443] != 8443 || len(fwd) != 1 {
+		t.Fatalf("ahead of a swap the stood row changed: members %d, forward %v %v", members, fwd, err)
+	}
+	moved := o
+	moved.Exit = "aheadcore2"
+	if fresh, err := s.recordTrunkEntryAhead(ctx, "aheadentry1", moved); err != nil || !fresh {
+		t.Fatalf("an entry moving to another core: new %v, %v", fresh, err)
+	}
+}

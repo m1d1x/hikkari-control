@@ -92,13 +92,19 @@ func (p TrunkPair) ProvokeListen(provokePort int) int {
 	return best
 }
 
-// recordTrunkEntry keeps what StandTrunkEntry stood.
-func (s *Service) recordTrunkEntry(ctx context.Context, box string, o TrunkEntryOptions) error {
+// trunkForwardJSON is an entry's forward as trunk_entries keeps it,
+// {"8443": 8443}.
+func trunkForwardJSON(forward map[int]int) ([]byte, error) {
 	fwd := map[string]int{}
-	for l, to := range o.Forward {
+	for l, to := range forward {
 		fwd[strconv.Itoa(l)] = to
 	}
-	raw, err := json.Marshal(fwd)
+	return json.Marshal(fwd)
+}
+
+// recordTrunkEntry keeps what StandTrunkEntry stood.
+func (s *Service) recordTrunkEntry(ctx context.Context, box string, o TrunkEntryOptions) error {
+	raw, err := trunkForwardJSON(o.Forward)
 	if err != nil {
 		return err
 	}
@@ -128,6 +134,43 @@ func (s *Service) recordTrunkEntryCore(ctx context.Context, box, exit string, po
 	}
 	_, err := s.pool.Exec(ctx, `UPDATE trunk_entries SET exit_box = $2, points = $3 WHERE entry_box = $1`, box, exit, points)
 	return err
+}
+
+// recordTrunkEntryAhead puts an entry over border points on record before
+// its swap, as recordTrunkEntryCore does, and also for an entry the hub has
+// no row of yet: a point forwards a core's trunk only from the entries on
+// record (borderPlanOf), so a fresh entry never brings a member up and its
+// stand fails on "no member came up" before it gets a row (V2 of
+// hikkari-client plans/2026-11-24-second-entry-client-failover.md, 25.11:
+// the second entry cbxmsk1). A row already there keeps its forward and
+// members until the swap is through, as before. newToCore says the entry
+// did not go to this core before: its points do not forward it yet.
+func (s *Service) recordTrunkEntryAhead(ctx context.Context, box string, o TrunkEntryOptions) (newToCore bool, err error) {
+	raw, err := trunkForwardJSON(o.Forward)
+	if err != nil {
+		return false, err
+	}
+	points := o.Points
+	if points == nil {
+		points = []string{}
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+	var was string
+	err = tx.QueryRow(ctx, `SELECT exit_box FROM trunk_entries WHERE entry_box = $1 FOR UPDATE`, box).Scan(&was)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO trunk_entries (entry_box, exit_box, forward, members, points) VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (entry_box) DO UPDATE SET exit_box = $2, points = $5`,
+		box, o.Exit, raw, o.Members, points); err != nil {
+		return false, err
+	}
+	return was != o.Exit, tx.Commit(ctx)
 }
 
 func (s *Service) forgetTrunkEntry(ctx context.Context, box string) error {
