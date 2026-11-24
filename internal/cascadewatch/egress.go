@@ -94,8 +94,9 @@ func classifyEgress(l journalLine, rx string) ([]Run, bool) {
 	return nil, false
 }
 
-// collectEgresses reads every receiver's watch since the last line read.
-func (w *Watch) collectEgresses(ctx context.Context) {
+// collectEgresses reads every receiver's watch since the last line read;
+// quiet receivers (border points) are read without alerts.
+func (w *Watch) collectEgresses(ctx context.Context, quiet map[string]bool) {
 	f, ok := w.fleet.(egressFleet)
 	if !ok {
 		return
@@ -106,13 +107,13 @@ func (w *Watch) collectEgresses(ctx context.Context) {
 		return
 	}
 	for _, rx := range rxs {
-		if err := w.collectEgress(ctx, rx); err != nil {
+		if err := w.collectEgress(ctx, rx, quiet[rx.Box]); err != nil {
 			applog.Error(ctx, "cascade", "receiver journal", applog.F("receiver", rx.Box), applog.F("err", err.Error()))
 		}
 	}
 }
 
-func (w *Watch) collectEgress(ctx context.Context, rx entry.EgressReceiver) error {
+func (w *Watch) collectEgress(ctx context.Context, rx entry.EgressReceiver, quiet bool) error {
 	key := "egress:" + rx.Box
 	w.mu.Lock()
 	since := w.cursor[key]
@@ -152,6 +153,9 @@ func (w *Watch) collectEgress(ctx context.Context, rx entry.EgressReceiver) erro
 			continue
 		}
 		for _, run := range got {
+			if quiet {
+				continue
+			}
 			if run.Data["kind"] == "egress_moved" {
 				w.alert(ctx, entry.TrunkPair{Entry: rx.Box, Exit: run.Exit}, "cascade.egress_moved",
 					fmt.Sprintf("приёмник %s ушёл с выхода %s на %s в %s: %s; адрес людей в интернете сменился",

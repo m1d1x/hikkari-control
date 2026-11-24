@@ -197,10 +197,14 @@ func judgeRound(rows []Run, minutes []Run, ruSlots map[string]bool) Verdict {
 		case LayerVPS:
 			red(LayerVPS, r.Vantage, why)
 		case LayerPath:
+			to := "выход"
+			if r.Target != "" && r.Target != "exit" {
+				to = "точка " + r.Target
+			}
 			if r.Vantage == "entry" {
-				red(LayerPath, "вход → выход", why)
+				red(LayerPath, "вход → "+to, why)
 			} else {
-				v.Notes = append(v.Notes, "путь с "+r.Vantage+" к выходу: "+why)
+				v.Notes = append(v.Notes, "путь с "+r.Vantage+" → "+to+": "+why)
 			}
 		case LayerTrunk:
 			if r.Target == "entry" && r.Vantage == "entry" {

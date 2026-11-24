@@ -13,8 +13,9 @@
 //
 //   - vps: the entry and the exit box, read by nekko-cascade-probe (CPU steal,
 //     load, memory, interface drops, conntrack, sockets);
-//   - path: bare TCP from 12 source ports and ICMP from the entry to the
-//     exit's relay port, and the same from the control vantage abroad;
+//   - path: bare TCP from 12 source ports and ICMP from the entry to each
+//     border point's forwarded relay port (G3), or to the exit's relay port
+//     and the same from the control vantage abroad when there are no points;
 //   - trunk: chunks from the exit's provoke receiver, single and pool, straight
 //     across the border and through the entry's loopback port, and straight
 //     from the control vantage;
@@ -37,6 +38,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -206,7 +208,20 @@ func (w *Watch) Tick(ctx context.Context) {
 		}
 		w.startRound(ctx, p)
 	}
-	w.collectEgresses(ctx)
+	w.collectEgresses(ctx, borderPoints(pairs))
+}
+
+// borderPoints are the boxes that only forward a trunk to its core (G3): the
+// people's sessions and their way to the internet live on the core, so what
+// a point's own egress tunnel does is no alert.
+func borderPoints(pairs []entry.TrunkPair) map[string]bool {
+	out := map[string]bool{}
+	for _, p := range pairs {
+		for _, b := range p.Points {
+			out[b] = true
+		}
+	}
+	return out
 }
 
 // collect reads the entry's journal since the last line read.
@@ -387,11 +402,29 @@ func (w *Watch) alertEntry(ctx context.Context, p entry.TrunkPair, collectErr er
 		return
 	}
 	first, lastRow := minutes[0], minutes[len(minutes)-1]
-	if d := num(lastRow.Data, "stalled") - num(first.Data, "stalled"); d >= stallAlert && num(lastRow.Data, "joined") >= num(first.Data, "joined") {
-		w.alert(ctx, p, "cascade.stalls", fmt.Sprintf("вход %s → %s: %d членов пула встали за %s (повторов %d, портов выведено %d)",
-			p.Entry, p.Exit, int(d), lastRow.TS.Sub(first.TS).Round(time.Minute),
-			int(num(lastRow.Data, "resent")-num(first.Data, "resent")), int(num(lastRow.Data, "port_kills")-num(first.Data, "port_kills"))))
+	d := num(lastRow.Data, "stalled") - num(first.Data, "stalled")
+	if d < stallAlert || num(lastRow.Data, "joined") < num(first.Data, "joined") {
+		return
 	}
+	// Behind border points members die by the dozen an hour and the pool
+	// heals them under a clean call (G6): stalls are an alert only when the
+	// people's call heard them in the same minutes.
+	calls, err := w.store.Rows(ctx, Query{Since: first.TS, Entry: p.Entry, Layer: LayerCall, Target: "copies1"})
+	if err != nil {
+		return
+	}
+	red := 0
+	for _, c := range calls {
+		if c.OK != nil && !*c.OK {
+			red++
+		}
+	}
+	if red == 0 {
+		return
+	}
+	w.alert(ctx, p, "cascade.stalls", fmt.Sprintf("вход %s → %s: %d членов пула встали за %s (повторов %d, портов выведено %d), звонок людей красный %d мин",
+		p.Entry, p.Exit, int(d), lastRow.TS.Sub(first.TS).Round(time.Minute),
+		int(num(lastRow.Data, "resent")-num(first.Data, "resent")), int(num(lastRow.Data, "port_kills")-num(first.Data, "port_kills")), red))
 }
 
 // alert writes one row to the client errors, at most once per alertEvery per
@@ -571,19 +604,27 @@ func (w *Watch) Round(ctx context.Context, p entry.TrunkPair, round time.Time) e
 		}
 	}
 
-	// The path, from the entry and from the control vantage.
-	relay := fmt.Sprintf("%s:%d", p.ExitAddress, p.RelayPort)
-	for _, b := range []*box{ent, ctl} {
-		d, err := b.measure(ctx, "path", relay, "12")
-		if err != nil {
-			if err := w.store.Insert(ctx, failed(LayerPath, b.vantage, "exit", err)); err != nil {
+	// The path the trunk takes: from the entry to each border point, or to
+	// the exit when there are none; the control vantage beside it only to an
+	// exit open to it (a point forwards to its entries alone).
+	targets := pathTargets(p)
+	vantages := []*box{ent}
+	if len(p.Points) == 0 {
+		vantages = append(vantages, ctl)
+	}
+	for _, b := range vantages {
+		for _, t := range targets {
+			d, err := b.measure(ctx, "path", t.addr, "12")
+			if err != nil {
+				if err := w.store.Insert(ctx, failed(LayerPath, b.vantage, t.name, err)); err != nil {
+					return err
+				}
+				continue
+			}
+			ok, why := judgePath(d)
+			if err := w.store.Insert(ctx, row(LayerPath, b.vantage, t.name, d, ok, why)); err != nil {
 				return err
 			}
-			continue
-		}
-		ok, why := judgePath(d)
-		if err := w.store.Insert(ctx, row(LayerPath, b.vantage, "exit", d, ok, why)); err != nil {
-			return err
 		}
 	}
 
@@ -887,4 +928,28 @@ func protocolRed(r Run) bool {
 	red, _ := r.Data["red"].(map[string]any)
 	list, _ := red[LayerProtocol].([]any)
 	return len(list) > 0
+}
+
+// pathTarget is where the path layer opens its TCP flows and pings.
+type pathTarget struct{ name, addr string }
+
+// pathTargets are the hops the people's trunk dials: each border point at
+// the relay port it forwards to the core (G3), or the exit's relay itself.
+// The core behind points answers only its points (H6), so a path to it
+// measures nothing the trunk uses.
+func pathTargets(p entry.TrunkPair) []pathTarget {
+	if len(p.Points) == 0 {
+		return []pathTarget{{"exit", fmt.Sprintf("%s:%d", p.ExitAddress, p.RelayPort)}}
+	}
+	ipOf := make(map[string]string, len(p.PointNames))
+	for ip, box := range p.PointNames {
+		ipOf[box] = ip
+	}
+	var out []pathTarget
+	for _, point := range p.Points {
+		if ip := ipOf[point]; ip != "" {
+			out = append(out, pathTarget{point, net.JoinHostPort(ip, strconv.Itoa(p.RelayPort))})
+		}
+	}
+	return out
 }
