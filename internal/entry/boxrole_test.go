@@ -14,11 +14,12 @@ import (
 // An egress's address goes to the internet, a clean receiver's must never
 // reach a subscription (hikkari-client
 // plans/2026-11-16-hidden-border-receiver-and-egress.md): a relay minted on
-// either would hand its address to every tester at once.
+// either would hand its address to every tester at once. An entry in Russia
+// (migration 089) is blind: a relay there would hold the people's keys.
 func TestABoxWithARoleGetsTheHubsKeyAndNoRelay(t *testing.T) {
 	ph := newProvHarness(t)
 	ctx := context.Background()
-	for _, role := range []string{RoleEgress, RoleReceiver} {
+	for _, role := range []string{RoleEgress, RoleReceiver, RoleEntry} {
 		u := uuid.New()
 		box := boxName("r", u)
 		id, err := ph.prov.CreateAndProvision(ctx, NewBox{
@@ -62,7 +63,7 @@ func TestABoxWithARoleGetsTheHubsKeyAndNoRelay(t *testing.T) {
 	}
 }
 
-func TestABoxRoleIsEgressOrReceiverOnAHikkariBox(t *testing.T) {
+func TestABoxRoleIsEgressReceiverOrEntryOnAHikkariBox(t *testing.T) {
 	s := &Service{}
 	ctx := context.Background()
 	for _, b := range []BoxSpec{

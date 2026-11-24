@@ -362,6 +362,11 @@ const (
 	// RoleReceiver is a receiver of the trunk on a clean address: its relay
 	// comes only from receiver-spare, a copy of the group's primary.
 	RoleReceiver = "receiver"
+	// RoleEntry is a trunk entry in Russia (migration 089): it takes the
+	// clients' TCP and carries their UDP over the trunk, holds no key of
+	// theirs (blindness, roadmap 3.2), and gets no relay ever; trunk-entry is
+	// all that stands on it.
+	RoleEntry = "entry"
 )
 
 var domainRe = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
@@ -409,8 +414,8 @@ func (s *Service) CreateBox(ctx context.Context, b BoxSpec) error {
 	b.Region = strings.TrimSpace(b.Region)
 	b.Domain = strings.ToLower(strings.TrimSpace(b.Domain))
 	switch {
-	case b.Role != "" && b.Role != RoleEgress && b.Role != RoleReceiver:
-		return fmt.Errorf("%w: box role %q: egress or receiver", ErrRejected, b.Role)
+	case b.Role != "" && b.Role != RoleEgress && b.Role != RoleReceiver && b.Role != RoleEntry:
+		return fmt.Errorf("%w: box role %q: egress, receiver or entry", ErrRejected, b.Role)
 	case b.Role != "" && (b.Proto != ProtoHikkari || b.Domain != ""):
 		return fmt.Errorf("%w: a box with a role is a Hikkari box without a domain of its own", ErrRejected)
 	case b.Proto != ProtoVlessRealityVision && b.Proto != ProtoHysteria2 && b.Proto != ProtoVlessXhttp && b.Proto != ProtoAmneziaWG && b.Proto != ProtoNaive && b.Proto != ProtoHikkari:
