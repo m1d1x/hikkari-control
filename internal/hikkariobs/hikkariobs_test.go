@@ -48,3 +48,20 @@ func TestParseClientLine(t *testing.T) {
 		}
 	}
 }
+
+// A client with several entries of a cascade (protocol v1.07) counts each by
+// number: which entry it was on and how long each was silent reach the table.
+func TestFlattenTakesAClientsEntries(t *testing.T) {
+	period := json.RawMessage(`{"entries":{"0":{"active_s":120.5,"silent_s":6.5,"silences":1,"ping_ms":{"n":2,"p50":31,"p95":40,"max":40},"now":1},
+		"1":{"active_s":6.5,"silent_s":0,"silences":0,"ping_ms":null,"now":0}}}`)
+	got, err := Flatten(period)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range map[string]float64{"entries.0.now": 1, "entries.0.silent_s": 6.5, "entries.0.silences": 1,
+		"entries.0.ping_ms.p50": 31, "entries.1.active_s": 6.5, "entries.1.now": 0} {
+		if g, ok := got[k]; !ok || g != v {
+			t.Fatalf("%s = %v, want %v (%v)", k, g, v, got)
+		}
+	}
+}

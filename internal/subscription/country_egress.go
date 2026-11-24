@@ -56,7 +56,9 @@ func (s *Service) SetCountryProfiles(ctx context.Context, name string, on bool) 
 	return nil
 }
 
-func (p countryPorts) links(nl string) []string {
+// deEntries is entries= of the DE link (v1.07): the further entries at their DE
+// country's port, "" for none.
+func (p countryPorts) links(nl, deEntries string) []string {
 	if p.de == 0 {
 		return []string{nl}
 	}
@@ -73,6 +75,11 @@ func (p countryPorts) links(nl string) []string {
 	u.Host = net.JoinHostPort(host, strconv.Itoa(p.de))
 	u.Fragment = "🇩🇪 Германия"
 	q.Set("egress", "de")
+	if deEntries == "" {
+		q.Del("entries")
+	} else {
+		q.Set("entries", deEntries)
+	}
 	u.RawQuery = q.Encode()
 	return []string{nl, u.String()}
 }

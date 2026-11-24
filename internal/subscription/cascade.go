@@ -19,12 +19,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/m1d1x/hikkari-control/internal/applog"
 	"github.com/m1d1x/hikkari-control/internal/entry"
 )
 
@@ -37,6 +40,18 @@ type cascade struct {
 	flag string
 	// relays are the exit's Hikkari relays the trunk reaches, by name.
 	relays map[string]bool
+	// more are the further entries (v1.07, 090_cascade_entries.sql), in the
+	// link's order after this one.
+	more []cascadeEntry
+}
+
+// cascadeEntry is a further entry of a cascade: where a link dials it, the
+// port of the DE country there (0 for none), and the exit relays its trunk
+// reaches.
+type cascadeEntry struct {
+	address      string
+	port, dePort int
+	relays       map[string]bool
 }
 
 // CascadeVia finds the entry's address and the exit relays a cascade carries
@@ -63,7 +78,54 @@ func (s *Service) cascadeOf(ctx context.Context, account uuid.UUID) (*cascade, e
 	if err != nil {
 		return nil, fmt.Errorf("subscription: cascade: %w", err)
 	}
-	return s.cascadeVia(ctx, exitBox, entryBox, port, exitLocation)
+	c, err := s.cascadeVia(ctx, exitBox, entryBox, port, exitLocation)
+	if err != nil {
+		return nil, err
+	}
+	if c.more, err = s.cascadeEntriesOf(ctx, account, exitBox); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// cascadeEntriesOf is account's further entries to exitBox, in order.
+func (s *Service) cascadeEntriesOf(ctx context.Context, account uuid.UUID, exitBox string) ([]cascadeEntry, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT e.entry_box, e.entry_port, coalesce(ce.de_port, 0)
+		FROM entry_cascade_entries e
+		LEFT JOIN entry_country_egress ce ON ce.entry_box = e.entry_box AND ce.nl_port = e.entry_port AND ce.applied_sha <> ''
+		WHERE e.account_id = $1 ORDER BY e.position`, account)
+	if err != nil {
+		return nil, fmt.Errorf("subscription: cascade entries: %w", err)
+	}
+	type row struct {
+		box          string
+		port, dePort int
+	}
+	list, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (row, error) {
+		var x row
+		return x, r.Scan(&x.box, &x.port, &x.dePort)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("subscription: cascade entries: %w", err)
+	}
+	via, ok := s.batch.(CascadeVia)
+	if !ok && len(list) > 0 {
+		return nil, ErrNoCascadeSource
+	}
+	var more []cascadeEntry
+	for _, x := range list {
+		address, relays, err := via.CascadeVia(ctx, x.box, exitBox)
+		if err != nil {
+			// A further entry the fleet cannot say leaves the link: entry 0
+			// still serves, as it did before the entry was added.
+			applog.Error(ctx, "subscription", "cascade entry left out",
+				applog.F("entry_box", x.box), applog.F("exit_box", exitBox), applog.F("err", err.Error()))
+			continue
+		}
+		more = append(more, cascadeEntry{address: address, port: x.port, dePort: x.dePort, relays: relays})
+	}
+	return more, nil
 }
 
 // cascadeVia is the cascade from entryBox at port to exitBox's relays.
@@ -86,7 +148,11 @@ func (s *Service) cascadeVia(ctx context.Context, exitBox, entryBox string, port
 // link (see above), only its name is taken, numbered by cascadeName: the same
 // relay served directly reads the same label, and a tester's log names the
 // profile it dialled only by this name.
-func (c *cascade) link(rec entry.RelayRecord, label string, dup bool) (string, bool) {
+//
+// entries puts the further entries that reach rec's relay on the link
+// (v1.07): only for a client that said it dials them, as an older one refuses
+// a link with a parameter it does not know.
+func (c *cascade) link(rec entry.RelayRecord, label string, dup, entries bool) (string, bool) {
 	if rec.Proto != entry.ProtoHikkari || !c.relays[rec.Name] {
 		return "", false
 	}
@@ -104,7 +170,32 @@ func (c *cascade) link(rec entry.RelayRecord, label string, dup bool) (string, b
 		return "", false
 	}
 	u.Fragment = strings.TrimSpace(c.flag + " " + CascadeName(name))
+	if entries {
+		if more := c.entries(rec.Name, false); more != "" {
+			q := u.Query()
+			q.Set("entries", more)
+			u.RawQuery = q.Encode()
+		}
+	}
 	return u.String(), true
+}
+
+// entries is entries= for relay's link: the further entries whose trunk
+// reaches it, host:port by commas, each at its DE country's port when de;
+// an entry with no DE country there is left out of a DE link.
+func (c *cascade) entries(relay string, de bool) string {
+	var list []string
+	for _, e := range c.more {
+		port := e.port
+		if de {
+			port = e.dePort
+		}
+		if !e.relays[relay] || port == 0 {
+			continue
+		}
+		list = append(list, net.JoinHostPort(e.address, strconv.Itoa(port)))
+	}
+	return strings.Join(list, ",")
 }
 
 // CascadeName is a node's label as its cascade reads: the number's first
@@ -183,6 +274,67 @@ func (s *Service) DropCascade(ctx context.Context, name string) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("%w %q: no cascade", ErrName, name)
+	}
+	return nil
+}
+
+// SetCascadeEntry adds the trunk entry on entryBox at port as a further entry
+// of the account name's cascade (v1.07): its links name it in entries=, after
+// those added before, for a client that dials several entries. The entry's
+// trunk must reach the cascade's exit. It returns the entry's number in the
+// link (entry 0 is the cascade's own); adding one already there is a no-op.
+func (s *Service) SetCascadeEntry(ctx context.Context, name, entryBox string, port int) (int, error) {
+	if port < 1 || port > 65535 {
+		return 0, fmt.Errorf("subscription: cascade entry port %d", port)
+	}
+	var account uuid.UUID
+	var exitBox, firstBox string
+	var firstPort int
+	err := s.pool.QueryRow(ctx, `
+		SELECT c.account_id, c.exit_box, c.entry_box, c.entry_port
+		FROM entry_cascades c JOIN hub_accounts a ON a.id = c.account_id WHERE a.name = $1`, name).
+		Scan(&account, &exitBox, &firstBox, &firstPort)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, fmt.Errorf("%w %q: no cascade", ErrName, name)
+	}
+	if err != nil {
+		return 0, err
+	}
+	if firstBox == entryBox && firstPort == port {
+		return 0, fmt.Errorf("subscription: %s:%d is the cascade's entry 0", entryBox, port)
+	}
+	via, ok := s.batch.(CascadeVia)
+	if !ok {
+		return 0, ErrNoCascadeSource
+	}
+	if _, _, err := via.CascadeVia(ctx, entryBox, exitBox); err != nil {
+		return 0, err
+	}
+	var position int
+	err = s.pool.QueryRow(ctx, `
+		WITH added AS (
+			INSERT INTO entry_cascade_entries (account_id, position, entry_box, entry_port)
+			SELECT $1, coalesce(max(position), 0) + 1, $2, $3 FROM entry_cascade_entries WHERE account_id = $1
+			ON CONFLICT (account_id, entry_box, entry_port) DO NOTHING
+			RETURNING position)
+		SELECT position FROM added
+		UNION ALL
+		SELECT position FROM entry_cascade_entries WHERE account_id = $1 AND entry_box = $2 AND entry_port = $3
+		LIMIT 1`, account, entryBox, port).Scan(&position)
+	return position, err
+}
+
+// DropCascadeEntry takes entryBox's entries off the account name's cascade;
+// the rest keep their numbers' order.
+func (s *Service) DropCascadeEntry(ctx context.Context, name, entryBox string) error {
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM entry_cascade_entries e USING hub_accounts a
+		WHERE a.id = e.account_id AND a.name = $1 AND e.entry_box = $2`, name, entryBox)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w %q: no cascade entry on %s", ErrName, name, entryBox)
 	}
 	return nil
 }
