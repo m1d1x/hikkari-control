@@ -84,6 +84,10 @@ const (
 	// callAlertMs: a pause of the trunk's call this long is a call broken
 	// for whoever is on one, not a frame lost.
 	callAlertMs = 500
+	// hopTraceMs: a pause of the people's call this long is traced across
+	// the border points: the pauses a call hears (the spike's threshold, a
+	// red minute), not only the ones that break it.
+	hopTraceMs = 150
 )
 
 // callOK: a minute of the trunk's call in which no call would have heard a

@@ -214,7 +214,7 @@ func (s *Store) pendingHops(ctx context.Context, p entry.TrunkPair, since time.T
 		AND c.layer='call' AND c.target='copies1' AND (c.data->>'gap_max_ms')::float8 >= $4::integer
 		AND NOT EXISTS (SELECT 1 FROM trunk_runs d WHERE d.entry_box=c.entry_box AND d.exit_box=c.exit_box
 		    AND d.ts=c.ts AND d.layer='event' AND d.target='hop_trace')
-		ORDER BY c.ts`, p.Entry, p.Exit, since, callAlertMs)
+		ORDER BY c.ts`, p.Entry, p.Exit, since, hopTraceMs)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +230,7 @@ func (s *Store) pendingHops(ctx context.Context, p entry.TrunkPair, since time.T
 			At time.Time `json:"at"`
 			MS int64     `json:"ms"`
 		}
-		if err := json.Unmarshal(raw, &gap); err == nil && !gap.At.IsZero() && gap.MS >= callAlertMs {
+		if err := json.Unmarshal(raw, &gap); err == nil && !gap.At.IsZero() && gap.MS >= hopTraceMs {
 			incidents = append(incidents, hopIncident{minute, gap.At, time.Duration(gap.MS) * time.Millisecond})
 		}
 	}
