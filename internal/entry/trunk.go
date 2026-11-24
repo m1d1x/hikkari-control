@@ -311,9 +311,19 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 	if len(o.Points) > 0 {
 		// The core and its points go on record before the swap (G3), as the
 		// stand's (trunkpipe.go): the points forward from the entries the
-		// hub knows go to the core.
-		if err := p.svc.recordTrunkEntryCore(ctx, box, o.Exit, o.Points); err != nil {
+		// hub knows go to the core. An entry new to the core is not among
+		// them yet: its points take it in before the swap, or no member of
+		// its comes up.
+		newToCore, err := p.svc.recordTrunkEntryAhead(ctx, box, o)
+		if err != nil {
 			return err
+		}
+		if newToCore {
+			for _, point := range o.Points {
+				if err := p.StandBorder(ctx, point, o.Exit, false); err != nil {
+					return fmt.Errorf("точка %s не взяла вход %s: %w", point, box, err)
+				}
+			}
 		}
 	}
 	r, _, err := p.provokeRemote(ctx, box)
