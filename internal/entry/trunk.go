@@ -279,9 +279,9 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 		open           map[int]bool
 		err            error
 		pipe           pipeBrain
+		pts            []string
 	)
 	if o.Pipe {
-		var pts []string
 		if pts, err = p.svc.pointAddresses(ctx, o.Points); err != nil {
 			return err
 		}
@@ -289,7 +289,6 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 		if err != nil {
 			return err
 		}
-		pipe.wires, err = p.svc.pointTLSWires(ctx, pipe.wires, box, o.Exit, false, o.Points, pts)
 		addr, sni, key, open = pipe.addr, pipe.sni, pipe.key, pipe.open
 	} else {
 		addr, sni, key, open, err = p.svc.trunkExitOf(ctx, o.Exit)
@@ -324,6 +323,16 @@ func (p *Provisioner) StandTrunkEntry(ctx context.Context, box string, o TrunkEn
 					return fmt.Errorf("точка %s не взяла вход %s: %w", point, box, err)
 				}
 			}
+		}
+		// A core that takes its points' names only (strict) answers no
+		// member dialled without them.
+		if err := p.svc.namePointsOnStrictCore(ctx, box, o.Exit, false, o.Points); err != nil {
+			return err
+		}
+	}
+	if o.Pipe {
+		if pipe.wires, err = p.svc.pointTLSWires(ctx, pipe.wires, box, o.Exit, false, o.Points, pts); err != nil {
+			return err
 		}
 	}
 	r, _, err := p.provokeRemote(ctx, box)

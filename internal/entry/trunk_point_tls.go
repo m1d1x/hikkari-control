@@ -176,6 +176,49 @@ func (s *Service) pointSNI(ctx context.Context, box, core string, stand bool, bo
 	return s.pointSNIFor(ctx, core, boxes, ips, enabled)
 }
 
+// namePointsOnStrictCore gives an entry the names of its points on a core
+// that answers its points' names only (allow_legacy off), when the operator
+// has not chosen for it (no row in entry_trunk_point_tls_uses): without them
+// no member of the entry comes up, and the uses row is what keeps the core's
+// names from being cleared under it (ClearCorePointTLS). 25.11 the second
+// entry cbxmsk1 on aeznl1 (strict since 23.11) dialled its points without
+// names and every handshake failed. A point without a name on a strict core
+// is an error: the entry could not reach the core through it.
+func (s *Service) namePointsOnStrictCore(ctx context.Context, box, core string, stand bool, points []string) error {
+	if len(points) == 0 {
+		return nil
+	}
+	var legacy bool
+	err := s.pool.QueryRow(ctx, `SELECT allow_legacy FROM entry_trunk_point_tls WHERE core_box=$1`, core).Scan(&legacy)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && legacy) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var chosen bool
+	if err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM entry_trunk_point_tls_uses WHERE entry_box=$1 AND stand=$2)`, box, stand).Scan(&chosen); err != nil {
+		return err
+	}
+	if chosen {
+		return nil
+	}
+	bindings, err := s.pointTLSBindings(ctx, core)
+	if err != nil {
+		return err
+	}
+	for _, point := range points {
+		if !slices.ContainsFunc(bindings, func(b pointTLSBinding) bool { return b.Box == point }) {
+			return fmt.Errorf("%w: ядро %s принимает только имена точек, у %s имени нет", ErrRejected, core, point)
+		}
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO entry_trunk_point_tls_uses (entry_box, core_box, stand, points) VALUES ($1,$2,$3,$4)`,
+		box, core, stand, points)
+	return err
+}
+
 func (s *Service) pointTLSWires(ctx context.Context, raw, box, core string, stand bool, boxes, ips []string) (string, error) {
 	names, err := s.pointSNI(ctx, box, core, stand, boxes, ips)
 	if err != nil {
