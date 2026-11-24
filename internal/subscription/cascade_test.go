@@ -21,12 +21,17 @@ type cascadeBatch struct {
 	fakeBatch
 	entryAddr string
 	relays    map[string]bool
+	// more are further entries the fleet knows to unl1, by box (v1.07).
+	more map[string]string
 }
 
 // BoxRecords is every record the fleet holds, in the pool or not.
 func (c *cascadeBatch) BoxRecords(context.Context, string) ([][]byte, error) { return c.envelopes, nil }
 
 func (c *cascadeBatch) CascadeVia(_ context.Context, entryBox, exitBox string) (string, map[string]bool, error) {
+	if addr, ok := c.more[entryBox]; ok && exitBox == "unl1" {
+		return addr, c.relays, nil
+	}
 	if entryBox != "ruin1" || exitBox != "unl1" {
 		return "", nil, entry.ErrRejected
 	}

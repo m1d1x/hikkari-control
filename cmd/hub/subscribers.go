@@ -36,6 +36,13 @@ const gib = 1 << 30
 //
 // subscriber-cascade-off <name>: the subscriber's links are its relays again.
 // subscriber-countries <name> on|off: offer a cascade account NL, DE and Auto.
+//
+// subscriber-cascade-entry <name> <entry-box> <port>: a further entry of the
+// subscriber's cascade (protocol v1.07): links for a client that dials
+// several entries name it in entries=, and the client leaves a silent entry
+// by itself. The entry's trunk must reach the cascade's exit.
+//
+// subscriber-cascade-entry-off <name> <entry-box>: the entry leaves the links.
 func runSubscriber(cmd string, args []string) {
 	fail := func(err error) {
 		fmt.Fprintln(os.Stderr, cmd+":", err)
@@ -44,7 +51,7 @@ func runSubscriber(cmd string, args []string) {
 	want := map[string]int{
 		"subscriber-add": 2, "subscriber-renew": 2, "subscriber-status": 1, "subscriber-link": 1, "subscriber-revoke": 1,
 		"plan-set": 5, "plan-retire": 1, "subscriber-cascade": 4, "subscriber-cascade-off": 1,
-		"subscriber-countries": 2,
+		"subscriber-countries": 2, "subscriber-cascade-entry": 3, "subscriber-cascade-entry-off": 2,
 	}[cmd]
 	if len(args) != want {
 		fail(fmt.Errorf("wrong arguments, see cmd/hub/subscribers.go"))
@@ -131,6 +138,21 @@ func runSubscriber(cmd string, args []string) {
 			fail(err)
 		}
 		fmt.Printf("%s: countries %s\n", args[0], args[1])
+	case "subscriber-cascade-entry":
+		port, err := strconv.Atoi(args[2])
+		if err != nil {
+			fail(fmt.Errorf("%q is not a port", args[2]))
+		}
+		n, err := subs.SetCascadeEntry(ctx, args[0], args[1], port)
+		if err != nil {
+			fail(err)
+		}
+		fmt.Printf("%s: entry %d is %s:%d\n", args[0], n, args[1], port)
+	case "subscriber-cascade-entry-off":
+		if err := subs.DropCascadeEntry(ctx, args[0], args[1]); err != nil {
+			fail(err)
+		}
+		fmt.Printf("%s: %s off\n", args[0], args[1])
 	case "plan-retire":
 		if err := subs.RetirePlan(ctx, args[0]); err != nil {
 			fail(err)

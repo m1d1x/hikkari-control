@@ -70,54 +70,7 @@ func TestHikkariRealCoreTwoChannels(t *testing.T) {
 		}
 	}()
 
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	address := l.Addr().String()
-	l.Close()
-	storage := t.TempDir()
-	certDir := filepath.Join(storage, "certificates", "test", "hk.example")
-	_ = os.MkdirAll(certDir, 0700)
-	_ = os.WriteFile(filepath.Join(certDir, "hk.example.crt"), []byte(certPEM), 0600)
-	_ = os.WriteFile(filepath.Join(certDir, "hk.example.key"), []byte(keyPEM), 0600)
-	root := t.TempDir()
-	_ = os.WriteFile(filepath.Join(root, "index.html"), []byte("<html>site</html>"), 0644)
-
-	cfg := naiveConfig{Listen: address, Host: "hk.example", User: "probe", Pass: "probe-secret-long-enough", Root: root, Storage: storage, UDP: true}
-	n := newNaiveRuntime(cfg)
-	// The client is on loopback, as the trunk is on a relay: here it is a
-	// client of its own.
-	n.pathOf = func(string) string { return observe.PathDirect }
-	_ = n.Set(context.Background(), []string{key})
-	activeNaive.Store(n)
-	defer activeNaive.Store(nil)
-	setActiveWatches(n.watches)
-	defer setActiveWatches(nil)
-	raw, _ := cfg.document()
-	var doc map[string]any
-	if err = json.Unmarshal(raw, &doc); err != nil {
-		t.Fatal(err)
-	}
-	doc["storage"] = map[string]any{"module": "file_system", "root": t.TempDir()}
-	apps := doc["apps"].(map[string]any)
-	apps["tls"] = map[string]any{"certificates": map[string]any{"load_pem": []any{map[string]any{"certificate": certPEM, "key": keyPEM}}}}
-	server := apps["http"].(map[string]any)["servers"].(map[string]any)["naive"].(map[string]any)
-	server["automatic_https"] = map[string]any{"disable": true}
-	handlers := server["routes"].([]any)[0].(map[string]any)["handle"].([]any)
-	handlers[1].(map[string]any)["acl"] = []any{map[string]any{"subjects": []string{"127.0.0.1"}, "allow": true}}
-	raw, _ = json.Marshal(doc)
-	if err = caddy.Load(raw, true); err != nil {
-		t.Fatal(err)
-	}
-	defer caddy.Stop()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	udp, err := startHikkariUDP(ctx, n, udpSockets(t, address))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer udp.Close()
+	address, n, udp := startHikkariTestRelay(t, key, certPEM, keyPEM)
 
 	_, port, _ := net.SplitHostPort(address)
 	deadPort := hikkariFreeUDPPort(t)
@@ -228,7 +181,7 @@ func TestHikkariRealCoreTwoChannels(t *testing.T) {
 	if own.Dup.Fresh < 90 || own.Dup.Opened != 1 {
 		t.Fatalf("dup up: %+v", own.Dup)
 	}
-	raw, _ = json.Marshal(own)
+	raw, _ := json.Marshal(own)
 	t.Logf("relay period (%d s): %s", seconds, raw)
 
 	// Revoking the key closes the datagram channel's door too.
@@ -407,4 +360,60 @@ func udpSockets(t *testing.T, address string) *sockets {
 		t.Fatal(err)
 	}
 	return &sockets{udp: udp, gen: 1}
+}
+
+// startHikkariTestRelay runs a relay on loopback as the real-core tests use it:
+// Caddy with the Naive front for key on a free port, and the datagram channel
+// on the same port. It stops with the test.
+func startHikkariTestRelay(t *testing.T, key, certPEM, keyPEM string) (string, *naiveRuntime, *hikkariUDP) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := l.Addr().String()
+	l.Close()
+	storage := t.TempDir()
+	certDir := filepath.Join(storage, "certificates", "test", "hk.example")
+	_ = os.MkdirAll(certDir, 0700)
+	_ = os.WriteFile(filepath.Join(certDir, "hk.example.crt"), []byte(certPEM), 0600)
+	_ = os.WriteFile(filepath.Join(certDir, "hk.example.key"), []byte(keyPEM), 0600)
+	root := t.TempDir()
+	_ = os.WriteFile(filepath.Join(root, "index.html"), []byte("<html>site</html>"), 0644)
+
+	cfg := naiveConfig{Listen: address, Host: "hk.example", User: "probe", Pass: "probe-secret-long-enough", Root: root, Storage: storage, UDP: true}
+	n := newNaiveRuntime(cfg)
+	// The client is on loopback, as the trunk is on a relay: here it is a
+	// client of its own.
+	n.pathOf = func(string) string { return observe.PathDirect }
+	_ = n.Set(context.Background(), []string{key})
+	activeNaive.Store(n)
+	t.Cleanup(func() { activeNaive.Store(nil) })
+	setActiveWatches(n.watches)
+	t.Cleanup(func() { setActiveWatches(nil) })
+	raw, _ := cfg.document()
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["storage"] = map[string]any{"module": "file_system", "root": t.TempDir()}
+	apps := doc["apps"].(map[string]any)
+	apps["tls"] = map[string]any{"certificates": map[string]any{"load_pem": []any{map[string]any{"certificate": certPEM, "key": keyPEM}}}}
+	server := apps["http"].(map[string]any)["servers"].(map[string]any)["naive"].(map[string]any)
+	server["automatic_https"] = map[string]any{"disable": true}
+	handlers := server["routes"].([]any)[0].(map[string]any)["handle"].([]any)
+	handlers[1].(map[string]any)["acl"] = []any{map[string]any{"subjects": []string{"127.0.0.1"}, "allow": true}}
+	raw, _ = json.Marshal(doc)
+	if err := caddy.Load(raw, true); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = caddy.Stop() })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	udp, err := startHikkariUDP(ctx, n, udpSockets(t, address))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = udp.Close() })
+	return address, n, udp
 }

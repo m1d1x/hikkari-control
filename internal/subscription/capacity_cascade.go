@@ -71,7 +71,7 @@ func (s *Service) capacityCascadeLinks(ctx context.Context, fleet Fleet) ([]casc
 			continue
 		}
 		for _, rec := range recs {
-			link, ok := via.link(rec, nodes[rec.Name].Label, false)
+			link, ok := via.link(rec, nodes[rec.Name].Label, false, false)
 			if ok && !seen[link] {
 				seen[link] = true
 				links = append(links, cascadeLink{link: link, entry: w.entry, exit: w.exit})

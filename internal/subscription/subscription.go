@@ -315,7 +315,7 @@ func (s *Service) LinksFor(ctx context.Context, token, engine string) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	return s.links(ctx, account, engine, awgCaps{}, 0, false, false, false, false)
+	return s.links(ctx, account, engine, awgCaps{}, 0, false, false, false, false, false)
 }
 
 // featuresHeader is how a client says what it can dial beyond what every client
@@ -380,8 +380,10 @@ func networkOf(h http.Header) uint32 {
 
 // hikkari: the client's core speaks Hikkari v1 (feature "hikkari"); only such a
 // client is given hikkari+v1:// links. hikkariDup: it speaks v1.02 too (feature
-// "hikkari-dup") and its links say dup=1.
-func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, awg awgCaps, asn uint32, naive, hikkari, hikkariDup, countryEgress bool) ([]string, error) {
+// "hikkari-dup") and its links say dup=1. hikkariEntries: it dials several
+// entries of a cascade (feature "hikkari-entries", protocol v1.07) and a
+// cascade link names its further entries.
+func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, awg awgCaps, asn uint32, naive, hikkari, hikkariDup, countryEgress, hikkariEntries bool) ([]string, error) {
 	key, err := s.accessKey(ctx, account)
 	if err != nil {
 		return nil, err
@@ -439,8 +441,12 @@ func (s *Service) links(ctx context.Context, account uuid.UUID, engine string, a
 			if countries.relay != "" && countries.relay != rec.Name {
 				continue
 			}
-			if link, ok := via.link(withKey(rec, key), nodes[rec.Name].Label, hikkariDup); ok {
-				links = append(links, countries.links(link)...)
+			if link, ok := via.link(withKey(rec, key), nodes[rec.Name].Label, hikkariDup, hikkariEntries); ok {
+				de := ""
+				if hikkariEntries {
+					de = via.entries(rec.Name, true)
+				}
+				links = append(links, countries.links(link, de)...)
 			}
 			continue
 		}
@@ -568,7 +574,7 @@ func (s *Service) Handler() http.HandlerFunc {
 			return
 		}
 		if err == nil {
-			links, err = s.links(r.Context(), account, engine, wantsAwg(r.Header), networkOf(r.Header), hasNaiveFeature(r.Header), hasFeature(r.Header, "hikkari"), hasFeature(r.Header, "hikkari-dup"), hasFeature(r.Header, "hikkari-country-egress"))
+			links, err = s.links(r.Context(), account, engine, wantsAwg(r.Header), networkOf(r.Header), hasNaiveFeature(r.Header), hasFeature(r.Header, "hikkari"), hasFeature(r.Header, "hikkari-dup"), hasFeature(r.Header, "hikkari-country-egress"), hasFeature(r.Header, "hikkari-entries"))
 		}
 		if err != nil {
 			applog.Error(r.Context(), "subscription", "batch failed", applog.F("err", err.Error()))
