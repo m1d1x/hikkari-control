@@ -88,4 +88,21 @@ func TestAFreshEntryTakesItsPointsNamesOnAStrictCore(t *testing.T) {
 	if !errors.Is(err, ErrRejected) || uses("tlsentry2") != nil {
 		t.Fatalf("a point with no name on a strict core: %v, uses %v", err, uses("tlsentry2"))
 	}
+	// The entry's stand (trunk-pipe, the country gateways' NL backend) dials
+	// the same points with a row of its own: 25.11 the stand on cbxmsk1 came
+	// up without names while its entry had them.
+	if err := s.namePointsOnStrictCore(ctx, "tlsentry2", "tlscore1", true, points); err != nil {
+		t.Fatal(err)
+	}
+	var stand []string
+	if err := pool.QueryRow(ctx, `SELECT points FROM entry_trunk_point_tls_uses WHERE entry_box = 'tlsentry2' AND stand`).Scan(&stand); err != nil || len(stand) != 2 {
+		t.Fatalf("a fresh stand on a strict core uses %v: %v", stand, err)
+	}
+	if uses("tlsentry2") != nil {
+		t.Fatalf("the stand's names went to its entry: %v", uses("tlsentry2"))
+	}
+	got, err = s.pointSNI(ctx, "tlsentry2", "tlscore1", true, points, []string{"192.0.2.1", "192.0.2.2"})
+	if err != nil || got["192.0.2.1"] != "edge.tlspoint1.test" || got["192.0.2.2"] != "edge.tlspoint2.test" {
+		t.Fatalf("names in the stand's wires %v %v", got, err)
+	}
 }
