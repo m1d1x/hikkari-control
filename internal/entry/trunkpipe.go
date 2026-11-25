@@ -449,6 +449,12 @@ func (p *Provisioner) StandTrunkPipe(ctx context.Context, box string, o TrunkPip
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
+	// A stand on a core that answers its points' names only gets them as
+	// its entry does (trunk.go): 25.11 the NL stand on cbxmsk1 failed every
+	// handshake on aeznl1 without them.
+	if err := p.svc.namePointsOnStrictCore(ctx, box, exitBox, true, points); err != nil {
+		return err
+	}
 	wiresFile, cronet := pipe.wires, pipe.cronet
 	wiresFile, err = p.svc.pointTLSWires(ctx, wiresFile, box, exitBox, true, points, pts)
 	if err != nil {
