@@ -43,6 +43,18 @@ func RegisterRoutes(mux *http.ServeMux, h *Handlers, adminKeys *auth.KeySet, poo
 	// one place the machine's address is opened, so owner-only, like the
 	// entry plane's own surface. See entry_box_card.go.
 	mux.HandleFunc("GET /api/v1/admin/entry/machines/{name}", ownerOnly(h.EntryBoxCard))
+	// The hosters as accounts (093): where the invoice lives, the ASN, and the
+	// console login, so the machines screen can send the owner to pay. The
+	// record is a plain admin edit; the secrets in it are owner-only, and
+	// opening one is audited — the same split as the machine card's address.
+	// See machines_billing.go.
+	mux.HandleFunc("GET /api/v1/admin/entry/provider-accounts", adminAuth(h.EntryProviderAccounts))
+	mux.HandleFunc("PATCH /api/v1/admin/entry/provider-accounts/{kind}", adminAuth(h.EntryProviderAccountSave))
+	mux.HandleFunc("PUT /api/v1/admin/entry/provider-accounts/{kind}/secret", ownerOnly(h.EntryProviderAccountSecret))
+	mux.HandleFunc("GET /api/v1/admin/entry/provider-accounts/{kind}/secret/{field}", ownerOnly(h.EntryProviderAccountReveal))
+	// What one machine's tariff says: its own-currency price, the plan's
+	// traffic ceiling, the paid-until date. A figure, no money moves.
+	mux.HandleFunc("PATCH /api/v1/admin/entry/machines/{name}/billing", adminAuth(h.EntryMachineBilling))
 	// The domain screen's figures (plan 42 К4): how long a name survives on a
 	// box, how fast the pool drains, how much buffer is left. The ledger and
 	// the buy button are internal/entry's. See entry_domains.go.
