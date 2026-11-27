@@ -3,6 +3,7 @@ package main
 import (
 	"net/netip"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -53,5 +54,21 @@ func TestAPointIsSilentByItsMembersAlone(t *testing.T) {
 	// A point with no members (none dialled yet) is not silent.
 	if got := b.step(at(10), []pipectl.PointTick{{IP: a}}); got != nil {
 		t.Fatalf("an empty point said %q", got)
+	}
+}
+
+// TestAPointsChangeIsALineForTheHub (runPoints): a point taken off the path
+// and one brought back each say why and the path left.
+func TestAPointsChangeIsALineForTheHub(t *testing.T) {
+	a, b, c := netip.MustParseAddr("10.0.0.1"), netip.MustParseAddr("10.0.0.2"), netip.MustParseAddr("10.0.0.3")
+	got := pointChangeLines(pipectl.PointChange{Path: []netip.Addr{a, b}, Left: []netip.Addr{c}, Why: "10.0.0.3 scores 184ms against 10.0.0.1's 62ms for 30s"})
+	want := []string{"trunk: point 10.0.0.3 off the path: 10.0.0.3 scores 184ms against 10.0.0.1's 62ms for 30s; path 10.0.0.1 10.0.0.2"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("lines %q, want %q", got, want)
+	}
+	got = pointChangeLines(pipectl.PointChange{Path: []netip.Addr{a, b, c}, Back: []netip.Addr{c}, Why: "its hold is over: judged again"})
+	want = []string{"trunk: point 10.0.0.3 back on the path: its hold is over: judged again; path 10.0.0.1 10.0.0.2 10.0.0.3"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("lines %q, want %q", got, want)
 	}
 }
