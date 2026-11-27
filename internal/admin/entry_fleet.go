@@ -139,10 +139,16 @@ type fleetBox struct {
 	MonthlyCents *int         `json:"monthlyCents,omitempty"`
 	// PriceAmount and PriceCurrency are the price as the hoster bills it,
 	// what the owner typed or the hoster's plan list gave.
-	PriceAmount    *float64 `json:"priceAmount,omitempty"`
-	PriceCurrency  string   `json:"priceCurrency,omitempty"`
-	Plan           string   `json:"plan,omitempty"`
-	ProviderRegion string   `json:"providerRegion,omitempty"`
+	PriceAmount   *float64 `json:"priceAmount,omitempty"`
+	PriceCurrency string   `json:"priceCurrency,omitempty"`
+	// TrafficQuotaGB is the terabytes-per-month ceiling of the machine's
+	// tariff in gigabytes (migration 093); nil when not known.
+	TrafficQuotaGB *int `json:"trafficQuotaGb,omitempty"`
+	// Role is the machine's role outside the relay pool (migration 070/089):
+	// "entry", "receiver", "egress"; empty for an ordinary fleet machine.
+	Role           string `json:"role,omitempty"`
+	Plan           string `json:"plan,omitempty"`
+	ProviderRegion string `json:"providerRegion,omitempty"`
 }
 
 // fleetRelay is one relay as the park shows it. Port, protocol and cover are
@@ -480,7 +486,9 @@ func (h *Handlers) fillFleetBoxes(ctx context.Context, out *entryFleet) error {
 			coalesce(provider_region, ''),
 			coalesce(label, ''),
 			price_amount::float8,
-			coalesce(price_currency, '')
+			coalesce(price_currency, ''),
+			traffic_quota_gb,
+			coalesce(role, '')
 		FROM entry_boxes
 		ORDER BY name ASC
 	`)
@@ -512,6 +520,8 @@ func (h *Handlers) fillFleetBoxes(ctx context.Context, out *entryFleet) error {
 			&b.Label,
 			&b.PriceAmount,
 			&b.PriceCurrency,
+			&b.TrafficQuotaGB,
+			&b.Role,
 		); err != nil {
 			return err
 		}
