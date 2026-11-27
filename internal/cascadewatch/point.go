@@ -21,7 +21,16 @@ import (
 //	trunk: point <ip> back: U of N members up after S s
 //	trunk: every point silent
 //	trunk: a point back after S s of every point silent
-//	trunk: points from=<unix> <ip> up=U/N proof_ms=P silent_s=S; ...
+//	trunk: points from=<unix> <ip> up=U/N proof_ms=P silent_s=S rtt_ms=R; ...
+//	trunk: point <ip> off the path: <why>; path <ip> <ip>
+//	trunk: point <ip> back on the path: <why>; path <ip> <ip> <ip>
+//
+// rtt_ms is the median round trip of the point's members up, the path entry
+// → point → core (-1 none; brains before 28.11 do not say it). The point
+// judge (hikkari-protocol pipectl pointjudge.go, plans
+// 2026-11-28-border-points-by-quality.md) takes a point off the path by it
+// and by its late seconds, and brings it back: an event (kind point_off,
+// point_on) with its why and the path, the addresses named by their boxes.
 //
 // A minute is a row of the point layer per point (target the point's box,
 // ok when it was silent no second of the minute); a change is an event
@@ -39,7 +48,9 @@ var (
 	rePointsSilent = regexp.MustCompile(`trunk: every point silent$`)
 	rePointsBack   = regexp.MustCompile(`trunk: a point back after (\d+) s of every point silent$`)
 	rePointsMinute = regexp.MustCompile(`trunk: points from=(\d+) (.+)$`)
-	rePointPart    = regexp.MustCompile(`^(\S+) up=(\d+)/(\d+) proof_ms=(-?\d+) silent_s=(\d+)$`)
+	rePointPart    = regexp.MustCompile(`^(\S+) up=(\d+)/(\d+) proof_ms=(-?\d+) silent_s=(\d+)(?: rtt_ms=(-?\d+))?$`)
+	rePointPath    = regexp.MustCompile(`trunk: point (\S+) (off the path|back on the path): (.+); path (.*)$`)
+	reAddr         = regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)
 )
 
 // classifyPoint turns a line about the border points into its rows; names
@@ -64,6 +75,14 @@ func classifyPoint(l journalLine, names map[string]string) ([]Run, bool) {
 		n, _ := strconv.Atoi(m[3])
 		after, _ := strconv.Atoi(m[4])
 		return ev(map[string]any{"kind": "point_back", "point": name(m[1]), "up": up, "members": n, "after_s": after})
+	}
+	if m := rePointPath.FindStringSubmatch(l.Msg); m != nil {
+		kind := "point_off"
+		if m[2] == "back on the path" {
+			kind = "point_on"
+		}
+		named := func(text string) string { return reAddr.ReplaceAllStringFunc(text, name) }
+		return ev(map[string]any{"kind": kind, "point": name(m[1]), "why": named(m[3]), "path": strings.Fields(named(m[4]))})
 	}
 	if rePointsSilent.MatchString(l.Msg) {
 		return ev(map[string]any{"kind": "points_silent"})
@@ -90,6 +109,9 @@ func classifyPoint(l journalLine, names map[string]string) ([]Run, bool) {
 		data := map[string]any{"from": from, "up": up, "members": n, "silent_s": silent}
 		if proof >= 0 {
 			data["proof_ms"] = proof
+		}
+		if rtt, err := strconv.Atoi(p[6]); err == nil && rtt >= 0 {
+			data["rtt_ms"] = rtt
 		}
 		runs = append(runs, Run{TS: time.Unix(from, 0).UTC(), Layer: LayerPoint, Target: name(p[1]), OK: boolp(silent == 0), Data: data})
 	}

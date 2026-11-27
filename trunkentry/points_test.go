@@ -16,7 +16,7 @@ import (
 func TestAPointIsSilentByItsMembersAlone(t *testing.T) {
 	a, c := netip.MustParseAddr("10.0.0.1"), netip.MustParseAddr("10.0.0.2")
 	word := func(upA, upC int) []pipectl.PointTick {
-		return []pipectl.PointTick{{IP: a, Members: 7, Up: upA, ProofAgo: 40 * time.Millisecond}, {IP: c, Members: 7, Up: upC, ProofAgo: -1}}
+		return []pipectl.PointTick{{IP: a, Members: 7, Up: upA, ProofAgo: 40 * time.Millisecond, RTT: 57 * time.Millisecond}, {IP: c, Members: 7, Up: upC, ProofAgo: -1, RTT: -1}}
 	}
 	b := newPointBook()
 	t0 := time.Unix(1_800_000_000, 0)
@@ -37,11 +37,11 @@ func TestAPointIsSilentByItsMembersAlone(t *testing.T) {
 			t.Fatalf("step %d: %q, want %q", i, got, s.want)
 		}
 	}
-	want := "trunk: points from=1800000000 10.0.0.1 up=7/7 proof_ms=40 silent_s=2; 10.0.0.2 up=7/7 proof_ms=-1 silent_s=4"
+	want := "trunk: points from=1800000000 10.0.0.1 up=7/7 proof_ms=40 silent_s=2 rtt_ms=57; 10.0.0.2 up=7/7 proof_ms=-1 silent_s=4 rtt_ms=-1"
 	if got := b.minute(t0); got != want {
 		t.Fatalf("minute %q, want %q", got, want)
 	}
-	if got := b.minute(t0); got != "trunk: points from=1800000000 10.0.0.1 up=7/7 proof_ms=40 silent_s=0; 10.0.0.2 up=7/7 proof_ms=-1 silent_s=0" {
+	if got := b.minute(t0); got != "trunk: points from=1800000000 10.0.0.1 up=7/7 proof_ms=40 silent_s=0 rtt_ms=57; 10.0.0.2 up=7/7 proof_ms=-1 silent_s=0 rtt_ms=-1" {
 		t.Fatalf("the next minute starts its own seconds: %q", got)
 	}
 	// No word: the book forgets the points without a word, and says no minute.
