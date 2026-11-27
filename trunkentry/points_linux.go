@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"time"
+
+	"github.com/m1d1x/hikkari-protocol/trunk/pipectl"
 )
 
 // pointsEvery is how often the brain reads the pipe's word on the points:
@@ -43,4 +45,23 @@ func (b *brain) sayPoints(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// runPoints keeps on the path the border points the judge does not take off
+// for their quality (pipectl.RunPoints; hikkari-client
+// plans/2026-11-28-border-points-by-quality.md): the hub's file offers the
+// points, the brain carries on the best of them. Each change is a line for
+// the hub:
+//
+//	nekko-trunk-entry: trunk: point <ip> off the path: <why>; path <ip> <ip>
+//	nekko-trunk-entry: trunk: point <ip> back on the path: <why>; path <ip> <ip> <ip>
+//
+// A new generation judges anew: a point taken off comes back with it and is
+// judged again from its first minute.
+func (b *brain) runPoints(ctx context.Context) {
+	b.pipe.RunPoints(ctx, func(c pipectl.PointChange) {
+		for _, line := range pointChangeLines(c) {
+			log.Printf("nekko-trunk-entry: %s", line)
+		}
+	})
 }

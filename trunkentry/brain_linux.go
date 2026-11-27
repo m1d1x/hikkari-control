@@ -390,6 +390,7 @@ func (b *brain) startExtras() {
 	go b.followWires(ctx)
 	go b.runReceivers(ctx)
 	go b.sayPoints(ctx)
+	go b.runPoints(ctx)
 }
 
 // handOver makes this generation an old one (its pipe already drains): no

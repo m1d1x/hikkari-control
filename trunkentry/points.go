@@ -118,3 +118,24 @@ func (b *pointBook) minute(from time.Time) string {
 func secs(d time.Duration) int64 {
 	return max(1, int64((d+time.Second/2)/time.Second))
 }
+
+// pointChangeLines are the lines of a change of the path the point judge
+// made (runPoints).
+func pointChangeLines(c pipectl.PointChange) []string {
+	path := make([]string, len(c.Path))
+	for i, ip := range c.Path {
+		path[i] = ip.String()
+	}
+	tail := fmt.Sprintf("%s; path %s", c.Why, strings.Join(path, " "))
+	if c.Err != nil {
+		tail += fmt.Sprintf(" (the pipe: %v)", c.Err)
+	}
+	var out []string
+	for _, ip := range c.Left {
+		out = append(out, fmt.Sprintf("trunk: point %s off the path: %s", ip, tail))
+	}
+	for _, ip := range c.Back {
+		out = append(out, fmt.Sprintf("trunk: point %s back on the path: %s", ip, tail))
+	}
+	return out
+}
