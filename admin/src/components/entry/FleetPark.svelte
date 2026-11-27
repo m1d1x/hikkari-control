@@ -5,13 +5,21 @@
 		setBoxLabel,
 		setBoxPrice,
 		setHosterLabel,
-		setHosterPlanTb,
 		type EntryFleet,
 		type FleetBox,
 		type FleetRelay,
 		type ProviderStats,
 		providerLabel,
 	} from '$lib/api/entry';
+	import {
+		fetchProviderAccounts,
+		saveProvider,
+		saveProviderSecret,
+		readProviderSecret,
+		saveBoxBilling,
+		type ProviderAccount,
+		type SecretField,
+	} from '$lib/api/machines';
 
 	interface Props {
 		fleet: EntryFleet;
@@ -484,6 +492,128 @@
 	/** Below this, rent over traffic is a figure about an idle machine, not about a terabyte. */
 	const MIN_MEASURED_GB = 100;
 
+	// ── Биллинг хостеров: где платим, сколько включено, когда следующее списание ──
+	// Ручные покупки API не имеют вовсе, поэтому эти числа вводит владелец, а
+	// хранит hub (internal/admin/machines_billing.go).
+	let accounts = $state<Record<string, ProviderAccount>>({});
+	let budgetDraft = $state<ProviderAccount | null>(null);
+	let secretMenu = $state<{ x: number; y: number; kind: string; field: SecretField } | null>(null);
+	let secretDraft = $state<{ login: string; password: string; apiKey: string }>({ login: '', password: '', apiKey: '' });
+	let billingEdit = $state<string | null>(null);
+	let billingDraft = $state('');
+
+	async function loadAccounts() {
+		try {
+			const res = await fetchProviderAccounts();
+			accounts = Object.fromEntries(res.accounts.map((a) => [a.provider, a]));
+		} catch {
+			// экран живёт без них: суммы и даты тогда пустые
+		}
+	}
+	void loadAccounts();
+
+	const daysLeft = (iso: string): number | null => {
+		const t = Date.parse(iso + 'T00:00:00Z');
+		if (Number.isNaN(t)) return null;
+		return Math.round((t - Date.now()) / 86_400_000);
+	};
+
+	/** Ближайшая дата списания у хостера: самая ранняя из живых машин. */
+	function nearestBilling(g: ProviderGroup): { iso: string; days: number | null } | null {
+		const dates = g.boxes
+			.filter((b) => !b.retiredAt && b.rentedUntil)
+			.map((b) => b.rentedUntil!.slice(0, 10))
+			.sort();
+		if (dates.length === 0) return null;
+		return { iso: dates[0], days: daysLeft(dates[0]) };
+	}
+
+	const ruDate = (iso: string) => iso.split('-').reverse().join('.');
+
+	const ROLE_LABEL: Record<string, string> = { entry: 'вход', receiver: 'приёмник', egress: 'выход' };
+	const roleLabel = (role?: string) => (role ? (ROLE_LABEL[role] ?? role) : '—');
+
+	/** Что стоит в колонке трафика у машины: тариф её плана, если он вписан. */
+	const boxQuotaText = (box: FleetBox) =>
+		box.trafficQuotaGb == null ? null : `${Math.round(box.trafficQuotaGb).toLocaleString('ru-RU')} ГБ`;
+
+	function blankAccount(kind: string): ProviderAccount {
+		return {
+			provider: kind, displayName: '', asn: '', billingUrl: '', apiHost: '', note: '',
+			hasLogin: false, hasPassword: false, hasApiKey: false,
+			machines: 0, monthlyCents: 0, currency: '',
+		};
+	}
+
+	// Одно значение секрета: hub расшифровывает и пишет это в журнал админки.
+	let billError = $state<string | null>(null);
+	async function copySecret(kind: string, field: SecretField) {
+		try {
+			const value = await readProviderSecret(kind, field);
+			await navigator.clipboard?.writeText(value);
+			billError = null;
+		} catch (e) {
+			billError = describeApiError(e);
+		}
+	}
+
+	async function saveAccountDraft(draft: ProviderAccount, secrets: { login?: string; password?: string; apiKey?: string }) {
+		try {
+			const saved = await saveProvider(draft.provider, {
+				displayName: draft.displayName, asn: draft.asn, billingUrl: draft.billingUrl,
+				apiHost: draft.apiHost, note: draft.note, spendCapCents: draft.spendCapCents ?? null,
+			});
+			const flags = Object.values(secrets).some((v) => v !== undefined)
+				? await saveProviderSecret(draft.provider, secrets)
+				: { hasLogin: saved.hasLogin, hasPassword: saved.hasPassword, hasApiKey: saved.hasApiKey };
+			accounts = { ...accounts, [draft.provider]: { ...saved, ...flags } };
+			budgetDraft = null;
+			billError = null;
+		} catch (e) {
+			billError = describeApiError(e);
+		}
+	}
+
+	// Цена и дата машины правятся двойным кликом, как и везде на этом экране.
+	async function saveBilling(box: FleetBox, field: 'priceAmount' | 'rentedUntil' | 'trafficQuotaGb', raw: string) {
+		const value = raw.trim();
+		try {
+			if (field === 'priceAmount') {
+				const n = Number(value.replace(',', '.'));
+				await saveBoxBilling(box.name, { priceAmount: Number.isFinite(n) ? n : 0, priceCurrency: 'EUR' });
+			} else if (field === 'rentedUntil') {
+				await saveBoxBilling(box.name, { rentedUntil: value || null });
+			} else {
+				await saveBoxBilling(box.name, { trafficQuotaGb: value ? Number(value) : null });
+			}
+			billError = null;
+			onChanged?.();
+		} catch (e) {
+			billError = describeApiError(e);
+		}
+	}
+
+	/** «2 100/32 000 ГБ»: слэш, без слов «из». */
+	function trafficPair(used: number | null | undefined, quota: number | null | undefined): string | null {
+		if (used == null && quota == null) return null;
+		const one = (v: number) => Math.round(v).toLocaleString('ru-RU');
+		const left = used == null ? '?' : one(used);
+		return `${left}/${quota == null ? '∞' : one(quota)} ГБ`;
+	}
+
+	/** Сумма по хостеру: цена, вписанная владельцем, когда она есть у всех машин в одной валюте. */
+	function groupMoney(g: ProviderGroup): string {
+		const priced = g.boxes.filter((b) => b.priceAmount != null);
+		const currencies = new Set(priced.map((b) => b.priceCurrency ?? ''));
+		if (priced.length > 0 && priced.length === g.boxes.length && currencies.size === 1) {
+			const sum = priced.reduce((acc, b) => acc + (b.priceAmount ?? 0), 0);
+			const cur = [...currencies][0];
+			const sign = cur === 'EUR' ? '€' : cur === 'RUB' ? '₽' : cur || '€';
+			return `${sum.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${sign}`;
+		}
+		return formatCents(g.monthlyCents);
+	}
+
 	function formatTraffic(gb: number): string {
 		if (gb >= 1000) return `${(gb / 1000).toFixed(1)} ТБ`;
 		return `${gb < 10 ? gb.toFixed(2) : gb.toFixed(0)} ГБ`;
@@ -535,50 +665,14 @@
 		else if (e.key === 'Escape') finishProviderRename(g, false);
 	}
 
-	// Terabytes a month in one machine's plan, typed the same way (18.11).
-	let planning = $state<string | null>(null);
-	let planDraft = $state('');
-	/** plans saved here before the next answer carries them; 0 is forgotten */
-	let savedPlans = $state<Record<string, number>>({});
-
+	/**
+	 * Terabytes a month in one machine's plan, as the hub knows it. The screen
+	 * used to write this per hoster (18.11); now the ceiling lives on the
+	 * machine (entry_boxes.traffic_quota_gb) and this stays as the fallback
+	 * for a hoster whose machines have no quota typed yet.
+	 */
 	function planOf(g: ProviderGroup): number | null {
-		const saved = savedPlans[g.provider];
-		if (saved !== undefined) return saved > 0 ? saved : null;
 		return g.stats?.planTb ?? null;
-	}
-
-	function startPlan(g: ProviderGroup) {
-		labelError = null;
-		planDraft = planOf(g)?.toString() ?? '';
-		planning = g.provider;
-	}
-
-	async function finishPlan(g: ProviderGroup, keep: boolean) {
-		if (planning !== g.provider) return;
-		planning = null;
-		if (!keep) return;
-		const text = planDraft
-			.trim()
-			.replace(',', '.')
-			.replace(/\s*тб$/i, '');
-		const tb = text === '' ? 0 : Number(text);
-		if (!Number.isFinite(tb) || tb < 0) {
-			labelError = `${providerLabel(g.provider)}: «${planDraft}» не число терабайт`;
-			return;
-		}
-		if (tb === (planOf(g) ?? 0)) return;
-		try {
-			await setHosterPlanTb(g.provider, tb);
-			savedPlans = { ...savedPlans, [g.provider]: tb };
-			onChanged?.();
-		} catch (e) {
-			labelError = `${providerLabel(g.provider)}: ${describeApiError(e)}`;
-		}
-	}
-
-	function planKey(e: KeyboardEvent, g: ProviderGroup) {
-		if (e.key === 'Enter') finishPlan(g, true);
-		else if (e.key === 'Escape') finishPlan(g, false);
 	}
 
 	/**
@@ -640,8 +734,15 @@
 				? `${box.priceAmount} ${box.priceCurrency} в месяц у хостера; двойной клик: поменять`
 				: 'двойной клик: вписать цену'}
 		>
-			{#if cents == null}<i class="nodata">нет цены</i>{:else}{formatCents(cents)}{#if suffix}<small>/мес</small
-					>{/if}{/if}
+			{#if box.priceAmount != null}
+				{box.priceAmount.toLocaleString('ru-RU', { maximumFractionDigits: 2 })}{box.priceCurrency === 'EUR'
+					? ' €'
+					: box.priceCurrency === 'RUB'
+						? ' ₽'
+						: ` ${box.priceCurrency ?? ''}`}
+			{:else if cents == null}<i class="nodata">нет цены</i>{:else}{formatCents(cents)}{#if suffix}<small
+					>/мес</small
+				>{/if}{/if}
 		</button>
 	{/if}
 {/snippet}
@@ -715,19 +816,12 @@
 					<thead>
 						<tr>
 							<th>провайдер</th>
-							<th class="num">машины</th>
-							<th class="num">релеи</th>
-							<th class="num">держатели</th>
+							<th class="num" style="width:56px" title="машин в строю">#</th>
 							<th class="num" title="аренда машин в строю в месяц">в месяц</th>
-							<th class="num" title="медиана цены одной машины в строю">тариф</th>
-							<th class="num">трафик {fleet.providers?.windowDays ?? 30} дн</th>
-							<th class="num" title="сколько ТБ в месяц входит в тариф одной машины; двойной клик по ячейке: вписать"
-								>тб в тарифе</th
-							>
-							<th class="num">себес / тб</th>
-							<th class="num" title="машины старше окна, дожившие до его конца без бана ip">выживаемость</th>
-							<th class="num" title="медиана жизни машин, сгоревших от бана">жизнь до бана</th>
-							<th>статус</th>
+							<th class="num" title="трафик за окно / включено в тарифы всех машин хостера">трафик</th>
+							<th class="num" title="тариф одной машины / тб в тарифе">себес / тб</th>
+							<th class="num" title="ближайшее списание у хостера">биллинг</th>
+							<th style="width:104px"></th>
 						</tr>
 					</thead>
 					<tbody>
@@ -737,6 +831,13 @@
 							{@const own = providerOwnLabel(g)}
 							{@const plan = planOf(g)}
 							{@const cost = costPerTb(g)}
+							{@const nb = nearestBilling(g)}
+							{@const quotaGb = (() => {
+								const own = g.boxes.reduce((sum, b) => sum + (b.trafficQuotaGb ?? 0), 0);
+								if (own > 0) return own;
+								return plan !== null ? plan * 1000 * g.boxes.length : null;
+							})()}
+							{@const trafficText = trafficPair(h?.trafficGb ?? null, quotaGb)}
 							<tr
 								class="prov-row"
 								class:open
@@ -761,10 +862,16 @@
 										{:else}
 											<button
 												class="prov-name"
-												onclick={(e) => e.stopPropagation()}
+												onclick={(e) => {
+													e.stopPropagation();
+													const url = accounts[g.provider]?.billingUrl;
+													if (url) window.open(url, '_blank', 'noopener');
+												}}
 												ondblclick={() => startProviderRename(g)}
-												title="двойной клик: своё имя провайдера"
-											>
+												title="{accounts[g.provider]?.asn
+													? accounts[g.provider].asn + ' · клик: биллинг · двойной клик: своё имя'
+													: 'клик: биллинг · двойной клик: своё имя провайдера'}"
+												>
 												{#if own}{own}
 													<small class="real-name">{providerLabel(g.provider)}</small>{:else}{providerLabel(
 														g.provider,
@@ -773,48 +880,16 @@
 										{/if}
 									</div>
 								</td>
-								<td class="num m">{g.boxes.length} <small class="share">{sharePct(g.boxes.length)}%</small></td>
-								<td class="num m">{g.liveRelays}</td>
-								<td class="num m">{g.holders.toLocaleString('ru-RU')}</td>
+								<td class="num m" title="машин в строю">{g.boxes.length}</td>
 								<td class="num m">
-									{formatCents(g.monthlyCents)}
-									{#if g.unpriced > 0}<small class="muted">+{g.unpriced} без цены</small>{/if}
+									{groupMoney(g)}
+									{#if g.unpriced > 0}<small class="muted">+{g.unpriced}</small>{/if}
 								</td>
 								<td class="num m">
-									{#if h?.perBoxMonthlyCents != null}{formatCents(h.perBoxMonthlyCents)}{:else}<span class="muted"
-											>-</span
-										>{/if}
-								</td>
-								<td class="num m">
-									{#if h?.trafficGb != null}
-										{formatTraffic(h.trafficGb)}
-										{#if plan !== null}<small class="muted">из {formatTraffic(plan * 1000 * g.boxes.length)}</small
-											>{/if}
+									{#if trafficText === null}
+										<span class="muted" title="тариф не заполнен, трафика не мерили">-</span>
 									{:else}
-										<span class="muted">-</span>
-									{/if}
-								</td>
-								<td class="num m">
-									{#if planning === g.provider}
-										<input
-											class="rename-input plan-input m"
-											placeholder="32"
-											aria-label="тб в тарифе у {providerLabel(g.provider)}"
-											bind:value={planDraft}
-											use:focusSelect
-											onclick={(e) => e.stopPropagation()}
-											onkeydown={(e) => planKey(e, g)}
-											onblur={() => finishPlan(g, true)}
-										/>
-									{:else}
-										<button
-											class="price-btn m"
-											onclick={(e) => e.stopPropagation()}
-											ondblclick={() => startPlan(g)}
-											title="двойной клик: сколько ТБ в месяц входит в тариф одной машины, пусто или 0 стирает"
-										>
-											{#if plan !== null}{plan} ТБ{:else}<span class="muted">-</span>{/if}
-										</button>
+										<span title="трафик за окно / включено в тарифы всех машин">{trafficText}</span>
 									{/if}
 								</td>
 								<td class="num m">
@@ -832,24 +907,59 @@
 									{/if}
 								</td>
 								<td class="num m">
-									{#if h?.winratePct == null}<span class="muted" title="нет машин старше окна">-</span
-										>{:else}{h.winratePct.toFixed(0)}%{/if}
-								</td>
-								<td class="num m">
-									{#if h?.medianLifeDays == null}<span class="muted" title="ни одна машина не сгорела от бана">-</span
-										>{:else}<span title="по {h.lifeSampleCount} сгоревшим">{formatLife(h.medianLifeDays)}</span>{/if}
-								</td>
-								<td>
-									{#if g.incidents > 0}
-										<span class="status-bad"><span class="bad-dot"></span>{g.incidents} в инциденте</span>
+									{#if nb === null}
+										<span class="muted" title="дата оплаты не задана">-</span>
 									{:else}
-										<span class="status-ok">чисто</span>
+										<span
+											class="billing"
+											class:soon={nb.days !== null && nb.days <= 3}
+											class:warn={nb.days !== null && nb.days > 3 && nb.days <= 7}
+											title="ближайшее списание у хостера"
+											>{ruDate(nb.iso)}<small>{nb.days} дн</small></span
+										>
 									{/if}
+								</td>
+								<td class="prov-acts">
+									<button
+										class="cred-ic"
+										class:set={accounts[g.provider]?.hasLogin}
+										title="логин биллинга: клик — скопировать, пкм — задать"
+										onclick={(e) => {
+											e.stopPropagation();
+											void copySecret(g.provider, 'login');
+										}}
+										oncontextmenu={(e) => {
+											e.preventDefault();
+											secretMenu = { x: e.clientX, y: e.clientY, kind: g.provider, field: 'login' };
+										}}>☰</button
+									>
+									<button
+										class="cred-ic"
+										class:set={accounts[g.provider]?.hasPassword}
+										title="пароль биллинга: клик — скопировать, пкм — задать"
+										onclick={(e) => {
+											e.stopPropagation();
+											void copySecret(g.provider, 'password');
+										}}
+										oncontextmenu={(e) => {
+											e.preventDefault();
+											secretMenu = { x: e.clientX, y: e.clientY, kind: g.provider, field: 'password' };
+										}}>⚿</button
+									>
+									<button
+										class="cred-ic"
+										title="API, ключ, лимит, AS"
+										onclick={(e) => {
+											e.stopPropagation();
+											budgetDraft = { ...(accounts[g.provider] ?? blankAccount(g.provider)) };
+											secretDraft = { login: '', password: '', apiKey: '' };
+										}}>⚙</button
+									>
 								</td>
 							</tr>
 							{#if open}
 								<tr class="prov-boxes">
-									<td colspan="12">
+									<td colspan="7">
 										{#each getSortedBoxes(g.boxes) as box (box.name)}
 											{@const boxOpen = expandedTreeBoxes.has(box.name)}
 											<div class="t-box" class:has-incident={box.openIncident}>
@@ -861,19 +971,65 @@
 													{boxOpen ? '▾' : '▸'}
 												</button>
 												{@render boxName(box, 't-box-name m')}
-												<span class="ip-sealed" title="ip запечатан, открывается в карточке">ip в конверте</span>
-												<span class="t-cell">{boxRegion(box)}</span>
-												<span class="t-cell m">{boxLifetime(box.createdAt)}</span>
-												<span class="t-cell m">{@render boxPrice(box, true)}</span>
-												<span class="t-cell">
+												<span class="t-cell role" title="роль машины в каскаде">{roleLabel(box.role)}</span>
+												<span class="t-cell m" title="цена машины в месяц, двойной клик — правка"
+													>{@render boxPrice(box, true)}</span
+												>
+												<span class="t-cell m" title="включено в тариф; расход по машине считает хостер"
+													>{#if boxQuotaText(box) === null}<span class="muted" title="тариф не вписан">-</span
+														>{:else}{boxQuotaText(box)}{/if}</span
+												>
+												<span class="t-cell m billing-cell">
+													{#if billingEdit === box.name}
+														<input
+															class="rename-input m"
+															placeholder="2026-12-12"
+															aria-label="дата оплаты машины {box.name}"
+															bind:value={billingDraft}
+															use:focusSelect
+															onclick={(e) => e.stopPropagation()}
+															onkeydown={(e) => {
+																if (e.key === 'Enter') {
+																	void saveBilling(box, 'rentedUntil', billingDraft);
+																	billingEdit = null;
+																} else if (e.key === 'Escape') billingEdit = null;
+															}}
+															onblur={() => (billingEdit = null)}
+														/>
+													{:else if box.rentedUntil}
+														{@const left = daysLeft(box.rentedUntil.slice(0, 10))}
+														<span
+															class="billing"
+															class:soon={left !== null && left <= 3}
+															class:warn={left !== null && left > 3 && left <= 7}
+															title="дата оплаты, двойной клик — правка"
+															ondblclick={() => {
+																billingEdit = box.name;
+																billingDraft = box.rentedUntil!.slice(0, 10);
+															}}
+															>{ruDate(box.rentedUntil.slice(0, 10))}<small>{left} дн</small></span
+															>
+													{:else}
+														<button
+															class="price-btn m muted"
+															onclick={(e) => e.stopPropagation()}
+															ondblclick={() => {
+																billingEdit = box.name;
+																billingDraft = '';
+															}}
+															title="дата оплаты не задана: двойной клик — вписать">-</button
+														>
+													{/if}
+												</span>
+												<span class="t-cell status-dot-cell">
 													{#if box.openIncident}
-														<span class="status-bad"><span class="bad-dot"></span>{box.openIncident}</span>
+														<span class="status-bad" title={box.openIncident}><span class="bad-dot"></span></span>
 													{:else if box.verdict === 'warn'}
-														<span class="status-warn"
-															><span class="warn-dot"></span>{box.verdictLabel || 'внимание'}</span
+														<span class="status-warn" title={box.verdictLabel || 'внимание'}
+															><span class="warn-dot"></span></span
 														>
 													{:else}
-														<span class="status-ok">чисто</span>
+														<span class="status-ok" title="чисто"><span class="ok-dot"></span></span>
 													{/if}
 												</span>
 											</div>
@@ -1237,6 +1393,84 @@
 		</div>
 	{/if}
 {/snippet}
+
+{#if secretMenu}
+	{@const acct = accounts[secretMenu.kind]}
+	{@const filled = secretMenu.field === 'login' ? acct?.hasLogin : acct?.hasPassword}
+	<button class="ctx-backdrop" aria-label="закрыть меню" onclick={() => (secretMenu = null)}></button>
+	<div class="ctx-menu" style="left: {secretMenu.x}px; top: {secretMenu.y + window.scrollY}px">
+		<button
+			onclick={() => {
+				const kind = secretMenu!.kind;
+				budgetDraft = { ...(accounts[kind] ?? blankAccount(kind)) };
+				secretDraft = { login: '', password: '', apiKey: '' };
+				secretMenu = null;
+			}}>{filled ? 'изменить' : 'задать'}</button
+		>
+		{#if filled}
+			<button
+				onclick={() => {
+					void copySecret(secretMenu!.kind, secretMenu!.field);
+					secretMenu = null;
+				}}>скопировать</button
+			>
+			<button
+				onclick={() => {
+					const field = secretMenu!.field;
+					void saveProviderSecret(secretMenu!.kind, { [field]: '' }).then((flags) => {
+						accounts = { ...accounts, [secretMenu!.kind]: { ...accounts[secretMenu!.kind], ...flags } };
+						secretMenu = null;
+					});
+				}}>удалить</button
+			>
+		{/if}
+	</div>
+{/if}
+
+{#if budgetDraft}
+	{@const draft = budgetDraft}
+	<button class="ctx-backdrop" aria-label="закрыть настройки" onclick={() => (budgetDraft = null)}></button>
+	<aside class="bill-drawer">
+		<div class="bill-head">
+			<span>{draft.displayName || providerLabel(draft.provider)}</span>
+			<button class="kill" onclick={() => (budgetDraft = null)}>закрыть</button>
+		</div>
+		<label class="bill-field">адрес биллинга
+			<input bind:value={draft.billingUrl} placeholder="https://my.aeza.net" />
+		</label>
+		<label class="bill-field">AS
+			<input bind:value={draft.asn} placeholder="AS203273" />
+		</label>
+		<label class="bill-field">логин биллинга
+			<input bind:value={secretDraft.login} placeholder={draft.hasLogin ? 'задан, пусто — не менять' : 'не задан'} />
+		</label>
+		<label class="bill-field">пароль биллинга
+			<input type="password" bind:value={secretDraft.password} placeholder={draft.hasPassword ? 'задан, пусто — не менять' : 'не задан'} />
+		</label>
+		<label class="bill-field">API-хост
+			<input bind:value={draft.apiHost} placeholder="—" />
+		</label>
+		<label class="bill-field">API-ключ
+			<input type="password" bind:value={secretDraft.apiKey} placeholder={draft.hasApiKey ? 'задан, пусто — не менять' : 'не задан'} />
+		</label>
+		<label class="bill-field">лимит расходов в месяц, €
+			<input
+				type="number"
+				min="0"
+				value={draft.spendCapCents == null ? '' : (draft.spendCapCents / 100).toFixed(2)}
+				oninput={(e) => (draft.spendCapCents = e.currentTarget.value === '' ? null : Math.round(Number(e.currentTarget.value) * 100))}
+			/>
+		</label>
+		<label class="bill-field">заметка
+			<input bind:value={draft.note} placeholder="—" />
+		</label>
+		<p class="bill-note">Секреты лежат на hub зашифрованными; открытие поля пишется в журнал админки.</p>
+		{#if billError}<p class="bill-error">{billError}</p>{/if}
+		<button class="bill-save" onclick={() => void saveAccountDraft(draft, Object.fromEntries(Object.entries(secretDraft).filter(([, v]) => v !== '')))}>
+			сохранить
+		</button>
+	</aside>
+{/if}
 
 <style>
 	/* ---------- providers: one line per hoster, its machines below ---------- */
@@ -2259,4 +2493,174 @@
 	.ok-icon {
 		font-weight: 700;
 	}
+	/* ---------- биллинг хостера: дата оплаты, значки секретов, шторка ---------- */
+	.billing {
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+
+	.billing-cell {
+		min-width: 128px;
+	}
+
+	.status-dot-cell {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.ok-dot {
+		display: inline-block;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--ok, oklch(0.72 0.15 155));
+	}
+
+	.billing small {
+		margin-left: 5px;
+		color: var(--text-3, oklch(0.42 0 0));
+		font-family: var(--mono, monospace);
+		font-size: 10px;
+	}
+
+	.billing.soon,
+	.billing.soon small {
+		color: var(--red, oklch(0.65 0.2 25));
+	}
+
+	.billing.warn,
+	.billing.warn small {
+		color: var(--warn, oklch(0.78 0.12 85));
+	}
+
+	.prov-acts {
+		display: flex;
+		gap: 2px;
+		justify-content: flex-end;
+		white-space: nowrap;
+	}
+
+	.cred-ic {
+		width: 24px;
+		height: 24px;
+		display: grid;
+		place-items: center;
+		border-radius: 5px;
+		color: var(--text-3, oklch(0.42 0 0));
+		font-size: 12px;
+		line-height: 1;
+	}
+
+	.cred-ic:hover {
+		background: var(--surface-hover, oklch(0.26 0 0));
+		color: var(--text, oklch(0.93 0 0));
+	}
+
+	.cred-ic.set {
+		color: var(--text-2, oklch(0.62 0 0));
+	}
+
+	.t-box .role {
+		color: var(--text-2, oklch(0.62 0 0));
+	}
+
+	.ctx-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 40;
+		background: none;
+	}
+
+	.ctx-menu {
+		position: absolute;
+		z-index: 41;
+		min-width: 168px;
+		padding: 4px;
+		background: var(--card-bg, oklch(0.27 0 0));
+		border: 1px solid var(--border, oklch(0.24 0 0));
+		border-radius: 8px;
+		box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+	}
+
+	.ctx-menu button {
+		display: block;
+		width: 100%;
+		padding: 7px 10px;
+		border-radius: 5px;
+		text-align: left;
+		font-size: 12px;
+	}
+
+	.ctx-menu button:hover {
+		background: var(--surface-hover, oklch(0.26 0 0));
+	}
+
+	.bill-drawer {
+		position: fixed;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		z-index: 41;
+		width: 340px;
+		padding: 18px 20px 24px;
+		overflow-y: auto;
+		background: var(--bg-raised, oklch(0.17 0 0));
+		border-left: 1px solid var(--border, oklch(0.24 0 0));
+	}
+
+	.bill-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 16px;
+		font-size: 14px;
+		font-weight: 600;
+	}
+
+	.bill-field {
+		display: block;
+		margin-bottom: 11px;
+		color: var(--text-3, oklch(0.42 0 0));
+		font-size: 11px;
+	}
+
+	.bill-field input {
+		width: 100%;
+		margin-top: 4px;
+		padding: 7px 9px;
+		background: var(--bg, oklch(0.14 0 0));
+		border: 1px solid var(--border, oklch(0.24 0 0));
+		border-radius: 6px;
+		color: var(--text, oklch(0.93 0 0));
+		font-size: 12px;
+	}
+
+	.bill-note {
+		margin: 12px 0 0;
+		color: var(--text-3, oklch(0.42 0 0));
+		font-size: 11px;
+		line-height: 1.5;
+	}
+
+	.bill-error {
+		margin: 8px 0 0;
+		color: var(--red, oklch(0.65 0.2 25));
+		font-size: 11px;
+	}
+
+	.bill-save {
+		margin-top: 14px;
+		padding: 8px 14px;
+		border-radius: 6px;
+		background: var(--primary, oklch(0.75 0.14 350));
+		color: oklch(0.16 0 0);
+		font-size: 12px;
+		font-weight: 600;
+	}
+
+	.bill-save:hover {
+		background: var(--primary-hover, oklch(0.8 0.14 350));
+	}
+
 </style>

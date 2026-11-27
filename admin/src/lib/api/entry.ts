@@ -1348,6 +1348,10 @@ export interface FleetBox {
 	monthlyCents?: number;
 	plan?: string;
 	providerRegion?: string;
+	/** роль машины в каскаде: entry, receiver, egress; пусто — не задана */
+	role?: string;
+	/** сколько гигабайт входит в тариф машины; undefined — не вписано */
+	trafficQuotaGb?: number;
 }
 
 export interface EntryFleet {

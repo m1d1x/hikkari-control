@@ -48,7 +48,6 @@
 			<SidebarItem href="/incidents" icon="events" label="Инциденты" {collapsed} />
 			<SidebarItem href="/censor" icon="realtime" label="Пробник" {collapsed} />
 			<SidebarItem href="/domains" icon="search" label="Домены" {collapsed} />
-			<SidebarItem href="/providers" icon="system" label="Провайдеры" {collapsed} />
 		</SidebarSection>
 
 		<SidebarSection label="Продукт" {collapsed}>
