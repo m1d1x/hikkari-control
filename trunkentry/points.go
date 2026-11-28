@@ -16,10 +16,12 @@ package main
 //	nekko-trunk-entry: trunk: point <ip> back: U of N members up after S s
 //	nekko-trunk-entry: trunk: every point silent
 //	nekko-trunk-entry: trunk: a point back after S s of every point silent
-//	nekko-trunk-entry: trunk: points from=<unix> <ip> up=U/N proof_ms=P silent_s=S; ...
+//	nekko-trunk-entry: trunk: points from=<unix> <ip> up=U/N proof_ms=P silent_s=S rtt_ms=R; ...
 //
 // silent_s is the seconds of the minute the point was silent, by the pipe's
-// word once a second; proof_ms -1 is none ever.
+// word once a second; proof_ms -1 is none ever; rtt_ms is the median round
+// trip of its members up at the latest word, the path entry → point → core
+// the point judge reads (runPoints), -1 none.
 
 import (
 	"fmt"
@@ -108,7 +110,11 @@ func (b *pointBook) minute(from time.Time) string {
 		if p.ProofAgo >= 0 {
 			ms = p.ProofAgo.Milliseconds()
 		}
-		parts = append(parts, fmt.Sprintf("%s up=%d/%d proof_ms=%d silent_s=%d", ip, p.Up, p.Members, ms, b.silentS[ip]))
+		rtt := int64(-1)
+		if p.RTT >= 0 {
+			rtt = p.RTT.Milliseconds()
+		}
+		parts = append(parts, fmt.Sprintf("%s up=%d/%d proof_ms=%d silent_s=%d rtt_ms=%d", ip, p.Up, p.Members, ms, b.silentS[ip], rtt))
 		b.silentS[ip] = 0
 	}
 	return fmt.Sprintf("trunk: points from=%d %s", from.Unix(), strings.Join(parts, "; "))

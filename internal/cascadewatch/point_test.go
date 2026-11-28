@@ -2,6 +2,7 @@ package cascadewatch
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -85,19 +86,29 @@ func TestDBPointChartShowsCurrentPeopleAndCallSeparatelyFromStand(t *testing.T) 
 func TestTheBrainsPointLinesAreRowsByBoxName(t *testing.T) {
 	names := map[string]string{"10.0.0.1": "unl1", "10.0.0.2": "ams3"}
 	at := time.Unix(1_800_000_000, 0).UTC()
-	l := journalLine{TS: at, Msg: "nekko-trunk-entry: trunk: points from=1800000000 10.0.0.1 up=7/7 proof_ms=40 silent_s=0; 10.0.0.2 up=0/7 proof_ms=-1 silent_s=60; 10.0.0.9 up=1/1 proof_ms=3 silent_s=2"}
+	l := journalLine{TS: at, Msg: "nekko-trunk-entry: trunk: points from=1800000000 10.0.0.1 up=7/7 proof_ms=40 silent_s=0 rtt_ms=57; 10.0.0.2 up=0/7 proof_ms=-1 silent_s=60 rtt_ms=-1; 10.0.0.9 up=1/1 proof_ms=3 silent_s=2"}
 	rows, ok := classifyPoint(l, names)
 	if !ok || len(rows) != 3 {
 		t.Fatalf("%v %+v", ok, rows)
 	}
-	if rows[0].Layer != LayerPoint || rows[0].Target != "unl1" || !*rows[0].OK || rows[0].Data["proof_ms"] != 40 {
+	if rows[0].Layer != LayerPoint || rows[0].Target != "unl1" || !*rows[0].OK || rows[0].Data["proof_ms"] != 40 || rows[0].Data["rtt_ms"] != 57 {
 		t.Fatalf("unl1 %+v", rows[0])
 	}
-	if rows[1].Target != "ams3" || *rows[1].OK || rows[1].Data["silent_s"] != 60 || rows[1].Data["proof_ms"] != nil {
+	if rows[1].Target != "ams3" || *rows[1].OK || rows[1].Data["silent_s"] != 60 || rows[1].Data["proof_ms"] != nil || rows[1].Data["rtt_ms"] != nil {
 		t.Fatalf("ams3 %+v", rows[1])
 	}
-	if rows[2].Target != "?" {
+	if rows[2].Target != "?" || rows[2].Data["rtt_ms"] != nil {
 		t.Fatalf("an unknown point %+v", rows[2])
+	}
+	off, ok := classifyPoint(journalLine{TS: at, Msg: "nekko-trunk-entry: trunk: point 10.0.0.2 off the path: 10.0.0.2 scores 121ms against 10.0.0.1's 57ms (10.0.0.1 57ms = rtt 57ms + late 0/120; 10.0.0.2 121ms = rtt 61ms + late 18/120) for 31s; path 10.0.0.1 10.0.0.9"}, names)
+	if !ok || len(off) != 1 || off[0].Data["kind"] != "point_off" || off[0].Data["point"] != "ams3" ||
+		off[0].Data["why"] != "ams3 scores 121ms against unl1's 57ms (unl1 57ms = rtt 57ms + late 0/120; ams3 121ms = rtt 61ms + late 18/120) for 31s" ||
+		!reflect.DeepEqual(off[0].Data["path"], []string{"unl1", "?"}) {
+		t.Fatalf("a point off the path: %v %+v", ok, off)
+	}
+	on, ok := classifyPoint(journalLine{TS: at, Msg: "nekko-trunk-entry: trunk: point 10.0.0.2 back on the path: its hold is over: judged again; path 10.0.0.1 10.0.0.2"}, names)
+	if !ok || len(on) != 1 || on[0].Data["kind"] != "point_on" || !reflect.DeepEqual(on[0].Data["path"], []string{"unl1", "ams3"}) {
+		t.Fatalf("a point back on the path: %v %+v", ok, on)
 	}
 	for msg, kind := range map[string]string{
 		"trunk: point 10.0.0.2 silent: 0 of 7 members up":          "point_silent",
